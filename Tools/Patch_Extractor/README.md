@@ -6,5 +6,6 @@
 - Left-clicking the mouse will extract a patch: this is saved on your local machine where the original image is located;
 - For each patch, the following information will be concatenated to a .txt file: original image name, top-left X, Y, and image patch name.  
 - Resolution of the local machine needs to be adjusted to be 100% for the entire GUI to be within screen.
+- Use the `Converting_CSV` script to convert the output .txt file into a format that can be uploaded to CoralNet.
 
 **This tool was developed by Dr. Yuri Rzhanov of the Center for Coastal and Ocean Mapping/Joint Hydrographic Center.**
