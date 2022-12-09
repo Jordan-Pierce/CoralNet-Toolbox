@@ -5,8 +5,8 @@ and download all images and annotations from a public source. The tool is
 written in Python and uses the requests library to download the images and 
 annotations from the CoralNet website.
 
-To use the CoralNet Crawler, you will need to provide the SOURCE_ID of the 
-source you want to download. The SOURCE_ID is a unique identifier for the 
+To use the CoralNet Crawler, you will need to provide the `SOURCE_ID` of the 
+source you want to download. The `SOURCE_ID` is a unique identifier for the 
 source on the CoralNet website, and can be found in the URL of the source's 
 page on the website. For example, for this source's ID is `2733`:
 ```
