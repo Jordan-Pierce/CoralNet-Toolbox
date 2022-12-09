@@ -95,6 +95,28 @@ def crawl(url):
     return image_name, image_page_url, image_path_url, next_image_page_url
 
 
+def download_labelset(url):
+    """
+    Downloads a .csv file holding the labelset from the given URL.
+
+    Args:
+        url (str): The URL of the website with the download button.
+
+    Returns:
+        None
+    """
+
+    # Make an HTTP GET request to download the .csv file
+    response = requests.get(url, params={"submit": "Export label entries to "
+                                                   "CSV"})
+
+    # Check the response status code
+    if response.status_code == 200:
+        # Save the .csv file to a local directory
+        with open(SOURCE_DIR + "label_set.csv", "wb") as f:
+            f.write(response.content)
+
+
 def download_image(row):
     """
     Downloads a single image from the given URL, using the provided file name
@@ -161,10 +183,16 @@ if __name__ == "__main__":
     image_path_urls = []
 
     # The source id of the source you want to download all the images from
-    source_url = CORALNET_URL + "/source/" + str(SOURCE_ID) + "/browse/images/"
+    source_url = CORALNET_URL + "/source/" + str(SOURCE_ID)
+    image_url = source_url + "/browse/images/"
+    labelset_url = source_url + "/export/labelset/"
+    annotation_url = source_url + "/export/annotations/"
+
+    # First download the labelset
+    download_labelset(labelset_url)
 
     # Convert the webpage to soup
-    soup = url_to_soup(source_url)
+    soup = url_to_soup(image_url)
 
     # Grab the first image page url
     images_divs = soup.find('span', class_='thumb_wrapper')
