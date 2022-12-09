@@ -1,5 +1,8 @@
+import os
+
 import requests
 import pandas as pd
+import multiprocessing
 from bs4 import BeautifulSoup
 
 
@@ -11,7 +14,14 @@ from bs4 import BeautifulSoup
 CORALNET_URL = "https://coralnet.ucsd.edu"
 
 # The source id of the source you want to download all the images from
-SOURCE_ID = 665
+SOURCE_ID = 2687
+
+# The directory to store the output
+SOURCE_DIR = "./" + str(SOURCE_ID) + "/"
+IMAGE_DIR = SOURCE_DIR + "images/"
+
+os.makedirs(SOURCE_DIR, exist_ok=True)
+os.makedirs(IMAGE_DIR, exist_ok=True)
 
 
 # -----------------------------------------------------------------------------
@@ -85,15 +95,64 @@ def crawl(url):
     return image_name, image_page_url, image_path_url, next_image_page_url
 
 
+def download_image(row):
+    """
+    Downloads a single image from the given URL, using the provided file name
+    to save the image to a local directory.
+
+    Args:
+        row (list): A list containing the file name and URL of the image to
+            download. The list should have at least two elements: the file
+            name and the URL.
+
+    Returns:
+        None
+    """
+
+    # the output path of the image being downloaded
+    image_path = IMAGE_DIR + row[0]
+
+    # Make an HTTP GET request to download the image
+    response = requests.get(row[2])
+
+    # Check the response status code
+    if response.status_code == 200:
+        # Save the image to a file in the output directory
+        with open(image_path, 'wb') as f:
+            f.write(response.content)
+
+        if os.path.exists(image_path):
+            print("File downloaded: ", image_path)
+        else:
+            print("File could not be downloaded: ", image_path)
+
+
+def download_images(df):
+    """
+    Downloads images from a list of URLs, using file names from a pandas
+    dataframe to save the images to a local directory.
+
+    Args: df (pandas.DataFrame): A dataframe containing the file names and
+    URLs of the images to download. The dataframe should have at least two
+    columns: 'file_name' and 'image_url'.
+
+    Returns:
+        None
+    """
+
+    # Use the multiprocessing library's Pool.map() method to download images
+    # in parallel
+    with multiprocessing.Pool() as pool:
+        # Apply the download_image function to each row in the dataframe
+        pool.map(download_image, df.values.tolist())
+
+
 if __name__ == "__main__":
 
     """This is the main function of the script. It initializes the necessary 
     constants and lists, converts the first image page URL to soup, and then 
     crawls through all the image pages to get the image page URLs and image 
     path URLs. """
-
-    # Constant for the coralnet url
-    CORALNET_URL = "https://coralnet.ucsd.edu"
 
     # A list containing the urls to all the image pages and a list containing
     # the the urls to all the images hosted on amazon
@@ -125,11 +184,19 @@ if __name__ == "__main__":
 
         print(image_name, image_page_url, image_path_url)
 
-    print("Number of image pages: ", len(image_page_urls))
-    print("Number of image paths: ", len(image_path_urls))
-
+    # Storing the results in dataframe, saving locally
     df = pd.DataFrame(list(zip(image_names, image_page_urls, image_path_urls)),
                       columns=['image_name', 'image_page', 'image_url'])
-    print(df)
+
+    df.to_csv(SOURCE_DIR + str(SOURCE_ID) + "_images.csv")
+
+    # Printing out the results
+    print("\n", "Data scraped from CoralNet: ")
+    print(df, "\n")
+
+    # Downloading the images in parallel using multiprocessing
+    print("Downloading images to: ", IMAGE_DIR)
+    download_images(df)
+
     print("Done.")
 
