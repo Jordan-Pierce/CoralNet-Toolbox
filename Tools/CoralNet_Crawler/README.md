@@ -13,7 +13,7 @@ page on the website. For example, for this source's ID is `2733`:
 https://coralnet.ucsd.edu/source/2733/
 ```
 
-Once you have the SOURCE_ID, you can use the CoralNet Crawler to download all 
+Once you have the `SOURCE_ID`, you can use the CoralNet Crawler to download all 
 images and annotations from the source. The Crawler will download the images 
 and annotations to your local computer, and you can use them for further 
 analysis or processing.
