@@ -19,7 +19,7 @@ LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
 # The source id of the source you want to download all the images from
 SOURCE_ID = 2733
 
-# The source id of the source you want to download all the images from
+# Constant URLs for getting images, labelset, and annotations
 SOURCE_URL = CORALNET_URL + "/source/" + str(SOURCE_ID)
 IMAGE_URL = SOURCE_URL + "/browse/images/"
 LABELSET_URL = SOURCE_URL + "/export/labelset/"
