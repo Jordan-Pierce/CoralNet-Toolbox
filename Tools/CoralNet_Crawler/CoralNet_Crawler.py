@@ -1,27 +1,44 @@
 import os
+import io
 
 import requests
 import pandas as pd
 import multiprocessing
 from bs4 import BeautifulSoup
 
-
 # -----------------------------------------------------------------------------
 # Configurations
 # -----------------------------------------------------------------------------
 
-# Constant for the coralnet url
+# Constant for the CoralNet url
 CORALNET_URL = "https://coralnet.ucsd.edu"
 
+# URL of the login page
+LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
+
 # The source id of the source you want to download all the images from
-SOURCE_ID = 2687
+SOURCE_ID = 2733
+
+# The source id of the source you want to download all the images from
+SOURCE_URL = CORALNET_URL + "/source/" + str(SOURCE_ID)
+IMAGE_URL = SOURCE_URL + "/browse/images/"
+LABELSET_URL = SOURCE_URL + "/export/labelset/"
 
 # The directory to store the output
 SOURCE_DIR = "./" + str(SOURCE_ID) + "/"
 IMAGE_DIR = SOURCE_DIR + "images/"
 
+# Creating the directories
 os.makedirs(SOURCE_DIR, exist_ok=True)
 os.makedirs(IMAGE_DIR, exist_ok=True)
+
+# Set the username and password for your CoralNet account locally, that way
+# credentials never need to be entered in the script (wherever it is).
+
+# Be sure to restart the terminal when first setting environmental variables
+# for them to be saved!
+USERNAME = os.getenv('CORALNET_USERNAME')
+PASSWORD = os.getenv('CORALNET_PASSWORD')
 
 
 # -----------------------------------------------------------------------------
@@ -50,29 +67,30 @@ def url_to_soup(url):
     return soup
 
 
-def crawl(url):
+def crawl(page_url):
     """
     Crawl a coralnet image page and get the associated image path url and
     the url of the next image page.
 
     Args:
-        url (str): The URL of the coralnet image page to crawl.
+        page_url (str): The URL of the coralnet image page to crawl.
 
     Returns: tuple: A tuple containing the image page URL, image path URL,
     and the URL of the next image page.
     """
 
     image_name = None
-    image_page_url = url
+    image_page_url = page_url
     image_path_url = None
     next_image_page_url = None
 
     # From the provided image page url, get the associated image path url
-    soup = url_to_soup(url)
+    soup = url_to_soup(page_url)
 
     # Find the div element with id="original_image_container" and
     # style="display:none;"
-    orginal_image_container = soup.find('div', id='original_image_container',
+    orginal_image_container = soup.find('div',
+                                        id='original_image_container',
                                         style='display:none;')
 
     # Find the img element within the div and get the value of the src
@@ -86,7 +104,7 @@ def crawl(url):
             # Get the value of the href attribute and prepend the CORALNET_URL
             next_image_page_url = CORALNET_URL + a_tag.get('href')
 
-        # Else, it return None and we know we're at the end
+        # Else, it returns None, and we know we're at the end of the images
 
     # Finally, get the name of the image, because when downloaded it might
     # not match
@@ -95,26 +113,126 @@ def crawl(url):
     return image_name, image_page_url, image_path_url, next_image_page_url
 
 
-def download_labelset(url):
+def download_labelset(labelset_url):
     """
-    Downloads a .csv file holding the labelset from the given URL.
-
+    Downloads a .csv file holding the label set from the given URL.
     Args:
-        url (str): The URL of the website with the download button.
-
+        labelset_url (str): The URL of the website with the download button.
     Returns:
         None
     """
 
+    print("Downloading labelset...")
+
     # Make an HTTP GET request to download the .csv file
-    response = requests.get(url, params={"submit": "Export label entries to "
-                                                   "CSV"})
+    response = requests.get(labelset_url,
+                            params={"submit": "Export label entries to CSV"})
 
     # Check the response status code
     if response.status_code == 200:
         # Save the .csv file to a local directory
         with open(SOURCE_DIR + "label_set.csv", "wb") as f:
             f.write(response.content)
+
+    if os.path.exists(SOURCE_DIR + "label_set.csv"):
+        print("Label set saved to: ", SOURCE_DIR + "label_set.csv")
+    else:
+        print("Could not download label set.")
+
+
+def download_annotations(image_url):
+    """
+    This function downloads the annotations from a CoralNet source using the
+    provided image URL. It logs into CoralNet using the provided username
+    and password, and exports the annotations for the images in the source
+    as a CSV file, which is saved in the local source directory.
+
+    :param image_url: A string containing the URL of an image in the source
+    """
+
+    print("Downloading annotations...")
+
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
+
+    # Pass along the cookies
+    cookies = response.cookies
+
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": USERNAME,
+        "password": PASSWORD,
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
+
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
+
+    # Use requests.Session to create a session that will maintain your login
+    # state
+    with requests.Session() as session:
+
+        # Use session.post() to submit the login form, including the
+        # "Referer" header
+        response = session.post(LOGIN_URL,
+                                data=data,
+                                headers=headers,
+                                cookies=cookies)
+
+        # Use session.get() to make a GET request to the source URL
+        response = session.get(image_url)
+
+        # Pass along the cookies
+        cookies = response.cookies
+
+        # Parse the HTML response using BeautifulSoup
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Find the form in the HTML
+        form = soup.find("form", {"id": "export-annotations-form"})
+
+        # Extract the form fields (input elements)
+        inputs = form.find_all("input")
+
+        # Create a dictionary with the form fields and their values
+        data = {'optional_columns': []}
+        for i, input in enumerate(inputs):
+            if i == 0:
+                data[input["name"]] = input["value"]
+            else:
+                data['optional_columns'].append(input['value'])
+
+        # Use session.post() to submit the form
+        response = session.post(CORALNET_URL + form["action"],
+                                data=data,
+                                headers=headers,
+                                cookies=cookies)
+
+        # Check the response status code
+        if response.status_code == 200:
+            # Convert the text in response to a dataframe
+            df = pd.read_csv(io.StringIO(response.text), sep=",")
+            # Save the dataframe locally
+            df.to_csv(SOURCE_DIR + "annotations.csv")
+
+        else:
+            print("Could not connect with CoralNet; please ensure that you "
+                  "entered your username, password, and source ID correctly.")
+
+    if os.path.exists(SOURCE_DIR + "label_set.csv"):
+        print("Annotations saved to: ", SOURCE_DIR + "annotations.csv")
+    else:
+        print("Could not download annotations.")
 
 
 def download_image(row):
@@ -149,7 +267,7 @@ def download_image(row):
             print("File could not be downloaded: ", image_path)
 
 
-def download_images(df):
+def download_images(image_url):
     """
     Downloads images from a list of URLs, using file names from a pandas
     dataframe to save the images to a local directory.
@@ -162,6 +280,40 @@ def download_images(df):
         None
     """
 
+    print("Downloading images...")
+
+    # A list containing the urls to all the image pages and a list containing
+    # the urls to all the images hosted on amazon
+    image_names = []
+    image_page_urls = []
+    image_path_urls = []
+
+    # Convert the webpage to soup
+    soup = url_to_soup(image_url)
+
+    # Grab the first image page url
+    images_divs = soup.find('span', class_='thumb_wrapper')
+    image_href = images_divs.find_all('a')[0].get("href")
+    next_page_url = CORALNET_URL + image_href
+
+    # Crawl across all image page urls, grabbing the image path url as well
+    # as the next page url continue doing this until the end of the source
+    # project image pages, where there is no next.
+    while next_page_url is not None:
+        name, page_url, path_url, next_page_url = crawl(next_page_url)
+
+        image_names.append(name)
+        image_page_urls.append(page_url)
+        image_path_urls.append(path_url)
+
+        print(name, page_url, path_url)
+
+    # Storing the results in dataframe
+    df = pd.DataFrame(list(zip(image_names, image_page_urls, image_path_urls)),
+                      columns=['image_name', 'image_page', 'image_url'])
+    # Saving locally
+    df.to_csv(SOURCE_DIR + str(SOURCE_ID) + "_images.csv")
+
     # Use the multiprocessing library's Pool.map() method to download images
     # in parallel
     with multiprocessing.Pool() as pool:
@@ -171,60 +323,20 @@ def download_images(df):
 
 if __name__ == "__main__":
 
-    """This is the main function of the script. It initializes the necessary 
-    constants and lists, converts the first image page URL to soup, and then 
-    crawls through all the image pages to get the image page URLs and image 
-    path URLs. """
+    """This is the main function of the script. It calls the functions 
+    download_labelset, download_annotations, and download_images to download 
+    the label set, annotations, and images, respectively. """
 
-    # A list containing the urls to all the image pages and a list containing
-    # the the urls to all the images hosted on amazon
-    image_names = []
-    image_page_urls = []
-    image_path_urls = []
+    # Download the label set as a csv
+    download_labelset(LABELSET_URL)
 
-    # The source id of the source you want to download all the images from
-    source_url = CORALNET_URL + "/source/" + str(SOURCE_ID)
-    image_url = source_url + "/browse/images/"
-    labelset_url = source_url + "/export/labelset/"
-    annotation_url = source_url + "/export/annotations/"
+    # Check to see if user credentials have been set,
+    # if not, annotations cannot be downloaded; skip.
+    if not None in [USERNAME, PASSWORD]:
+        # Download the annotations as a csv
+        download_annotations(IMAGE_URL)
 
-    # First download the labelset
-    download_labelset(labelset_url)
-
-    # Convert the webpage to soup
-    soup = url_to_soup(image_url)
-
-    # Grab the first image page url
-    images_divs = soup.find('span', class_='thumb_wrapper')
-    next_image_page_url = CORALNET_URL + images_divs.find_all('a')[0].get(
-        "href")
-
-    # Crawl across all image page urls, grabbing the image path url as well
-    # as the next page url continue doing this until the end of the source
-    # project image pages, where there is no next.
-    while next_image_page_url is not None:
-        image_name, image_page_url, image_path_url, next_image_page_url = crawl(
-            next_image_page_url)
-
-        image_names.append(image_name)
-        image_page_urls.append(image_page_url)
-        image_path_urls.append(image_path_url)
-
-        print(image_name, image_page_url, image_path_url)
-
-    # Storing the results in dataframe, saving locally
-    df = pd.DataFrame(list(zip(image_names, image_page_urls, image_path_urls)),
-                      columns=['image_name', 'image_page', 'image_url'])
-
-    df.to_csv(SOURCE_DIR + str(SOURCE_ID) + "_images.csv")
-
-    # Printing out the results
-    print("\n", "Data scraped from CoralNet: ")
-    print(df, "\n")
-
-    # Downloading the images in parallel using multiprocessing
-    print("Downloading images to: ", IMAGE_DIR)
-    download_images(df)
+    # Download all the images
+    download_images(IMAGE_URL)
 
     print("Done.")
-
