@@ -22,24 +22,6 @@ CORALNET_LABELSET_URL = CORALNET_URL + "/label/list/"
 # URL of the login page
 LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
 
-# The source id of the source you want to download all the images from
-SOURCE_ID = 2822
-
-# Constant URLs for getting images, labelset, and annotations
-SOURCE_URL = CORALNET_URL + "/source/" + str(SOURCE_ID)
-IMAGE_URL = SOURCE_URL + "/browse/images/"
-LABELSET_URL = SOURCE_URL + "/export/labelset/"
-
-# The directory to store the output
-SOURCE_DIR = "./" + str(SOURCE_ID) + "/"
-IMAGE_DIR = SOURCE_DIR + "images/"
-ANNO_DIR = SOURCE_DIR + "annotations/"
-
-# Creating the directories
-os.makedirs(SOURCE_DIR, exist_ok=True)
-os.makedirs(IMAGE_DIR, exist_ok=True)
-os.makedirs(ANNO_DIR, exist_ok=True)
-
 # Set the username and password for your CoralNet account locally, that way
 # credentials never need to be entered in the script (wherever it is).
 
@@ -47,7 +29,6 @@ os.makedirs(ANNO_DIR, exist_ok=True)
 # for them to be saved!
 USERNAME = os.getenv('CORALNET_USERNAME')
 PASSWORD = os.getenv('CORALNET_PASSWORD')
-
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -342,16 +323,37 @@ if __name__ == "__main__":
     download_labelset, download_annotations, and download_images to download 
     the label set, annotations, and images, respectively. """
 
-    # Download the label set as a csv
-    download_labelset(LABELSET_URL)
+    # The source ids of the sources you want to download all the data from
+    SOURCE_IDs = input("Enter the desired Source IDs, followed by a comma: ")
+    SOURCE_IDs = [l.strip() for l in SOURCE_IDs.split(",")]
 
-    # Check to see if user credentials have been set,
-    # if not, annotations cannot be downloaded; skip.
-    if not None in [USERNAME, PASSWORD]:
-        # Download the annotations as a csv
-        download_annotations(IMAGE_URL)
+    for SOURCE_ID in SOURCE_IDs:
 
-    # Download all the images
-    download_images(IMAGE_URL)
+        # Constant URLs for getting images, labelset, and annotations
+        SOURCE_URL = CORALNET_URL + "/source/" + str(SOURCE_ID)
+        IMAGE_URL = SOURCE_URL + "/browse/images/"
+        LABELSET_URL = SOURCE_URL + "/export/labelset/"
+
+        # The directory to store the output
+        SOURCE_DIR = "./" + str(SOURCE_ID) + "/"
+        IMAGE_DIR = SOURCE_DIR + "images/"
+        ANNO_DIR = SOURCE_DIR + "annotations/"
+
+        # Creating the directories
+        os.makedirs(SOURCE_DIR, exist_ok=True)
+        os.makedirs(IMAGE_DIR, exist_ok=True)
+        os.makedirs(ANNO_DIR, exist_ok=True)
+
+        # Download the label set as a csv
+        download_labelset(LABELSET_URL)
+
+        # Check to see if user credentials have been set,
+        # if not, annotations cannot be downloaded; skip.
+        if not None in [USERNAME, PASSWORD]:
+            # Download the annotations as a csv
+            download_annotations(IMAGE_URL)
+
+        # Download all the images
+        download_images(IMAGE_URL)
 
     print("Done.")

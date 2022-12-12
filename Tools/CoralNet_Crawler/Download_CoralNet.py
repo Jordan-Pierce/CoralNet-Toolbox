@@ -211,6 +211,83 @@ def download_coralnet_labelset():
     return df
 
 
+def get_source_ids(labelsets):
+    """This function takes in a pandas dataframe containing a subset of
+    labelsets and returns a list of source ids that contain those labelsets."""
+
+    # List of source ids that contain the desired labelset(s)
+    source_ids = []
+
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
+
+    # Pass along the cookies
+    cookies = response.cookies
+
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": USERNAME,
+        "password": PASSWORD,
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
+
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
+
+    # Use requests.Session to create a session that will maintain your login
+    # state
+    with requests.Session() as session:
+        # Use session.post() to submit the login form, including the
+        # "Referer" header
+        response = session.post(LOGIN_URL,
+                                data=data,
+                                headers=headers,
+                                cookies=cookies)
+
+        # Loop through all labelset URLs
+        for url in labelsets['URL'].values:
+
+            # Use session.get() to make a GET request to the source URL
+            response = session.get(url)
+
+            # Pass along the cookies
+            cookies = response.cookies
+
+            # Parse the HTML response using BeautifulSoup
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Find all the source ids on the page
+            a_tags = soup.find_all('a')
+            a_tags = [a for a in a_tags if '/source/' in a.get('href')]
+            source_id = [a.get("href").split("/")[-2] for a in a_tags]
+            source_id = [id for id in source_id if id.isnumeric()]
+
+            # Extend the list, continue to next page
+            source_ids.extend(source_id)
+
+    # If the list of source ids is not empty, save locally
+    if source_ids is not []:
+        with open('Desired_Source_ID_List.txt', 'w') as f:
+            f.write(','.join(str(_) for _ in source_ids))
+
+        if os.path.exists("Desired_Source_ID_List.txt"):
+            print("Source ID List saved successfully.")
+        else:
+            print("Could not find / download list of Source IDs.")
+
+    return source_ids
+
+
 if __name__ == "__main__":
     """This is the main function of the script. It calls the functions 
     download_coralnet_sources and download_coralnet to download 
@@ -219,14 +296,38 @@ if __name__ == "__main__":
     labels."""
 
     # Download the source list as a csv
-    coralnet_sources = download_coralnet_sources()
+    SOURCES = download_coralnet_sources()
 
     # Download the label set list as a csv
-    coralnet_labelsets = download_coralnet_labelset()
+    LABELSETS = download_coralnet_labelset()
 
-    # Get the path to the list of desired labelsets
-    labelset_path = input("Enter path to desired labelset: ")
-    labelset = parse_labelset_file(labelset_path)
+    print("\n", "For reference, see this page: ", CORALNET_LABELSET_URL)
+
+    # Get the list of desired labelsets
+    mode = input("Choose how you'd like to select the labelsets: \n"
+                 "1) Name\n"
+                 "2) Functional Group\n"
+                 "3) Short Code \n").lower()
+
+    labelsets = input("Enter the desired labelsets, followed by a comma: ")
+    labelsets = [l.strip() for l in labelsets.split(",")]
+
+    if mode in ['1', "name"]:
+        labelsets = LABELSETS[LABELSETS['Name'].isin(labelsets)]
+
+    elif mode in ['2', 'functional group', 'functional_group']:
+        labelsets = LABELSETS[LABELSETS['Functional_Group'].isin(labelsets)]
+
+    elif mode in ['3', 'short code', 'short_code']:
+        labelsets = LABELSETS[LABELSETS['Short_Code'].isin(labelsets)]
+
+    else:
+        print("This mode is not a valid option: ", mode)
+        print("Exiting.")
+
+    SOURCE_IDs = get_source_ids(labelsets)
+
+    print("Done.")
 
 
 
