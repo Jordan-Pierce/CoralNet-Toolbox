@@ -13,11 +13,17 @@ from bs4 import BeautifulSoup
 # Constant for the CoralNet url
 CORALNET_URL = "https://coralnet.ucsd.edu"
 
+# CoralNet Source page, lists all sources
+CORALNET_SOURCE_URL = CORALNET_URL + "/source/about/"
+
+# CoralNet Labelset page, lists all labelsets
+CORALNET_LABELSET_URL = CORALNET_URL + "/label/list/"
+
 # URL of the login page
 LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
 
 # The source id of the source you want to download all the images from
-SOURCE_ID = 2733
+SOURCE_ID = 2822
 
 # Constant URLs for getting images, labelset, and annotations
 SOURCE_URL = CORALNET_URL + "/source/" + str(SOURCE_ID)
@@ -27,10 +33,12 @@ LABELSET_URL = SOURCE_URL + "/export/labelset/"
 # The directory to store the output
 SOURCE_DIR = "./" + str(SOURCE_ID) + "/"
 IMAGE_DIR = SOURCE_DIR + "images/"
+ANNO_DIR = SOURCE_DIR + "annotations/"
 
 # Creating the directories
 os.makedirs(SOURCE_DIR, exist_ok=True)
 os.makedirs(IMAGE_DIR, exist_ok=True)
+os.makedirs(ANNO_DIR, exist_ok=True)
 
 # Set the username and password for your CoralNet account locally, that way
 # credentials never need to be entered in the script (wherever it is).
@@ -223,14 +231,21 @@ def download_annotations(image_url):
             # Convert the text in response to a dataframe
             df = pd.read_csv(io.StringIO(response.text), sep=",")
             # Save the dataframe locally
-            df.to_csv(SOURCE_DIR + "annotations.csv")
+            df.to_csv(SOURCE_DIR + "all_annotations.csv")
+
+            # Save annotations per image
+            for image_name in df['Name'].unique():
+                image_annotations = df[df['Name'] == image_name]
+                # Save in annotation folder
+                anno_name = image_name.split(".")[0] + ".csv"
+                image_annotations.to_csv(ANNO_DIR + anno_name)
 
         else:
             print("Could not connect with CoralNet; please ensure that you "
                   "entered your username, password, and source ID correctly.")
 
-    if os.path.exists(SOURCE_DIR + "label_set.csv"):
-        print("Annotations saved to: ", SOURCE_DIR + "annotations.csv")
+    if os.path.exists(SOURCE_DIR + "all_annotations.csv"):
+        print("Annotations saved to: ", SOURCE_DIR + "all_annotations.csv")
     else:
         print("Could not download annotations.")
 
