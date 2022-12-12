@@ -22,3 +22,11 @@ The CoralNet Crawler is available as a Google Colab notebook, which allows you
 to run the code online without having to install any additional software on your 
 computer. To access the CoralNet Crawler on Google Colab, 
 click [this link](https://colab.research.google.com/drive/1A-KGTOlfG7M4392-suQOiwEYmHsKf8c-?usp=sharing).
+
+### Download CoralNet
+
+This script can be used to download all data (labelset, images, annotations)
+from multiple sources. The script will take in a list of `Labelsets` (user 
+only needs to enter them in manually, or by copying and pasting them when 
+prompted). Next, the script will find all `SOURCE_IDs` that contain those 
+`Labelsets` and use CoralNet Crawler to download each one.

@@ -1,4 +1,4 @@
-### The Patch Extractor tool.
+### The Patch Extractor tool
 
 - Whole images ( .bmp, .png, .jpg) can be dragged and dropped into the GUI;
 - Users can then adjust the desired patch size (defaults to 224 x 224 pixels), then press Apply;
@@ -9,3 +9,15 @@
 - Use the `Converting_CSV` script to convert the output .txt file into a format that can be uploaded to CoralNet.
 
 **This tool was developed by Dr. Yuri Rzhanov of the Center for Coastal and Ocean Mapping/Joint Hydrographic Center.**
+
+### Converting
+
+This notebook can be used to convert and merge the .txt files output from 
+the Patch Exaction Tool. The .txt files have an xy value that represents 
+the top-left corner (i.e., origin) of the patch extracted, though for 
+CoralNet, these need to be the center. The notebook expects all .txt files 
+to placed in the folder `TXT_Files`, and the `patch_size` variable to be 
+set the size the patch was when extracted.
+
+Alternatively, you can use this script in Google Colab, which you can find 
+here.
