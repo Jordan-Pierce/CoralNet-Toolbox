@@ -20,4 +20,5 @@ to placed in the folder `TXT_Files`, and the `patch_size` variable to be
 set the size the patch was when extracted.
 
 Alternatively, you can use this script in Google Colab, which you can find 
-here.
+[here](https://colab.research.google.
+com/drive/19hfFQL3B-J3xQDe-UnpWs1YX3hfb3PFA?usp=sharing).
