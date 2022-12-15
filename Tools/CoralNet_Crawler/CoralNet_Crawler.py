@@ -114,19 +114,89 @@ def download_labelset(labelset_url):
     print("Downloading labelset...")
 
     # Make an HTTP GET request to download the .csv file
-    response = requests.get(labelset_url,
-                            params={"submit": "Export label entries to CSV"})
+    response = requests.get(labelset_url)
 
-    # Check the response status code
-    if response.status_code == 200:
-        # Save the .csv file to a local directory
-        with open(SOURCE_DIR + "label_set.csv", "wb") as f:
-            f.write(response.content)
+    # Convert the HTML response to soup
+    soup = BeautifulSoup(response.text, "html.parser")
 
-    if os.path.exists(SOURCE_DIR + "label_set.csv"):
-        print("Label set saved to: ", SOURCE_DIR + "label_set.csv")
+    # Extract the table we're looking for
+    table = soup.find("table", class_="detail_table")
+
+    labelset = []
+
+    # Loop through each row in the table, ignoring the header
+    for tr in table.find_all("tr")[1:]:
+        label_id = tr.find("a").get("href").split("/")[-2]
+        url = CORALNET_URL + tr.find("a").get("href")
+        name = tr.find("a").text.strip()
+        short_code = tr.find_all("td")[1].text.strip()
+        functional_group = tr.find_all("td")[2].text.strip()
+
+        labelset.append([label_id, url, name, short_code, functional_group])
+
+    # Create dataframe to hold all labelset information
+    df = pd.DataFrame(labelset, columns=['Label_ID', 'Label_URL', 'Name',
+                                         'Short_Code', 'Functional_Group'])
+    # Save locally
+    df.to_csv(SOURCE_DIR + "labelset.csv")
+
+    if os.path.exists(SOURCE_DIR + "labelset.csv"):
+        print("Label set saved to: ", SOURCE_DIR + "labelset.csv")
     else:
-        print("Could not download label set.")
+        print("Could not download labelset.")
+
+    return df
+
+
+def download_model_meta(source_url):
+    """This function collects the model data from a source webpage. The
+    metadata will be stored within a dataframe and saved locally. If there
+    is no metadata (i.e., trained models), the function returns None."""
+
+    # Make an HTTP GET request to download the .csv file
+    response = requests.get(source_url)
+
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    script = None
+    # Of the scripts, find the one containing model metadata
+    for script in soup.find_all("script"):
+        if "Classifier overview" in script.text:
+            script = script.text
+            break
+
+    # If the page doesn't have model metadata, then return None early
+    if script is None:
+        return script
+
+    # Parse the data when represented as a string, convert to dict
+    data = script[script.find("data:"):].split(",\n")[0]
+    data = eval(data[data.find("[{"):])
+
+    # Loop through and collect meta from each model instance, store in list
+    meta = []
+    for point in data:
+
+        score = point["y"]
+        nimages = point["nimages"]
+        traintime = point["traintime"]
+        date = point["date"]
+        source_id = point["pk"]
+
+        meta.append([score, nimages, traintime, date, source_id])
+
+    # Convert list to dataframe
+    df = pd.DataFrame(meta, columns=['Accuracy %', 'N_Images',
+                                     'Train_Time', 'Date', 'Source_ID'])
+    # Save locally
+    df.to_csv(SOURCE_DIR + "model_metadata.csv")
+
+    if os.path.exists(SOURCE_DIR + "model_metadata.csv"):
+        print("Annotations saved to: ", SOURCE_DIR + "model_metadata.csv")
+    else:
+        print("Could not download model metadata.")
+
+    return df
 
 
 def download_annotations(image_url):
@@ -332,7 +402,7 @@ if __name__ == "__main__":
         # Constant URLs for getting images, labelset, and annotations
         SOURCE_URL = CORALNET_URL + "/source/" + str(SOURCE_ID)
         IMAGE_URL = SOURCE_URL + "/browse/images/"
-        LABELSET_URL = SOURCE_URL + "/export/labelset/"
+        LABELSET_URL = SOURCE_URL + "/labelset/"
 
         # The directory to store the output
         SOURCE_DIR = "./" + str(SOURCE_ID) + "/"
@@ -346,6 +416,11 @@ if __name__ == "__main__":
 
         # Download the label set as a csv
         download_labelset(LABELSET_URL)
+
+        # Download the metadata of the trained model, if exists
+        download_model_meta(SOURCE_URL)
+
+        break
 
         # Check to see if user credentials have been set,
         # if not, annotations cannot be downloaded; skip.
