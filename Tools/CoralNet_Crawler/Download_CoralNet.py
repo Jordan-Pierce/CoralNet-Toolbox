@@ -272,13 +272,14 @@ def get_source_ids(labelsets):
             source_id = [a.get("href").split("/")[-2] for a in a_tags]
             source_id = [id for id in source_id if id.isnumeric()]
 
-            # Extend the list, continue to next page
+            # Extend the list, remove duplicates
             source_ids.extend(source_id)
+            source_ids = [*set(source_ids)]
 
-    # If the list of source ids is not empty, save locally
-    if source_ids is not []:
-        with open('Desired_Source_ID_List.txt', 'w') as f:
-            f.write(','.join(str(_) for _ in source_ids))
+            # If the list of source ids is not empty, save locally
+            if source_ids is not []:
+                with open('Desired_Source_ID_List.txt', 'w') as f:
+                    f.write(','.join(str(_) for _ in source_ids))
 
         if os.path.exists("Desired_Source_ID_List.txt"):
             print("Source ID List saved successfully.")
@@ -301,7 +302,7 @@ if __name__ == "__main__":
     # Download the label set list as a csv
     LABELSETS = download_coralnet_labelset()
 
-    print("\n", "For reference, see this page: ", CORALNET_LABELSET_URL)
+    print("\nFor reference, see this page: ", CORALNET_LABELSET_URL)
 
     # Get the list of desired labelsets
     mode = input("Choose how you'd like to select the labelsets: \n"
@@ -309,7 +310,11 @@ if __name__ == "__main__":
                  "2) Functional Group\n"
                  "3) Short Code \n").lower()
 
-    labelsets = input("Enter the desired labelsets, followed by a comma: ")
+    labelsets = input("Instructions: Enter the desired labelsets, followed "
+                      "by a comma. \nNote: The Name, Functional Group, "
+                      "or Short Code must match exactly as seen in the above "
+                      "url. \nDesired Labelset: ")
+
     labelsets = [l.strip() for l in labelsets.split(",")]
 
     if mode in ['1', "name"]:
@@ -324,6 +329,8 @@ if __name__ == "__main__":
     else:
         print("This mode is not a valid option: ", mode)
         print("Exiting.")
+
+    print("Finding sources; See 'Desired_Source_ID_List.txt' for progress...")
 
     SOURCE_IDs = get_source_ids(labelsets)
 

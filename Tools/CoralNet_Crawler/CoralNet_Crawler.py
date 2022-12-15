@@ -102,7 +102,7 @@ def crawl(page_url):
     return image_name, image_page_url, image_path_url, next_image_page_url
 
 
-def download_labelset(labelset_url):
+def download_labelset(labelset_url, source_dir):
     """
     Downloads a .csv file holding the label set from the given URL.
     Args:
@@ -138,17 +138,17 @@ def download_labelset(labelset_url):
     df = pd.DataFrame(labelset, columns=['Label_ID', 'Label_URL', 'Name',
                                          'Short_Code', 'Functional_Group'])
     # Save locally
-    df.to_csv(SOURCE_DIR + "labelset.csv")
+    df.to_csv(source_dir + "labelset.csv")
 
-    if os.path.exists(SOURCE_DIR + "labelset.csv"):
-        print("Label set saved to: ", SOURCE_DIR + "labelset.csv")
+    if os.path.exists(source_dir + "labelset.csv"):
+        print("Label set saved to: ", source_dir + "labelset.csv")
     else:
         print("Could not download labelset.")
 
     return df
 
 
-def download_model_meta(source_url):
+def download_model_meta(source_url, source_dir):
     """This function collects the model data from a source webpage. The
     metadata will be stored within a dataframe and saved locally. If there
     is no metadata (i.e., trained models), the function returns None."""
@@ -189,17 +189,17 @@ def download_model_meta(source_url):
     df = pd.DataFrame(meta, columns=['Accuracy %', 'N_Images',
                                      'Train_Time', 'Date', 'Source_ID'])
     # Save locally
-    df.to_csv(SOURCE_DIR + "model_metadata.csv")
+    df.to_csv(source_dir + "model_metadata.csv")
 
-    if os.path.exists(SOURCE_DIR + "model_metadata.csv"):
-        print("Annotations saved to: ", SOURCE_DIR + "model_metadata.csv")
+    if os.path.exists(source_dir + "model_metadata.csv"):
+        print("Annotations saved to: ", source_dir + "model_metadata.csv")
     else:
         print("Could not download model metadata.")
 
     return df
 
 
-def download_annotations(image_url):
+def download_annotations(image_url, source_dir, anno_dir):
     """
     This function downloads the annotations from a CoralNet source using the
     provided image URL. It logs into CoralNet using the provided username
@@ -249,7 +249,10 @@ def download_annotations(image_url):
                                 cookies=cookies)
 
         # Use session.get() to make a GET request to the source URL
-        response = session.get(image_url)
+        response = session.get(image_url,
+                               data=data,
+                               headers=headers,
+                               cookies=cookies)
 
         # Pass along the cookies
         cookies = response.cookies
@@ -259,6 +262,12 @@ def download_annotations(image_url):
 
         # Find the form in the HTML
         form = soup.find("form", {"id": "export-annotations-form"})
+
+        # If form comes back empty, it's likely the credentials are incorrect
+        if form is None:
+            print("Annotations could not be downloaded; it looks like the "
+                  "CoralNet Username and Password are incorrect!")
+            return
 
         # Extract the form fields (input elements)
         inputs = form.find_all("input")
@@ -282,26 +291,26 @@ def download_annotations(image_url):
             # Convert the text in response to a dataframe
             df = pd.read_csv(io.StringIO(response.text), sep=",")
             # Save the dataframe locally
-            df.to_csv(SOURCE_DIR + "all_annotations.csv")
+            df.to_csv(source_dir + "all_annotations.csv")
 
             # Save annotations per image
             for image_name in df['Name'].unique():
                 image_annotations = df[df['Name'] == image_name]
                 # Save in annotation folder
                 anno_name = image_name.split(".")[0] + ".csv"
-                image_annotations.to_csv(ANNO_DIR + anno_name)
+                image_annotations.to_csv(anno_dir + anno_name)
 
         else:
             print("Could not connect with CoralNet; please ensure that you "
                   "entered your username, password, and source ID correctly.")
 
-    if os.path.exists(SOURCE_DIR + "all_annotations.csv"):
-        print("Annotations saved to: ", SOURCE_DIR + "all_annotations.csv")
+    if os.path.exists(source_dir + "all_annotations.csv"):
+        print("Annotations saved to: ", source_dir + "all_annotations.csv")
     else:
         print("Could not download annotations.")
 
 
-def download_image(row):
+def download_image(row, image_dir):
     """
     Downloads a single image from the given URL, using the provided file name
     to save the image to a local directory.
@@ -316,7 +325,7 @@ def download_image(row):
     """
 
     # the output path of the image being downloaded
-    image_path = IMAGE_DIR + row[0]
+    image_path = image_dir + row[0]
 
     # Make an HTTP GET request to download the image
     response = requests.get(row[2])
@@ -333,7 +342,7 @@ def download_image(row):
             print("File could not be downloaded: ", image_path)
 
 
-def download_images(image_url):
+def download_images(image_url, source_dir, image_dir):
     """
     Downloads images from a list of URLs, using file names from a pandas
     dataframe to save the images to a local directory.
@@ -378,57 +387,65 @@ def download_images(image_url):
     df = pd.DataFrame(list(zip(image_names, image_page_urls, image_path_urls)),
                       columns=['image_name', 'image_page', 'image_url'])
     # Saving locally
-    df.to_csv(SOURCE_DIR + str(SOURCE_ID) + "_images.csv")
+    df.to_csv(source_dir + str(source_dir) + "_images.csv")
 
-    # Use the multiprocessing library's Pool.map() method to download images
-    # in parallel
-    with multiprocessing.Pool() as pool:
-        # Apply the download_image function to each row in the dataframe
-        pool.map(download_image, df.values.tolist())
+    # Loop through all the URLs, and download each image
+    [download_image(row, image_dir) for row in df.values.tolist()]
+
+
+def download_data(source_id):
+    """This function serves as the front for downloading all the data
+    (labelset, model metadata, annotations and images) for a source. This
+    function was made so that multiprocessing can be used to download the
+    data for multiple sources concurrently."""
+
+    # Constant URLs for getting images, labelset, and annotations
+    source_url = CORALNET_URL + "/source/" + str(source_id)
+    image_url = source_url + "/browse/images/"
+    labelset_url = source_url + "/labelset/"
+
+    # The directory to store the output
+    source_dir = "./" + str(source_id) + "/"
+    image_dir = source_dir + "images/"
+    anno_dir = source_dir + "annotations/"
+
+    # Creating the directories
+    os.makedirs(source_dir, exist_ok=True)
+    os.makedirs(image_dir, exist_ok=True)
+    os.makedirs(anno_dir, exist_ok=True)
+
+    # Download the metadata of the trained model, if exists
+    download_model_meta(source_url, source_dir)
+
+    # Download the label set as a csv
+    download_labelset(labelset_url, source_dir)
+
+    # Download all the images
+    download_images(image_url)
+
+    # Check to see if user credentials have been set,
+    # if not, annotations cannot be downloaded; skip.
+    if not None in [USERNAME, PASSWORD]:
+        # Download the annotations as a csv
+        download_annotations(image_url, source_dir, anno_dir)
+
 
 
 if __name__ == "__main__":
 
     """This is the main function of the script. It calls the functions 
     download_labelset, download_annotations, and download_images to download 
-    the label set, annotations, and images, respectively. """
+    the label set, annotations, and images, respectively."""
 
     # The source ids of the sources you want to download all the data from
     SOURCE_IDs = input("Enter the desired Source IDs, followed by a comma: ")
     SOURCE_IDs = [l.strip() for l in SOURCE_IDs.split(",")]
 
-    for SOURCE_ID in SOURCE_IDs:
+    # Create a `Pool` object with the number of processes you want to use
+    pool = multiprocessing.Pool(processes=11)
 
-        # Constant URLs for getting images, labelset, and annotations
-        SOURCE_URL = CORALNET_URL + "/source/" + str(SOURCE_ID)
-        IMAGE_URL = SOURCE_URL + "/browse/images/"
-        LABELSET_URL = SOURCE_URL + "/labelset/"
-
-        # The directory to store the output
-        SOURCE_DIR = "./" + str(SOURCE_ID) + "/"
-        IMAGE_DIR = SOURCE_DIR + "images/"
-        ANNO_DIR = SOURCE_DIR + "annotations/"
-
-        # Creating the directories
-        os.makedirs(SOURCE_DIR, exist_ok=True)
-        os.makedirs(IMAGE_DIR, exist_ok=True)
-        os.makedirs(ANNO_DIR, exist_ok=True)
-
-        # Download the label set as a csv
-        download_labelset(LABELSET_URL)
-
-        # Download the metadata of the trained model, if exists
-        download_model_meta(SOURCE_URL)
-
-        break
-
-        # Check to see if user credentials have been set,
-        # if not, annotations cannot be downloaded; skip.
-        if not None in [USERNAME, PASSWORD]:
-            # Download the annotations as a csv
-            download_annotations(IMAGE_URL)
-
-        # Download all the images
-        download_images(IMAGE_URL)
+    # Apply the `download_image` function to every element in `SOURCE_IDs`
+    # in parallel
+    pool.map(download_data, SOURCE_IDs)
 
     print("Done.")
