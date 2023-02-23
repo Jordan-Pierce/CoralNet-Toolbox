@@ -430,7 +430,6 @@ def download_data(source_id):
         download_annotations(image_url, source_dir, anno_dir)
 
 
-
 if __name__ == "__main__":
 
     """This is the main function of the script. It calls the functions 
@@ -444,7 +443,7 @@ if __name__ == "__main__":
     # Create a `Pool` object with the number of processes you want to use
     pool = multiprocessing.Pool(processes=11)
 
-    # Apply the `download_image` function to every element in `SOURCE_IDs`
+    # Apply the `download_data` function to every element in `SOURCE_IDs`
     # in parallel
     pool.map(download_data, SOURCE_IDs)
 
