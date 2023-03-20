@@ -5,6 +5,7 @@
   <img src="./Figures/CoralNet_Tools_Logo.png" alt="CoralNet_Tools_Logo">
 </p>
 
+---
 
 ### About CoralNet
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous benefits to humans. However, they are under threat due to climate change, pollution, overfishing, and other factors. CoralNet is a platform designed to aid researchers and scientists in studying these important ecosystems and their inhabitants.
