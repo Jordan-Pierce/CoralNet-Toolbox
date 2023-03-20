@@ -30,3 +30,5 @@ from multiple sources. The script will take in a list of `Labelsets` (user
 only needs to enter them in manually, or by copying and pasting them when 
 prompted). Next, the script will find all `SOURCE_IDs` that contain those 
 `Labelsets` and use CoralNet Crawler to download each one.
+
+Overall, the CoralNet Crawler and the Download CoralNet script offer researchers convenient ways to access and download CoralNet data for further analysis and processing.
