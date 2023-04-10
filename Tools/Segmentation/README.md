@@ -1,6 +1,6 @@
 # Semantic Segmentation
 
-The Semantic_Segmentation tools available in the CoralNet repository provide a means to train a machine learning algorithm to perform semantic segmentation on annotated images of coral reefs. Semantic segmentation involves assigning a label to every pixel in an image to identify the object or feature it represents. In the context of coral reefs, this could involve segmenting an image to identify different coral species or other features present.
+The Semantic Segmentation tools available in the CoralNet repository provide a means to train a machine learning algorithm to perform semantic segmentation on annotated images of coral reefs. Semantic segmentation involves assigning a label to every pixel in an image to identify the object or feature it represents. In the context of coral reefs, this could involve segmenting an image to identify different coral species or other features present.
 
 The Segmentation tool uses Meta's Segment Anything Model (SAM), which creates segmentation masks for the entire image. Existing ground-truth points are used to provide class categories to each mask.This approach allows for greater flexibility in the segmentation process and can lead to more accurate results.
 
