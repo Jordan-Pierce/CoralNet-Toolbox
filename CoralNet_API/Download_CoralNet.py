@@ -1,39 +1,16 @@
 import os
 import io
-
+import sys
+import os.path
+import argparse
 import requests
 import pandas as pd
 import multiprocessing
 from bs4 import BeautifulSoup
 
 # -----------------------------------------------------------------------------
-# Configurations
-# -----------------------------------------------------------------------------
-
-# Constant for the CoralNet url
-CORALNET_URL = "https://coralnet.ucsd.edu"
-
-# CoralNet Source page, lists all sources
-CORALNET_SOURCE_URL = CORALNET_URL + "/source/about/"
-
-# CoralNet Labelset page, lists all labelsets
-CORALNET_LABELSET_URL = CORALNET_URL + "/label/list/"
-
-# URL of the login page
-LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
-
-# Set the username and password for your CoralNet account locally, that way
-# credentials never need to be entered in the script (wherever it is).
-
-# Be sure to restart the terminal when first setting environmental variables
-# for them to be saved!
-USERNAME = os.getenv('CORALNET_USERNAME')
-PASSWORD = os.getenv('CORALNET_PASSWORD')
-
-# -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
-
 
 def url_to_soup(url):
     """
@@ -405,7 +382,7 @@ def download_data(source_id):
     labelset_url = source_url + "/labelset/"
 
     # The directory to store the output
-    source_dir = "./" + str(source_id) + "/"
+    source_dir = OUTPUT_DIR + "/" + str(source_id) + "/"
     image_dir = source_dir + "images/"
     anno_dir = source_dir + "annotations/"
 
@@ -429,22 +406,369 @@ def download_data(source_id):
         # Download the annotations as a csv
         download_annotations(image_url, source_dir, anno_dir)
 
+def parse_labelset_file(path):
+    """Helper function to extract the labelsets from a provided file.
+    Returns a list containing all labelsets."""
+
+    labelset = []
+
+    # Checks that file exists
+    if os.path.exists(path):
+        try:
+            # Attempts to open file in read mode, parses, stores in list
+            with open(path, "r") as f:
+                for line in f:
+                    items = line.strip().split(',')[0]
+                    labelset.append(items)
+
+        except:
+            print("Could not parse file correct. Please ensure that each "
+                  "labelset code is on it's own line, followed by a comma.")
+
+    else:
+        print("Path does not exist: ", path)
+        print("Exiting.")
+        sys.exit()
+
+    return labelset
+
+
+def download_coralnet_sources():
+    """Downloads a list of all the public sources currently on CoralNet."""
+
+    print("Downloading CoralNet Source List...")
+
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
+
+    # Pass along the cookies
+    cookies = response.cookies
+
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": USERNAME,
+        "password": PASSWORD,
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
+
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
+
+    # Use requests.Session to create a session that will maintain your login
+    # state
+    with requests.Session() as session:
+
+        # Use session.post() to submit the login form, including the
+        # "Referer" header
+        response = session.post(LOGIN_URL,
+                                data=data,
+                                headers=headers,
+                                cookies=cookies)
+
+        # Use session.get() to make a GET request to the source URL
+        response = session.get(CORALNET_SOURCE_URL)
+
+        # Pass along the cookies
+        cookies = response.cookies
+
+        # Parse the HTML response using BeautifulSoup
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        links = soup.find_all('ul', class_='object_list')[0].find_all("li")
+
+        source_ids = []
+        # Now, get all the source id's on the page
+        for link in links:
+            href = link.find("a").get("href")
+            source_id = href.split("/")[-2]
+            # Confirm that the value is numerical
+            if source_id.isnumeric():
+                source_ids.append(source_id)
+
+        df = pd.DataFrame(source_ids, columns=['Source_ID'])
+        df.to_csv("CoralNet_Source_ID_List.csv")
+
+        if os.path.exists("CoralNet_Source_ID_List.csv"):
+            print("Source ID list exported successfully.")
+        else:
+            print("Could not download Source ID list; check that variable "
+                  "CORALNET_SOURCE_URL is correct.")
+
+    return df
+
+
+def download_coralnet_labelset():
+    """Downloads a list of all the Labelsets currently on CoralNet."""
+
+    print("Downloading CoralNet Labeset List...")
+
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
+
+    # Pass along the cookies
+    cookies = response.cookies
+
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": USERNAME,
+        "password": PASSWORD,
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
+
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
+
+    # Use requests.Session to create a session that will maintain your login
+    # state
+    with requests.Session() as session:
+
+        # Use session.post() to submit the login form, including the
+        # "Referer" header
+        response = session.post(LOGIN_URL,
+                                data=data,
+                                headers=headers,
+                                cookies=cookies)
+
+        # Use session.get() to make a GET request to the source URL
+        response = session.get(CORALNET_LABELSET_URL)
+
+        # Pass along the cookies
+        cookies = response.cookies
+
+        # Parse the HTML response using BeautifulSoup
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Get the table with all labelset information
+        table = soup.find_all('tr', attrs={"data-label-id": True})
+
+        # Loop through each row, grab the information, store in lists
+        rows = []
+        for row in table:
+            # Grab attributes from row
+            attributes = row.find_all("td")
+            # Extract each attribute, store in variable
+            name = attributes[0].text
+            url = CORALNET_URL + attributes[0].find("a").get("href")
+            functional_group = attributes[1].text
+            popularity = attributes[2].find("div").get("title").split("%")[0]
+            short_code = attributes[4].text
+
+            is_duplicate = False
+            is_verified = False
+            has_calcification = False
+            notes = ""
+            # Loop through the optional attributes
+            for column in attributes[3].find_all("img"):
+                if column.get("alt") == "Duplicate":
+                    is_duplicate = True
+                    notes = column.get("title")
+                if column.get("alt") == "Verified":
+                    is_verified = True
+                if column.get("alt") == "Has calcification rate data":
+                    has_calcification = True
+
+            rows.append([name, url, functional_group, popularity, short_code,
+                         is_duplicate, notes, is_verified, has_calcification])
+
+        # Create dataframe
+        df = pd.DataFrame(rows, columns=['Name', 
+                                         'URL', 
+                                         'Functional_Group',
+                                         'Popularity %', 
+                                         'Short_Code',
+                                         'Duplicate', 
+                                         'Duplicate Notes',
+                                         'Verified',
+                                         'Has_Calcification_Rates'])
+
+        # Save locally
+        df.to_csv("CoralNet_Labelset_List.csv")
+
+        if os.path.exists("CoralNet_Labelset_List.csv"):
+            print("Labelset list exported successfully.")
+        else:
+            print("Could not download Labelset list; check that variable "
+                  "CORALNET_LABELSET_URL is correct.")
+
+    return df
+
+
+def get_source_ids(labelsets):
+    """This function takes in a pandas dataframe containing a subset of
+    labelsets and returns a list of source ids that contain those labelsets."""
+
+    # List of source ids that contain the desired labelset(s)
+    source_ids = []
+
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
+
+    # Pass along the cookies
+    cookies = response.cookies
+
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": USERNAME,
+        "password": PASSWORD,
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
+
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
+
+    # Use requests.Session to create a session that will maintain your login
+    # state
+    with requests.Session() as session:
+        # Use session.post() to submit the login form, including the
+        # "Referer" header
+        response = session.post(LOGIN_URL,
+                                data=data,
+                                headers=headers,
+                                cookies=cookies)
+
+        # Loop through all labelset URLs
+        for url in labelsets['URL'].values:
+
+            # Use session.get() to make a GET request to the source URL
+            response = session.get(url)
+
+            # Pass along the cookies
+            cookies = response.cookies
+
+            # Parse the HTML response using BeautifulSoup
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Find all the source ids on the page
+            a_tags = soup.find_all('a')
+            a_tags = [a for a in a_tags if '/source/' in a.get('href')]
+            source_id = [a.get("href").split("/")[-2] for a in a_tags]
+            source_id = [id for id in source_id if id.isnumeric()]
+
+            # Extend the list, remove duplicates
+            source_ids.extend(source_id)
+            source_ids = [*set(source_ids)]
+
+            # If the list of source ids is not empty, save locally
+            if source_ids is not []:
+                with open('Desired_Source_ID_List.txt', 'w') as f:
+                    f.write(','.join(str(_) for _ in source_ids))
+
+        if os.path.exists("Desired_Source_ID_List.txt"):
+            print("Source ID List saved successfully.")
+        else:
+            print("Could not find / download list of Source IDs.")
+
+    return source_ids
+
+
+# -----------------------------------------------------------------------------
+# Command Line Interface
+# -----------------------------------------------------------------------------
+
+parser = argparse.ArgumentParser(description='CoralNet arguments')
+
+parser.add_argument('--username', type=str, default=os.getenv('CORALNET_USERNAME'),
+                    help='Username for CoralNet account')
+
+parser.add_argument('--password', type=str, default=os.getenv('CORALNET_PASSWORD'),
+                    help='Password for CoralNet account')
+
+parser.add_argument('--source_ids', type=int, nargs='+',
+                    help='A list of source IDs to download.')
+
+parser.add_argument('--output_dir', type=str, default="download",
+                    help='A root directory where all downloads will be saved to.')
+
+args = parser.parse_args()
+
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+
+# Constant for the CoralNet url
+CORALNET_URL = "https://coralnet.ucsd.edu"
+
+# CoralNet Source page, lists all sources
+CORALNET_SOURCE_URL = CORALNET_URL + "/source/about/"
+
+# CoralNet Labelset page, lists all labelsets
+CORALNET_LABELSET_URL = CORALNET_URL + "/label/list/"
+
+# URL of the login page
+LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
+
+# A list of sources to download
+SOURCE_IDS = args.source_ids
+
+# Credentials
+USERNAME = args.username
+PASSWORD = args.password
+
+# Output directory
+OUTPUT_DIR = args.output_dir
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
-
     """This is the main function of the script. It calls the functions 
     download_labelset, download_annotations, and download_images to download 
-    the label set, annotations, and images, respectively."""
+    the label set, annotations, and images, respectively.
+    
+    There are other functions that also allow you to identify all public
+    sources, all labelsets, and sources containing specific labelsets.
+    It is entirely possibly to identify sources based on labelsets, and
+    download all those sources, or simply download all data from all
+    source. Have fun!"""
 
-    # The source ids of the sources you want to download all the data from
-    SOURCE_IDs = input("Enter the desired Source IDs, followed by a comma: ")
-    SOURCE_IDs = [l.strip() for l in SOURCE_IDs.split(",")]
-
-    # Create a `Pool` object with the number of processes you want to use
-    pool = multiprocessing.Pool(processes=11)
+    # Create a `Pool` object with the number of processes you have, minus 1
+    pool = multiprocessing.Pool(processes=os.cpu_count()-1)
 
     # Apply the `download_data` function to every element in `SOURCE_IDs`
     # in parallel
-    pool.map(download_data, SOURCE_IDs)
+    pool.map(download_data, SOURCE_IDS)
 
     print("Done.")
+
+
+
+
+
+
+
+
+
