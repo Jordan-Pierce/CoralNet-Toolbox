@@ -33,52 +33,6 @@ def url_to_soup(url):
     return soup
 
 
-def crawl(page_url):
-    """
-    Crawl a coralnet image page and get the associated image path url and
-    the url of the next image page.
-
-    Args:
-        page_url (str): The URL of the coralnet image page to crawl.
-
-    Returns: tuple: A tuple containing the image page URL, image path URL,
-    and the URL of the next image page.
-    """
-
-    image_name = None
-    image_page_url = page_url
-    image_path_url = None
-    next_image_page_url = None
-
-    # From the provided image page url, get the associated image path url
-    soup = url_to_soup(page_url)
-
-    # Find the div element with id="original_image_container" and
-    # style="display:none;"
-    orginal_image_container = soup.find('div',
-                                        id='original_image_container',
-                                        style='display:none;')
-
-    # Find the img element within the div and get the value of the src
-    # attribute
-    image_path_url = orginal_image_container.find('img').get('src')
-
-    # Now, get the next page's url
-    for a_tag in soup.find_all('a'):
-        # check if the text of the <a> tag contains "Next"
-        if "Next" in a_tag.text:
-            # Get the value of the href attribute and prepend the CORALNET_URL
-            next_image_page_url = CORALNET_URL + a_tag.get('href')
-
-        # Else, it returns None, and we know we're at the end of the images
-
-    # Finally, get the name of the image, because when downloaded it might
-    # not match
-    image_name = soup.find('title').text.split(" |")[0]
-
-    return image_name, image_page_url, image_path_url, next_image_page_url
-
-
 def download_labelset(labelset_url, source_dir):
     """
     Downloads a .csv file holding the label set from the given URL.
@@ -286,7 +240,53 @@ def download_annotations(image_url, source_dir, anno_dir):
     else:
         print("Could not download annotations.")
 
+        
+def crawl(page_url):
+    """
+    Crawl a coralnet image page and get the associated image path url and
+    the url of the next image page.
 
+    Args:
+        page_url (str): The URL of the coralnet image page to crawl.
+
+    Returns: tuple: A tuple containing the image page URL, image path URL,
+    and the URL of the next image page.
+    """
+
+    image_name = None
+    image_page_url = page_url
+    image_path_url = None
+    next_image_page_url = None
+
+    # From the provided image page url, get the associated image path url
+    soup = url_to_soup(page_url)
+
+    # Find the div element with id="original_image_container" and
+    # style="display:none;"
+    orginal_image_container = soup.find('div',
+                                        id='original_image_container',
+                                        style='display:none;')
+
+    # Find the img element within the div and get the value of the src
+    # attribute
+    image_path_url = orginal_image_container.find('img').get('src')
+
+    # Now, get the next page's url
+    for a_tag in soup.find_all('a'):
+        # check if the text of the <a> tag contains "Next"
+        if "Next" in a_tag.text:
+            # Get the value of the href attribute and prepend the CORALNET_URL
+            next_image_page_url = CORALNET_URL + a_tag.get('href')
+
+        # Else, it returns None, and we know we're at the end of the images
+
+    # Finally, get the name of the image, because when downloaded it might
+    # not match
+    image_name = soup.find('title').text.split(" |")[0]
+
+    return image_name, image_page_url, image_path_url, next_image_page_url
+        
+    
 def download_image(row, image_dir):
     """
     Downloads a single image from the given URL, using the provided file name
