@@ -364,7 +364,7 @@ def download_images(image_url, source_dir, image_dir):
     df = pd.DataFrame(list(zip(image_names, image_page_urls, image_path_urls)),
                       columns=['image_name', 'image_page', 'image_url'])
     # Saving locally
-    df.to_csv(source_dir + str(source_dir) + "_images.csv")
+    df.to_csv(source_dir + "images.csv")
 
     # Loop through all the URLs, and download each image
     [download_image(row, image_dir) for row in df.values.tolist()]
@@ -398,7 +398,7 @@ def download_data(source_id):
     download_labelset(labelset_url, source_dir)
 
     # Download all the images
-    download_images(image_url)
+    download_images(image_url, source_dir, image_dir)
 
     # Check to see if user credentials have been set,
     # if not, annotations cannot be downloaded; skip.
@@ -406,6 +406,7 @@ def download_data(source_id):
         # Download the annotations as a csv
         download_annotations(image_url, source_dir, anno_dir)
 
+        
 def parse_labelset_file(path):
     """Helper function to extract the labelsets from a provided file.
     Returns a list containing all labelsets."""
