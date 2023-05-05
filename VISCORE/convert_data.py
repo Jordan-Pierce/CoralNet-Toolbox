@@ -31,6 +31,9 @@ def convert_to_csv(dots_path, cams_path, output_dir):
 
     cams = {k: cams_dict.copy() for k in list(cams_json['cams'].keys())}
 
+    # Dataframe to hold all the data
+    df = pd.DataFrame()
+
     # Loop through all the cams
     for cam_id in cams.keys():
 
@@ -66,20 +69,27 @@ def convert_to_csv(dots_path, cams_path, output_dir):
         cams[cam_id]['Points'] = points
 
         # Create a dataframe from the current cam
-        data = cams[cam_id]
-        df = pd.DataFrame(data['Points'], columns=['Column', 'Row', 'Label'])
-        df['Name'] = data['Name']
-        df['Width'] = data['Width']
-        df['Height'] = data['Height']
-        df['File_Path'] = data['File_Path']
+        data = pd.DataFrame(cams[cam_id]['Points'],
+                            columns=['Column', 'Row', 'Label'])
 
-        output_file = f"{output_dir}{data['Name'].split('.')[0]}.csv"
-        df.to_csv(output_file, index=False)
+        # Fill in the information
+        data['Name'] = cams[cam_id]['Name']
+        data['Width'] = cams[cam_id]['Width']
+        data['Height'] = cams[cam_id]['Height']
+        data['File_Path'] = cams[cam_id]['File_Path']
+        # Concatenate the dataframes
+        df = pd.concat([df, data], ignore_index=True)
 
-        if os.path.exists(output_file):
-            print(f"NOTE: Successfully saved {data['Name'].split('.')[0]}.csv")
-        else:
-            print(f"ERROR: Failed to save {data['Name'].split('.')[0]}.csv")
+    # Save the dataframe as a csv file
+    basename = os.path.basename(dots_path).split(".")[0] + ".csv"
+    output_file = f"{output_dir}{basename}"
+    df.to_csv(output_file, index=False)
+
+    # Check that file was saved
+    if os.path.exists(output_file):
+        print(f"NOTE: Successfully saved {output_file}")
+    else:
+        print(f"ERROR: Failed to save {output_file}")
 
 
 def main():
@@ -94,7 +104,7 @@ def main():
                         help='The path to the cams JSON file')
 
     parser.add_argument('--output_dir', type=str,
-                        default="./Data/Converted_Data/",
+                        default="./Data/",
                         help='Directory to save .csv files.')
 
     args = parser.parse_args()
