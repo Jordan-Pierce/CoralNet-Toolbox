@@ -133,6 +133,185 @@ def get_model_meta(source_id, username, password):
     return df
 
 
+def get_labelset(source_id, username, password):
+    """
+    Downloads a .csv file holding the label set from the given URL.
+    Args:
+        source_id (str): The URL of the website with the download button.
+    Returns:
+        None
+    """
+
+    print("Downloading Labelset...")
+
+    # Set the url for the source given the source id
+    source_url = CORALNET_URL + "/source/" + str(source_id)
+    labelset_url = source_url + "/labelset/"
+
+    # Create an empty variable for the labelset
+    df = None
+
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
+
+    # Pass along the cookies
+    cookies = response.cookies
+
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": username,
+        "password": password,
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
+
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
+
+    try:
+        # Use requests.Session to create a session that will maintain your
+        # login state
+        with requests.Session() as session:
+
+            # Use session.post() to submit the login form, including the
+            # "Referer" header
+            response = session.post(LOGIN_URL,
+                                    data=data,
+                                    headers=headers,
+                                    cookies=cookies)
+
+            # Use session.get() to make a GET request to the source URL
+            response = session.get(labelset_url,
+                                   data=data,
+                                   headers=headers,
+                                   cookies=cookies)
+
+            # Pass along the cookies
+            cookies = response.cookies
+
+            # Convert the HTML response to soup
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Extract the table we're looking for
+            table = soup.find("table", class_="detail_table")
+
+        labelset = []
+
+        # Loop through each row in the table, ignoring the header
+        for tr in table.find_all("tr")[1:]:
+            label_id = tr.find("a").get("href").split("/")[-2]
+            url = CORALNET_URL + tr.find("a").get("href")
+            name = tr.find("a").text.strip()
+            short_code = tr.find_all("td")[1].text.strip()
+            funct_group = tr.find_all("td")[2].text.strip()
+
+            labelset.append([label_id, url, name, short_code, funct_group])
+
+        # Create dataframe to hold all labelset information
+        df = pd.DataFrame(labelset, columns=['Label_ID',
+                                             'Label_URL',
+                                             'Name',
+                                             'Short_Code',
+                                             'Functional_Group'])
+
+    except:
+        print("Error: Unable to get labelset from source.")
+
+    return df
+
+
+def get_image_url(image_page_url, username, password):
+    """
+    Returns an AWS url for the image, give the image page url. This takes a bit
+    longer for each individual each image because a login has to occur each
+    time. For situations where a source doesn't have thousands of images, it
+    might be better to just use the get_images function, and then subset the
+    images of interest.
+
+    Args: image_page_url (string): The url of the source's image page.
+
+    Returns:
+            'image_url': The URL of the image on Amazon AWS
+    """
+
+    # Create an empty variable to store the image url
+    image_url = None
+
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
+
+    # Pass along the cookies
+    cookies = response.cookies
+
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": username,
+        "password": password,
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
+
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
+
+    try:
+        print(f"NOTE: Getting URL for {image_page_url}")
+
+        # Use requests.Session to create a session that will maintain your
+        # login state
+        with requests.Session() as session:
+            # Use session.post() to submit the login form, including the
+            # "Referer" header
+            response = session.post(LOGIN_URL,
+                                    data=data,
+                                    headers=headers,
+                                    cookies=cookies)
+
+            # Use session.get() to make a GET request to the source URL
+            response = session.get(image_page_url,
+                                   data=data,
+                                   headers=headers,
+                                   cookies=cookies)
+
+            # Pass along the cookies
+            cookies = response.cookies
+
+            # Convert the webpage to soup
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Find the div element with id="original_image_container" and
+            # style="display:none;"
+            image_container = soup.find('div',
+                                        id='original_image_container',
+                                        style='display:none;')
+
+            # Find the img element within the div, get the src attribute
+            image_url = image_container.find('img').get('src')
+
+    except:
+        print("Error: Unable to get image url from image page.")
+
+    return image_url
+
+
 def get_images(source_id, username, password, verbose=False):
     """
     Crawls a source for all the images it contains. Stores the image name,
@@ -302,6 +481,8 @@ def download_images(dataframe, source_dir, image_dir):
     # Save the dataframe of images locally
     dataframe.to_csv(source_dir + "images.csv")
 
+    expired_images = []
+
     # Loop through all the URLs, and download each image
     for index, row in dataframe.iterrows():
         # the output path of the image being downloaded
@@ -322,104 +503,15 @@ def download_images(dataframe, source_dir, image_dir):
                 print("File could not be downloaded: ", image_path)
 
         else:
-            print(f"Error: Could not download image {row[0]}; "
-                  f"it likely expired, try again in a minute.")
+            print(f"Error: Image {row[0]} expired; trying again...")
+            expired_images.append(row)
 
-
-def get_labelset(source_id, username, password):
-    """
-    Downloads a .csv file holding the label set from the given URL.
-    Args:
-        source_id (str): The URL of the website with the download button.
-    Returns:
-        None
-    """
-
-    print("Downloading Labelset...")
-
-    # Set the url for the source given the source id
-    source_url = CORALNET_URL + "/source/" + str(source_id)
-    labelset_url = source_url + "/labelset/"
-
-    # Create an empty variable for the labelset
-    df = None
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
-
-    try:
-        # Use requests.Session to create a session that will maintain your
-        # login state
-        with requests.Session() as session:
-
-            # Use session.post() to submit the login form, including the
-            # "Referer" header
-            response = session.post(LOGIN_URL,
-                                    data=data,
-                                    headers=headers,
-                                    cookies=cookies)
-
-            # Use session.get() to make a GET request to the source URL
-            response = session.get(labelset_url,
-                                   data=data,
-                                   headers=headers,
-                                   cookies=cookies)
-
-            # Pass along the cookies
-            cookies = response.cookies
-
-            # Convert the HTML response to soup
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # Extract the table we're looking for
-            table = soup.find("table", class_="detail_table")
-
-        labelset = []
-
-        # Loop through each row in the table, ignoring the header
-        for tr in table.find_all("tr")[1:]:
-            label_id = tr.find("a").get("href").split("/")[-2]
-            url = CORALNET_URL + tr.find("a").get("href")
-            name = tr.find("a").text.strip()
-            short_code = tr.find_all("td")[1].text.strip()
-            funct_group = tr.find_all("td")[2].text.strip()
-
-            labelset.append([label_id, url, name, short_code, funct_group])
-
-        # Create dataframe to hold all labelset information
-        df = pd.DataFrame(labelset, columns=['Label_ID',
-                                             'Label_URL',
-                                             'Name',
-                                             'Short_Code',
-                                             'Functional_Group'])
-
-    except:
-        print("Error: Unable to get labelset from source.")
-
-    return df
+    # If any of the original images expired while trying to download,
+    # this will recursively call the function again to try to download
+    # just the expired images.
+    if expired_images:
+        expired_images = pd.DataFrame(expired_images)
+        download_images(expired_images, source_dir + "expired_", image_dir)
 
 
 def get_annotations(source_id, username, password):
