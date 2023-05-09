@@ -636,79 +636,89 @@ def download_data(source_id, username, password, output_dir):
     os.makedirs(image_dir, exist_ok=True)
     os.makedirs(anno_dir, exist_ok=True)
 
-    # Get the metadata of the trained model, then save.
-    meta = get_model_meta(source_id, username, password)
-    meta.to_csv(source_dir + "metadata.csv")
+    try:
+        # Get the metadata of the trained model, then save.
+        meta = get_model_meta(source_id, username, password)
+        # Print if there is no trained model.
+        if meta is None:
+            print("Source does not have a trained model.")
+        else:
+            # Save the metadata to a CSV file.
+            meta.to_csv(source_dir + "metadata.csv")
+            # Check if the metadata was saved.
+            if os.path.exists(source_dir + "metadata.csv"):
+                print("Metadata saved to: ", source_dir + "metadata.csv")
+            else:
+                raise Exception("Could not download model metadata.")
 
-    if os.path.exists(source_dir + "metadata.csv"):
-        print("Metadata saved to: ", source_dir + "metadata.csv")
-    else:
-        print("Could not download model metadata.")
+    except Exception as e:
+        print("Error: Unable to get model metadata from source.")
+        print(e)
 
-    # Get the labelset, then save.
-    labelset = get_labelset(source_id, username, password)
-    labelset.to_csv(source_dir + "labelset.csv")
+    try:
+        # Get the labelset, then save.
+        labelset = get_labelset(source_id, username, password)
+        # Print if there is no labelset.
+        if labelset is None:
+            print("Source does not have a labelset.")
+        else:
+            labelset.to_csv(source_dir + "labelset.csv")
+            # Check if the labelset was saved.
+            if os.path.exists(source_dir + "labelset.csv"):
+                print("Labelset saved to: ", source_dir + "labelset.csv")
+            else:
+                raise Exception("Could not download labelset.")
 
-    if os.path.exists(source_dir + "labelset.csv"):
-        print("Labelset saved to: ", source_dir + "labelset.csv")
-    else:
-        print("Could not download labelset.")
+    except Exception as e:
+        print("Error: Unable to get labelset from source.")
+        print(e)
 
-    # Get all the image URLS, then save.
-    images = get_images(source_id, username, password)
-    download_images(images, source_dir, image_dir)
+    try:
+        # Get all the image URLS, then save.
+        images = get_images(source_id, username, password)
+        download_images(images, source_dir, image_dir)
+    except Exception as e:
+        print("Error: Unable to get images from source.")
+        print(e)
 
-    # Get all the annotations, then save.
-    annotations = get_annotations(source_id, username, password)
-    annotations.to_csv(source_dir + "annotations.csv")
+    try:
+        # Get all the annotations, then save.
+        annotations = get_annotations(source_id, username, password)
+        # Print if there are no annotations.
+        if annotations is None:
+            print("Source does not have any annotations.")
+        else:
+            annotations.to_csv(source_dir + "annotations.csv")
+            # Check if the annotations were saved.
+            if os.path.exists(source_dir + "annotations.csv"):
+                print("Annotations saved to: ", source_dir + "annotations.csv")
 
-    # Save annotations per image
-    for image_name in annotations['Name'].unique():
-        image_annotations = annotations[annotations['Name'] == image_name]
-        # Save in annotation folder
-        anno_name = image_name.split(".")[0] + ".csv"
-        image_annotations.to_csv(anno_dir + anno_name)
+                # Save annotations per image
+                for image_name in annotations['Name'].unique():
+                    image_annotations = annotations[
+                        annotations['Name'] == image_name]
+                    # Save in annotation folder
+                    anno_name = image_name.split(".")[0] + ".csv"
+                    image_annotations.to_csv(anno_dir + anno_name)
+            else:
+                raise Exception("Could not download annotations.")
 
-    if os.path.exists(source_dir + "annotations.csv"):
-        print("Annotations saved to: ", source_dir + "annotations.csv")
-    else:
-        print("Could not download annotations.")
+    except Exception as e:
+        print("Error: Unable to get annotations from source.")
+        print(e)
 
 
 # -----------------------------------------------------------------------------
 # Downloading All of CoralNet
 # -----------------------------------------------------------------------------
-def parse_labelset_file(path):
-    """Helper function to extract the labelsets from a provided file.
-    Returns a list containing all labelsets."""
 
-    labelset = []
-
-    # Checks that file exists
-    if os.path.exists(path):
-        try:
-            # Attempts to open file in read mode, parses, stores in list
-            with open(path, "r") as f:
-                for line in f:
-                    items = line.strip().split(',')[0]
-                    labelset.append(items)
-
-        except:
-            print("Could not parse file correct. Please ensure that each "
-                  "labelset code is on it's own line, followed by a comma.")
-
-    else:
-        print("Path does not exist: ", path)
-        print("Exiting.")
-        sys.exit()
-
-    return labelset
-
-
-def download_coralnet_sources(username, password):
+def download_coralnet_sources(username, password, output_dir):
     """Downloads a list of all the public sources currently on CoralNet."""
 
     print("Downloading CoralNet Source List...")
+
+    # Create an empty dataframe to store the source list
+    df = None
 
     # Send a GET request to the login page to retrieve the login form
     response = requests.get(LOGIN_URL)
@@ -758,31 +768,74 @@ def download_coralnet_sources(username, password):
 
         links = soup.find_all('ul', class_='object_list')[0].find_all("li")
 
+        # Lists to store the source IDs and names
         source_ids = []
-        # Now, get all the source id's on the page
+        source_names = []
+
+        # Now, get all the source IDs and names on the page
         for link in links:
             href = link.find("a").get("href")
             source_id = href.split("/")[-2]
-            # Confirm that the value is numerical
+            source_name = link.find("a").text.strip()
+
+            # Confirm that the ID is numerical
             if source_id.isnumeric():
                 source_ids.append(source_id)
+                source_names.append(source_name)
 
-        df = pd.DataFrame(source_ids, columns=['Source_ID'])
-        df.to_csv("CoralNet_Source_ID_List.csv")
+        try:
+            # Store as a dict
+            data = {'Source_ID': source_ids, 'Source_Name': source_names}
+            # Create a dataframe
+            df = pd.DataFrame(data)
+            df.to_csv(f"{output_dir}CoralNet_Source_ID_List.csv")
 
-        if os.path.exists("CoralNet_Source_ID_List.csv"):
-            print("Source ID list exported successfully.")
-        else:
-            print("Could not download Source ID list; check that variable "
-                  "CORALNET_SOURCE_URL is correct.")
+            if os.path.exists(f"{output_dir}CoralNet_Source_ID_List.csv"):
+                print("Source ID list exported successfully.")
+            else:
+                raise Exception("Could not download Source ID list; check "
+                                "that variable CoralNet URL is correct.")
+        except Exception as e:
+            print("Error: Unable to get source list from CoralNet.")
+            print(e)
 
     return df
 
 
-def download_coralnet_labelset(username, password):
+def parse_labelset_file(path):
+    """Helper function to extract the labelsets from a provided file.
+    Returns a list containing all labelsets."""
+
+    labelset = []
+
+    # Checks that file exists
+    if os.path.exists(path):
+        try:
+            # Attempts to open file in read mode, parses, stores in list
+            with open(path, "r") as f:
+                for line in f:
+                    items = line.strip().split(',')[0]
+                    labelset.append(items)
+
+        except:
+            print("Could not parse file correct. Please ensure that each "
+                  "labelset code is on it's own line, followed by a comma.")
+
+    else:
+        print("Path does not exist: ", path)
+        print("Exiting.")
+        sys.exit()
+
+    return labelset
+
+
+def download_coralnet_labelset(username, password, output_dir):
     """Downloads a list of all the Labelsets currently on CoralNet."""
 
     print("Downloading CoralNet Labeset List...")
+
+    # Create an empty dataframe to store the labelset list
+    df = None
 
     # Send a GET request to the login page to retrieve the login form
     response = requests.get(LOGIN_URL)
@@ -862,35 +915,42 @@ def download_coralnet_labelset(username, password):
             rows.append([name, url, functional_group, popularity, short_code,
                          is_duplicate, notes, is_verified, has_calcification])
 
-        # Create dataframe
-        df = pd.DataFrame(rows, columns=['Name', 
-                                         'URL', 
-                                         'Functional_Group',
-                                         'Popularity %', 
-                                         'Short_Code',
-                                         'Duplicate', 
-                                         'Duplicate Notes',
-                                         'Verified',
-                                         'Has_Calcification_Rates'])
+        try:
+            # Create dataframe
+            df = pd.DataFrame(rows, columns=['Name',
+                                             'URL',
+                                             'Functional_Group',
+                                             'Popularity %',
+                                             'Short_Code',
+                                             'Duplicate',
+                                             'Duplicate Notes',
+                                             'Verified',
+                                             'Has_Calcification_Rates'])
 
-        # Save locally
-        df.to_csv("CoralNet_Labelset_List.csv")
+            # Save locally
+            df.to_csv(f"{output_dir}CoralNet_Labelset_List.csv")
 
-        if os.path.exists("CoralNet_Labelset_List.csv"):
-            print("Labelset list exported successfully.")
-        else:
-            print("Could not download Labelset list; check that variable "
-                  "CORALNET_LABELSET_URL is correct.")
+            if os.path.exists(f"{output_dir}CoralNet_Labelset_List.csv"):
+                print("Labelset list exported successfully.")
+            else:
+                raise Exception("Could not download Labelset list; "
+                                "check that variable Labelset URL is correct.")
+
+        except Exception as e:
+            print("Error: Unable to get labelset list from CoralNet.")
+            print(e)
 
     return df
 
 
-def get_source_ids(labelsets, username, password):
+def get_sources_with(labelsets, username, password, output_dir):
     """This function takes in a pandas dataframe containing a subset of
     labelsets and returns a list of source ids that contain those labelsets."""
 
-    # List of source ids that contain the desired labelset(s)
-    source_ids = []
+    print("Finding sources with desired labelsets...")
+
+    # Create an empty dataframe to store the source list
+    df = None
 
     # Send a GET request to the login page to retrieve the login form
     response = requests.get(LOGIN_URL)
@@ -928,6 +988,9 @@ def get_source_ids(labelsets, username, password):
                                 headers=headers,
                                 cookies=cookies)
 
+        # List of source ids that contain the desired labelsets
+        source_ids = []
+
         # Loop through all labelset URLs
         for url in labelsets['URL'].values:
 
@@ -945,22 +1008,24 @@ def get_source_ids(labelsets, username, password):
             a_tags = [a for a in a_tags if '/source/' in a.get('href')]
             source_id = [a.get("href").split("/")[-2] for a in a_tags]
             source_id = [id for id in source_id if id.isnumeric()]
-
-            # Extend the list, remove duplicates
             source_ids.extend(source_id)
-            source_ids = [*set(source_ids)]
 
+        try:
             # If the list of source ids is not empty, save locally
             if source_ids is not []:
-                with open('Desired_Source_ID_List.txt', 'w') as f:
-                    f.write(','.join(str(_) for _ in source_ids))
+                df = pd.DataFrame(source_ids, columns=['Source_ID'])
+                df.to_csv(f"{output_dir}Desired_Source_ID_List.csv")
 
-        if os.path.exists("Desired_Source_ID_List.txt"):
-            print("Source ID List saved successfully.")
-        else:
-            print("Could not find / download list of Source IDs.")
+                if os.path.exists(f"{output_dir}Desired_Source_ID_List.csv"):
+                    print("Source ID List exported successfully.")
+                else:
+                    raise Exception("Could not download list of Source IDs.")
 
-    return source_ids
+        except Exception as e:
+            print("Error: Unable to get list of Source IDs.")
+            print(e)
+
+    return df
 
 
 def authenticate(username, password):
@@ -1005,6 +1070,8 @@ def authenticate(username, password):
         if "credentials you entered did not match" in response.text:
             raise Exception("Login failed. Please check your username and "
                             "password.")
+        else:
+            print(f"NOTE: Successfully logged in for {username}")
 
 
 def main():
