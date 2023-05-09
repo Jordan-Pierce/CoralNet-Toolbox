@@ -1041,7 +1041,7 @@ def main():
     parser.add_argument('--source_ids', type=int, nargs='+',
                         help='A list of source IDs to download.')
 
-    parser.add_argument('--output_dir', type=str, default="download",
+    parser.add_argument('--output_dir', type=str, default="../CoralNet_Data/",
                         help='A root directory where all downloads will be '
                              'saved to.')
 
@@ -1084,15 +1084,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
