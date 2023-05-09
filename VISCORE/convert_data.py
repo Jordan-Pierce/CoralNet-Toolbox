@@ -23,12 +23,12 @@ def convert_to_csv(dots_path, cams_path, output_dir):
 
     # Create a dictionary, where each cam has its name, and points,
     # containing row, column and label
-    cams_dict = {"Name": "",
-                 "Width": None,
-                 "Height": None,
-                 "Points": None
+    cams_dict = {"image_name": "",
+                 "width": None,
+                 "height": None,
+                 "points": None
                  }
-
+    # Create a dictionary for each cam
     cams = {k: cams_dict.copy() for k in list(cams_json['cams'].keys())}
 
     # Dataframe to hold all the data
@@ -44,12 +44,12 @@ def convert_to_csv(dots_path, cams_path, output_dir):
         cam = cams_json['cams'][cam_id]
 
         # Get the file name
-        cams[cam_id]['File_Path'] = cam['fn']
-        cams[cam_id]['Name'] = os.path.basename(cam['fn'])
+        cams[cam_id]['image_path'] = cam['fn']
+        cams[cam_id]['image_name'] = os.path.basename(cam['fn'])
 
         # Get the width and height
-        cams[cam_id]['Width'] = cam['wh'][0]
-        cams[cam_id]['Height'] = cam['wh'][1]
+        cams[cam_id]['width'] = cam['wh'][0]
+        cams[cam_id]['height'] = cam['wh'][1]
 
         # Get all the dots for the current cam
         points = []
@@ -58,25 +58,25 @@ def convert_to_csv(dots_path, cams_path, output_dir):
             dot = cam['dots'][d]
             # Fill in the information
             point = {
-                "Column": int(dot['px'][0]),
-                "Row": int(dot['px'][1]),
-                "Label": dots[d]
+                "column": int(dot['px'][0]),
+                "row": int(dot['px'][1]),
+                "label": dots[d]
             }
 
             points.append(point)
 
         # Pass the points for the cam to the dictionary
-        cams[cam_id]['Points'] = points
+        cams[cam_id]['points'] = points
 
         # Create a dataframe from the current cam
-        data = pd.DataFrame(cams[cam_id]['Points'],
-                            columns=['Column', 'Row', 'Label'])
+        columns = ['column', 'row', 'label']
+        data = pd.DataFrame(cams[cam_id]['points'], columns=columns)
 
         # Fill in the information
-        data['Name'] = cams[cam_id]['Name']
-        data['Width'] = cams[cam_id]['Width']
-        data['Height'] = cams[cam_id]['Height']
-        data['File_Path'] = cams[cam_id]['File_Path']
+        data['image_name'] = cams[cam_id]['image_name']
+        data['width'] = cams[cam_id]['width']
+        data['height'] = cams[cam_id]['height']
+        data['image_path'] = cams[cam_id]['image_path']
         # Concatenate the dataframes
         df = pd.concat([df, data], ignore_index=True)
 
