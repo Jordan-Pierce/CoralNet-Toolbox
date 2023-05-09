@@ -9,22 +9,7 @@ import pandas as pd
 import multiprocessing
 from bs4 import BeautifulSoup
 
-
-# -----------------------------------------------------------------------------
-# Constants
-# -----------------------------------------------------------------------------
-
-# Constant for the CoralNet url
-CORALNET_URL = "https://coralnet.ucsd.edu"
-
-# CoralNet Source page, lists all sources
-CORALNET_SOURCE_URL = CORALNET_URL + "/source/about/"
-
-# CoralNet Labelset page, lists all labelsets
-CORALNET_LABELSET_URL = CORALNET_URL + "/label/list/"
-
-# URL of the login page
-LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
+from CoralNet import *
 
 # -----------------------------------------------------------------------------
 # Downloading Individual Sources
@@ -1028,51 +1013,9 @@ def get_sources_with(labelsets, username, password, output_dir):
     return df
 
 
-def authenticate(username, password):
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
-
-    # Use requests.Session to create a session that will maintain your login
-    # state
-    with requests.Session() as session:
-
-        # Use session.post() to submit the login form, including the
-        # "Referer" header
-        response = session.post(LOGIN_URL,
-                                data=data,
-                                headers=headers,
-                                cookies=cookies)
-
-        if "credentials you entered did not match" in response.text:
-            raise Exception("Login failed. Please check your username and "
-                            "password.")
-        else:
-            print(f"NOTE: Successfully logged in for {username}")
-
+# -----------------------------------------------------------------------------
+# Main function
+# -----------------------------------------------------------------------------
 
 def main():
     """This is the main function of the script. It calls the functions
