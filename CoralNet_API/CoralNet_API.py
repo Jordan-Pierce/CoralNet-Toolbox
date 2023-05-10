@@ -11,7 +11,7 @@ from PIL import Image
 from io import BytesIO
 
 from CoralNet import *
-from Download_CoralNet import *
+from CoralNet_Download import *
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -249,9 +249,9 @@ def convert_to_csv(response, image_name, output_dir):
     for point in response['data'][0]['attributes']['points']:
         # Create a dictionary to store the data for each point
         p = dict()
-        p['image'] = image_name
-        p['X'] = point['column']
-        p['Y'] = point['row']
+        p['image_name'] = image_name
+        p['column'] = point['column']
+        p['row'] = point['row']
         # Loop through each classification for each point
         for index, classification in enumerate(point['classifications']):
             p['score_' + str(index + 1)] = classification['score']
@@ -311,16 +311,15 @@ def main():
         # Check to see if the csv file exists
         assert os.path.exists(args.csv_path)
         # Determine if it's a single file or a folder
-        if os.path.isfile(args.path):
+        if os.path.isfile(args.csv_path):
             # If file, just read it in
             DATA = pd.read_csv(args.csv_path)
-        elif os.path.isdir(args.path):
+        elif os.path.isdir(args.csv_path):
             # If folder, read in all csv files, concatenate them together
-            csv_files = glob.glob(os.path.join(args.csv_path, "*.csv"))
+            csv_files = glob.glob(args.csv_path + "/*.csv")
             DATA = pd.DataFrame()
             for csv_file in csv_files:
-                data = pd.read_csv(csv_file)
-                DATA = pd.concat([DATA, data])
+                DATA = pd.concat([DATA, pd.read_csv(csv_file)])
         else:
             raise Exception(f"ERROR: {args.csv_path} is invalid.")
 
@@ -328,7 +327,8 @@ def main():
         assert 'image_name' in DATA.columns
 
     except Exception as e:
-        print(f"ERROR: File(s) provided do not match expected format.\n{e}")
+        print(f"ERROR: File(s) provided do not match expected format!\n"
+              f"{args.csv_path}\n{e}")
         sys.exit(1)
 
     # Username, Password
@@ -377,7 +377,7 @@ def main():
     os.makedirs(SOURCE_PREDICTIONS, exist_ok=True)
 
     # Get the images desired for predictions; make sure it's not file path.
-    images = DATA['image_name'].tolist()
+    images = DATA['image_name'].unique().tolist()
     images = [os.path.basename(image) for image in images]
 
     try:
@@ -407,7 +407,8 @@ def main():
             # Then we sample points from the image
             x, y, samples = sample_points_for_url(image_url, 200, 'stratified')
             # Save the points to a csv file in the SOURCE_POINTS folder
-            pd.DataFrame(samples).to_csv(SOURCE_POINTS + image + ".csv")
+            df = pd.DataFrame(samples); df['image_name'] = image
+            df.to_csv(SOURCE_POINTS + image + ".csv")
             if os.path.exists(SOURCE_POINTS + image + ".csv"):
                 print(f"NOTE: Points for {image} saved successfully")
             else:
@@ -464,8 +465,7 @@ def main():
             if not is_expired(row['image_url']):
                 # The image url has not expired, so we can queue the image
                 print(f"NOTE: Getting sample points for {row['image_name']}")
-                point_file = row['image_name'] + ".csv"
-                points = POINTS[POINTS['image_name'] == point_file]
+                points = POINTS[POINTS['image_name'] == row['image_name']]
                 points = points.to_dict(orient="records")
             else:
                 # The image url expired, so we need to update it later.
