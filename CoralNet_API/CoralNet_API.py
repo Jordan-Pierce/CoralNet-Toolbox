@@ -293,9 +293,10 @@ def main():
                         default=os.getenv('CORALNET_PASSWORD'),
                         help='Password for CoralNet account')
 
-    parser.add_argument('--csv_file', type=str,
-                        help='A CSV file containing the following: '
-                             'image_name, row, column')
+    parser.add_argument('--csv_path', type=str,
+                        help='A path to a csv file, or folder containing '
+                             'multiple csv files. Each csv file should '
+                             'contain following: image_name, row, column')
 
     parser.add_argument('--source_id', type=int,
                         help='The ID of the source being used.')
@@ -307,10 +308,27 @@ def main():
     args = parser.parse_args()
 
     try:
-        DATA = pd.read_csv(args.csv_file)
+        # Check to see if the csv file exists
+        assert os.path.exists(args.csv_path)
+        # Determine if it's a single file or a folder
+        if os.path.isfile(args.path):
+            # If file, just read it in
+            DATA = pd.read_csv(args.csv_path)
+        elif os.path.isdir(args.path):
+            # If folder, read in all csv files, concatenate them together
+            csv_files = glob.glob(os.path.join(args.csv_path, "*.csv"))
+            DATA = pd.DataFrame()
+            for csv_file in csv_files:
+                data = pd.read_csv(csv_file)
+                DATA = pd.concat([DATA, data])
+        else:
+            raise Exception(f"ERROR: {args.csv_path} is invalid.")
+
+        # Check to see if the csv file has the expected columns
         assert 'image_name' in DATA.columns
+
     except Exception as e:
-        print(f"ERROR: CSV file provided does not match expected format.\n{e}")
+        print(f"ERROR: File(s) provided do not match expected format.\n{e}")
         sys.exit(1)
 
     # Username, Password
@@ -333,15 +351,17 @@ def main():
     # Check if the model exists
     if metadata is None:
         raise Exception(f"ERROR: No model found for the source {SOURCE_ID}.")
+
     # Get the model ID and URL
     MODEL_ID = metadata['Model_ID'][0]
     MODEL_URL = CORALNET_URL + f"/api/classifier/{MODEL_ID}/deploy/"
 
     # All images associated with the source
     SOURCE_IMAGES = get_images(SOURCE_ID, USERNAME, PASSWORD)
+
     # Check if there are any images
     if SOURCE_IMAGES is None:
-        raise Exception(f"ERROR: No images found for the source {SOURCE_ID}.")
+        raise Exception(f"ERROR: No images found in the source {SOURCE_ID}.")
 
     # Set the data root directory
     DATA_ROOT = args.output_dir + "/"
@@ -356,15 +376,16 @@ def main():
     os.makedirs(SOURCE_POINTS, exist_ok=True)
     os.makedirs(SOURCE_PREDICTIONS, exist_ok=True)
 
-    # Get the images that we want predictions for
+    # Get the images desired for predictions; make sure it's not file path.
     images = DATA['image_name'].tolist()
+    images = [os.path.basename(image) for image in images]
 
     try:
         # We will get the information needed from the source images dataframe
         IMAGES = SOURCE_IMAGES[SOURCE_IMAGES['image_name'].isin(images)]
-        print("NOTE: Found {len(IMAGES)} images in the source {SOURCE_ID}.")
+        print(f"NOTE: Found {len(IMAGES)} images in the source {SOURCE_ID}.")
     except Exception as e:
-        print(f"ERROR: Image names in {args.csv_file} do not match any of "
+        print(f"ERROR: Image names in {args.csv_path} do not match any of "
               f"those in the source {SOURCE_ID}. Make sure they have already "
               f"been uploaded to the source before using the API script.\n{e}")
         sys.exit(1)
@@ -372,7 +393,7 @@ def main():
     # Check if we have row and column information available, else sample points
     if 'row' not in DATA.columns or 'column' not in DATA.columns:
         if input(f"NOTE: No row or column information was found in "
-                 f"{args.csv_file}. Do you want randomly sample 200 "
+                 f"{args.csv_path}\n. Do you want randomly sample 200 "
                  f"points? (y/n): ").lower() == 'n':
             # Exit the script
             print("NOTE: Exiting script.")
@@ -392,7 +413,7 @@ def main():
             else:
                 print(f"ERROR: Could not save points for {image}")
 
-        # Get all the points for all the images
+        # Get all the points for all the images that were just created
         POINT_PATHS = glob.glob(SOURCE_POINTS + "*.csv")
 
         # This dataframe will contain all the points for all the images

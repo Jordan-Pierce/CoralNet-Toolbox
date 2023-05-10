@@ -1,6 +1,9 @@
+import concurrent
 import os
 import io
 import sys
+import glob
+import shutil
 import os.path
 import argparse
 import requests
@@ -446,6 +449,23 @@ def get_images(source_id, username, password, verbose=False):
     return df
 
 
+def download_image(image_url, image_path):
+    """
+    Download an image from a URL and save it to a directory. Return the path
+    to the downloaded image if download was successful, otherwise return None.
+    """
+    # Send a GET request to the image URL
+    response = requests.get(image_url)
+    # Check if the response was successful
+    if response.status_code == 200:
+        # Save the image to the specified path
+        with open(image_path, 'wb') as f:
+            f.write(response.content)
+        return image_path, True
+    else:
+        return image_path, False
+
+
 def download_images(dataframe, source_dir, image_dir):
     """
     Download images from URLs in a pandas dataframe and save them to a
@@ -464,39 +484,43 @@ def download_images(dataframe, source_dir, image_dir):
     print("Downloading Images...")
 
     # Save the dataframe of images locally
-    dataframe.to_csv(source_dir + "images.csv")
+    csv_file = source_dir + "images.csv"
+    dataframe.to_csv(csv_file)
+    # Check if the CSV file was saved before trying to download
+    if os.path.exists(csv_file):
+        print(f"Image CSV saved to: {csv_file}")
+    else:
+        raise Exception("Error: Unable to save image CSV.")
 
     expired_images = []
 
-    # Loop through all the URLs, and download each image
-    for index, row in dataframe.iterrows():
-        # the output path of the image being downloaded
-        image_path = image_dir + row[0]
+    with multiprocessing.Pool() as pool:
 
-        # Make an HTTP GET request to download the image
-        response = requests.get(row[2])
+        results = []
 
-        # Check the response status code
-        if response.status_code == 200:
-            # Save the image to a file in the output directory
-            with open(image_path, 'wb') as f:
-                f.write(response.content)
+        for index, row in dataframe.iterrows():
+            # Get the image name and URL from the dataframe
+            name = row['image_name']
+            url = row['image_url']
+            path = image_dir + name
+            # Add the download task to the pool
+            results.append(pool.apply_async(download_image, (url, path)))
 
-            if os.path.exists(image_path):
-                print("File downloaded: ", image_path)
+        # Wait for all tasks to complete and collect the results
+        for result in results:
+            # Get the downloaded image path
+            downloaded_image_path, downloaded = result.get()
+
+            if downloaded:
+                print("File downloaded:", downloaded_image_path)
             else:
-                print("File could not be downloaded: ", image_path)
+                print(f"File could not be downloaded {downloaded_image_path}")
+                expired_images.append(downloaded_image_path)
 
-        else:
-            print(f"Error: Image {row[0]} expired; trying again...")
-            expired_images.append(row)
-
-    # If any of the original images expired while trying to download,
-    # this will recursively call the function again to try to download
-    # just the expired images.
     if expired_images:
-        expired_images = pd.DataFrame(expired_images)
-        download_images(expired_images, source_dir + "expired_", image_dir)
+        print(f"Expired images: {len(expired_images)}")
+        expired_images = pd.DataFrame(expired_images, columns=['image_path'])
+        expired_images.to_csv(source_dir + "expired_images.csv")
 
 
 def get_annotations(source_id, username, password):
@@ -1049,6 +1073,8 @@ def main():
 
     # A list of sources to download
     source_ids = args.source_ids
+    if source_ids is None:
+        raise Exception("Please provide a list of source IDs.")
 
     # Credentials
     username = args.username
@@ -1063,18 +1089,9 @@ def main():
         # Ensure the user provided a username and password.
         authenticate(username, password)
 
-        # Create a new function that "partially applies" the three variables
-        # to the`download_data` function
-        partial_download_data = functools.partial(download_data,
-                                                  username=username,
-                                                  password=password,
-                                                  output_dir=output_dir)
-
-        # Create a `Pool` object with the number of processes you have, minus 1
-        pool = multiprocessing.Pool(processes=os.cpu_count() - 1)
-
-        # Apply the `partial_download_data` to every element in source_ids
-        pool.map(partial_download_data, source_ids)
+        for source_id in args.source_ids:
+            print(f"Downloading Data for Source: {source_id}")
+            download_data(source_id, username, password, output_dir)
 
         print("Done.")
 

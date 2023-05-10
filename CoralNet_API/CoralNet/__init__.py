@@ -19,6 +19,9 @@ CORALNET_LABELSET_URL = CORALNET_URL + "/label/list/"
 # URL of the login page
 LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
 
+# Image Formats
+IMG_FORMATS = ["jpg", "jpeg", "png", "tif", "tiff", "bmp"]
+
 # -----------------------------------------------------------------------------
 # Functions to authenticate with CoralNet
 # -----------------------------------------------------------------------------
@@ -80,7 +83,6 @@ def get_token(username, password):
     Raises:
         ValueError: If authentication fails.
     """
-
     # Requirements for authentication
     CORALNET_AUTH = CORALNET_URL + "/api/token_auth/"
     HEADERS = {"Content-type" : "application/vnd.api+json"}
