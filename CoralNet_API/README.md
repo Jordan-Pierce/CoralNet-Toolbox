@@ -151,9 +151,10 @@ The script is setup to work via command line, and expects the following:
 - `source_id` - The ID of the source you want to upload data to; need access.
 - `output_dir` - The directory where you want the predictions to be saved.
 - `csv_path` - Path to a .csv file (or folder containing multiple .csv files) 
-  with (at a minimum) a column called `image_name`; users can also their own
-  provide columns `row` and `column` containing points to make predictions 
-  for, else, the code will sample 200 points (stratified random).
+  with (at a minimum) a column called `image_name`; users can also provide 
+  their own points by providing columns `row` and `column` containing 
+  points to make predictions for, else, the code will sample the points
+  (default is 200 points, stratified random).
 
 The following describes what is expected in the csv files:
 ```python
