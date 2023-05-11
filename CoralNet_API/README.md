@@ -20,7 +20,8 @@ export CORALNET_PASSWORD=mypassword
 ### CoralNet Download ⬇️
 
 This script can be used to download all data (labelset, images, annotations) 
-from any public source. The script is setup to work via command line, and 
+from any public source, or a private source your account has access to. The 
+script is setup to work via command line, and 
 expects the following:
 - `username` - CoralNet username; will also read the environmental 
   variable `CORALNET_USERNAME`.
@@ -98,10 +99,10 @@ The following describes what is expected in the annotations, and labelset:
 # labelset.csv
 # Label_ID and Short_Code are requried fields
 
-   Label_ID                            Label_URL        Name Short_Code Functional_Group
-0        59  https://coralnet.ucsd.edu/label/59/    Acropora      Acrop       Hard coral
-1        60  https://coralnet.ucsd.edu/label/60/  Astreopora     Astreo       Hard coral
-2        61  https://coralnet.ucsd.edu/label/61/  Cyphastrea      Cypha       Hard coral
+   Label_ID     Short_Code 
+0        59          Acrop        
+1        60          Astreo        
+2        61          Cypha        
 ```
 
 Example of usage:
@@ -120,12 +121,14 @@ If you previously set the environmental variables `CORALNET_USERNAME` and
 passing the respective variables via command line.
 
 Things to note:
-- If you attempt to upload a label file without setting any labelsets, 
-  CoralNet will throw an error; additionally, if you attempt to upload a 
-  label file with class categories that are not within the registered 
-  labelset, CoralNet will throw an error.
-- If you attempt to upload images with names that already exist, CoralNet 
-  will throw an error.
+- If you attempt to do the following, CoralNet will throw an error:
+  - upload an annotation file without setting any labelsets
+  - upload an annotation file with labels that are not within the 
+    registered labelset
+  - upload an annotation file with images that are not within the source
+- The order of uploading should be:
+  - labelset and / or images
+  - annotations
 - If you want to see the uploads occur, set `headless` to True, otherwise 
   it will run in the background,
 
