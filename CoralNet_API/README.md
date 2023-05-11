@@ -1,11 +1,15 @@
-# CoralNet_API
+# CoralNet API
 
-This repository provides a Python library for accessing data on CoralNet through code, which allows users to programmatically interact with CoralNet and perform tasks such as uploading and downloading data, and annotating images.
+![](Figures/CoralNet.png)
 
-For all of these scripts, it is recommended to set your CoralNet username and password as an environment variable, as
-these will be read as the defaults when running the script via command line:
+This repository provides a Python library for accessing data on CoralNet 
+through code, which allows users to programmatically interact with CoralNet and 
+perform tasks such as uploading and downloading data, and annotating images.
+
+For all of these scripts, it is recommended to set your CoralNet username and 
+password as an environment variable, as these will be read as the defaults when 
+running the script via command line:
 ```python
-
 # Windows
 set CORALNET_USERNAME=myusername
 set CORALNET_PASSWORD=mypassword
@@ -15,74 +19,164 @@ export CORALNET_USERNAME=myusername
 export CORALNET_PASSWORD=mypassword
 ```
 
-### Download CoralNet
+### CoralNet Download ⬇️
 
-This script can be used to download all data (labelset, images, annotations) from any public source. The script is setup
-to work via command line, and expects the following:
-- `username` - CoralNet username; will also read the environmental variable `CORALNET_USERNAME`.
-- `password` - CoralNet password; will also read the environmental variable `CORALNET_PASSWORD`.
+This script can be used to download all data (labelset, images, annotations) 
+from any public source. The script is setup to work via command line, and 
+expects the following:
+- `username` - CoralNet username; will also read the environmental 
+  variable `CORALNET_USERNAME`.
+- `password` - CoralNet password; will also read the environmental variable 
+  `CORALNET_PASSWORD`.
 - `source_ids` - A list of source IDs you want to download.
 - `output_dir` - A directory that will contain all downloaded data.
 
 Example of use:
-`python Download_CoralNet.py --username JohnDoe --password 123456789 --source_ids 1 54 983 --output_dir downloads`
+```python 
+python CoralNet_Download.py --username JohnDoe \
+                            --password 123456789 \ 
+                            --source_ids 1 54 983 \
+                            --output_dir ../CoralNet_Data/
+```
 
-If you previously set the environmental variables `CORALNET_USERNAME` and `CORALNET_PASSWORD`, these will be read as
-the defaults, and you can avoid passing the respective variables via command line.
+If you previously set the environmental variables `CORALNET_USERNAME` and 
+`CORALNET_PASSWORD`, these will be read as the defaults, and you can avoid 
+passing the respective variables via command line.
 
-Data will be downloaded in the following folder structure (for an example, see `../CoralNet_Data`):
+Data will be downloaded in the following folder structure (for an example, 
+see `../CoralNet_Data`):
 ```python
 output_dir/
     source_id_1/
         images/
         annotations.csv
-        label_set.csv
+        labelset.csv
         images.csv
+        metadata.csv
     source_id_2/
         images/
         annotations.csv
-        label_set.csv
+        labelset.csv
         images.csv
+        metadata.csv
 ```
-Although `Download_CoralNet.py` will just download the data for each public source desired, it also contains functions 
-that would allow you to:
-- Identify all labelsets
-- Identify all public sources
-- Download all public sources given a list of desired labelsets
+Although `CoralNet_Download.py` will just download the data for each public 
+source desired, it also contains functions that would allow you to:
+- Identify all labelsets on CoralNet
+- Identify all public sources CoralNet
+- Download all public sources given a list of desired labelsets 
 - Download all data from all the public sources in CoralNet
 
-Overall, the `Download_CoralNet.py` script is meant to offer researchers convenient ways to access and download CoralNet data for further analysis and processing. Please do not abuse CoralNet: its services are a useful resource to the coral research community.
+Overall, the `CoralNet_Download.py` script is meant to offer researchers 
+convenient ways to access and download CoralNet data for further analysis and 
+processing. **Please do not abuse CoralNet**: its services are an invaluable 
+and useful resource to the coral research community.
 
-### Upload CoralNet
+### Upload CoralNet ⬆️
 
-This script can be used to automate the process of uploading images, annotations, and a labelset given a source ID.
-The script is setup to work via command line, and expects the following:
-- `username` - CoralNet username; will also read the environmental variable `CORALNET_USERNAME`.
-- `password` - CoralNet password; will also read the environmental variable `CORALNET_PASSWORD`.
-- `source_id` - The ID of the source you want to upload data to; your account must already have access to the source.
-- `image_folder` - (optional) A folder containing images that you want to upload.
-- `labels` - (optional) A .csv file containing point annotations.
-- `labelset` - (optional) A .csv file containing the labelsets.
+This script can be used to automate the process of uploading images, 
+annotations, and a labelset given a source ID. The script is setup to work via 
+command line, and expects the following:
+- `username` - CoralNet username; default env variable `CORALNET_USERNAME`.
+- `password` - CoralNet password; default env variable `CORALNET_PASSWORD`.
+- `source_id` - The ID of the source you want to upload data to; need access.
+- `image_folder` - (optional) A folder with images that you want to upload.
+- `annotations` - (optional) A .csv file with point annotations.
+- `labelset` - (optional) A .csv file with the labelsets.
 
-Example of use:
-`python Upload_CoralNet.py --username JohnDoe --password 123456789 --source_id 1 --image_folder path/to/images/ --labels labels.csv --labelset labelset.csv`
+The following describes what is expected in the annotations, and labelset:
 
-If you previously set the environmental variables `CORALNET_USERNAME` and `CORALNET_PASSWORD`, these will be read as
-the defaults, and you can avoid passing the respective variables via command line.
+```python
+# annotations.csv
+# image_name, row, column, label are required fields
+
+                                        image_name   row  column  label
+0  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   671     217   Sand
+1  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg  1252     971   Sand
+2  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   548    1054  Macro
+```
+
+```python
+# labelset.csv
+# Label_ID and Short_Code are requried fields
+
+   Label_ID                            Label_URL        Name Short_Code Functional_Group
+0        59  https://coralnet.ucsd.edu/label/59/    Acropora      Acrop       Hard coral
+1        60  https://coralnet.ucsd.edu/label/60/  Astreopora     Astreo       Hard coral
+2        61  https://coralnet.ucsd.edu/label/61/  Cyphastrea      Cypha       Hard coral
+```
+
+Example of usage:
+```python 
+python Upload_CoralNet.py --username JohnDoe \
+                          --password 123456789 \ 
+                          --source_id 1 \
+                          --image_folder path/to/images/ \ 
+                          --annotations annotations.csv \
+                          --labelset labelset.csv
+                          --headless True
+```
+
+If you previously set the environmental variables `CORALNET_USERNAME` and 
+`CORALNET_PASSWORD`, these will be read as the defaults, and you can avoid 
+passing the respective variables via command line.
 
 Things to note:
-- If you attempt to upload a label file without setting any labelsets, CoralNet will throw an error; additionally, if you attempt to upload a label file with class categories that are not within the registered labelset, CoralNet will throw an error.
-- If you attempt to upload images with names that already exist, CoralNet wil throw an error.
+- If you attempt to upload a label file without setting any labelsets, 
+  CoralNet will throw an error; additionally, if you attempt to upload a 
+  label file with class categories that are not within the registered 
+  labelset, CoralNet will throw an error.
+- If you attempt to upload images with names that already exist, CoralNet 
+  will throw an error.
+- If you want to see the uploads occur, set `headless` to True, otherwise 
+  it will run in the background,
 
 
-### CoralNet API
+### CoralNet API ☁️
 
-This script can be used to have an existing source's model perform predictions on publically available images.
+This script can be used to have an existing source's model perform predictions 
+on publicly available images. CoralNet's API expects URLs that are 
+publicly available, that it will then download and make predictions for 
+given a list points. Instead of uploading images to cloud storage and 
+passing those URLs to the API, this script takes advantage of the 
+functions in `CoralNet_Dowload.py` by getting the AWS URLs of images 
+that have **already uploaded to CoralNet**. Users must upload the images to 
+the source (w/ or w/o annotations) and `CoralNet_API.py` will retrieve the 
+AWS URL given just the `image_name`, and pass it to the model. The script is 
+setup to work via command line, and expects the following:
+- `username` - CoralNet username; default env variable `CORALNET_USERNAME`.
+- `password` - CoralNet password; default env variable `CORALNET_PASSWORD`.
+- `source_id` - The ID of the source you want to upload data to; need access.
+- `output_dir` - The directory where you want the predictions to be saved.
+- `csv_path` - Path to a .csv file (or folder containing multiple .csv files) 
+  with (at a minimum) a column called `image_name`; users can also their own
+  provide columns `row` and `column` containing points to make predictions 
+  for, else, the code will sample 200 points (stratified random).
 
-To get started, users can refer to the `Tutorial.ipynb` included in this repository. This notebook provides a step-by-step guide for setting up a Dropbox account, obtaining authorization, and making requests to CoralNet using the CoralNet API.
+The following describes what is expected in the csv files:
+```python
+# csv_path
+# image_name is required; row and column are optional.
 
-Users can also refer to the API documentation provided by CoralNet for more information on the available API endpoints and their usage.
+                                        image_name   row  column  
+0  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   671     217   
+1  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg  1252     971   
+2  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   548    1054  
+```
+
+If `row` and `column` are not provided, the sampled points will be saved in 
+a "points" folder located in the source folder within the output directory. 
+Predictions from the model will be saved in a "predictions" folder located
+in the source folder within the output directory.
+
+Users can also refer to the API documentation provided by CoralNet for more 
+information on the available API endpoints and their usage.
 
 
-![](Figures/Workflow.png)
+### Notebooks
 
+Before jumping into the scipts, it might be useful to play around with 
+functions for each script via notebook. The notebooks are as follows:
+- `CoralNet_Download.ipynb` - Notebook for downloading data from CoralNet.
+- `CoralNet_Uplod.ipynb` - Notebook for uploading data to CoralNet.
+- `CoralNet_API.ipynb` - Notebook for making predictions via CoralNet's API.
