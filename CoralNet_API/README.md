@@ -137,14 +137,15 @@ Things to note:
 
 This script can be used to have an existing source's model perform predictions 
 on publicly available images. CoralNet's API expects URLs that are 
-publicly available, that it will then download and make predictions for 
-given a list points. Instead of uploading images to cloud storage and 
+publicly available, which it will then download them and make predictions 
+for them given a list points. Instead of uploading images to cloud storage and 
 passing those URLs to the API, this script takes advantage of the 
 functions in `CoralNet_Dowload.py` by getting the AWS URLs of images 
-that have **already uploaded to CoralNet**. Users must upload the images to 
-the source (w/ or w/o annotations) and `CoralNet_API.py` will retrieve the 
-AWS URL given just the `image_name`, and pass it to the model. The script is 
-setup to work via command line, and expects the following:
+that have **already uploaded to CoralNet**. Therefore, users must first upload 
+the images to the source (w/ or w/o annotations) and `CoralNet_API.py` will 
+retrieve the AWS URL given just the `image_name`, and pass it to the model. 
+Alternatively, you could use the functions in the script to pass your own URLs.
+The script is setup to work via command line, and expects the following:
 - `username` - CoralNet username; default env variable `CORALNET_USERNAME`.
 - `password` - CoralNet password; default env variable `CORALNET_PASSWORD`.
 - `source_id` - The ID of the source you want to upload data to; need access.
@@ -165,7 +166,7 @@ The following describes what is expected in the csv files:
 2  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   548    1054  
 ```
 
-If `row` and `column` are not provided, the sampled points will be saved in 
+If `row` and `column` are not provided, points will be sampled and saved in 
 a "points" folder located in the source folder within the output directory. 
 Predictions from the model will be saved in a "predictions" folder located
 in the source folder within the output directory.
@@ -177,7 +178,11 @@ information on the available API endpoints and their usage.
 ### Notebooks
 
 Before jumping into the scipts, it might be useful to play around with 
-functions for each script via notebook. The notebooks are as follows:
+functions for each script via notebook. The notebooks contain examples and 
+comments that may be useful for understanding and altering the code as 
+needed. The notebooks are as follows:
 - `CoralNet_Download.ipynb` - Notebook for downloading data from CoralNet.
 - `CoralNet_Uplod.ipynb` - Notebook for uploading data to CoralNet.
 - `CoralNet_API.ipynb` - Notebook for making predictions via CoralNet's API.
+
+**Pull requests are welcome!**
