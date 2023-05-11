@@ -1,9 +1,5 @@
 # CoralNet API
 
-<p align="center">
-  <img src="./Figures/CoralNet.png" alt="CoralNet_Logo">
-</p>
-
 This repository provides a Python library for accessing data on CoralNet 
 through code, which allows users to programmatically interact with CoralNet and 
 perform tasks such as uploading and downloading data, and annotating images.
