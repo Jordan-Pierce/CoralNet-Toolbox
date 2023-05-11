@@ -129,8 +129,8 @@ Things to note:
 - The order of uploading should be:
   - labelset and / or images
   - annotations
-- If you want to see the uploads occur, set `headless` to True, otherwise 
-  it will run in the background,
+- If you want to see the uploads occur, set `headless` to False, otherwise 
+  it will run in the background.
 
 
 ### CoralNet API ☁️
