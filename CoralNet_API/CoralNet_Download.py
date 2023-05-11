@@ -205,11 +205,11 @@ def get_labelset(source_id, username, password):
             labelset.append([label_id, url, name, short_code, funct_group])
 
         # Create dataframe to hold all labelset information
-        df = pd.DataFrame(labelset, columns=['Label_ID',
-                                             'Label_URL',
+        df = pd.DataFrame(labelset, columns=['Label ID',
+                                             'Label URL',
                                              'Name',
-                                             'Short_Code',
-                                             'Functional_Group'])
+                                             'Short Code',
+                                             'Functional Group'])
 
     except:
         print("Error: Unable to get labelset from source.")
@@ -928,13 +928,13 @@ def download_coralnet_labelset(username, password, output_dir):
             # Create dataframe
             df = pd.DataFrame(rows, columns=['Name',
                                              'URL',
-                                             'Functional_Group',
+                                             'Functional Group',
                                              'Popularity %',
-                                             'Short_Code',
+                                             'Short Code',
                                              'Duplicate',
                                              'Duplicate Notes',
                                              'Verified',
-                                             'Has_Calcification_Rates'])
+                                             'Has Calcification Rates'])
 
             # Save locally
             df.to_csv(f"{output_dir}CoralNet_Labelset_List.csv")
