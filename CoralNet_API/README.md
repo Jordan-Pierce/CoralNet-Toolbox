@@ -137,8 +137,8 @@ Things to note:
 
 This script can be used to have an existing source's model perform predictions 
 on publicly available images. CoralNet's API expects URLs that are 
-publicly available, which it will then download them and make predictions 
-for them given a list points. Instead of uploading images to cloud storage and 
+publicly available, which it will then download and predictions for, given a
+list of points. Instead of uploading images to a cloud storage and 
 passing those URLs to the API, this script takes advantage of the 
 functions in `CoralNet_Dowload.py` by getting the AWS URLs of images 
 that have **already uploaded to CoralNet**. Therefore, users must first upload 
