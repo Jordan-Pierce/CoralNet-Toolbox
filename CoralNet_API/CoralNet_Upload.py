@@ -498,7 +498,7 @@ def main():
                         help='Source ID to upload to.')
 
     parser.add_argument('--images', type=str, default="",
-                        help='The A directory where all images are located')
+                        help='A directory where all images are located')
 
     parser.add_argument('--annotations', type=str, default="",
                         help='The path to the annotations file')
