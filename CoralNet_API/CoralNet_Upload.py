@@ -476,12 +476,26 @@ def upload_annotations(driver, source_id, annotations):
     return driver, success
 
 # -----------------------------------------------------------------------------
-# TODO include checks for the source, data formats, argparse, notebook
+# Main
 # -----------------------------------------------------------------------------
 
 def main():
     """
+    This is the main function for the script. Users can upload images,
+    labelsets, and annotations to CoralNet via command line. First a browser
+    is checked for, then the user's credentials are checked. Data is checked to
+    exist, and then uploaded to CoralNet.
 
+    If a user tries to upload data they do no have permissions to, the script
+    will exit. If a user tries to upload data to a source that does not exist,
+    the script will exit. If a user tries to upload annotations to a source
+    that does not have a complete labelset or corresponding images, the script
+    will exit. In general, it's dummy proofed to prevent users from uploading
+    data that will not work.
+
+    If annotations already exist for an image, they will be overwritten. If
+    images already exist for a source, they will be skipped. If a labelset
+    already exists for a source, it will be added.
     """
 
     parser = argparse.ArgumentParser(description='CoralNet arguments')
@@ -513,6 +527,22 @@ def main():
     args = parser.parse_args()
 
     # -------------------------------------------------------------------------
+    # Authenticate the user
+    # -------------------------------------------------------------------------
+    # Credentials
+    username = args.username
+    password = args.password
+
+    try:
+        # Authenticate, make sure the credentials are correct
+        authenticate(username, password)
+        CORALNET_TOKEN, HEADERS = get_token(username, password)
+
+    except Exception as e:
+        print(f"ERROR: Could not authenticate for user {username}.\n{e}")
+        sys.exit(1)
+
+    # -------------------------------------------------------------------------
     # Get the browser
     # -------------------------------------------------------------------------
     options = Options()
@@ -531,7 +561,7 @@ def main():
 
     # Data to be uploaded
     IMAGES = os.path.abspath(args.images)
-    IMAGES = glob.glob(IMAGES + "\\*.*")
+    IMAGES = glob.glob(IMAGES + "\\*.*")[:10]
     IMAGES = [i for i in IMAGES if i.split('.')[-1] in IMG_FORMATS]
 
     # Check if there are images to upload
@@ -561,19 +591,6 @@ def main():
               f"Images: {args.images}\n"
               f"Labelset: {args.labelset}\n"
               f"Annotations: {args.annotations}")
-        sys.exit(1)
-
-    # Credentials
-    username = args.username
-    password = args.password
-
-    try:
-        # Authenticate, make sure the credentials are correct
-        authenticate(username, password)
-        CORALNET_TOKEN, HEADERS = get_token(username, password)
-
-    except Exception as e:
-        print(f"ERROR: Could not authenticate for user {username}.\n{e}")
         sys.exit(1)
 
     # ID of the source to upload data to
