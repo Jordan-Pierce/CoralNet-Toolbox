@@ -100,7 +100,7 @@ The following describes what is expected in the annotations, and labelset:
 # labelset.csv
 # Label ID and Short Code are requried fields; column names are not flexible
 
-   Label ID     Short_Code 
+   Label ID     Short Code 
 0        59          Acrop        
 1        60          Astreo        
 2        61          Cypha        
