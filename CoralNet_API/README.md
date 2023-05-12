@@ -98,7 +98,7 @@ The following describes what is expected in the annotations, and labelset:
 
 ```python
 # labelset.csv
-# Label ID and Short Code are requried fields; column names are not flexible
+# Label ID and Short Code are required fields; column names are not flexible
 
    Label ID     Short Code 
 0        59          Acrop        
