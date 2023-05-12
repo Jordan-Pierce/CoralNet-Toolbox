@@ -574,6 +574,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: Could not authenticate for user {username}.\n{e}")
+        sys.exit(1)
 
     # ID of the source to upload data to
     source_id = args.source_id
