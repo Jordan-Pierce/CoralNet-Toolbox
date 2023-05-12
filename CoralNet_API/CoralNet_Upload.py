@@ -2,20 +2,56 @@ import os
 import glob
 import sys
 import time
+import argparse
+import subprocess
 
 from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
 
 from CoralNet import *
-
 
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
 
-def login(driver):
+def check_for_browsers(options):
+    """
+    Check if Chrome, Firefox, and Edge browsers are installed.
+    """
+
+    # Greedy search for Chrome, Firefox, and Edge browsers
+    try:
+        browser = webdriver.Chrome(options=options)
+        print("NOTE: Using Google Chrome")
+        return browser
+
+    except Exception as e:
+        print("Warning: Google Chrome is not installed")
+
+    try:
+        browser = webdriver.Edge(options=options)
+        print("NOTE: Using Microsoft Edge")
+        return browser
+
+    except Exception as e:
+        print("Warning: Microsoft Edge is not installed")
+
+    try:
+        browser = webdriver.Firefox(options=options)
+        print("NOTE: Using Mozilla Firefox")
+        return browser
+
+    except Exception as e:
+        print("Warning: Firefox is not installed")
+
+    print("ERROR: No browsers are installed. Exiting")
+    sys.exit(1)
+
+
+def login(username, password, driver):
     """
     Log in to CoralNet.
     """
@@ -42,8 +78,8 @@ def login(driver):
         EC.presence_of_element_located((By.XPATH, path)))
 
     # Enter the username and password
-    username_input.send_keys(USERNAME)
-    password_input.send_keys(PASSWORD)
+    username_input.send_keys(username)
+    password_input.send_keys(password)
 
     # Click the login button
     time.sleep(3)
@@ -59,12 +95,34 @@ def login(driver):
         success = True
 
     except Exception as e:
-        raise ValueError(f"ERROR: Could not login with {USERNAME}\n{e}")
+        raise ValueError(f"ERROR: Could not login with {username}\n{e}")
 
     return driver, success
 
 
-def upload_images(driver, images):
+def check_permissions(driver):
+    """
+    Check if the user has permission to access the page.
+    """
+
+    try:
+        # First check that this is existing source the user has access to
+        path = "content-container"
+        status = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, path)))
+
+        # Check the status
+        if not status.text:
+            raise Exception(f"ERROR: Unable to access page information")
+
+    except Exception as e:
+        print(f"ERROR: {e} Exiting.")
+        sys.exit(1)
+
+    return driver, status
+
+
+def upload_images(driver, source_id, images):
     """
     Upload images to CoralNet.
     """
@@ -75,7 +133,20 @@ def upload_images(driver, images):
     success = False
 
     # Go to the upload page
-    driver.get(CORALNET_URL + f"/source/{SOURCE_ID}/upload/images/")
+    driver.get(CORALNET_URL + f"/source/{source_id}/upload/images/")
+
+    # First check that this is existing source the user has access to
+    try:
+        # Check the permissions
+        driver, status = check_permissions(driver)
+
+        # Check the status
+        if "Page could not be found" in status.text:
+            raise Exception(f"ERROR: {status.text.split('.')[0]}")
+
+    except Exception as e:
+        print(f"ERROR: {e} or you do not have permission to access it")
+        return driver, success
 
     # Send the files to CoralNet for upload
     try:
@@ -103,7 +174,7 @@ def upload_images(driver, images):
     try:
         # Check if files can be uploaded
         path = "status_display"
-        status = WebDriverWait(driver, len(IMAGES)).until(
+        status = WebDriverWait(driver, len(images)).until(
             EC.presence_of_element_located((By.ID, path)))
 
         # If there are many files, they will be checked
@@ -179,7 +250,7 @@ def upload_images(driver, images):
     return driver, success
 
 
-def upload_labelset(driver, labelset):
+def upload_labelset(driver, source_id, labelset):
     """
     Upload labelsets to CoralNet.
     """
@@ -190,7 +261,20 @@ def upload_labelset(driver, labelset):
     success = False
 
     # Go to the upload page
-    driver.get(CORALNET_URL + f"/source/{SOURCE_ID}/labelset/import/")
+    driver.get(CORALNET_URL + f"/source/{source_id}/labelset/import/")
+
+    # First check that this is existing source the user has access to
+    try:
+        # Check the permissions
+        driver, status = check_permissions(driver)
+
+        # Check the status
+        if "Page could not be found" in status.text:
+            raise Exception(f"ERROR: {status.text.split('.')[0]}")
+
+    except Exception as e:
+        print(f"ERROR: {e} or you do not have permission to access it")
+        return driver, success
 
     # Check if files can be uploaded, get the status for the page
     path = "status_display"
@@ -239,10 +323,11 @@ def upload_labelset(driver, labelset):
 
             elif "Error" in status.text:
                 # The file is not formatted correctly
-                raise Exception(f"ERROR: {status.text}: {status_details.text}")
+                raise Exception(f"ERROR: {status.text}\n"
+                                f"ERROR: {status_details.text}")
             else:
                 # File input field is enabled, but something is wrong
-                raise Exception(f"ERROR: Could not upload {LABELSET}")
+                raise Exception(f"ERROR: Could not upload {labelset}")
         else:
             # File input field is not enabled, something is wrong
             raise Exception("ERROR: File input field is not enabled; exiting.")
@@ -255,7 +340,7 @@ def upload_labelset(driver, labelset):
     return driver, success
 
 
-def upload_annotations(driver, annotations):
+def upload_annotations(driver, source_id, annotations):
     """
     Upload annotations to CoralNet.
     """
@@ -269,21 +354,25 @@ def upload_annotations(driver, annotations):
     alert = False
 
     # Go to the upload page
-    driver.get(CORALNET_URL + f"/source/{SOURCE_ID}/upload/annotations_csv/")
+    driver.get(CORALNET_URL + f"/source/{source_id}/upload/annotations_csv/")
 
+    # First check that this is existing source the user has access to
     try:
-        # First check that there is already a labelset uploaded
-        path = "content-container"
-        status = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, path)))
+        # Check the permissions
+        driver, status = check_permissions(driver)
 
-        # Check the status
+        # Check the status, user doesn't have permission
+        if "Page could not be found" in status.text:
+            raise Exception(f"ERROR: {status.text.split('.')[0]} or you do not"
+                            f" have permission to access it")
+
+        # Check the status, source doesn't have a labelset yet
         if "create a labelset before uploading annotations" in status.text:
             raise Exception(f"ERROR: {status.text.split('.')[0]}")
 
     except Exception as e:
-        print(f"ERROR: Could not upload annotations.\n{e}")
-        # return success
+        print(f"{e}")
+        return driver, success
 
     # Check if files can be uploaded, get the status for the page
     path = "status_display"
@@ -321,7 +410,8 @@ def upload_annotations(driver, annotations):
             # If there was an error, raise an exception
             if "Error" in status.text:
                 # The file is not formatted correctly
-                raise Exception(f"ERROR: {status.text}: {status_details.text}")
+                raise Exception(f"ERROR: {status.text}\n"
+                                f"ERROR: {status_details.text}")
 
             # Data was sent successfully
             elif "Data OK" in status.text:
@@ -394,72 +484,125 @@ def main():
 
     """
 
-    # argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='CoralNet arguments')
 
-    # Username
-    USERNAME = os.getenv("CORALNET_USERNAME")
+    parser.add_argument('--username', type=str,
+                        default=os.getenv('CORALNET_USERNAME'),
+                        help='Username for CoralNet account')
 
-    # Password
-    PASSWORD = os.getenv("CORALNET_PASSWORD")
+    parser.add_argument('--password', type=str,
+                        default=os.getenv('CORALNET_PASSWORD'),
+                        help='Password for CoralNet account')
 
-    try:
-        # Authenticate
-        authenticate(USERNAME, PASSWORD)
-        CORALNET_TOKEN, HEADERS = get_token(USERNAME, PASSWORD)
-    except Exception as e:
-        print(e)
+    parser.add_argument('--source_id', type=int,
+                        help='Source ID to upload to.')
 
-    # ID of the source to upload data to
-    SOURCE_ID = 4054
+    parser.add_argument('--images', type=str, default="",
+                        help='The A directory where all images are located')
 
-    # Where the data root is on the local machine
-    # The path needs to be absolute, not relative.
-    DATA_ROOT = "../CoralNet_Data/3420/"
-    DATA_ROOT = os.path.abspath(DATA_ROOT) + "/"
+    parser.add_argument('--annotations', type=str, default="",
+                        help='The path to the annotations file')
 
-    # Check that the data root exists
-    if not os.path.exists(DATA_ROOT):
-        raise ValueError(f"ERROR: {DATA_ROOT} does not exist")
+    parser.add_argument('--labelset', type=str, default="",
+                        help='The path to the labelset file')
 
-    # Collecting data to be uploaded
-    IMAGES = glob.glob(DATA_ROOT + "images/*.*")[0:25]
-    LABELSET = DATA_ROOT + "labelset.csv"
-    ANNOTATIONS = DATA_ROOT + "annotations.csv"
+    parser.add_argument('--headless', type=str, default='True',
+                        choices=['True', 'False'],
+                        help='Run browser in headless mode')
+
+    args = parser.parse_args()
+
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    options = Options()
+
+    if args.headless.lower() == 'true':
+        # Set headless mode
+        options.add_argument("--headless")
+
+    # Pass the options object while creating the driver
+    driver = check_for_browsers(options=options)
 
     # Flags to determine what to upload
-    UPLOAD_IMAGES = False if len(IMAGES) == 0 else True
-    UPLOAD_LABELSET = False if not os.path.exists(LABELSET) else True
-    UPLOAD_ANNOTATIONS = False if not os.path.exists(ANNOTATIONS) else True
+    UPLOAD_IMAGES = False
+    UPLOAD_LABELSET = False
+    UPLOAD_ANNOTATIONS = False
 
-    # Check data formats locally before trying to upload, check source page
-    #
-    #
-    #
+    # Data to be uploaded
+    IMAGES = os.path.abspath(args.images)
+    IMAGES = glob.glob(IMAGES + "\\*.*")
+    IMAGES = [i for i in IMAGES if i.split('.')[-1] in IMG_FORMATS]
 
-    # Set up the browser driver (in this case, Chrome)
-    driver = webdriver.Chrome()
+    # Check if there are images to upload
+    if len(IMAGES) > 0:
+        print(f"NOTE: Found {len(IMAGES)} images to upload.")
+        UPLOAD_IMAGES = True
+
+    # Assign the labelset
+    LABELSET = os.path.abspath(args.labelset)
+
+    # Check if there is a labelset to upload
+    if os.path.exists(LABELSET) and "csv" in LABELSET.split(".")[-1]:
+        print(f"NOTE: Found labelset to upload.")
+        UPLOAD_LABELSET = True
+
+    # Assign the annotations
+    ANNOTATIONS = os.path.abspath(args.annotations)
+
+    # Check if there are annotations to upload
+    if os.path.exists(ANNOTATIONS) and "csv" in ANNOTATIONS.split(".")[-1]:
+        print(f"NOTE: Found annotations to upload.")
+        UPLOAD_ANNOTATIONS = True
+
+    # If there are no images, labelset, or annotations to upload, exit
+    if not UPLOAD_IMAGES and not UPLOAD_LABELSET and not UPLOAD_ANNOTATIONS:
+        print(f"ERROR: No data to upload. Please check the following files:\n"
+              f"Images: {args.images}\n"
+              f"Labelset: {args.labelset}\n"
+              f"Annotations: {args.annotations}")
+        sys.exit(1)
+
+    # Credentials
+    username = args.username
+    password = args.password
+
+    try:
+        # Authenticate, make sure the credentials are correct
+        authenticate(username, password)
+        CORALNET_TOKEN, HEADERS = get_token(username, password)
+
+    except Exception as e:
+        print(f"ERROR: Could not authenticate for user {username}.\n{e}")
+
+    # ID of the source to upload data to
+    source_id = args.source_id
+
+    # -------------------------------------------------------------------------
+    # Upload the data
+    # -------------------------------------------------------------------------
 
     # Log in to CoralNet
-    driver, _ = login(driver)
+    driver, _ = login(username, password, driver)
 
     # Upload images
     if UPLOAD_IMAGES:
-        driver, _ = upload_images(driver, IMAGES)
+        driver, _ = upload_images(driver, source_id, IMAGES)
 
     # Upload labelset
     if UPLOAD_LABELSET:
-        driver, _ = upload_labelset(driver, LABELSET)
+        driver, _ = upload_labelset(driver, source_id, LABELSET)
 
     # Upload annotations
     if UPLOAD_ANNOTATIONS:
-        driver, _ = upload_annotations(driver, ANNOTATIONS)
+        driver, _ = upload_annotations(driver, source_id, ANNOTATIONS)
 
     # Close the browser
-    if input("\nExit? (y/n): ").lower() == "y":
-        print("NOTE: Closing connection...")
-        driver.quit()
+    print("NOTE: Closing connection...")
+    driver.quit()
 
     print("Done.")
+
 
 if __name__ == "__main__":
     main()
