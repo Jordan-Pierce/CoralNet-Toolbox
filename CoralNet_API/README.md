@@ -82,12 +82,13 @@ command line, and expects the following:
 - `image_folder` - (optional) A folder with images that you want to upload.
 - `annotations` - (optional) A .csv file with point annotations.
 - `labelset` - (optional) A .csv file with the labelsets.
+- `headless` - (optional) Whether the browser runs in the background
 
 The following describes what is expected in the annotations, and labelset:
 
 ```python
 # annotations.csv
-# image_name, row, column, label are required fields
+# image_name, row, column, label are required fields; column names are flexible
 
                                         image_name   row  column  label
 0  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   671     217   Sand
@@ -97,9 +98,9 @@ The following describes what is expected in the annotations, and labelset:
 
 ```python
 # labelset.csv
-# Label_ID and Short_Code are requried fields
+# Label ID and Short Code are requried fields; column names are not flexible
 
-   Label_ID     Short_Code 
+   Label ID     Short_Code 
 0        59          Acrop        
 1        60          Astreo        
 2        61          Cypha        
@@ -164,7 +165,7 @@ The script is setup to work via command line, and expects the following:
 The following describes what is expected in the csv files:
 ```python
 # csv_path
-# image_name is required; row and column are optional.
+# image_name is required; row and column are optional. Column names are flexible
 
                                         image_name   row  column  
 0  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   671     217   
