@@ -130,7 +130,12 @@ Things to note:
   - labelset and / or images
   - annotations
 - If you want to see the uploads occur, set `headless` to False, otherwise 
-  it will run in the background.
+  it will run in the background (see gif below)
+
+<p align="center">
+  <img src="./Figures/CoralNet_Upload.gif" alt="CoralNet_Upload_gif">
+  <br>Look Mah, no hands!
+</p>
 
 
 ### CoralNet API ☁️
