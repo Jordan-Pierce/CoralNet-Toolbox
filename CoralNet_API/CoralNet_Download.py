@@ -810,33 +810,6 @@ def download_coralnet_sources(username, password, output_dir):
     return df
 
 
-def parse_labelset_file(path):
-    """Helper function to extract the labelsets from a provided file.
-    Returns a list containing all labelsets."""
-
-    labelset = []
-
-    # Checks that file exists
-    if os.path.exists(path):
-        try:
-            # Attempts to open file in read mode, parses, stores in list
-            with open(path, "r") as f:
-                for line in f:
-                    items = line.strip().split(',')[0]
-                    labelset.append(items)
-
-        except:
-            print("Could not parse file correct. Please ensure that each "
-                  "labelset code is on it's own line, followed by a comma.")
-
-    else:
-        print("Path does not exist: ", path)
-        print("Exiting.")
-        sys.exit()
-
-    return labelset
-
-
 def download_coralnet_labelset(username, password, output_dir):
     """Downloads a list of all the Labelsets currently on CoralNet."""
 
@@ -901,6 +874,7 @@ def download_coralnet_labelset(username, password, output_dir):
             attributes = row.find_all("td")
             # Extract each attribute, store in variable
             name = attributes[0].text
+            label_id = attributes[0].find("a").get("href").split("/")[2]
             url = CORALNET_URL + attributes[0].find("a").get("href")
             functional_group = attributes[1].text
             popularity = attributes[2].find("div").get("title").split("%")[0]
@@ -920,12 +894,21 @@ def download_coralnet_labelset(username, password, output_dir):
                 if column.get("alt") == "Has calcification rate data":
                     has_calcification = True
 
-            rows.append([name, url, functional_group, popularity, short_code,
-                         is_duplicate, notes, is_verified, has_calcification])
+            rows.append([label_id,
+                         name,
+                         url,
+                         functional_group,
+                         popularity,
+                         short_code,
+                         is_duplicate,
+                         notes,
+                         is_verified,
+                         has_calcification])
 
         try:
             # Create dataframe
-            df = pd.DataFrame(rows, columns=['Name',
+            df = pd.DataFrame(rows, columns=['Label ID',
+                                             'Name',
                                              'URL',
                                              'Functional Group',
                                              'Popularity %',
