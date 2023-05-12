@@ -217,13 +217,9 @@ def get_labelset(source_id, username, password):
     return df
 
 
-def get_image_url(image_page_url, username, password):
+def get_image_urls(image_page_urls, username, password):
     """
-    Returns an AWS url for the image, give the image page url. This takes a bit
-    longer for each individual each image because a login has to occur each
-    time. For situations where a source doesn't have thousands of images, it
-    might be better to just use the get_images function, and then subset the
-    images of interest.
+    Returns an AWS url for a list of images, give the image page urls.
 
     Args: image_page_url (string): The url of the source's image page.
 
@@ -232,7 +228,7 @@ def get_image_url(image_page_url, username, password):
     """
 
     # Create an empty variable to store the image url
-    image_url = None
+    image_urls = []
 
     # Send a GET request to the login page to retrieve the login form
     response = requests.get(LOGIN_URL)
@@ -261,7 +257,7 @@ def get_image_url(image_page_url, username, password):
     }
 
     try:
-        print(f"NOTE: Getting URL for {image_page_url}")
+        print(f"NOTE: Getting URLs for {len(image_page_urls)} images...")
 
         # Use requests.Session to create a session that will maintain your
         # login state
@@ -273,31 +269,34 @@ def get_image_url(image_page_url, username, password):
                                     headers=headers,
                                     cookies=cookies)
 
-            # Use session.get() to make a GET request to the source URL
-            response = session.get(image_page_url,
-                                   data=data,
-                                   headers=headers,
-                                   cookies=cookies)
+            for image_page_url in image_page_urls:
 
-            # Pass along the cookies
-            cookies = response.cookies
+                # Use session.get() to make a GET request to the source URL
+                response = session.get(image_page_url,
+                                       data=data,
+                                       headers=headers,
+                                       cookies=cookies)
 
-            # Convert the webpage to soup
-            soup = BeautifulSoup(response.text, "html.parser")
+                # Pass along the cookies
+                cookies = response.cookies
 
-            # Find the div element with id="original_image_container" and
-            # style="display:none;"
-            image_container = soup.find('div',
-                                        id='original_image_container',
-                                        style='display:none;')
+                # Convert the webpage to soup
+                soup = BeautifulSoup(response.text, "html.parser")
 
-            # Find the img element within the div, get the src attribute
-            image_url = image_container.find('img').get('src')
+                # Find the div element with id="original_image_container" and
+                # style="display:none;"
+                image_container = soup.find('div',
+                                            id='original_image_container',
+                                            style='display:none;')
+
+                # Find the img element within the div, get the src attribute
+                image_url = image_container.find('img').get('src')
+                image_urls.append(image_url)
 
     except:
-        print("Error: Unable to get image url from image page.")
+        print("Error: Unable to get image urls from image pages.")
 
-    return image_url
+    return image_urls
 
 
 def get_images(source_id, username, password, verbose=False):

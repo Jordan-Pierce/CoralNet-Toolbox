@@ -603,12 +603,9 @@ def main():
         if not queued and not active and expired_imgs:
             print("NOTE: Updating expired images' URL")
             # Get the subset of dataframe containing only the expired images
-            IMAGES = IMAGES[IMAGES['image_name'].isin(expired_imgs)]
-            new_urls = []
-            for i, r in IMAGES.iterrows():
-                url = get_image_url(r['image_page'], USERNAME, PASSWORD)
-                new_urls.append(url)
-            # Store the new urls in the subset of images dataframe
+            IMAGES = IMAGES[IMAGES['image_name'].isin(expired_imgs)].copy()
+            old_urls = IMAGES['image_page'].tolist()
+            new_urls = get_image_urls(old_urls, USERNAME, PASSWORD)
             IMAGES['image_url'] = new_urls
 
         # Check to see everything has been completed, breaking the loop
