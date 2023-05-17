@@ -506,7 +506,7 @@ def main():
             # The image url has not expired, so we can queue the image
             elif not is_expired(url):
                 print(f"NOTE: Image {name} not in queue; sampling")
-                points = POINTS[POINTS['image_name'] == name + ".csv"]
+                points = POINTS[POINTS['image_name'].str.contains(name)]
                 points = points[['row', 'column']].to_dict(orient="records")
 
                 # Add the data to the list for payloads
@@ -547,8 +547,7 @@ def main():
             queued_imgs.append(image_names)
 
         # Print the status of the jobs
-        print_job_status(queued_jobs, active_jobs, completed_jobs,
-                         expired_imgs)
+        print_job_status(queued_jobs, active_jobs, completed_jobs, expired_imgs)
 
         # Start uploading the queued jobs to CoralNet if there are
         # less than 5 active jobs, and there are more in the queue.
@@ -560,8 +559,7 @@ def main():
 
                 # Break when active gets to 5
                 if len(active_jobs) >= 5:
-                    print(
-                        "NOTE: Five jobs already active; checking status")
+                    print("NOTE: Five jobs already active; checking status")
                     break  # Breaks from both loops
 
                 # Upload the image and the sampled points to CoralNet
