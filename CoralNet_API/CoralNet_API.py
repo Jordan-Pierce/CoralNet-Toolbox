@@ -454,9 +454,9 @@ def main():
         # We will use the points provided in the CSV file
         POINTS = DATA[['image_name', 'row', 'column']]
 
-    # ------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------
     # We will now get the predictions for each of the images
-    # ------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------------------------
     # Jobs that are currently queued
     queued_jobs = []
     queued_imgs = []
@@ -499,6 +499,7 @@ def main():
                 # print(f"Image {name} already active; skipping")
                 continue  # Skip to the next image within the current for loop
 
+            # if this image is already in queued, skip it.
             elif any(name in n for n in queued_imgs):
                 # print(f"Image {name} already queued; skipping")
                 continue  # Skip to the next image within the current for loop
@@ -590,8 +591,7 @@ def main():
                     print(f"CoralNet: {message}")
 
                     if "5 jobs active" in message:
-                        print(f"NOTE: Will attempt again at "
-                              f"{in_N_seconds(patience)}")
+                        print(f"NOTE: Will attempt again at {in_N_seconds(patience)}")
                         time.sleep(patience)
 
                     else:
@@ -614,20 +614,17 @@ def main():
         while len(active_jobs) <= 5 and len(active_jobs) != 0:
 
             # Check the status of the active jobs
-            print_job_status(queued_jobs, active_jobs, completed_jobs,
-                             expired_imgs)
+            print_job_status(queued_jobs, active_jobs, completed_jobs, expired_imgs)
 
             # Sleep before checking status again
             print(f"\nNOTE: Checking status again at {in_N_seconds(patience)}")
             time.sleep(patience)
 
             # Loop through the active jobs
-            for i, (job, names) in enumerate(
-                    list(zip(active_jobs, active_imgs))):
+            for i, (job, names) in enumerate(list(zip(active_jobs, active_imgs))):
 
                 # Check the status of the current job
-                current_status, message, wait = check_job_status(job,
-                                                                 CORALNET_TOKEN)
+                current_status, message, wait = check_job_status(job, CORALNET_TOKEN)
 
                 # Print the message
                 print(f"NOTE: {message}")
@@ -641,7 +638,7 @@ def main():
                                                           SOURCE_PREDICTIONS)
 
                     # Deal with images after the job has been completed
-                    for name in names:  #
+                    for name in names:
                         # If the image was in expired, add to expired
                         if name in expired:
                             expired_imgs.append(name)

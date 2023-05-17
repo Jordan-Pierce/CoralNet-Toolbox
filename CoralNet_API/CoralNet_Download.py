@@ -465,7 +465,7 @@ def download_image(image_url, image_path):
         return image_path, False
 
 
-def download_images(dataframe, source_dir, image_dir):
+def download_images(dataframe, source_dir):
     """
     Download images from URLs in a pandas dataframe and save them to a
     directory.
@@ -490,6 +490,10 @@ def download_images(dataframe, source_dir, image_dir):
         print(f"Image CSV saved to: {csv_file}")
     else:
         raise Exception("Error: Unable to save image CSV.")
+
+    # Create the image directory if it doesn't exist
+    image_dir = source_dir + "images/"
+    os.makedirs(image_dir, exist_ok=True)
 
     expired_images = []
 
@@ -684,7 +688,7 @@ def download_data(source_id, username, password, output_dir):
     try:
         # Get all the image URLS, then save.
         images = get_images(source_id, username, password)
-        download_images(images, source_dir, image_dir)
+        download_images(images, source_dir)
     except Exception as e:
         print("Error: Unable to get images from source.")
         print(e)
