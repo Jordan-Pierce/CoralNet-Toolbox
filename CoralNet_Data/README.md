@@ -1,4 +1,4 @@
-### CoralNet Data
+# CoralNet Data
 
 This is an example of how the scripts expect data to be stored, and how they will be downloaded from:
 
