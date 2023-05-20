@@ -1,233 +1,472 @@
-import concurrent
-import os
-import io
-import sys
-import glob
-import shutil
-import os.path
-import argparse
-import requests
-import functools
-import pandas as pd
-import multiprocessing
-from bs4 import BeautifulSoup
-
 from CoralNet import *
 
-# -----------------------------------------------------------------------------
-# Downloading Individual Sources
-# -----------------------------------------------------------------------------
 
+# -------------------------------------------------------------------------------------------------
+# Functions for downloading all of CoralNet
+# -------------------------------------------------------------------------------------------------
 
-def get_model_meta(source_id, username, password):
-    """This function collects the model data from a source webpage. The
-    metadata will be stored within a dataframe and saved locally. If there
-    is no metadata (i.e., trained models), the function returns None."""
-
-    print("Downloading Metadata...")
-
-    # Set the source url
-    source_url = CORALNET_URL + "/source/" + str(source_id)
-
-    # Empty dataframe to store metadata
-    df = None
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
-
-    try:
-        # Use requests.Session to create a session that will maintain your
-        # login state
-        with requests.Session() as session:
-
-            # Use session.post() to submit the login form, including the
-            # "Referer" header
-            response = session.post(LOGIN_URL,
-                                    data=data,
-                                    headers=headers,
-                                    cookies=cookies)
-
-            # Use session.get() to make a GET request to the source URL
-            response = session.get(source_url,
-                                   data=data,
-                                   headers=headers,
-                                   cookies=cookies)
-
-            # Pass along the cookies
-            cookies = response.cookies
-
-            # Parse the HTML of the response using BeautifulSoup
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            script = None
-            # Of the scripts, find the one containing model metadata
-            for script in soup.find_all("script"):
-                if "Classifier overview" in script.text:
-                    script = script.text
-                    break
-
-            # If the page doesn't have model metadata, then return None early
-            if script is None:
-                return script
-
-            # Parse the data when represented as a string, convert to dict
-            data = script[script.find("data:"):].split(",\n")[0]
-            data = eval(data[data.find("[{"):])
-
-            # Loop through and collect meta from each model instance, store
-            meta = []
-            for point in data:
-
-                score = point["y"]
-                nimages = point["nimages"]
-                traintime = point["traintime"]
-                date = point["date"]
-                source_id = point["pk"]
-
-                meta.append([score, nimages, traintime, date, source_id])
-
-            # Convert list to dataframe
-            df = pd.DataFrame(meta, columns=['Accuracy %',
-                                             'N_Images',
-                                             'Train_Time',
-                                             'Date',
-                                             'Model_ID'])
-    except:
-        print("Error: Unable to get metadata from source.")
-
-    return df
-
-
-def get_labelset(source_id, username, password):
+def download_coralnet_labelsets(driver, output_dir):
     """
-    Downloads a .csv file holding the label set from the given URL.
-    Args:
-        source_id (str): The URL of the website with the download button.
-    Returns:
-        None
+    Download a list of all labelsets in CoralNet.
     """
 
-    print("Downloading Labelset...")
+    # Variable to hold the list of sources
+    labelset = None
 
-    # Set the url for the source given the source id
-    source_url = CORALNET_URL + "/source/" + str(source_id)
-    labelset_url = source_url + "/labelset/"
+    # Go to the images page
+    driver.get(CORALNET_LABELSET_URL)
 
-    # Create an empty variable for the labelset
-    df = None
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
+    print("NOTE: Downloading CoralNet Labelset List")
 
     try:
-        # Use requests.Session to create a session that will maintain your
-        # login state
-        with requests.Session() as session:
+        # Parse the HTML response using BeautifulSoup
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
 
-            # Use session.post() to submit the login form, including the
-            # "Referer" header
-            response = session.post(LOGIN_URL,
-                                    data=data,
-                                    headers=headers,
-                                    cookies=cookies)
+        # Get the table with all labelset information
+        table = soup.find_all('tr', attrs={"data-label-id": True})
 
-            # Use session.get() to make a GET request to the source URL
-            response = session.get(labelset_url,
-                                   data=data,
-                                   headers=headers,
-                                   cookies=cookies)
+        # Loop through each row, grab the information, store in lists
+        rows = []
+        for row in tqdm(table):
+            # Grab attributes from row
+            attributes = row.find_all("td")
+            # Extract each attribute, store in variable
+            name = attributes[0].text
+            label_id = attributes[0].find("a").get("href").split("/")[2]
+            url = CORALNET_URL + attributes[0].find("a").get("href")
+            functional_group = attributes[1].text
+            popularity = attributes[2].find("div").get("title").split("%")[0]
+            short_code = attributes[4].text
+            # Additional attribute information
+            is_duplicate = False
+            is_verified = False
+            has_calcification = False
+            notes = ""
 
-            # Pass along the cookies
-            cookies = response.cookies
+            # Loop through the optional attributes
+            for column in attributes[3].find_all("img"):
+                if column.get("alt") == "Duplicate":
+                    is_duplicate = True
+                    notes = column.get("title")
+                if column.get("alt") == "Verified":
+                    is_verified = True
+                if column.get("alt") == "Has calcification rate data":
+                    has_calcification = True
 
-            # Convert the HTML response to soup
-            soup = BeautifulSoup(response.text, "html.parser")
+            rows.append([label_id,
+                         name,
+                         url,
+                         functional_group,
+                         popularity,
+                         short_code,
+                         is_duplicate,
+                         notes,
+                         is_verified,
+                         has_calcification])
 
-            # Extract the table we're looking for
-            table = soup.find("table", class_="detail_table")
+        # Create dataframe
+        labelset = pd.DataFrame(rows, columns=['Label ID',
+                                               'Name',
+                                               'URL',
+                                               'Functional Group',
+                                               'Popularity %',
+                                               'Short Code',
+                                               'Duplicate',
+                                               'Duplicate Notes',
+                                               'Verified',
+                                               'Has Calcification Rates'])
 
-        labelset = []
+        # Save locally
+        labelset.to_csv(f"{output_dir}CoralNet_Labelset_List.csv")
 
-        # Loop through each row in the table, ignoring the header
-        for tr in table.find_all("tr")[1:]:
-            label_id = tr.find("a").get("href").split("/")[-2]
-            url = CORALNET_URL + tr.find("a").get("href")
-            name = tr.find("a").text.strip()
-            short_code = tr.find_all("td")[1].text.strip()
-            funct_group = tr.find_all("td")[2].text.strip()
+        if os.path.exists(f"{output_dir}CoralNet_Labelset_List.csv"):
+            print("NOTE: Labelset list saved successfully")
+        else:
+            raise Exception("ERROR: Could not download Labelset list; "
+                            "check that variable Labelset URL is correct.")
 
-            labelset.append([label_id, url, name, short_code, funct_group])
+    except Exception as e:
+        print(f"Error: Unable to get labelset list from CoralNet.\n{e}")
+        labelset = None
 
-        # Create dataframe to hold all labelset information
-        df = pd.DataFrame(labelset, columns=['Label ID',
-                                             'Label URL',
-                                             'Name',
-                                             'Short Code',
-                                             'Functional Group'])
+    return driver, labelset
 
-    except:
-        print("Error: Unable to get labelset from source.")
 
-    return df
+def get_sources_with(driver, labelsets, output_dir):
+    """
+    Downloads a list of sources that contain the specified labelsets.
+    """
+
+    # Go to the images page
+    driver.get(CORALNET_LABELSET_URL)
+
+    print("NOTE: Downloading list of sources")
+
+    try:
+        source_list = []
+
+        # Loop through all labelset URLs
+        for i, r in tqdm(labelsets.iterrows()):
+
+            # Go to the labeset page
+            driver.get(r['URL'])
+
+            # Parse the HTML response using BeautifulSoup
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+            # Find all the source ids on the page
+            a_tags = soup.find_all('a')
+            for a_tag in a_tags:
+
+                # It's an a_tag, but not one of interest
+                if not '/source/' in a_tag.get('href'):
+                    continue
+
+                # Get the source id
+                source_id = a_tag.get("href").split("/")[-2]
+                source_id = source_id if source_id.isnumeric() else None
+                # Get the URL
+                source_url = f"{CORALNET_URL}/label/{source_id}/"
+                # Get the source name
+                source_name = a_tag.text.strip()
+
+                # Add to the list if it's a valid source
+                if source_id:
+                    source_list.append([source_id,
+                                        source_name,
+                                        source_url,
+                                        r['Name']])
+
+        # If the list of source ids is not empty, save locally
+        if source_list:
+            # Convert to dataframe
+            source_list = pd.DataFrame(source_list, columns=['Source_ID',
+                                                             'Source_Name',
+                                                             'Source_URL',
+                                                             'Contains'])
+            # Save locally
+            source_list.to_csv(f"{output_dir}Desired_Source_ID_List.csv")
+            # Check that it exists
+            if os.path.exists(f"{output_dir}Desired_Source_ID_List.csv"):
+                print("NOTE: Source ID List saved successfully")
+            else:
+                raise Exception("ERROR: Could not save Source ID List")
+        else:
+            raise Exception("ERROR: No sources found")
+
+    except Exception as e:
+        print(f"ERROR: Unable to get list of Source IDs\n{e}")
+        source_list = None
+
+    return driver, source_list
+
+
+def download_coralnet_sources(driver, output_dir):
+    """
+    Downloads a list of all the public sources currently on CoralNet.
+    """
+
+    # Variable to hold the list of sources
+    sources = None
+
+    # Go to the images page
+    driver.get(CORALNET_SOURCE_URL)
+
+    print("NOTE: Downloading CoralNet Source List")
+
+    try:
+        # Parse the HTML response using BeautifulSoup
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+        # Find all the instances of sources
+        links = soup.find_all('ul', class_='object_list')[0].find_all("li")
+
+        # Lists to store the source IDs and names
+        source_urls = []
+        source_ids = []
+        source_names = []
+
+        # Now, get all the source IDs and names on the page
+        for link in tqdm(links):
+            # Parse the information
+            url = CORALNET_URL + link.find("a").get("href")
+            source_id = url.split("/")[-2]
+            source_name = link.find("a").text.strip()
+
+            # Check what is grabbed it actually a source
+            if source_id.isnumeric():
+                source_urls.append(url)
+                source_ids.append(source_id)
+                source_names.append(source_name)
+
+        # Store as a dict
+        sources = {'Source_ID': source_ids,
+                   'Source_Name': source_names,
+                   'Source_URL': source_urls}
+
+        # Create a dataframe
+        sources = pd.DataFrame(sources)
+        sources.to_csv(f"{output_dir}CoralNet_Source_ID_List.csv")
+
+        if os.path.exists(f"{output_dir}CoralNet_Source_ID_List.csv"):
+            print("NOTE: CoralNet Source list saved successfully")
+        else:
+            raise Exception("ERROR: Could not download Source ID list; "
+                            "check that variable CoralNet URL is correct.")
+    except Exception as e:
+        print(f"Error: Unable to get source list from CoralNet.\n{e}")
+        sources = None
+
+    return driver, sources
+
+# -------------------------------------------------------------------------------------------------
+# Functions for downloading data from individual sources
+# -------------------------------------------------------------------------------------------------
+
+def download_metadata(driver, source_id, source_dir=None):
+    """
+    Given a source ID, download the labelset.
+    """
+
+    # To hold the metadata
+    meta = []
+
+    # Go to the meta page
+    driver.get(CORALNET_URL + f"/source/{source_id}/")
+
+    # First check that this is existing source the user has access to
+    try:
+        # Check the permissions
+        driver, status = check_permissions(driver)
+
+        # Check the status
+        if "Page could not be found" in status.text:
+            raise Exception(status.text.split('.')[0])
+
+    except Exception as e:
+        print(f"ERROR: {e} or you do not have permission to access it")
+        sys.exit(1)
+
+    print(f"NOTE: Downloading model metadata for {source_id}")
+
+    try:
+        # Convert the page to soup
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+        script = None
+
+        # Of the scripts, find the one containing model metadata
+        for script in soup.find_all("script"):
+            if "Classifier overview" in script.text:
+                script = script.text
+                break
+
+        # If the page doesn't have model metadata, then return None early
+        if not script:
+            raise Exception("NOTE: No model metadata found")
+
+        # Parse the data when represented as a string, convert to dict
+        data = script[script.find("data:"):].split(",\n")[0]
+        data = eval(data[data.find("[{"):])
+
+        # Loop through and collect meta from each model instance, store
+        for point in tqdm(data):
+            classifier_nbr = point["x"]
+            score = point["y"]
+            nimages = point["nimages"]
+            traintime = point["traintime"]
+            date = point["date"]
+            source_id = point["pk"]
+
+            meta.append([classifier_nbr,
+                         score,
+                         nimages,
+                         traintime,
+                         date,
+                         source_id])
+
+        # Convert list to dataframe
+        meta = pd.DataFrame(meta, columns=['Classifier nbr',
+                                           'Accuracy %',
+                                           'N_Images',
+                                           'Train_Time',
+                                           'Date',
+                                           'Model_ID'])
+
+        if source_dir:
+            # Save the metadata
+            meta.to_csv(source_dir + "metadata.csv")
+
+            # Check that it was saved
+            if os.path.exists(source_dir + "metadata.csv"):
+                print("NOTE: Metadata saved successfully")
+
+    except Exception as e:
+        print(f"ERROR: Issue with downloading metadata")
+        meta = None
+
+    return driver, meta
+
+
+def download_labelset(driver, source_id, source_dir):
+    """
+    Given a source ID, download the labelset.
+    """
+
+    # To hold the labelset
+    labelset = None
+
+    # Go to the images page
+    driver.get(CORALNET_URL + f"/source/{source_id}/labelset/")
+
+    # First check that this is existing source the user has access to
+    try:
+        # Check the permissions
+        driver, status = check_permissions(driver)
+
+        # Check the status
+        if "Page could not be found" in status.text:
+            raise Exception(status.text.split('.')[0])
+
+    except Exception as e:
+        print(f"ERROR: {e} or you do not have permission to access it")
+        sys.exit(1)
+
+    print(f"NOTE: Downloading labelset for {source_id}")
+
+    try:
+        # Find the "Export Label to CSV" button
+        path = 'input[type="submit"][value="Export label entries to CSV"]'
+        button = driver.find_element(By.CSS_SELECTOR, path)
+
+        # Click the button
+        if button.is_enabled():
+            button.click()
+        else:
+            raise Exception("ERROR: Button is not enabled")
+
+        # Wait for the file to download
+        while not os.path.exists(source_dir + "labelset.csv"):
+            time.sleep(1)
+
+        print("NOTE: Labelset saved successfully")
+        labelset = pd.read_csv(source_dir + "labelset.csv")
+
+    except Exception as e:
+        print(f"ERROR: Issue with downloading labelset")
+        labelset = None
+
+    return driver, labelset
+
+
+def download_image(image_url, image_path):
+    """
+    Download an image from a URL and save it to a directory. Return the path
+    to the downloaded image if download was successful, otherwise return None.
+    """
+    # Send a GET request to the image URL
+    response = requests.get(image_url)
+    # Check if the response was successful
+    if response.status_code == 200:
+        # Save the image to the specified path
+        with open(image_path, 'wb') as f:
+            f.write(response.content)
+        return image_path, True
+    else:
+        return image_path, False
+
+
+def download_images(dataframe, source_dir):
+    """
+    Download images from URLs in a pandas dataframe and save them to a
+    directory.
+    """
+
+    # Save the dataframe of images locally
+    csv_file = source_dir + "images.csv"
+    dataframe.to_csv(csv_file)
+    # Check if the CSV file was saved before trying to download
+    if os.path.exists(csv_file):
+        print(f"NOTE: Saved image dataframe as CSV file")
+    else:
+        raise Exception("Error: Unable to save image CSV file")
+
+    # Create the image directory if it doesn't exist
+    image_dir = source_dir + "images/"
+    os.makedirs(image_dir, exist_ok=True)
+
+    print(f"NOTE: Downloading {len(dataframe)} images")
+
+    # To hold the expired images
+    expired_images = []
+
+    with tqdm(total=len(dataframe)) as pbar:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+
+            results = []
+
+            for index, row in dataframe.iterrows():
+                # Get the image name and URL from the dataframe
+                name = row['image_name']
+                url = row['image_url']
+                path = image_dir + name
+                # Add the download task to the executor
+                results.append(executor.submit(download_image, url, path))
+
+            # Wait for all tasks to complete and collect the results
+            for result in concurrent.futures.as_completed(results):
+                # Get the downloaded image path
+                downloaded_image_path, downloaded = result.result()
+                # Get the image name from the downloaded image path
+                basename = os.path.basename(downloaded_image_path)
+                if not downloaded:
+                    expired_images.append(basename)
+                # Update the progress bar
+                pbar.update(1)
+
+    if expired_images:
+        print(f"NOTE: {len(expired_images)} images had expired before being downloaded")
+        print(f"NOTE: Saving list of expired images to {source_dir}expired_images.csv")
+        expired_images = pd.DataFrame(expired_images, columns=['image_path'])
+        expired_images.to_csv(source_dir + "expired_images.csv")
+
+
+def get_image_url(session, image_page_url):
+    """
+    Given an image page URL, retrieve the image URL.
+    """
+
+    try:
+        # Make a GET request to the image page URL using the authenticated session
+        response = session.get(image_page_url)
+        cookies = response.cookies
+
+        # Convert the webpage to soup
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Find the div element with id="original_image_container" and style="display:none;"
+        image_container = soup.find('div', id='original_image_container', style='display:none;')
+
+        # Find the img element within the div and get the src attribute
+        image_url = image_container.find('img').get('src')
+
+        return image_url
+
+    except Exception as e:
+        print(f"Error: Unable to get image URL from image page: {e}")
+        return None
 
 
 def get_image_urls(image_page_urls, username, password):
     """
-    Returns an AWS url for a list of images, give the image page urls.
-
-    Args: image_page_url (string): The url of the source's image page.
-
-    Returns:
-            'image_url': The URL of the image on Amazon AWS
+    Given a list of image page URLs, retrieve the image URLs for each image page.
+    This function uses requests to authenticate with the website and retrieve
+    the image URLs, because it is thread-safe, unlike Selenium.
     """
 
-    # Create an empty variable to store the image url
+    print("NOTE: Retrieving image URLs")
+
+    # List to hold all the image URLs
     image_urls = []
 
     # Send a GET request to the login page to retrieve the login form
@@ -256,771 +495,268 @@ def get_image_urls(image_page_urls, username, password):
         "Referer": LOGIN_URL,
     }
 
-    try:
-        print(f"NOTE: Getting URLs for {len(image_page_urls)} images...")
+    # Use requests.Session to create a session that will maintain your login state
+    session = requests.Session()
 
-        # Use requests.Session to create a session that will maintain your
-        # login state
-        with requests.Session() as session:
-            # Use session.post() to submit the login form, including the
-            # "Referer" header
-            response = session.post(LOGIN_URL,
-                                    data=data,
-                                    headers=headers,
-                                    cookies=cookies)
+    # Use session.post() to submit the login form
+    session.post(LOGIN_URL, data=data, headers=headers, cookies=cookies)
 
-            for image_page_url in image_page_urls:
+    with tqdm(total=len(image_page_urls)) as pbar:
+        with ThreadPoolExecutor() as executor:
+            # Submit the image_url retrieval tasks to the thread pool
+            future_to_url = {executor.submit(get_image_url, session, url):
+                                 url for url in image_page_urls}
 
-                # Use session.get() to make a GET request to the source URL
-                response = session.get(image_page_url,
-                                       data=data,
-                                       headers=headers,
-                                       cookies=cookies)
+            # Retrieve the completed results as they become available
+            for future in concurrent.futures.as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    image_url = future.result()
+                    if image_url:
+                        image_urls.append(image_url)
+                except Exception as e:
+                    print(f"ERROR: issue retrieving image URL for {url}\n{e}")
+                finally:
+                    pbar.update(1)
+                    pbar.refresh()
 
-                # Pass along the cookies
-                cookies = response.cookies
-
-                # Convert the webpage to soup
-                soup = BeautifulSoup(response.text, "html.parser")
-
-                # Find the div element with id="original_image_container" and
-                # style="display:none;"
-                image_container = soup.find('div',
-                                            id='original_image_container',
-                                            style='display:none;')
-
-                # Find the img element within the div, get the src attribute
-                image_url = image_container.find('img').get('src')
-                image_urls.append(image_url)
-
-    except:
-        print("Error: Unable to get image urls from image pages.")
+    print(f"NOTE: Retrieved {len(image_urls)} image URLs")
 
     return image_urls
 
 
-def get_images(source_id, username, password, verbose=False):
+def get_images(driver, source_id):
     """
-    Crawls a source for all the images it contains. Stores the image name,
-    image page url, and image url (AWS) in a pandas dataframe.
-
-    Args: image_url (string): The url of the source's image page.
-
-    Returns:
-        Pandas dataframe with the following columns:
-            'image_name': The file name of the image
-            'image_page': The URL of the image on CoralNet
-            'image_url': The URL of the image on Amazon AWS
+    Given a source ID, retrieve the image names, and page URLs.
     """
 
-    print("Crawling for Images...")
+    # To hold the images
+    images = None
 
-    # Set the url for the source given the source id
-    source_url = CORALNET_URL + "/source/" + str(source_id)
-    image_url = source_url + "/browse/images/"
+    # Go to the images page
+    driver.get(CORALNET_URL + f"/source/{source_id}/browse/images/")
 
-    # Create an empty dataframe to store the image data
-    df = None
+    # First check that this is existing source the user has access to
+    try:
+        # Check the permissions
+        driver, status = check_permissions(driver)
 
-    # A list containing the urls to all the image pages and a list containing
-    # the urls to all the images hosted on amazon
-    image_names = []
+        # Check the status
+        if "Page could not be found" in status.text:
+            raise Exception(status.text.split('.')[0])
+
+    except Exception as e:
+        print(f"ERROR: {e} or you do not have permission to access it")
+        sys.exit(1)
+
+    print(f"NOTE: Crawling all pages for source {source_id}")
+
+    # Create lists to store the URLs and titles
     image_page_urls = []
-    image_path_urls = []
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
+    image_names = []
 
     try:
-        # Use requests.Session to create a session that will maintain your
-        # login state
-        with requests.Session() as session:
-            # Use session.post() to submit the login form, including the
-            # "Referer" header
-            response = session.post(LOGIN_URL,
-                                    data=data,
-                                    headers=headers,
-                                    cookies=cookies)
+        # Find the element with the page number
+        page_element = driver.find_element(By.CSS_SELECTOR, 'div.line')
+        num_pages = int(page_element.text.split(" ")[-1]) // 20 + 1
 
-            # Use session.get() to make a GET request to the source URL
-            response = session.get(image_url,
-                                   data=data,
-                                   headers=headers,
-                                   cookies=cookies)
+        with tqdm(total=num_pages) as pbar:
 
-            # Pass along the cookies
-            cookies = response.cookies
+            while True:
 
-            # Convert the webpage to soup
-            soup = BeautifulSoup(response.text, "html.parser")
+                # Find all the image elements
+                url_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
+                name_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
 
-            # Grab the first image page url
-            images_divs = soup.find('span', class_='thumb_wrapper')
-            image_href = images_divs.find_all('a')[0].get("href")
-            next_image_page_url = CORALNET_URL + image_href
+                # Iterate over the image elements
+                for url_element, name_element in list(zip(url_elements, name_elements)):
+                    # Extract the href attribute (URL)
+                    image_page_url = url_element.get_attribute('href')
+                    image_page_urls.append(image_page_url)
 
-            # Crawl across all image page urls, grabbing the image path url
-            # as well as the next page url continue doing this until the end
-            # of the source project image pages, where there is no next.
-            while next_image_page_url is not None:
+                    # Extract the title attribute (image name)
+                    image_name = name_element.get_attribute('title').split(" - ")[0]
+                    image_names.append(image_name)
 
-                image_name = None
-                image_page_url = next_image_page_url
-                image_path_url = None
-                next_image_page_url = None
+                path = 'input[title="Next page"]'
+                next_button = driver.find_elements(By.CSS_SELECTOR, path)
 
-                # From the image page url, get the associated image path url
-                # Use session.get() to make a GET request to the source URL
-                response = session.get(image_page_url,
-                                       data=data,
-                                       headers=headers,
-                                       cookies=cookies)
+                if next_button:
+                    next_button[0].click()
+                    pbar.update(1)
+                    pbar.refresh()
 
-                # Pass along the cookies
-                cookies = response.cookies
-
-                # Convert the webpage to soup
-                soup = BeautifulSoup(response.text, "html.parser")
-
-                # Find the div element with id="original_image_container" and
-                # style="display:none;"
-                image_container = soup.find('div',
-                                            id='original_image_container',
-                                            style='display:none;')
-
-                # Find the img element within the div, get the src attribute
-                image_path_url = image_container.find('img').get('src')
-
-                # Now, get the next page's url
-                for a_tag in soup.find_all('a'):
-                    # check if the text of the <a> tag contains "Next"
-                    if "Next" in a_tag.text:
-                        # Get the value of the href attribute
-                        next_image_page_url = CORALNET_URL + a_tag.get('href')
-
-                    # Else, it returns None; we know we're at the end of the
-                    # images which will cause an exit from the current while
-                    # loop.
-
-                # Get the name of the image; when downloaded it might not match
-                image_name = soup.find('title').text.split(" |")[0]
-
-                image_names.append(image_name)
-                image_page_urls.append(image_page_url)
-                image_path_urls.append(image_path_url)
-
-                if verbose:
-                    print(image_name, image_page_url, image_path_url)
-
-            # Storing the results in dataframe
-            df = pd.DataFrame(list(zip(image_names,
-                                       image_page_urls,
-                                       image_path_urls)),
-                              columns=['image_name',
-                                       'image_page',
-                                       'image_url'])
-    except:
-        print("Error: Unable to get images from source.")
-
-    return df
-
-
-def download_image(image_url, image_path):
-    """
-    Download an image from a URL and save it to a directory. Return the path
-    to the downloaded image if download was successful, otherwise return None.
-    """
-    # Send a GET request to the image URL
-    response = requests.get(image_url)
-    # Check if the response was successful
-    if response.status_code == 200:
-        # Save the image to the specified path
-        with open(image_path, 'wb') as f:
-            f.write(response.content)
-        return image_path, True
-    else:
-        return image_path, False
-
-
-def download_images(dataframe, source_dir):
-    """
-    Download images from URLs in a pandas dataframe and save them to a
-    directory.
-
-    Parameters:
-    -----------
-    dataframe: pandas DataFrame
-        A pandas DataFrame with columns containing image URLs.
-    source_dir: str
-        The directory where the image URLs CSV file will be saved.
-    image_dir: str
-        The directory where the downloaded images will be saved.
-    """
-
-    print("Downloading Images...")
-
-    # Save the dataframe of images locally
-    csv_file = source_dir + "images.csv"
-    dataframe.to_csv(csv_file)
-    # Check if the CSV file was saved before trying to download
-    if os.path.exists(csv_file):
-        print(f"Image CSV saved to: {csv_file}")
-    else:
-        raise Exception("Error: Unable to save image CSV.")
-
-    # Create the image directory if it doesn't exist
-    image_dir = source_dir + "images/"
-    os.makedirs(image_dir, exist_ok=True)
-
-    expired_images = []
-
-    with multiprocessing.Pool() as pool:
-
-        results = []
-
-        for index, row in dataframe.iterrows():
-            # Get the image name and URL from the dataframe
-            name = row['image_name']
-            url = row['image_url']
-            path = image_dir + name
-            # Add the download task to the pool
-            results.append(pool.apply_async(download_image, (url, path)))
-
-        # Wait for all tasks to complete and collect the results
-        for result in results:
-            # Get the downloaded image path
-            downloaded_image_path, downloaded = result.get()
-
-            if downloaded:
-                print("File downloaded:", downloaded_image_path)
-            else:
-                print(f"File could not be downloaded {downloaded_image_path}")
-                expired_images.append(downloaded_image_path)
-
-    if expired_images:
-        print(f"Expired images: {len(expired_images)}")
-        expired_images = pd.DataFrame(expired_images, columns=['image_path'])
-        expired_images.to_csv(source_dir + "expired_images.csv")
-
-
-def get_annotations(source_id, username, password):
-    """
-    This function downloads the annotations from a CoralNet source using the
-    provided image URL. It logs into CoralNet using the provided username
-    and password, and exports the annotations for the images in the source
-    as a CSV file, which is saved in the local source directory.
-
-    :param source_id: A string containing the source of interest.
-    """
-
-    print("Downloading Annotations...")
-
-    # Set the url for the source given the source id
-    source_url = CORALNET_URL + "/source/" + str(source_id)
-    image_url = source_url + "/browse/images/"
-
-    # Create an empty variable for annotations
-    df = None
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
-
-    try:
-        # Use requests.Session to create a session that will maintain your
-        # login state
-        with requests.Session() as session:
-
-            # Use session.post() to submit the login form, including the
-            # "Referer" header
-            response = session.post(LOGIN_URL,
-                                    data=data,
-                                    headers=headers,
-                                    cookies=cookies)
-
-            # Use session.get() to make a GET request to the source URL
-            response = session.get(image_url,
-                                   data=data,
-                                   headers=headers,
-                                   cookies=cookies)
-
-            # Pass along the cookies
-            cookies = response.cookies
-
-            # Parse the HTML response using BeautifulSoup
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # Find the form in the HTML
-            form = soup.find("form", {"id": "export-annotations-form"})
-
-            # If form comes back empty, it's likely the credentials are wrong
-            if form is None:
-                raise Exception("Annotations could not be downloaded; "
-                                "it looks like the CoralNet Username and "
-                                "Password are incorrect!")
-
-            # Extract the form fields (input elements)
-            inputs = form.find_all("input")
-
-            # Create a dictionary with the form fields and their values
-            data = {'optional_columns': []}
-            for i, input in enumerate(inputs):
-                if i == 0:
-                    data[input["name"]] = input["value"]
                 else:
-                    data['optional_columns'].append(input['value'])
+                    print("NOTE: Finished crawling all pages")
+                    break
 
-            # Use session.post() to submit the form
-            response = session.post(CORALNET_URL + form["action"],
-                                    data=data,
-                                    headers=headers,
-                                    cookies=cookies)
+            images = pd.DataFrame({'image_page': image_page_urls,
+                                   'image_name': image_names})
 
-            # Check the response status code
-            if response.status_code == 200:
-                # Convert the text in response to a dataframe
-                df = pd.read_csv(io.StringIO(response.text), sep=",")
+    except Exception as e:
+        print(f"ERROR: Issue with crawling pages")
+        images = None
 
-    except:
-        print("Error: Unable to get annotations from source.")
-
-    return df
+    return driver, images
 
 
-def download_data(source_id, username, password, output_dir):
-    """This function serves as the front for downloading all the data
+def download_annotations(driver, source_id, source_dir, wait_time=3600):
+    """
+    Given a source ID, download the annotations.
+    """
+
+    # To hold the annotations
+    annotations = None
+
+    # Go to the images page
+    driver.get(CORALNET_URL + f"/source/{source_id}/browse/images/")
+
+    # First check that this is existing source the user has access to
+    try:
+        # Check the permissions
+        driver, status = check_permissions(driver)
+
+        # Check the status
+        if "Page could not be found" in status.text:
+            raise Exception(status.text.split('.')[0])
+
+    except Exception as e:
+        print(f"ERROR: {e} or you do not have permission to access it")
+        sys.exit(1)
+
+    print(f"NOTE: Downloading annotations for source {source_id}")
+
+
+    try:
+        # Wait for the action box to be present
+        action_box = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, 'action-box'))
+        )
+
+        if not action_box.is_enabled():
+            raise Exception("ERROR: Action box is not enabled")
+
+        # Select all the annotation options
+        path = 'browse_action'
+        action_select = Select(action_box.find_element(By.NAME, path))
+        action_select.select_by_value('export_annotations')
+
+        # Select the desired image selection
+        path = 'image_select_type'
+        image_select = Select(action_box.find_element(By.NAME, path))
+        image_select.select_by_value('all')
+
+        # Select the optional columns
+        path = 'input[name="optional_columns"]'
+        optional_columns = action_box.find_elements(By.CSS_SELECTOR, path)
+        for column in optional_columns[0:4]:
+            column.click()
+
+        # Change the wait time, since this takes a while and will otherwise timeout
+        driver.implicitly_wait(wait_time)
+
+        # Submit the form
+        path = 'form#export-annotations-form button.submit'
+        go_button = action_box.find_element(By.CSS_SELECTOR, path)
+        go_button.click()
+
+        # Wait for the file to download
+        while not os.path.exists(source_dir + "annotations.csv"):
+            time.sleep(1)
+
+        print("NOTE: Annotations saved successfully")
+        annotations = pd.read_csv(source_dir + "annotations.csv")
+
+    except Exception as e:
+        print(f"ERROR: Issue with downloading annotations")
+        annotations = None
+
+    # Reset the wait time
+    driver.implicitly_wait(30)
+
+    return driver, annotations
+
+
+def download_data(driver, source_id, output_dir):
+    """
+    This function serves as the front for downloading all the data
     (labelset, model metadata, annotations and images) for a source. This
     function was made so that multiprocessing can be used to download the
-    data for multiple sources concurrently."""
+    data for multiple sources concurrently.
+    """
 
     # The directory to store the output
-    source_dir = output_dir + "/" + str(source_id) + "/"
-    image_dir = source_dir + "images/"
-    anno_dir = source_dir + "annotations/"
+    source_dir = os.path.abspath(output_dir) + f"\\{str(source_id)}\\"
+    image_dir = source_dir + "images\\"
 
     # Creating the directories
     os.makedirs(source_dir, exist_ok=True)
     os.makedirs(image_dir, exist_ok=True)
-    os.makedirs(anno_dir, exist_ok=True)
+
+    # Update the download directory in the driver
+    download_settings = {
+        "behavior": "allow",
+        "downloadPath": source_dir
+    }
+
+    driver.execute_cdp_cmd('Page.setDownloadBehavior', download_settings)
 
     try:
         # Get the metadata of the trained model, then save.
-        meta = get_model_meta(source_id, username, password)
+        driver, meta = download_metadata(driver, source_id, source_dir)
         # Print if there is no trained model.
         if meta is None:
-            print("Source does not have a trained model.")
-        else:
-            # Save the metadata to a CSV file.
-            meta.to_csv(source_dir + "metadata.csv")
-            # Check if the metadata was saved.
-            if os.path.exists(source_dir + "metadata.csv"):
-                print("Metadata saved to: ", source_dir + "metadata.csv")
-            else:
-                raise Exception("Could not download model metadata.")
+            raise Exception(f"ERROR: Source {source_id} does not have a trained model")
 
     except Exception as e:
-        print("Error: Unable to get model metadata from source.")
-        print(e)
+        print(f"ERROR: Unable to get model metadata from source {source_id}\n{e}")
+        meta = None
 
     try:
         # Get the labelset, then save.
-        labelset = get_labelset(source_id, username, password)
+        driver, labelset = download_labelset(driver, source_id, source_dir)
         # Print if there is no labelset.
         if labelset is None:
-            print("Source does not have a labelset.")
-        else:
-            labelset.to_csv(source_dir + "labelset.csv")
-            # Check if the labelset was saved.
-            if os.path.exists(source_dir + "labelset.csv"):
-                print("Labelset saved to: ", source_dir + "labelset.csv")
-            else:
-                raise Exception("Could not download labelset.")
+            raise Exception(f"ERROR: Source {source_id} does not have a labelset")
 
     except Exception as e:
-        print("Error: Unable to get labelset from source.")
-        print(e)
+        print(f"ERROR: Unable to get labelset from source {source_id}\n{e}")
+        labelset = None
 
     try:
-        # Get all the image URLS, then save.
-        images = get_images(source_id, username, password)
-        download_images(images, source_dir)
+        # Get the images for the source
+        driver, images = get_images(driver, source_id)
+
+        if images is not None:
+            # Get the image page URLs
+            image_pages = images['image_page'].tolist()
+            # Get the image AWS URLs
+            images['image_url'] = get_image_urls(image_pages,
+                                                 username,
+                                                 password)
+
+            # Download the images to the specified directory
+            download_images(images, source_dir)
+
+        else:
+            raise Exception(f"ERROR: Source {source_id} does not have any images")
+
     except Exception as e:
-        print("Error: Unable to get images from source.")
-        print(e)
+        print(f"ERROR: Unable to get images from source {source_id}\n{e}")
+        images = None
 
     try:
         # Get all the annotations, then save.
-        annotations = get_annotations(source_id, username, password)
+        driver, annotations = download_annotations(driver, source_id, source_dir)
         # Print if there are no annotations.
         if annotations is None:
-            print("Source does not have any annotations.")
-        else:
-            annotations.to_csv(source_dir + "annotations.csv")
-            # Check if the annotations were saved.
-            if os.path.exists(source_dir + "annotations.csv"):
-                print("Annotations saved to: ", source_dir + "annotations.csv")
-
-                # Save annotations per image
-                for image_name in annotations['Name'].unique():
-                    image_annotations = annotations[
-                        annotations['Name'] == image_name]
-                    # Save in annotation folder
-                    anno_name = image_name.split(".")[0] + ".csv"
-                    image_annotations.to_csv(anno_dir + anno_name)
-            else:
-                raise Exception("Could not download annotations.")
+            raise Exception(f"ERROR: Source {source_id} does not have any annotations")
 
     except Exception as e:
-        print("Error: Unable to get annotations from source.")
-        print(e)
+        print(f"ERROR: Unable to get annotations from source {source_id}\n{e}")
+        annotations = None
 
-
-# -----------------------------------------------------------------------------
-# Downloading All of CoralNet
-# -----------------------------------------------------------------------------
-
-def download_coralnet_sources(username, password, output_dir):
-    """Downloads a list of all the public sources currently on CoralNet."""
-
-    print("Downloading CoralNet Source List...")
-
-    # Create an empty dataframe to store the source list
-    df = None
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
-
-    # Use requests.Session to create a session that will maintain your login
-    # state
-    with requests.Session() as session:
-
-        # Use session.post() to submit the login form, including the
-        # "Referer" header
-        response = session.post(LOGIN_URL,
-                                data=data,
-                                headers=headers,
-                                cookies=cookies)
-
-        # Use session.get() to make a GET request to the source URL
-        response = session.get(CORALNET_SOURCE_URL)
-
-        # Pass along the cookies
-        cookies = response.cookies
-
-        # Parse the HTML response using BeautifulSoup
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        links = soup.find_all('ul', class_='object_list')[0].find_all("li")
-
-        # Lists to store the source IDs and names
-        source_ids = []
-        source_names = []
-
-        # Now, get all the source IDs and names on the page
-        for link in links:
-            href = link.find("a").get("href")
-            source_id = href.split("/")[-2]
-            source_name = link.find("a").text.strip()
-
-            # Confirm that the ID is numerical
-            if source_id.isnumeric():
-                source_ids.append(source_id)
-                source_names.append(source_name)
-
-        try:
-            # Store as a dict
-            data = {'Source_ID': source_ids, 'Source_Name': source_names}
-            # Create a dataframe
-            df = pd.DataFrame(data)
-            df.to_csv(f"{output_dir}CoralNet_Source_ID_List.csv")
-
-            if os.path.exists(f"{output_dir}CoralNet_Source_ID_List.csv"):
-                print("Source ID list exported successfully.")
-            else:
-                raise Exception("Could not download Source ID list; check "
-                                "that variable CoralNet URL is correct.")
-        except Exception as e:
-            print("Error: Unable to get source list from CoralNet.")
-            print(e)
-
-    return df
-
-
-def download_coralnet_labelset(username, password, output_dir):
-    """Downloads a list of all the Labelsets currently on CoralNet."""
-
-    print("Downloading CoralNet Labeset List...")
-
-    # Create an empty dataframe to store the labelset list
-    df = None
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
-
-    # Use requests.Session to create a session that will maintain your login
-    # state
-    with requests.Session() as session:
-
-        # Use session.post() to submit the login form, including the
-        # "Referer" header
-        response = session.post(LOGIN_URL,
-                                data=data,
-                                headers=headers,
-                                cookies=cookies)
-
-        # Use session.get() to make a GET request to the source URL
-        response = session.get(CORALNET_LABELSET_URL)
-
-        # Pass along the cookies
-        cookies = response.cookies
-
-        # Parse the HTML response using BeautifulSoup
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Get the table with all labelset information
-        table = soup.find_all('tr', attrs={"data-label-id": True})
-
-        # Loop through each row, grab the information, store in lists
-        rows = []
-        for row in table:
-            # Grab attributes from row
-            attributes = row.find_all("td")
-            # Extract each attribute, store in variable
-            name = attributes[0].text
-            label_id = attributes[0].find("a").get("href").split("/")[2]
-            url = CORALNET_URL + attributes[0].find("a").get("href")
-            functional_group = attributes[1].text
-            popularity = attributes[2].find("div").get("title").split("%")[0]
-            short_code = attributes[4].text
-
-            is_duplicate = False
-            is_verified = False
-            has_calcification = False
-            notes = ""
-            # Loop through the optional attributes
-            for column in attributes[3].find_all("img"):
-                if column.get("alt") == "Duplicate":
-                    is_duplicate = True
-                    notes = column.get("title")
-                if column.get("alt") == "Verified":
-                    is_verified = True
-                if column.get("alt") == "Has calcification rate data":
-                    has_calcification = True
-
-            rows.append([label_id,
-                         name,
-                         url,
-                         functional_group,
-                         popularity,
-                         short_code,
-                         is_duplicate,
-                         notes,
-                         is_verified,
-                         has_calcification])
-
-        try:
-            # Create dataframe
-            df = pd.DataFrame(rows, columns=['Label ID',
-                                             'Name',
-                                             'URL',
-                                             'Functional Group',
-                                             'Popularity %',
-                                             'Short Code',
-                                             'Duplicate',
-                                             'Duplicate Notes',
-                                             'Verified',
-                                             'Has Calcification Rates'])
-
-            # Save locally
-            df.to_csv(f"{output_dir}CoralNet_Labelset_List.csv")
-
-            if os.path.exists(f"{output_dir}CoralNet_Labelset_List.csv"):
-                print("Labelset list exported successfully.")
-            else:
-                raise Exception("Could not download Labelset list; "
-                                "check that variable Labelset URL is correct.")
-
-        except Exception as e:
-            print("Error: Unable to get labelset list from CoralNet.")
-            print(e)
-
-    return df
-
-
-def get_sources_with(labelsets, username, password, output_dir):
-    """This function takes in a pandas dataframe containing a subset of
-    labelsets and returns a list of source ids that contain those labelsets."""
-
-    print("Finding sources with desired labelsets...")
-
-    # Create an empty dataframe to store the source list
-    df = None
-
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
-
-    # Pass along the cookies
-    cookies = response.cookies
-
-    # Parse the HTML of the response using BeautifulSoup
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # Extract the CSRF token from the HTML of the login page
-    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
-    # Create a dictionary with the login form fields and their values
-    # (replace "username" and "password" with your actual username and
-    # password)
-    data = {
-        "username": username,
-        "password": password,
-        "csrfmiddlewaretoken": csrf_token["value"],
-    }
-
-    # Include the "Referer" header in the request
-    headers = {
-        "Referer": LOGIN_URL,
-    }
-
-    # Use requests.Session to create a session that will maintain your login
-    # state
-    with requests.Session() as session:
-        # Use session.post() to submit the login form, including the
-        # "Referer" header
-        response = session.post(LOGIN_URL,
-                                data=data,
-                                headers=headers,
-                                cookies=cookies)
-
-        # List of source ids that contain the desired labelsets
-        source_ids = []
-
-        # Loop through all labelset URLs
-        for url in labelsets['URL'].values:
-
-            # Use session.get() to make a GET request to the source URL
-            response = session.get(url)
-
-            # Pass along the cookies
-            cookies = response.cookies
-
-            # Parse the HTML response using BeautifulSoup
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # Find all the source ids on the page
-            a_tags = soup.find_all('a')
-            a_tags = [a for a in a_tags if '/source/' in a.get('href')]
-            source_id = [a.get("href").split("/")[-2] for a in a_tags]
-            source_id = [id for id in source_id if id.isnumeric()]
-            source_ids.extend(source_id)
-
-        try:
-            # If the list of source ids is not empty, save locally
-            if source_ids is not []:
-                df = pd.DataFrame(source_ids, columns=['Source_ID'])
-                df.to_csv(f"{output_dir}Desired_Source_ID_List.csv")
-
-                if os.path.exists(f"{output_dir}Desired_Source_ID_List.csv"):
-                    print("Source ID List exported successfully.")
-                else:
-                    raise Exception("Could not download list of Source IDs.")
-
-        except Exception as e:
-            print("Error: Unable to get list of Source IDs.")
-            print(e)
-
-    return df
+    return driver, meta, labelset, images, annotations
 
 
 # -----------------------------------------------------------------------------
@@ -1028,7 +764,8 @@ def get_sources_with(labelsets, username, password, output_dir):
 # -----------------------------------------------------------------------------
 
 def main():
-    """This is the main function of the script. It calls the functions
+    """
+    This is the main function of the script. It calls the functions
     download_labelset, download_annotations, and download_images to download
     the label set, annotations, and images, respectively.
 
@@ -1036,7 +773,10 @@ def main():
     sources, all labelsets, and sources containing specific labelsets.
     It is entirely possibly to identify sources based on labelsets, and
     download all those sources, or simply download all data from all
-    source. Have fun!"""
+    source. Have fun!
+
+    BE RESPONSIBLE WITH YOUR DOWNLOADS. DO NOT OVERWHELM THE SERVERS.
+    """
 
     parser = argparse.ArgumentParser(description='CoralNet arguments')
 
@@ -1055,35 +795,69 @@ def main():
                         help='A root directory where all downloads will be '
                              'saved to.')
 
+    parser.add_argument('--headless', type=str, default='True',
+                        choices=['True', 'False'],
+                        help='Run browser in headless mode')
+
     args = parser.parse_args()
 
     # A list of sources to download
     source_ids = args.source_ids
     if source_ids is None:
-        raise Exception("Please provide a list of source IDs.")
+        print("ERROR: Please provide a list of source IDs.")
+        sys.exit(1)
 
+    # -------------------------------------------------------------------------
+    # Authenticate the user
+    # -------------------------------------------------------------------------
     # Credentials
+    global username, password
     username = args.username
     password = args.password
+
+    try:
+        # Ensure the user provided a username and password.
+        authenticate(username, password)
+    except Exception as e:
+        print(f"ERROR: Could not download data.\n{e}")
+        sys.exit(1)
 
     # Output directory
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    options = Options()
+
+    if args.headless.lower() == 'true':
+        # Set headless mode
+        options.add_argument("--headless")
+
+    # Pass the options object while creating the driver
+    driver = check_for_browsers(options=options)
+    driver, _ = login(driver, username, password)
+
+    # -------------------------------------------------------------------------
+    # Download the data
+    # -------------------------------------------------------------------------
+
     try:
-
-        # Ensure the user provided a username and password.
-        authenticate(username, password)
-
         for source_id in args.source_ids:
-            print(f"Downloading Data for Source: {source_id}")
-            download_data(source_id, username, password, output_dir)
-
-        print("Done.")
+            print(f"\nNOTE: Downloading Data for Source {source_id}")
+            driver, m, l, i, a = download_data(driver, source_id, output_dir)
 
     except Exception as e:
-        print(f"{e}\nERROR: Could not download data.")
+        raise Exception(f"ERROR: Could not download data.\n{e}")
+
+    finally:
+        # Close the browser
+        driver.close()
+
+    print("Done.")
 
 
 if __name__ == "__main__":
     main()
+

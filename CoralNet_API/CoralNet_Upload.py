@@ -1,126 +1,9 @@
-import os
 import glob
-import sys
-import time
-import argparse
-import subprocess
-
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
 from CoralNet import *
 
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
-
-def check_for_browsers(options):
-    """
-    Check if Chrome, Firefox, and Edge browsers are installed.
-    """
-
-    # Greedy search for Chrome, Firefox, and Edge browsers
-    try:
-        browser = webdriver.Chrome(options=options)
-        print("NOTE: Using Google Chrome")
-        return browser
-
-    except Exception as e:
-        print("Warning: Google Chrome is not installed")
-
-    try:
-        browser = webdriver.Edge(options=options)
-        print("NOTE: Using Microsoft Edge")
-        return browser
-
-    except Exception as e:
-        print("Warning: Microsoft Edge is not installed")
-
-    try:
-        browser = webdriver.Firefox(options=options)
-        print("NOTE: Using Mozilla Firefox")
-        return browser
-
-    except Exception as e:
-        print("Warning: Firefox is not installed")
-
-    print("ERROR: No browsers are installed. Exiting")
-    sys.exit(1)
-
-
-def login(username, password, driver):
-    """
-    Log in to CoralNet.
-    """
-
-    # Create a variable for success
-    success = False
-
-    # Navigate to the page to login
-    driver.get(CORALNET_URL + "/accounts/login/")
-
-    # Find the username button
-    path = "id_username"
-    username_input = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.ID, path)))
-
-    # Find the password button
-    path = "id_password"
-    password_input = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.ID, path)))
-
-    # Find the login button
-    path = "//input[@type='submit'][@value='Sign in']"
-    login_button = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.XPATH, path)))
-
-    # Enter the username and password
-    username_input.send_keys(username)
-    password_input.send_keys(password)
-
-    # Click the login button
-    time.sleep(3)
-    login_button.click()
-
-    # Confirm login was successful; after 60 seconds, throw an error.
-    try:
-        path = "//a[@href='/accounts/logout/']/span[text()='Sign out']"
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, path)))
-
-        # Login was successful
-        success = True
-
-    except Exception as e:
-        raise ValueError(f"ERROR: Could not login with {username}\n{e}")
-
-    return driver, success
-
-
-def check_permissions(driver):
-    """
-    Check if the user has permission to access the page.
-    """
-
-    try:
-        # First check that this is existing source the user has access to
-        path = "content-container"
-        status = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, path)))
-
-        # Check the status
-        if not status.text:
-            raise Exception(f"ERROR: Unable to access page information")
-
-    except Exception as e:
-        print(f"ERROR: {e} Exiting.")
-        sys.exit(1)
-
-    return driver, status
-
 
 def upload_images(driver, source_id, images):
     """
@@ -536,7 +419,6 @@ def main():
     try:
         # Authenticate, make sure the credentials are correct
         authenticate(username, password)
-        CORALNET_TOKEN, HEADERS = get_token(username, password)
 
     except Exception as e:
         print(f"ERROR: Could not authenticate for user {username}.\n{e}")
@@ -561,7 +443,7 @@ def main():
 
     # Data to be uploaded
     IMAGES = os.path.abspath(args.images)
-    IMAGES = glob.glob(IMAGES + "\\*.*")[:10]
+    IMAGES = glob.glob(IMAGES + "\\*.*")
     IMAGES = [i for i in IMAGES if i.split('.')[-1] in IMG_FORMATS]
 
     # Check if there are images to upload
@@ -601,7 +483,7 @@ def main():
     # -------------------------------------------------------------------------
 
     # Log in to CoralNet
-    driver, _ = login(username, password, driver)
+    driver, _ = login(driver, username, password)
 
     # Upload images
     if UPLOAD_IMAGES:
@@ -616,9 +498,7 @@ def main():
         driver, _ = upload_annotations(driver, source_id, ANNOTATIONS)
 
     # Close the browser
-    print("NOTE: Closing connection...")
-    driver.quit()
-
+    driver.close()
     print("Done.")
 
 
