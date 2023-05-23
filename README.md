@@ -44,6 +44,21 @@ CoralNet and performing various tasks related to analyzing annotated images. The
 useful for researchers and scientists working with coral reefs, as well as for students and
 hobbyists interested in learning more about these important ecosystems.
 
+### Citation
+
+If used in project or publication, please attribute your use of this repository with the following:
+    
+```
+@misc{CoralNet Tools,
+  author = {Pierce, Jordan and Edwards, Clint and Vieham, Shay and Rojano, Sarah and Cook, 
+  Sophie and Battista, Tim},
+  title = {CoralNet Tools},
+  year = {2022},
+  howpublished = {\url{https://github.com/Jordan-Pierce/CoralNet_Tools}},
+  note = {GitHub repository}
+}
+```
+
 ---
 
 ### Disclaimer
