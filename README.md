@@ -28,6 +28,12 @@ programmatically interact with CoralNet and perform tasks such as uploading and 
 and annotating images. This library can be used to automate tasks and integrate CoralNet 
 functionality into other applications.
 
+#### **Image_Classifier**
+Image_Classifier is a set of tools for training your own patch-based image classifier using the 
+images and annotations downloaded from CoralNet, or those that you create using the Patch_Extractor 
+tool. This tool can be used to classify images based on the presence of specific features or coral
+species.
+
 #### **Patch_Extractor**
 Patch_Extractor is a tool for dividing annotated images into smaller patches, which can be useful 
 for training machine learning models on the annotated data. This tool can be used to generate 
