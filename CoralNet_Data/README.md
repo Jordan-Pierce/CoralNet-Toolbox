@@ -1,6 +1,7 @@
 # CoralNet Data
 
-This is an example of how the scripts expect data to be stored, and how they will be downloaded from:
+This is an example of how the scripts expect data to be stored, and how they will be downloaded 
+from CoralNet:
 
 ```python
 output_dir/

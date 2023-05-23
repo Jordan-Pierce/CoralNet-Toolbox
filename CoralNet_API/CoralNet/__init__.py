@@ -21,9 +21,9 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # Constants
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 
 # Constant for the CoralNet url
 CORALNET_URL = "https://coralnet.ucsd.edu"

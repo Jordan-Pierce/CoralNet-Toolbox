@@ -444,7 +444,7 @@ def main():
     # Data to be uploaded
     IMAGES = os.path.abspath(args.images)
     IMAGES = glob.glob(IMAGES + "\\*.*")
-    IMAGES = [i for i in IMAGES if i.split('.')[-1] in IMG_FORMATS]
+    IMAGES = [i for i in IMAGES if i.split('.')[-1].lower() in IMG_FORMATS]
 
     # Check if there are images to upload
     if len(IMAGES) > 0:

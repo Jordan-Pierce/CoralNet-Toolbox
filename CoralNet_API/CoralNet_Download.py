@@ -1,3 +1,5 @@
+import os.path
+
 from CoralNet import *
 
 
@@ -240,7 +242,7 @@ def download_metadata(driver, source_id, source_dir=None):
         driver, status = check_permissions(driver)
 
         # Check the status
-        if "Page could not be found" in status.text:
+        if "Page could not be found" in status.text or "don't have permission" in status.text:
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
@@ -325,7 +327,7 @@ def download_labelset(driver, source_id, source_dir):
         driver, status = check_permissions(driver)
 
         # Check the status
-        if "Page could not be found" in status.text:
+        if "Page could not be found" in status.text or "don't have permission" in status.text:
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
@@ -364,8 +366,14 @@ def download_image(image_url, image_path):
     Download an image from a URL and save it to a directory. Return the path
     to the downloaded image if download was successful, otherwise return None.
     """
+
+    # Do not re-download images that already exist
+    if os.path.exists(image_path):
+        return image_path, True
+
     # Send a GET request to the image URL
     response = requests.get(image_url)
+
     # Check if the response was successful
     if response.status_code == 200:
         # Save the image to the specified path
@@ -542,7 +550,7 @@ def get_images(driver, source_id):
         driver, status = check_permissions(driver)
 
         # Check the status
-        if "Page could not be found" in status.text:
+        if "Page could not be found" in status.text or "don't have permission" in status.text:
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
@@ -617,7 +625,7 @@ def download_annotations(driver, source_id, source_dir, wait_time=3600):
         driver, status = check_permissions(driver)
 
         # Check the status
-        if "Page could not be found" in status.text:
+        if "Page could not be found" in status.text or "don't have permission" in status.text:
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
@@ -652,13 +660,13 @@ def download_annotations(driver, source_id, source_dir, wait_time=3600):
         for column in optional_columns[0:4]:
             column.click()
 
-        # Change the wait time, since this takes a while and will otherwise timeout
-        driver.implicitly_wait(wait_time)
-
         # Submit the form
         path = 'form#export-annotations-form button.submit'
         go_button = action_box.find_element(By.CSS_SELECTOR, path)
         go_button.click()
+
+        # Change the wait time, since this takes a while and will otherwise timeout
+        driver.implicitly_wait(wait_time)
 
         # Wait for the file to download
         while not os.path.exists(source_dir + "annotations.csv"):
@@ -706,7 +714,7 @@ def download_data(driver, source_id, output_dir):
         driver, meta = download_metadata(driver, source_id, source_dir)
         # Print if there is no trained model.
         if meta is None:
-            raise Exception(f"ERROR: Source {source_id} does not have a trained model")
+            raise Exception(f"ERROR: Source {source_id} may not have a trained model")
 
     except Exception as e:
         print(f"ERROR: Unable to get model metadata from source {source_id}\n{e}")
@@ -717,7 +725,7 @@ def download_data(driver, source_id, output_dir):
         driver, labelset = download_labelset(driver, source_id, source_dir)
         # Print if there is no labelset.
         if labelset is None:
-            raise Exception(f"ERROR: Source {source_id} does not have a labelset")
+            raise Exception(f"ERROR: Source {source_id} may not have a labelset")
 
     except Exception as e:
         print(f"ERROR: Unable to get labelset from source {source_id}\n{e}")
@@ -739,7 +747,7 @@ def download_data(driver, source_id, output_dir):
             download_images(images, source_dir)
 
         else:
-            raise Exception(f"ERROR: Source {source_id} does not have any images")
+            raise Exception(f"ERROR: Source {source_id} may not have any images")
 
     except Exception as e:
         print(f"ERROR: Unable to get images from source {source_id}\n{e}")
@@ -750,10 +758,11 @@ def download_data(driver, source_id, output_dir):
         driver, annotations = download_annotations(driver, source_id, source_dir)
         # Print if there are no annotations.
         if annotations is None:
-            raise Exception(f"ERROR: Source {source_id} does not have any annotations")
+            raise Exception(f"ERROR: Source {source_id} may not have any annotations")
 
     except Exception as e:
         print(f"ERROR: Unable to get annotations from source {source_id}\n{e}")
+        print("NOTE: If there are annotations, you may need to increase the wait time variable")
         annotations = None
 
     return driver, meta, labelset, images, annotations
@@ -845,11 +854,11 @@ def main():
 
     try:
         for source_id in args.source_ids:
-            print(f"\nNOTE: Downloading Data for Source {source_id}")
+            print(f"\nNOTE: Downloading data for source {source_id}")
             driver, m, l, i, a = download_data(driver, source_id, output_dir)
 
     except Exception as e:
-        raise Exception(f"ERROR: Could not download data.\n{e}")
+        raise Exception(f"ERROR: Could not download data\n{e}")
 
     finally:
         # Close the browser
