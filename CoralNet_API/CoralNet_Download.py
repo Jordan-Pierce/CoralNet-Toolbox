@@ -465,7 +465,7 @@ def get_image_url(session, image_page_url):
         return None
 
 
-def get_image_urls(image_page_urls, username, password):
+def get_image_urls(driver, image_page_urls):
     """
     Given a list of image page URLs, retrieve the image URLs for each image page.
     This function uses requests to authenticate with the website and retrieve
@@ -493,8 +493,8 @@ def get_image_urls(image_page_urls, username, password):
     # (replace "username" and "password" with your actual username and
     # password)
     data = {
-        "username": username,
-        "password": password,
+        "username": driver.capabilities['credentials']['username'],
+        "password": driver.capabilities['credentials']['password'],
         "csrfmiddlewaretoken": csrf_token["value"],
     }
 
@@ -530,7 +530,7 @@ def get_image_urls(image_page_urls, username, password):
 
     print(f"NOTE: Retrieved {len(image_urls)} image URLs")
 
-    return image_urls
+    return driver, image_urls
 
 
 def get_images(driver, source_id):
@@ -608,79 +608,117 @@ def get_images(driver, source_id):
     return driver, images
 
 
-def download_annotations(driver, source_id, source_dir, wait_time=3600):
+def download_annotations(driver, source_id, source_dir):
     """
-    Given a source ID, download the annotations.
+    This function downloads the annotations from a CoralNet source.
     """
 
     # To hold the annotations
     annotations = None
 
-    # Go to the images page
-    driver.get(CORALNET_URL + f"/source/{source_id}/browse/images/")
+    # The URL of the source page
+    source_url = CORALNET_URL + f"/source/{source_id}/browse/images/"
 
-    # First check that this is existing source the user has access to
-    try:
-        # Check the permissions
-        driver, status = check_permissions(driver)
+    # Send a GET request to the login page to retrieve the login form
+    response = requests.get(LOGIN_URL)
 
-        # Check the status
-        if "Page could not be found" in status.text or "don't have permission" in status.text:
-            raise Exception(status.text.split('.')[0])
+    # Pass along the cookies
+    cookies = response.cookies
 
-    except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
-        sys.exit(1)
+    # Parse the HTML of the response using BeautifulSoup
+    soup = BeautifulSoup(response.text, "html.parser")
 
-    print(f"NOTE: Downloading annotations for source {source_id}")
+    # Extract the CSRF token from the HTML of the login page
+    csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
 
+    # Create a dictionary with the login form fields and their values
+    # (replace "username" and "password" with your actual username and
+    # password)
+    data = {
+        "username": driver.capabilities['credentials']['username'],
+        "password": driver.capabilities['credentials']['password'],
+        "csrfmiddlewaretoken": csrf_token["value"],
+    }
 
-    try:
-        # Wait for the action box to be present
-        action_box = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, 'action-box'))
-        )
+    # Include the "Referer" header in the request
+    headers = {
+        "Referer": LOGIN_URL,
+    }
 
-        if not action_box.is_enabled():
-            raise Exception("ERROR: Action box is not enabled")
+    # Use requests.Session to create a session that will maintain your login state
+    with requests.Session() as session:
 
-        # Select all the annotation options
-        path = 'browse_action'
-        action_select = Select(action_box.find_element(By.NAME, path))
-        action_select.select_by_value('export_annotations')
+        # Use session.post() to submit the login form, including the "Referer" header
+        response = session.post(LOGIN_URL,
+                                data=data,
+                                headers=headers,
+                                cookies=cookies)
 
-        # Select the desired image selection
-        path = 'image_select_type'
-        image_select = Select(action_box.find_element(By.NAME, path))
-        image_select.select_by_value('all')
+        try:
+            # Use session.get() to make a GET request to the source URL
+            response = session.get(source_url,
+                                   data=data,
+                                   headers=headers,
+                                   cookies=cookies)
 
-        # Select the optional columns
-        path = 'input[name="optional_columns"]'
-        optional_columns = action_box.find_elements(By.CSS_SELECTOR, path)
-        for column in optional_columns[0:4]:
-            column.click()
+            # Pass along the cookies
+            cookies = response.cookies
 
-        # Submit the form
-        path = 'form#export-annotations-form button.submit'
-        go_button = action_box.find_element(By.CSS_SELECTOR, path)
-        go_button.click()
+            # Get the status of the source
+            status = response.text.split(".")[0]
 
-        # Change the wait time, since this takes a while and will otherwise timeout
-        driver.implicitly_wait(wait_time)
+            # Check the response to see if the source exists and the user has access to it
+            if "Page could not be found" in status or "don't have permission" in status:
+                raise Exception(f"ERROR: {status} or you do not have permission to access it")
 
-        # Wait for the file to download
-        while not os.path.exists(source_dir + "annotations.csv"):
-            time.sleep(1)
+            # Download the annotations
+            print(f"NOTE: Downloading annotations for source {source_id}")
 
-        print("NOTE: Annotations saved successfully")
-        annotations = pd.read_csv(source_dir + "annotations.csv")
+            # Parse the HTML response using BeautifulSoup
+            soup = BeautifulSoup(response.text, "html.parser")
 
-    except Exception as e:
-        print(f"ERROR: Issue with downloading annotations")
-        annotations = None
+            # Find the form in the HTML
+            form = soup.find("form", {"id": "export-annotations-form"})
 
-    # Reset the wait time
-    driver.implicitly_wait(30)
+            # If form comes back empty, it's likely the credentials are incorrect
+            if form is None:
+                raise Exception(f"ERROR: Issue with downloading annotations; form is not enabled")
+
+            # Extract the form fields (input elements)
+            inputs = form.find_all("input")
+
+            # Create a dictionary with the form fields and their values
+            data = {'optional_columns': []}
+            for i, input in enumerate(inputs):
+                if i == 0:
+                    data[input["name"]] = input["value"]
+                else:
+                    data['optional_columns'].append(input['value'])
+
+            # Use session.post() to submit the form
+            response = session.post(CORALNET_URL + form["action"],
+                                    data=data,
+                                    headers=headers,
+                                    cookies=cookies)
+
+            # Check the response status code
+            if response.status_code == 200:
+                # Convert the text in response to a dataframe
+                annotations = pd.read_csv(io.StringIO(response.text), sep=",")
+                # Save the dataframe locally
+                annotations.to_csv(source_dir + "annotations.csv")
+
+                if not os.path.exists(source_dir + "annotations.csv"):
+                    raise Exception("ERROR: Issue with saving annotations")
+                else:
+                    print("NOTE: Annotations saved successfully")
+
+            else:
+                raise Exception("ERROR: Could not submit form, likely due to a timeout")
+
+        except Exception as e:
+            print(f"ERROR: Issue with downloading annotations")
+            annotations = None
 
     return driver, annotations
 
@@ -739,9 +777,7 @@ def download_data(driver, source_id, output_dir):
             # Get the image page URLs
             image_pages = images['image_page'].tolist()
             # Get the image AWS URLs
-            images['image_url'] = get_image_urls(image_pages,
-                                                 username,
-                                                 password)
+            driver, images['image_url'] = get_image_urls(driver, image_pages)
 
             # Download the images to the specified directory
             download_images(images, source_dir)
@@ -755,7 +791,7 @@ def download_data(driver, source_id, output_dir):
 
     try:
         # Get all the annotations, then save.
-        driver, annotations = download_annotations(driver, source_id, source_dir)
+        annotations = download_annotations(driver, source_id, source_dir)
         # Print if there are no annotations.
         if annotations is None:
             raise Exception(f"ERROR: Source {source_id} may not have any annotations")
@@ -819,12 +855,10 @@ def main():
     # -------------------------------------------------------------------------
     # Authenticate the user
     # -------------------------------------------------------------------------
-    # Credentials
-    global username, password
-    username = args.username
-    password = args.password
-
     try:
+        username = args.username
+        password = args.password
+
         # Ensure the user provided a username and password.
         authenticate(username, password)
     except Exception as e:
@@ -846,7 +880,13 @@ def main():
 
     # Pass the options object while creating the driver
     driver = check_for_browsers(options=options)
-    driver, _ = login(driver, username, password)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': username,
+        'password': password
+    }
+    # Login to CoralNet
+    driver, _ = login(driver)
 
     # -------------------------------------------------------------------------
     # Download the data

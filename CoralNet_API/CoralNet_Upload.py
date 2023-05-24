@@ -412,16 +412,14 @@ def main():
     # -------------------------------------------------------------------------
     # Authenticate the user
     # -------------------------------------------------------------------------
-    # Credentials
-    username = args.username
-    password = args.password
-
     try:
-        # Authenticate, make sure the credentials are correct
-        authenticate(username, password)
+        username = args.username
+        password = args.password
 
+        # Ensure the user provided a username and password.
+        authenticate(username, password)
     except Exception as e:
-        print(f"ERROR: Could not authenticate for user {username}.\n{e}")
+        print(f"ERROR: Could not download data.\n{e}")
         sys.exit(1)
 
     # -------------------------------------------------------------------------
@@ -435,6 +433,12 @@ def main():
 
     # Pass the options object while creating the driver
     driver = check_for_browsers(options=options)
+
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': username,
+        'password': password
+    }
 
     # Flags to determine what to upload
     UPLOAD_IMAGES = False
@@ -483,7 +487,7 @@ def main():
     # -------------------------------------------------------------------------
 
     # Log in to CoralNet
-    driver, _ = login(driver, username, password)
+    driver, _ = login(driver)
 
     # Upload images
     if UPLOAD_IMAGES:

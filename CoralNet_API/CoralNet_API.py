@@ -5,7 +5,6 @@ import datetime
 from PIL import Image
 from io import BytesIO
 
-from CoralNet import *
 from CoralNet_Download import *
 
 # -----------------------------------------------------------------------------
@@ -312,11 +311,14 @@ def main():
     # Source information
     SOURCE_ID = str(args.source_id)
 
-    # Username, Password
-    USERNAME = args.username
-    PASSWORD = args.password
-
+    # ----------------------------------------
+    # Authenticate
+    # ----------------------------------------
     try:
+        # Username, Password
+        USERNAME = args.username
+        PASSWORD = args.password
+
         # Authenticate
         authenticate(USERNAME, PASSWORD)
         CORALNET_TOKEN, HEADERS = get_token(USERNAME, PASSWORD)
@@ -330,7 +332,13 @@ def main():
 
     # Pass the options object while creating the driver
     driver = check_for_browsers(options=options)
-    driver, _ = login(driver, USERNAME, PASSWORD)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': USERNAME,
+        'password': PASSWORD
+    }
+    # Login to CoralNet
+    driver, _ = login(driver)
 
     # Variables for the model
     driver, meta = download_metadata(driver, SOURCE_ID)
@@ -374,7 +382,7 @@ def main():
 
         # Get the image AWS URLs for the images of interest
         image_pages = IMAGES['image_page'].tolist()
-        IMAGES['image_url'] = get_image_urls(image_pages, USERNAME, PASSWORD)
+        driver, IMAGES['image_url'] = get_image_urls(driver, image_pages)
 
     except Exception as e:
         raise Exception(f"ERROR: Image names in {args.csv_path} do not match any of "
@@ -655,7 +663,7 @@ def main():
             IMAGES = IMAGES[IMAGES['image_name'].isin(expired_imgs)].copy()
 
             # Get the unexpired AWS image URLs
-            new_urls = get_image_urls(IMAGES['image_page'].tolist(), USERNAME, PASSWORD)
+            driver, new_urls = get_image_urls(driver, IMAGES['image_page'].tolist())
             IMAGES['image_url'] = new_urls
 
             # Reset the expired images list

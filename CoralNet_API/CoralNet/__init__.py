@@ -1,6 +1,8 @@
 import os
+import io
 import sys
 import time
+import tqdm
 import json
 import requests
 import argparse
@@ -19,6 +21,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
 from selenium.webdriver.support import expected_conditions as EC
 
 # -------------------------------------------------------------------------------------------------
@@ -87,8 +93,8 @@ def authenticate(username, password):
                                 cookies=cookies)
 
         if "credentials you entered did not match" in response.text:
-            raise Exception(f"ERROR: Authentication unsuccessful for {username}\n "
-                            f"Please check that your usename and password are correct.")
+            raise Exception(f"ERROR: Authentication unsuccessful for '{username}'\n "
+                            f"Please check that your usename and password are correct")
         else:
             print(f"NOTE: Authentication successful for {username}")
 
@@ -98,36 +104,42 @@ def check_for_browsers(options):
     Check if Chrome, Firefox, and Edge browsers are installed.
     """
 
+    # Needed to avoid timeouts when running in headless mode
+    options.add_experimental_option('extensionLoadTimeout', 3600000)
+
     # Greedy search for Chrome, Firefox, and Edge browsers
     try:
+        ChromeDriverManager().install()
         browser = webdriver.Chrome(options=options)
         print("NOTE: Using Google Chrome")
         return browser
 
     except Exception as e:
-        print("Warning: Google Chrome is not installed")
+        print("Warning: Google Chrome could not be used")
 
     try:
-        browser = webdriver.Edge(options=options)
-        print("NOTE: Using Microsoft Edge")
-        return browser
-
-    except Exception as e:
-        print("Warning: Microsoft Edge is not installed")
-
-    try:
+        GeckoDriverManager().install()
         browser = webdriver.Firefox(options=options)
         print("NOTE: Using Mozilla Firefox")
         return browser
 
     except Exception as e:
-        print("Warning: Firefox is not installed")
+        print("Warning: Firefox could not be used")
+
+    try:
+        EdgeChromiumDriverManager().install()
+        browser = webdriver.Edge(options=options)
+        print("NOTE: Using Microsoft Edge")
+        return browser
+
+    except Exception as e:
+        print("Warning: Microsoft Edge could not be used")
 
     print("ERROR: No browsers are installed. Exiting")
     sys.exit(1)
 
 
-def login(driver, username, password):
+def login(driver):
     """
     Log in to CoralNet using Selenium.
     """
@@ -154,8 +166,8 @@ def login(driver, username, password):
         EC.presence_of_element_located((By.XPATH, path)))
 
     # Enter the username and password
-    username_input.send_keys(username)
-    password_input.send_keys(password)
+    username_input.send_keys(driver.capabilities['credentials']['username'])
+    password_input.send_keys(driver.capabilities['credentials']['password'])
 
     # Click the login button
     time.sleep(3)
@@ -170,10 +182,11 @@ def login(driver, username, password):
         # Login was successful
         success = True
 
-        print(f"NOTE: Successfully logged in for {username}")
+        print(f"NOTE: Successfully logged in for {driver.capabilities['credentials']['username']}")
 
     except Exception as e:
-        raise ValueError(f"ERROR: Could not login with {username}\n{e}")
+        raise ValueError(f"ERROR: Could not login with "
+                         f"{driver.capabilities['credentials']['username']}\n{e}")
 
     return driver, success
 
