@@ -57,7 +57,7 @@ If used in project or publication, please attribute your use of this repository 
 ```
 @misc{CoralNet Tools,
   author = {Pierce, Jordan and Edwards, Clint and Vieham, Shay and Rojano, Sarah and Cook, 
-  Sophie and Battista, Tim},
+  Sophie, Costa, Bryan, Sweeny, Edward, Kraus, Jennifer and Battista, Tim},
   title = {CoralNet Tools},
   year = {2022},
   howpublished = {\url{https://github.com/Jordan-Pierce/CoralNet_Tools}},
