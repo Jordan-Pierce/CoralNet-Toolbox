@@ -9,8 +9,8 @@ password as an environment variable, as these will be read as the defaults when
 running the script via command line:
 ```python
 # Windows
-set CORALNET_USERNAME=myusername
-set CORALNET_PASSWORD=mypassword
+set CORALNET_USERNAME myusername
+set CORALNET_PASSWORD mypassword
 
 # Linux, macOS
 export CORALNET_USERNAME=myusername
@@ -88,9 +88,9 @@ The following describes what is expected in the annotations, and labelset:
 
 ```python
 # annotations.csv
-# image_name, row, column, label are required fields; column names are flexible
+# Image Name, Row, Column, Label are required fields; Label refers to Label Short Code
 
-                                        image_name   row  column  label
+                                              Name   Row  Column  Label
 0  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   671     217   Sand
 1  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg  1252     971   Sand
 2  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   548    1054  Macro
@@ -98,7 +98,7 @@ The following describes what is expected in the annotations, and labelset:
 
 ```python
 # labelset.csv
-# Label ID and Short Code are required fields; column names are not flexible
+# Label ID and Short Code are required fields
 
    Label ID     Short Code 
 0        59          Acrop        
@@ -167,7 +167,7 @@ The following describes what is expected in the csv files:
 # csv_path
 # image_name is required; row and column are optional. Column names are flexible
 
-                                        image_name   row  column  
+                                              Name   Row  Column  
 0  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   671     217   
 1  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg  1252     971   
 2  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   548    1054  

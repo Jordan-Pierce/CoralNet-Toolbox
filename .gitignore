@@ -1,2 +1,3 @@
 *.hd
 *__pycache__/
+/CoralNet_API/VISCORE/Data/

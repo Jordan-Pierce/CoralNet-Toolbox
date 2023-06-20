@@ -7,7 +7,7 @@ from CoralNet import *
 # Functions for downloading all of CoralNet
 # -------------------------------------------------------------------------------------------------
 
-def download_coralnet_labelsets(driver, output_dir):
+def download_coralnet_labelsets(driver, output_dir=None):
     """
     Download a list of all labelsets in CoralNet.
     """
@@ -74,18 +74,22 @@ def download_coralnet_labelsets(driver, output_dir):
                                                'Popularity %',
                                                'Short Code',
                                                'Duplicate',
-                                               'Duplicate Notes',
+                                               'Duplicate_Notes',
                                                'Verified',
                                                'Has Calcification Rates'])
 
-        # Save locally
-        labelset.to_csv(f"{output_dir}CoralNet_Labelset_List.csv")
+        # See if the user wants to save locally
+        if output_dir:
 
-        if os.path.exists(f"{output_dir}CoralNet_Labelset_List.csv"):
-            print("NOTE: Labelset list saved successfully")
-        else:
-            raise Exception("ERROR: Could not download Labelset list; "
-                            "check that variable Labelset URL is correct.")
+            # Save locally
+            labelset.to_csv(f"{output_dir}CoralNet_Labelset_List.csv")
+
+            # Check that it was saved
+            if os.path.exists(f"{output_dir}CoralNet_Labelset_List.csv"):
+                print("NOTE: Labelset list saved successfully")
+            else:
+                raise Exception("ERROR: Could not download Labelset list; "
+                                "check that variable Labelset URL is correct.")
 
     except Exception as e:
         print(f"Error: Unable to get labelset list from CoralNet.\n{e}")
@@ -94,7 +98,72 @@ def download_coralnet_labelsets(driver, output_dir):
     return driver, labelset
 
 
-def get_sources_with(driver, labelsets, output_dir):
+def download_coralnet_sources(driver, output_dir=None):
+    """
+    Downloads a list of all the public sources currently on CoralNet.
+    """
+
+    # Variable to hold the list of sources
+    sources = None
+
+    # Go to the images page
+    driver.get(CORALNET_SOURCE_URL)
+
+    print("NOTE: Downloading CoralNet Source List")
+
+    try:
+        # Parse the HTML response using BeautifulSoup
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+        # Find all the instances of sources
+        links = soup.find_all('ul', class_='object_list')[0].find_all("li")
+
+        # Lists to store the source IDs and names
+        source_urls = []
+        source_ids = []
+        source_names = []
+
+        # Now, get all the source IDs and names on the page
+        for link in tqdm(links):
+            # Parse the information
+            url = CORALNET_URL + link.find("a").get("href")
+            source_id = url.split("/")[-2]
+            source_name = link.find("a").text.strip()
+
+            # Check what is grabbed it actually a source
+            if source_id.isnumeric():
+                source_urls.append(url)
+                source_ids.append(source_id)
+                source_names.append(source_name)
+
+        # Store as a dict
+        sources = {'Source_ID': source_ids,
+                   'Source_Name': source_names,
+                   'Source_URL': source_urls}
+
+        # Create a dataframe
+        sources = pd.DataFrame(sources)
+
+        # Check if user wants to save locally:
+        if output_dir:
+
+            # Save locally
+            sources.to_csv(f"{output_dir}CoralNet_Source_ID_List.csv")
+
+            # Check that it was saved
+            if os.path.exists(f"{output_dir}CoralNet_Source_ID_List.csv"):
+                print("NOTE: CoralNet Source list saved successfully")
+            else:
+                raise Exception("ERROR: Could not download Source ID list; "
+                                "check that variable CoralNet URL is correct.")
+    except Exception as e:
+        print(f"Error: Unable to get source list from CoralNet.\n{e}")
+        sources = None
+
+    return driver, sources
+
+
+def get_sources_with(driver, labelsets, output_dir=None):
     """
     Downloads a list of sources that contain the specified labelsets.
     """
@@ -141,18 +210,23 @@ def get_sources_with(driver, labelsets, output_dir):
 
         # If the list of source ids is not empty, save locally
         if source_list:
+
             # Convert to dataframe
             source_list = pd.DataFrame(source_list, columns=['Source_ID',
                                                              'Source_Name',
                                                              'Source_URL',
                                                              'Contains'])
-            # Save locally
-            source_list.to_csv(f"{output_dir}Desired_Source_ID_List.csv")
-            # Check that it exists
-            if os.path.exists(f"{output_dir}Desired_Source_ID_List.csv"):
-                print("NOTE: Source ID List saved successfully")
-            else:
-                raise Exception("ERROR: Could not save Source ID List")
+            # Check to see if use wants to save locally
+            if output_dir:
+
+                # Save locally
+                source_list.to_csv(f"{output_dir}Desired_Source_ID_List.csv")
+
+                # Check that it exists
+                if os.path.exists(f"{output_dir}Desired_Source_ID_List.csv"):
+                    print("NOTE: Source ID List saved successfully")
+                else:
+                    raise Exception("ERROR: Could not save Source ID List")
         else:
             raise Exception("ERROR: No sources found")
 
@@ -162,64 +236,6 @@ def get_sources_with(driver, labelsets, output_dir):
 
     return driver, source_list
 
-
-def download_coralnet_sources(driver, output_dir):
-    """
-    Downloads a list of all the public sources currently on CoralNet.
-    """
-
-    # Variable to hold the list of sources
-    sources = None
-
-    # Go to the images page
-    driver.get(CORALNET_SOURCE_URL)
-
-    print("NOTE: Downloading CoralNet Source List")
-
-    try:
-        # Parse the HTML response using BeautifulSoup
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-        # Find all the instances of sources
-        links = soup.find_all('ul', class_='object_list')[0].find_all("li")
-
-        # Lists to store the source IDs and names
-        source_urls = []
-        source_ids = []
-        source_names = []
-
-        # Now, get all the source IDs and names on the page
-        for link in tqdm(links):
-            # Parse the information
-            url = CORALNET_URL + link.find("a").get("href")
-            source_id = url.split("/")[-2]
-            source_name = link.find("a").text.strip()
-
-            # Check what is grabbed it actually a source
-            if source_id.isnumeric():
-                source_urls.append(url)
-                source_ids.append(source_id)
-                source_names.append(source_name)
-
-        # Store as a dict
-        sources = {'Source_ID': source_ids,
-                   'Source_Name': source_names,
-                   'Source_URL': source_urls}
-
-        # Create a dataframe
-        sources = pd.DataFrame(sources)
-        sources.to_csv(f"{output_dir}CoralNet_Source_ID_List.csv")
-
-        if os.path.exists(f"{output_dir}CoralNet_Source_ID_List.csv"):
-            print("NOTE: CoralNet Source list saved successfully")
-        else:
-            raise Exception("ERROR: Could not download Source ID list; "
-                            "check that variable CoralNet URL is correct.")
-    except Exception as e:
-        print(f"Error: Unable to get source list from CoralNet.\n{e}")
-        sources = None
-
-    return driver, sources
 
 # -------------------------------------------------------------------------------------------------
 # Functions for downloading data from individual sources

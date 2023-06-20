@@ -1,4 +1,6 @@
 import glob
+import os.path
+
 from CoralNet import *
 
 # -----------------------------------------------------------------------------
@@ -19,16 +21,11 @@ def upload_images(driver, source_id, images):
     driver.get(CORALNET_URL + f"/source/{source_id}/upload/images/")
 
     # First check that this is existing source the user has access to
-    try:
-        # Check the permissions
-        driver, status = check_permissions(driver)
+    driver, success = check_permissions(driver)
 
-        # Check the status
-        if "Page could not be found" in status.text:
-            raise Exception(f"ERROR: {status.text.split('.')[0]}")
-
-    except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
+    # If the user does not have access to the source, exit immediately
+    if not success:
+        print("ERROR: Cannot continue with process; exiting function.")
         return driver, success
 
     # Send the files to CoralNet for upload
@@ -147,16 +144,11 @@ def upload_labelset(driver, source_id, labelset):
     driver.get(CORALNET_URL + f"/source/{source_id}/labelset/import/")
 
     # First check that this is existing source the user has access to
-    try:
-        # Check the permissions
-        driver, status = check_permissions(driver)
+    driver, success = check_permissions(driver)
 
-        # Check the status
-        if "Page could not be found" in status.text:
-            raise Exception(f"ERROR: {status.text.split('.')[0]}")
-
-    except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
+    # If the user does not have access to the source, exit immediately
+    if not success:
+        print("ERROR: Cannot continue with process; exiting function.")
         return driver, success
 
     # Check if files can be uploaded, get the status for the page
@@ -240,21 +232,11 @@ def upload_annotations(driver, source_id, annotations):
     driver.get(CORALNET_URL + f"/source/{source_id}/upload/annotations_csv/")
 
     # First check that this is existing source the user has access to
-    try:
-        # Check the permissions
-        driver, status = check_permissions(driver)
+    driver, success = check_permissions(driver)
 
-        # Check the status, user doesn't have permission
-        if "Page could not be found" in status.text:
-            raise Exception(f"ERROR: {status.text.split('.')[0]} or you do not"
-                            f" have permission to access it")
-
-        # Check the status, source doesn't have a labelset yet
-        if "create a labelset before uploading annotations" in status.text:
-            raise Exception(f"ERROR: {status.text.split('.')[0]}")
-
-    except Exception as e:
-        print(f"{e}")
+    # If the user does not have access to the source, exit immediately
+    if not success:
+        print("ERROR: Cannot continue with process; exiting function.")
         return driver, success
 
     # Check if files can be uploaded, get the status for the page
@@ -357,6 +339,7 @@ def upload_annotations(driver, source_id, annotations):
     time.sleep(3)
 
     return driver, success
+
 
 # -----------------------------------------------------------------------------
 # Main

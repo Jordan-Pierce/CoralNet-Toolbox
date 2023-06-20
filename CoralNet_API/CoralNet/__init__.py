@@ -46,6 +46,27 @@ LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
 # Image Formats
 IMG_FORMATS = ["jpg", "jpeg", "png", "tif", "tiff", "bmp"]
 
+# CoralNet functional groups
+FUNC_GROUPS_LIST = [
+    "Other Invertebrates",
+    "Hard coral",
+    "Soft Substrate",
+    "Hard Substrate",
+    "Other",
+    "Algae",
+    "Seagrass"]
+
+# Mapping from group to ID
+FUNC_GROUPS_DICT = {
+    "Other Invertebrates": "14",
+    "Hard coral": "10",
+    "Soft Substrate": "15",
+    "Hard Substrate": "16",
+    "Other": "18",
+    "Algae": "19",
+    "Seagrass": "20"}
+
+
 # -------------------------------------------------------------------------------------------------
 # Functions to authenticate with CoralNet
 # -------------------------------------------------------------------------------------------------
@@ -196,6 +217,9 @@ def check_permissions(driver):
     Check if the user has permission to access the page.
     """
 
+    # Variable to determine success
+    success = False
+
     try:
         # First check that this is existing source the user has access to
         path = "content-container"
@@ -204,13 +228,26 @@ def check_permissions(driver):
 
         # Check the status
         if not status.text:
-            raise Exception(f"ERROR: Unable to access page information")
+            print(f"ERROR: Unable to access page information; unknown issue")
+
+        elif "Page could not be found" in status.text:
+            print(f"ERROR: {status.text.split('.')[0]}")
+
+        elif "don't have permission" in status.text:
+            print(f"ERROR: {status.text.split('.')[0]}")
+
+        elif "create a labelset before uploading annotations" in status.text:
+            print(f"ERROR: {status.text.split('.')[0]}")
+
+        else:
+            # The page is fine
+            success = True
 
     except Exception as e:
-        print(f"ERROR: {e} Exiting.")
+        print(f"ERROR: Unknown issue. Exiting.")
         sys.exit(1)
 
-    return driver, status
+    return driver, success
 
 
 def get_token(username, password):
@@ -219,7 +256,7 @@ def get_token(username, password):
     """
     # Requirements for authentication
     CORALNET_AUTH = CORALNET_URL + "/api/token_auth/"
-    HEADERS = {"Content-type" : "application/vnd.api+json"}
+    HEADERS = {"Content-type": "application/vnd.api+json"}
     PAYLOAD = {"username": username, "password": password}
 
     # Response from CoralNet when provided credentials
