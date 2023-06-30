@@ -31,6 +31,7 @@
 31,30,Muricea,Muricea,Muricea,Octocoral,Soft_coral,Soft_coral,Muricea spp.,MURSPP,Other Invertebrates,1386
 32,31,Muriceopsis,Muriceopsis,Muriceopsis,Octocoral,Soft_coral,Soft_coral,Muriceopsis spp.,MURISPP,Other Invertebrates,1387
 33,32,Mycto_dana,M_dan,Mycetophyllia_danaana,Mussidae,Hard_coral,Hard_coral,Mycetophyllia danaana,MycetDan,Hard coral,1785
+34,33,Mycto_reezy,M_ree,Mycetophyllia_reesi,Mussidae,Hard_coral,Hard_coral,Mycetophyllia,Mycetophy,Hard coral,390
 35,34,Octo_pachy,Octo_pachy,Octocoral_pachyclavularia,Octocoral,Soft_coral,Soft_coral,Pachyclavularia,Pachcla,Other Invertebrates,2053
 36,35,P_branneri,P_bra,Porites_branneri,Poritidae,Hard_coral,Hard_coral,Porites branneri,PorBran,Hard coral,1371
 37,36,Plexaura,Plexaura,Plexaura,Octocoral,Soft_coral,Soft_coral,Plexaura spp.,PLESPP,Other Invertebrates,1382
@@ -51,6 +52,7 @@
 52,51,Anemone,Anemone,Anemone,Anemone,Anemone,Invertebrates,Anemone,Anemone,Other Invertebrates,3208
 53,52,Barrell_spng,Barrell_spng,Xestospongia,Sponge,Sponge,Sponge,Xestospongia,XES,Other Invertebrates,2963
 55,54,Briareum,Briareum,Briareum_branch,Octocoral,Soft_coral,Soft_coral,Briareum,GORG-BRI,Other Invertebrates,1795
+54,53,Branch_octo,Branch_octo,Branching_Octocorals,Octocoral,Soft_coral,Soft_coral,Branching_Octocorals,Branch_oct,Other Invertebrates,7768
 56,55,Bryozo,Bryozo,Bryozoan,Bryozoan,Invertebrates,Invertebrates,Bryozoan,bryozoan,Other Invertebrates,1853
 57,56,Chondrilla,Chondrilla,Chondrilla,Sponge,Sponge,Sponge,Chondrilla spp.,CHON,Other Invertebrates,1796
 58,57,Clionid,Clionid,Clionid,Sponge,Sponge,Sponge,Clionid spp.,CLIONI,Other Invertebrates,1797
@@ -113,6 +115,7 @@
 116,115,Dictyota,Dictyota,Dictyota,Dictyota,Macroalgae,Macroalgae,Dictyota,Dictyota,Algae,503
 117,116,Halimeda,Halimeda,Halimeda,Calcareous_Algae,Macroalgae,Macroalgae,Halimeda,Halimeda,Algae,403
 118,117,Lobophora,Lobophora,Lobophora,Lobophora,Macroalgae,Macroalgae,Lobophora,Lobophora,Algae,138
+119,118,Encr_macro,Encr_macro,Encrusting_macroalgae,Encrusting_macroalgae,Macroalgae,Macroalgae,Encrusting_macroalgae,Encr_macro,Algae,7767
 120,119,Unkn_macro,Unkn_macro,Unknown_macroalgae,Unknown_macroalgae,Macroalgae,Macroalgae,Unknown macroalgae,UnkMacroa,Algae,3591
 122,121,Peyssonnelia,Peyssonnelia,Peyssonnelia_sp,Peyssonnelia_sp,Macroalgae,Macroalgae,Peyssonnelia spp.,Peyss,Algae,4441
 123,122,Turf,Turf,Turf_Algae,Turf_Algae,Turf_Algae,Turf_Algae,Turf algae,Turf,Algae,82
