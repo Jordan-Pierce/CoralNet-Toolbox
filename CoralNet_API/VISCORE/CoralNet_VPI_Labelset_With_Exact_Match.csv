@@ -1,0 +1,119 @@
+,VPI_ID,VPI_label_V3,VPI_label_V4,VPI_name,Taxo_high,Fxnl_high,Fxnl_low,Name,Short Code,Functional Group,Label ID
+2,1,A_agaric,A_aga,Agaricia_agaricites,Agariciidae,Hard_coral,Hard_coral,Agaricia agaricites,AgAga,Hard coral,1357
+3,2,A_fragil,A_fra,Agaricia_fragilis,Agariciidae,Hard_coral,Hard_coral,Agaricia fragilis,AgFra,Hard coral,1358
+4,3,A_graham,A_gra,Agaricia_grahamae,Agariciidae,Hard_coral,Hard_coral,Agaricia grahamae,AgGra,Hard coral,1359
+5,4,A_humili,A_hum,Agaricia_humilis,Agariciidae,Hard_coral,Hard_coral,Agaricia humilis,AgHum,Hard coral,1188
+6,5,A_lamarc,A_lam,Agaricia_lamarcki,Agariciidae,Hard_coral,Hard_coral,Agaricia lamarcki,AgLam,Hard coral,1360
+7,6,A_tenui,A_ten,Agaricia_tenuifolia,Agariciidae,Hard_coral,Hard_coral,Agaricia tenuifolia,AgTen,Hard coral,1766
+8,7,A_undata,A_und,Agaricia_undata,Agariciidae,Hard_coral,Hard_coral,Agaricia undata,AgUnd,Hard coral,1770
+9,8,Ascidian,Ascidian,Ascidians,Ascidian,Ascidian,Invertebrates,Ascidians,Ascidians,Other Invertebrates,4762
+10,9,Basalt,Basalt,Basalt,Basalt,Non_biological,Substrate,Basalt,Basalt,Hard Substrate,2218
+11,10,Bivalve,Bivalve,Bivalve,Bivalve,Invertebrates,Invertebrates,Bivalve,Bivalve,Other Invertebrates,1829
+12,11,Black_coral,Black_coral,Black_coral,Black_coral,Invertebrates,Invertebrates,CRED-Wire and black coral,*ANTI,Other Invertebrates,3507
+13,12,Cladocora,C_arb,Cladocora_arbuscula,Oculinidae,Hard_coral,Hard_coral,Cladocora arbuscula,ClaArb,Hard coral,1361
+14,13,Colpo_brev,C_bre,Colpophyllia_breviserialis,Faviidae,Hard_coral,Hard_coral,Colpophyllia breviserialis,COB,Hard coral,1771
+15,14,Colpo_sp,Colpophyllia_sp,Colpophyllia_sp,Faviidae,Hard_coral,Hard_coral,Colpophylia,colpo,Hard coral,6913
+16,15,Erythropodium,Erythropodium,Erythropodium,Erythropodium,Soft_coral,Soft_coral,Erythropodium,erythro,Other Invertebrates,6916
+17,16,Eunicea,Eunicea,Eunicea,Eunicea,Soft_coral,Soft_coral,Eunicea spp.,EUNSPP,Other Invertebrates,1384
+18,17,Fine_sediment,Fine_sediment,Fine_sediment,Sediment,Non_biological,Substrate,sediment (fine),sed_fine,Soft Substrate,1639
+19,18,Green_Diploso,Green_diploso,Green_Diplosoma,Tunicata,Invertebrates,Invertebrates,Green diplosoma,g_diplo,Soft Substrate,5994
+20,19,Hydrozoan,Hydrozoan,Other_hydrozoans,Milleporidae,Invertebrates,Invertebrates,Hydrozoan,Root hydro,Other Invertebrates,3200
+21,20,Icilligorgia,Icilligorgia,Icilligorgia,Octocoral,Soft_coral,Soft_coral,Iciligorgia spp.,ICISPP,Other Invertebrates,1391
+22,21,Iso_rigida,I_rig,Isophyllia_rigida,Mussidae,Hard_coral,Hard_coral,Isophyllia rigida,IsophRig,Hard coral,1362
+23,22,Iso_sinuo,I_sin,Isophyllia_sinuosa,Mussidae,Hard_coral,Hard_coral,Isophyllia sinuosa,IsophSin,Hard coral,1363
+24,23,Leather_coral,Leather_coral,Leather_coral,Octocoral,Soft_coral,Soft_coral,Leather Coral,LC,Other Invertebrates,3011
+25,24,M_carma,M_car,Madracis_carmabi,Astrocoeniidae,Hard_coral,Hard_coral,Madracis carmabi,MadCarm,Hard coral,1780
+26,25,M_form,M_for,Madracis_formosa,Astrocoeniidae,Hard_coral,Hard_coral,Madracis formosa,MadForm,Hard coral,1782
+27,26,M_phar,M_pha,Madracis_pharensis,Astrocoeniidae,Hard_coral,Hard_coral,Madracis pharensis,MadPhar,Hard coral,1784
+28,27,M_senar,M_sen,Madracis_senaria,Astrocoeniidae,Hard_coral,Hard_coral,Madracis senaria,MadSen,Hard coral,2458
+29,28,Mill_squa,M_squ,Millepora_squarrosa,Milleporidae,Invertebrates,Millepora,Millepora squarrosa,MIS,Other Invertebrates,1793
+30,29,Mill_striata,M_str,Millepora_striata,Milleporidae,Invertebrates,Millepora,Millepora striata,MILS,Other Invertebrates,6868
+31,30,Muricea,Muricea,Muricea,Octocoral,Soft_coral,Soft_coral,Muricea spp.,MURSPP,Other Invertebrates,1386
+32,31,Muriceopsis,Muriceopsis,Muriceopsis,Octocoral,Soft_coral,Soft_coral,Muriceopsis spp.,MURISPP,Other Invertebrates,1387
+33,32,Mycto_dana,M_dan,Mycetophyllia_danaana,Mussidae,Hard_coral,Hard_coral,Mycetophyllia danaana,MycetDan,Hard coral,1785
+35,34,Octo_pachy,Octo_pachy,Octocoral_pachyclavularia,Octocoral,Soft_coral,Soft_coral,Pachyclavularia,Pachcla,Other Invertebrates,2053
+36,35,P_branneri,P_bra,Porites_branneri,Poritidae,Hard_coral,Hard_coral,Porites branneri,PorBran,Hard coral,1371
+37,36,Plexaura,Plexaura,Plexaura,Octocoral,Soft_coral,Soft_coral,Plexaura spp.,PLESPP,Other Invertebrates,1382
+38,37,Plexaurella,Plexaurella,Plexaurella,Octocoral,Soft_coral,Soft_coral,Plexaurella spp.,PLEXSPP,Other Invertebrates,1385
+39,38,Polychaeta,Polychaeta,Polychaeta,Polychaeta,Invertebrates,Invertebrates,Polychaeta,POLYCH,Other Invertebrates,4015
+40,39,Pseudoplex,Pseudoplex,Pseudoplexaura,Octocoral,Soft_coral,Soft_coral,Pseudoplexaura spp.,PSESPP,Other Invertebrates,1383
+41,40,Pterogorgia,Pterogorgia,Pterogorgia,Octocoral,Soft_coral,Soft_coral,Pterogorgia,Pterogorg,Other Invertebrates,1389
+42,41,Sid_stell,S_ste,Siderastrea_stellata,Siderastreidae,Hard_coral,Hard_coral,Siderastrea stellata,SidStel,Hard coral,3241
+43,42,Scolym_cube,S_cub,Scolymia_cubensis,Mussidae,Hard_coral,Hard_coral,Scolymia cubensis,SCOCUB,Hard coral,1375
+44,43,Scolym_lace,S_lac,Scolymia_lacera,Mussidae,Hard_coral,Hard_coral,Scolymia lacera,SCOLA,Hard coral,1789
+45,44,Stylaster,Stylaster,Stylaster_roseus,Stylasteridae,Invertebrates,Invertebrates,Stylaster roseus,Fire Sros,Hard coral,2456
+46,45,Trididemnum,Trididemnum,Trididemnum,Tunicata,Invertebrates,Invertebrates,Trididemnum spp.,TRIDI,Other Invertebrates,1800
+47,46,Tunicate,Tunicate,Tunicate,Tunicata,Invertebrates,Invertebrates,Tunicate,Tunicate,Other Invertebrates,1854
+48,47,A_cerv,A_cer,Acropora_cervicornis,Acroporidae,Hard_coral,Hard_coral,Acropora cervicornis,AcrCerv,Hard coral,1768
+49,48,A_palm,A_pal,Acropora_palmata,Acroporidae,Hard_coral,Hard_coral,Acropora palmata,AcrPalm,Hard coral,1769
+50,49,A_prolif,A_pro,Acropora_prolifera,Acroporidae,Hard_coral,Hard_coral,Acropora prolifera,AcrPro,Hard coral,1356
+51,50,Agaricia_sp,Agaricia_sp,Agaricia_sp,Agariciidae,Hard_coral,Hard_coral,Agaricia spp.,AG,Hard coral,2962
+52,51,Anemone,Anemone,Anemone,Anemone,Anemone,Invertebrates,Anemone,Anemone,Other Invertebrates,3208
+53,52,Barrell_spng,Barrell_spng,Xestospongia,Sponge,Sponge,Sponge,Xestospongia,XES,Other Invertebrates,2963
+55,54,Briareum,Briareum,Briareum_branch,Octocoral,Soft_coral,Soft_coral,Briareum,GORG-BRI,Other Invertebrates,1795
+56,55,Bryozo,Bryozo,Bryozoan,Bryozoan,Invertebrates,Invertebrates,Bryozoan,bryozoan,Other Invertebrates,1853
+57,56,Chondrilla,Chondrilla,Chondrilla,Sponge,Sponge,Sponge,Chondrilla spp.,CHON,Other Invertebrates,1796
+58,57,Clionid,Clionid,Clionid,Sponge,Sponge,Sponge,Clionid spp.,CLIONI,Other Invertebrates,1797
+59,58,Colpo_nat,C_nat,Colpophyllia_natans,Faviidae,Hard_coral,Hard_coral,Colpophyllia natans,CoNat,Hard coral,1772
+60,59,Coral_skeleton,Coral_skeleton,Coral_skeleton,Coral_skeleton,Coral_skeleton,Coral_skeleton,Coral skeleton,COSK,Hard Substrate,2790
+61,60,Corallimorph,Corallimorph,Corallimorph,Corallimorph,Soft_coral,Soft_coral,Corallimorpharia,Collimorph,Other Invertebrates,134
+62,61,Diplor_lab,D_lab,Diploria_labyrinthiformis,Faviidae,Hard_coral,Hard_coral,Diploria labyrinthiformis,DiplLab,Hard coral,1187
+63,62,Dendrogyra,D_cyl,Dendrogyra_cylindrus,Meandrinidae,Hard_coral,Hard_coral,Dendrogyra cylindrus,DenCyl,Hard coral,1773
+64,63,Dichocoenia,D_sto,Dichocoenia_stokesii,Meandrinidae,Hard_coral,Hard_coral,Dichocoenia,dichoco,Hard coral,6915
+65,64,Encr_spng,Encr_spng,encrusting_sponge,Sponge,Sponge,Sponge,Encrusting sponge,ENSP,Other Invertebrates,147
+66,65,Eusmilia,E_fas,Eusmilia_fastigiata,Meandrinidae,Hard_coral,Hard_coral,Eusmilia fastigiata,EFAS,Hard coral,382
+67,66,Favia,F_fra,Favia_fragum,Faviidae,Hard_coral,Hard_coral,Favia fragum,FaviaFrag,Hard coral,1777
+68,67,Helioseris,H_cuc,Helioseris_cucculata,Agariciidae,Hard_coral,Hard_coral,Helioseris,helios,Other Invertebrates,6918
+69,68,Hydroid,Hydroid,Hydroid,Hydroid,Invertebrates,Invertebrates,Hydroid,Hydra,Other Invertebrates,456
+70,69,Isophyllia_sp,Isophyllia_sp,Isophyllia_sp,Mussidae,Hard_coral,Hard_coral,Isophyllia,Isophyllia,Hard coral,385
+71,70,Mill_alci,M_alc,Millepora_alcicornis,Milleporidae,Invertebrates,Millepora,Millepora alcicornis,MILA,Other Invertebrates,1742
+72,71,M_cav,M_cav,Montastraea_cavernosa,Faviidae,Hard_coral,Hard_coral,Montastraea cavernosa,MontaCav,Hard coral,110
+73,72,Mill_comp,M_com,Millepora_complanata,Milleporidae,Invertebrates,Millepora,Millepora complanata,MILC,Other Invertebrates,1743
+74,73,M_decac,M_dec,Madracis_decactis complex,Astrocoeniidae,Hard_coral,Hard_coral,Madracis decactis,MadDeca,Hard coral,1781
+75,74,M_mirab,M_mir,Madracis_mirabilis,Astrocoeniidae,Hard_coral,Hard_coral,Madracis mirabilis,MAMI,Hard coral,1783
+76,75,Madracis_sp,Madracis_sp,Madracis_sp,Astrocoeniidae,Hard_coral,Hard_coral,Madracis,Madracis,Hard coral,387
+77,76,Manicina,M_are,Manicina_areolata,Faviidae,Hard_coral,Hard_coral,Manicina areolata,MAA,Hard coral,1182
+78,77,Meandrina,M_mea,Meandrina_meandrites,Meandrinidae,Hard_coral,Hard_coral,Meandrina meandrites,MM,Hard coral,1183
+79,78,Millepora_sp,Millepora_sp,Millepora_sp,Milleporidae,Invertebrates,Millepora,Millepora spp.,Mil_spp,Hard coral,1976
+80,79,Mussa,M_ang,Mussa_angulosa,Mussidae,Hard_coral,Hard_coral,Mussa angulosa,MUSANG,Hard coral,1365
+81,80,Mycto_alici,M_ali,Mycetophyllia_aliciae,Mussidae,Hard_coral,Hard_coral,Mycetophyllia aliciae,MycetAli,Hard coral,1366
+82,81,Mycto_ferox,M_fer,Mycetophyllia_ferox,Mussidae,Hard_coral,Hard_coral,Mycetophyllia ferox,MycetFer,Hard coral,1367
+83,82,Mycto_lamarc,M_lam,Mycetophyllia_lamarckiana,Mussidae,Hard_coral,Hard_coral,Mycetophyllia lamarckana,MycetLam,Hard coral,1786
+84,83,Mycto_sp,Mycetophyillia_sp,Mycetophyillia_sp,Mussidae,Hard_coral,Hard_coral,Mycetophyllia,Mycetophy,Hard coral,390
+85,84,O_ann,O_ann,Orbicella_annularis,Faviidae,Hard_coral,Hard_coral,Orbicella annularis,OrbAnn,Hard coral,1368
+86,85,O_fav,O_fav,Orbicella_faveolata,Faviidae,Hard_coral,Hard_coral,Orbicella faveolata,OrbFav,Hard coral,1369
+87,86,O_frank,O_fra,Orbicella_franksi,Faviidae,Hard_coral,Hard_coral,Orbicella franksi,OrbFrank,Hard coral,1370
+88,87,Oculina,O_dif,Oculina_diffusa,Oculinidae,Hard_coral,Hard_coral,Oculina diffusa,OCD,Hard coral,1787
+89,88,Orbicella_sp,Orbicella_sp,Orbicella_sp,Faviidae,Hard_coral,Hard_coral,Orbicella spp.,CL-ORB,Hard coral,6643
+91,90,P_astreoides,P_ast,Porites_astreoides,Poritidae,Hard_coral,Hard_coral,Porites astreoides,PorAstr,Hard coral,113
+92,91,P_clivosa,P_cli,Pseudodiploria_clivosa,Faviidae,Hard_coral,Hard_coral,Pseudodiploria clivosa,PseuCliv,Hard coral,1373
+93,92,P_divaricata,P_div,Porites_divaricata,Poritidae,Hard_coral,Hard_coral,Porites divaricata,PorDiv,Hard coral,1177
+94,93,P_furcata,P_fur,Porites_furcata,Poritidae,Hard_coral,Hard_coral,Porites furcata,PorFurc,Hard coral,1176
+95,94,P_porites,P_por,Porites_porites,Poritidae,Hard_coral,Hard_coral,Porites porites,PorPor,Hard coral,1788
+96,95,Porites_sp,Porites_sp,Porites_sp,Poritidae,Hard_coral,Hard_coral,Porites,Porites,Hard coral,74
+97,96,P_strigosa,P_str,Pseudodiploria_strigosa,Faviidae,Hard_coral,Hard_coral,Pseudodiploria strigosa,PseuStrig,Hard coral,1374
+98,97,Palythoa,Palythoa,Palythoa_sp,Zoanthidae,Invertebrates,Zoanthid,Palythoa sp,Paly,Hard coral,419
+99,98,Pavement,Pavement,Pavement,Pavement,Non_biological,Substrate,Pavement,Pavement,Hard Substrate,2513
+100,99,Pseudopterog,Pseudopterog,Antillogorgia,Octocoral,Soft_coral,Soft_coral,Antillogorgia spp.,ANTSPP,Other Invertebrates,1388
+101,100,Sid_rad,S_rad,Siderastrea_radians,Siderastreidae,Hard_coral,Hard_coral,Siderastrea radians,SidRad,Hard coral,1376
+102,101,Sid_sid,S_sid,Siderastrea_siderea,Siderastreidae,Hard_coral,Hard_coral,Siderastrea siderea,SidSid,Hard coral,111
+103,102,Sid_sp,Siderastrea_sp,Siderastrea_sp,Siderastreidae,Hard_coral,Hard_coral,Siderastrea,Siderastr,Hard coral,474
+104,103,Sand,Sand,Sand,Sand,Non_biological,Substrate,Sand,Sand,Soft Substrate,84
+105,104,Scolymia_sp,Scolymia_sp,Scolymia_sp,Mussidae,Hard_coral,Hard_coral,Scolymia,SCOL,Hard coral,197
+106,105,Sea_fan,Sea_fan,Gorgonia_sp,Octocoral,Soft_coral,Soft_coral,Gorgonia spp.,GORSPP,Other Invertebrates,1390
+107,106,Seagrass,Seagrass,Seagrass,Seagrass,Seagrass,Seagrass,Seagrass,Seagrass,Seagrass,94
+108,107,Solenastrea,S_bou,Solenastrea_bournoni,Faviidae,Hard_coral,Hard_coral,Solenastrea bournoni,SOLBOU,Hard coral,1377
+109,108,Stephanocoenia,S_int,Stephanocoenia_intersepta,Astrocoeniidae,Hard_coral,Hard_coral,Stephanocoenia intersepta,StephInt,Hard coral,1378
+110,109,Tubastrea,Tubastrea,Tubastrea_sp,Dendrophylliidae,Hard_coral,Hard_coral,Tubastrea,Tubastrea,Hard coral,78
+111,110,Tube_spng,Tube_spng,erect sponge,Sponge,Sponge,Sponge,Erect sponge,ERSP,Other Invertebrates,148
+112,111,Zoanthid,Zoanthid,Zoanthus,Zoanthidae,Invertebrates,Zoanthid,Zoanthus,ZOA,Other Invertebrates,981
+113,112,Calc_algae,Calc_algae,Calcareous_Algae,Calcareous_Algae,Macroalgae,Macroalgae,Calcareous algae,CALG,Algae,140
+114,113,CCA,CCA,CCA,CCA,CCA,CCA,CCA,CCA1,Algae,5309
+115,114,Cyano,Cyano,Cyanobacteria,Cyanophyta,Cyanobacteria,Cyanobacteria,Cyanobacteria,CYANOB,Other,2543
+116,115,Dictyota,Dictyota,Dictyota,Dictyota,Macroalgae,Macroalgae,Dictyota,Dictyota,Algae,503
+117,116,Halimeda,Halimeda,Halimeda,Calcareous_Algae,Macroalgae,Macroalgae,Halimeda,Halimeda,Algae,403
+118,117,Lobophora,Lobophora,Lobophora,Lobophora,Macroalgae,Macroalgae,Lobophora,Lobophora,Algae,138
+120,119,Unkn_macro,Unkn_macro,Unknown_macroalgae,Unknown_macroalgae,Macroalgae,Macroalgae,Unknown macroalgae,UnkMacroa,Algae,3591
+122,121,Peyssonnelia,Peyssonnelia,Peyssonnelia_sp,Peyssonnelia_sp,Macroalgae,Macroalgae,Peyssonnelia spp.,Peyss,Algae,4441
+123,122,Turf,Turf,Turf_Algae,Turf_Algae,Turf_Algae,Turf_Algae,Turf algae,Turf,Algae,82
+124,123,Turf_new,Turf_new,Turf_over_recently_dead_coral,Turf_Algae,Turf_Algae,Turf_Algae,Turf overgrowing recently dead coral,Turf coral,Algae,2454

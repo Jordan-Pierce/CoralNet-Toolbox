@@ -8,7 +8,7 @@ import sys
 sys.path.append('../')
 
 
-def convert_to_csv(labels_path, labelset_path, output_dir):
+def convert_to_coralnet(labels_path, labelset_path, output_dir):
     """
     Converts the dots and cams JSON files to CSV files for CoralNet. The CSV
     files are saved in the output directory.
@@ -35,31 +35,37 @@ def convert_to_csv(labels_path, labelset_path, output_dir):
             continue
 
         try:
+            # Get the name of the image
+            name = os.path.basename(r['Name'])
+            # Get the row of the annotation
+            row = int(r['Row'])
+            # Get the column of the annotation
+            column = int(r['Column'])
             # Get the VPI label
-            l = r['Label']
+            label = r['Label']
             # Find it within the CoralNet VPI labelset
-            lbst = labelset[(labelset['VPI_label_V3'] == l) | (labelset['VPI_label_V4'] == l)]
+            lbst = labelset[(labelset['VPI_label_V3'] == label) | (labelset['VPI_label_V4'] == label)]
+
             # Check that one was found
             if lbst.empty:
                 raise Exception
+            else:
+                short_code = lbst['Short Code'].item()
+
         except Exception as e:
-            # print(f'ERROR: Could not locate {r["Label"]} in labelset {labelset_path}; exiting.')
-            # sys.exit(1)
+            print(f'ERROR: Could not locate {r["Label"]} in labelset {labelset_path}; skipping.')
             continue
 
         # Get the values for the updated label csv file
         # For some reason, CoralNet uses the Short Code as
         # the label from within a source
-        a = r[['Name', 'Row', 'Column']]
-        a['Row'] = int(a['Row'])
-        a['Column'] = int(a['Column'])
-        a['Label'] = lbst['Short Code'].item()
+        a = [name, row, column, short_code]
         annotations.append(a)
 
     # Save the labelsets as a csv file
-    basename = os.path.basename(labels_path).split('.')[0] + '_updated.csv'
+    basename = os.path.basename(labels_path).split('.')[0] + '_updated.dots.csv'
     output_file = f'{output_dir}{basename}'
-    annotations = pd.DataFrame(annotations)
+    annotations = pd.DataFrame(annotations, columns=['Name', 'Row', 'Column', 'Label'])
     annotations.to_csv(output_file, index=False)
 
     # Check that file was saved
@@ -101,7 +107,7 @@ def main():
     assert os.path.exists(labelsets_path), 'ERROR: Labelsets path does not exist'
 
     try:
-        annotations = convert_to_csv(labels_path, labelsets_path, output_dir)
+        annotations = convert_to_coralnet(labels_path, labelsets_path, output_dir)
         print('Done.')
 
     except Exception as e:

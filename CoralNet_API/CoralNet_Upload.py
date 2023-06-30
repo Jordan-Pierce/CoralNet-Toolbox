@@ -435,15 +435,18 @@ def main():
         'password': password
     }
 
+    # -------------------------------------------------------------------------
+    # Prepare the upload data
+    # -------------------------------------------------------------------------
     # Flags to determine what to upload
     UPLOAD_IMAGES = False
     UPLOAD_LABELSET = False
     UPLOAD_ANNOTATIONS = False
 
     # Data to be uploaded
-    IMAGES = os.path.abspath(args.images)
-    IMAGES = glob.glob(IMAGES + "\\*.*")
-    IMAGES = [i for i in IMAGES if i.split('.')[-1].lower() in IMG_FORMATS]
+    IMAGES = glob.glob(args.images + "\\*.*")
+    IMAGES = [i for i in IMAGES if os.path.basename(i).split(".")[-1].lower() in IMG_FORMATS]
+    IMAGES = [os.path.abspath(i) for i in IMAGES]
 
     # Check if there are images to upload
     if len(IMAGES) > 0:
@@ -465,6 +468,10 @@ def main():
     if os.path.exists(ANNOTATIONS) and "csv" in ANNOTATIONS.split(".")[-1]:
         print(f"NOTE: Found annotations to upload.")
         UPLOAD_ANNOTATIONS = True
+
+        # Subset the images so that only those with annotations are uploaded
+        a = pd.read_csv(ANNOTATIONS)['Name'].values
+        IMAGES = [i for i in IMAGES if os.path.basename(i) in a]
 
     # If there are no images, labelset, or annotations to upload, exit
     if not UPLOAD_IMAGES and not UPLOAD_LABELSET and not UPLOAD_ANNOTATIONS:
