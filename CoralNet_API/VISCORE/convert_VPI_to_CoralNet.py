@@ -32,7 +32,7 @@ def convert_to_csv(labels_path, mapping_path, output_dir):
 
         # if label is NaN, skip
         if pd.isna(r['Label']):
-            print("NOTE: Skipping null data")
+            print(f"NOTE: Skipping null data {r['Label']}")
             continue
 
         try:
@@ -50,16 +50,17 @@ def convert_to_csv(labels_path, mapping_path, output_dir):
         # Get the values for the updated label csv file
         # For some reason, CoralNet uses the Short Code as
         # the label from within a source
-        a = r[['Name', 'Row', 'Column']]
-        a['Row'] = int(a['Row'])
-        a['Column'] = int(a['Column'])
-        a['Label'] = lbst['Short Code'].item()
-        annotations.append(a)
+        name = os.path.basename(r['Name'].item())
+        row = int(r['Row'].item())
+        column = int(r['Column'].item())
+        label = lbst['Short Code'].item()
+        # Add to the list
+        annotations.append([name, row, column, label])
 
     # Save the labelsets as a csv file
     basename = os.path.basename(labels_path).split('.')[0] + '_updated.csv'
     output_file = f'{output_dir}{basename}'
-    annotations = pd.DataFrame(annotations)
+    annotations = pd.DataFrame(annotations, columns=['Name', 'Row', 'Column', 'Label'])
     annotations.to_csv(output_file, index=False)
 
     # Check that file was saved
@@ -83,7 +84,7 @@ def main():
                         help='The path to the CSV that maps VPI labels to CoralNet labels')
 
     parser.add_argument('--output_dir', type=str,
-                        default='./Data/',
+                        default=None,
                         help='Directory to save .csv files.')
 
     args = parser.parse_args()
@@ -91,7 +92,9 @@ def main():
     # Get the arguments
     labels_path = args.labels_path
     mapping_path = args.mapping_path
-    output_dir = args.output_dir
+
+    if args.output_dir is None:
+        output_dir = os.path.dirname(labels_path) + "\\"
 
     # Make the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
