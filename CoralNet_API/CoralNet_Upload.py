@@ -42,9 +42,9 @@ def upload_images(driver, source_id, images):
         # Check if the file input field is enabled
         if file_input.is_enabled():
             print(f"NOTE: File input field is enabled")
-            for image_path in images:
-                print(f"NOTE: Sending {os.path.basename(image_path)}")
-                file_input.send_keys(image_path)
+            print(f"NOTE: Attempting to upload {len(images)} images")
+            file_input.send_keys("\n".join(images))
+
         else:
             # File input field is not enabled, something is wrong
             raise ValueError(
@@ -435,36 +435,45 @@ def main():
         'password': password
     }
 
+    # -------------------------------------------------------------------------
+    # Prepare the data
+    # -------------------------------------------------------------------------
     # Flags to determine what to upload
-    UPLOAD_IMAGES = False
     UPLOAD_LABELSET = False
+    UPLOAD_IMAGES = False
     UPLOAD_ANNOTATIONS = False
-
-    # Data to be uploaded
-    IMAGES = os.path.abspath(args.images)
-    IMAGES = glob.glob(IMAGES + "\\*.*")
-    IMAGES = [i for i in IMAGES if i.split('.')[-1].lower() in IMG_FORMATS]
-
-    # Check if there are images to upload
-    if len(IMAGES) > 0:
-        print(f"NOTE: Found {len(IMAGES)} images to upload.")
-        UPLOAD_IMAGES = True
 
     # Assign the labelset
     LABELSET = os.path.abspath(args.labelset)
 
     # Check if there is a labelset to upload
     if os.path.exists(LABELSET) and "csv" in LABELSET.split(".")[-1]:
-        print(f"NOTE: Found labelset to upload.")
+        print(f"NOTE: Found labelset to upload")
         UPLOAD_LABELSET = True
+    else:
+        print(f"NOTE: No valid labelset found in {LABELSET}")
+
+    # Data to be uploaded
+    IMAGES = os.path.abspath(args.images)
+    IMAGES = glob.glob(IMAGES + "/*.*")
+    IMAGES = [i for i in IMAGES if i.split('.')[-1].lower() in IMG_FORMATS]
+
+    # Check if there are images to upload
+    if len(IMAGES) > 0:
+        print(f"NOTE: Found {len(IMAGES)} images to upload")
+        UPLOAD_IMAGES = True
+    else:
+        print(f"NOTE: No valid images found in {args.images}")
 
     # Assign the annotations
     ANNOTATIONS = os.path.abspath(args.annotations)
 
     # Check if there are annotations to upload
     if os.path.exists(ANNOTATIONS) and "csv" in ANNOTATIONS.split(".")[-1]:
-        print(f"NOTE: Found annotations to upload.")
+        print(f"NOTE: Found annotations to upload")
         UPLOAD_ANNOTATIONS = True
+    else:
+        print(f"NOTE: No valid annotations found in {ANNOTATIONS}")
 
     # If there are no images, labelset, or annotations to upload, exit
     if not UPLOAD_IMAGES and not UPLOAD_LABELSET and not UPLOAD_ANNOTATIONS:
@@ -484,13 +493,13 @@ def main():
     # Log in to CoralNet
     driver, _ = login(driver)
 
-    # Upload images
-    if UPLOAD_IMAGES:
-        driver, _ = upload_images(driver, source_id, IMAGES)
-
     # Upload labelset
     if UPLOAD_LABELSET:
         driver, _ = upload_labelset(driver, source_id, LABELSET)
+
+    # Upload images
+    if UPLOAD_IMAGES:
+        driver, _ = upload_images(driver, source_id, IMAGES)
 
     # Upload annotations
     if UPLOAD_ANNOTATIONS:
