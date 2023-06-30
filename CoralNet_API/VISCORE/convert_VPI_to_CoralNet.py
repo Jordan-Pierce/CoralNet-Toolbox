@@ -8,7 +8,7 @@ import sys
 sys.path.append('../')
 
 
-def convert_to_csv(labels_path, labelset_path, output_dir):
+def convert_to_csv(labels_path, mapping_path, output_dir):
     """
     Converts the dots and cams JSON files to CSV files for CoralNet. The CSV
     files are saved in the output directory.
@@ -20,7 +20,7 @@ def convert_to_csv(labels_path, labelset_path, output_dir):
         labels = pd.read_csv(labels_path)
 
         # Open the labelset file
-        labelset = pd.read_csv(labelset_path)
+        mapping = pd.read_csv(mapping_path)
 
     except Exception as e:
         raise Exception(f'ERROR: Issue opening provided paths')
@@ -31,20 +31,20 @@ def convert_to_csv(labels_path, labelset_path, output_dir):
     for i, r in tqdm(labels.iterrows()):
 
         # if label is NaN, skip
-        if pd.isna(r['Label']) or r['Label'] in ['Unkn_macro']:
+        if pd.isna(r['Label']):
+            print("NOTE: Skipping null data")
             continue
 
         try:
             # Get the VPI label
             l = r['Label']
             # Find it within the CoralNet VPI labelset
-            lbst = labelset[(labelset['VPI_label_V3'] == l) | (labelset['VPI_label_V4'] == l)]
+            lbst = mapping[(mapping['VPI_label_V3'] == l) | (mapping['VPI_label_V4'] == l)]
             # Check that one was found
             if lbst.empty:
                 raise Exception
         except Exception as e:
-            # print(f'ERROR: Could not locate {r["Label"]} in labelset {labelset_path}; exiting.')
-            # sys.exit(1)
+            print(f'ERROR: Could not locate {r["Label"]} in {mapping_path}; skipping.')
             continue
 
         # Get the values for the updated label csv file
@@ -78,9 +78,9 @@ def main():
     parser.add_argument('--labels_path', type=str,
                         help='The path to the labels CSV file output by VISCORE VPI')
 
-    parser.add_argument('--labelsets_path', type=str,
-                        default='./CoralNet_VPI_Labelset_With_Exact_Match.csv',
-                        help='The path to the CoralNet_VPI_Labelsets.csv')
+    parser.add_argument('--mapping_path', type=str,
+                        default='./MIR_VPI_CoralNet_Mapping.csv',
+                        help='The path to the CSV that maps VPI labels to CoralNet labels')
 
     parser.add_argument('--output_dir', type=str,
                         default='./Data/',
@@ -90,7 +90,7 @@ def main():
 
     # Get the arguments
     labels_path = args.labels_path
-    labelsets_path = args.labelsets_path
+    mapping_path = args.mapping_path
     output_dir = args.output_dir
 
     # Make the output directory if it doesn't exist
@@ -98,10 +98,10 @@ def main():
 
     # Check that the paths exist
     assert os.path.exists(labels_path), 'ERROR: labels path does not exist'
-    assert os.path.exists(labelsets_path), 'ERROR: Labelsets path does not exist'
+    assert os.path.exists(mapping_path), 'ERROR: Labelsets path does not exist'
 
     try:
-        annotations = convert_to_csv(labels_path, labelsets_path, output_dir)
+        annotations = convert_to_csv(labels_path, mapping_path, output_dir)
         print('Done.')
 
     except Exception as e:
