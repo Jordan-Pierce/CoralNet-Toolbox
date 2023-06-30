@@ -22,12 +22,6 @@ This repository contains a collection of tools that can be used to interact with
 perform various tasks related to analyzing the annotated images. The following is a list of the 
 tools currently available:
 
-#### **CoralNet_3D**
-CoralNet_3D is a set of tools for representing single images as 3D point clouds. Images are 
-provided depth maps using MiDAS and represented as a point cloud with RGB color component values 
-coming from the original images. This tool can be useful for visualizing the annotated images in 3D 
-and analyzing their structure.
-
 #### **CoralNet_API**
 CoralNet_API is a Python library for accessing the CoralNet API, which allows users to 
 programmatically interact with CoralNet and perform tasks such as uploading and downloading data, 
@@ -44,12 +38,6 @@ species.
 Patch_Extractor is a tool for dividing annotated images into smaller patches, which can be useful 
 for training machine learning models on the annotated data. This tool can be used to generate 
 training datasets for image classification or semantic segmentation.
-
-#### **Semantic_Segmentation**
-Semantic_Segmentation is a set of tools for training a semantic segmentation algorithm using the 
-images and annotations downloaded from CoralNet, or those you create using the Patch_Extractor 
-tool. This tool can be used to segment images into different regions based on the presence of 
-specific features or coral species.
 
 #### **How to use**
 To use these tools, you need to have access to the CoralNet platform. Once you have an account, 
