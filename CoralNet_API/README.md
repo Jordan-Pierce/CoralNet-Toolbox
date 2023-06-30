@@ -130,7 +130,7 @@ The following describes what is expected of the annotations, and labelset:
 
 Example of usage:
 ```python 
-python Upload_CoralNet.py --username JohnDoe \
+python CoralNet_Upload.py --username JohnDoe \
                           --password 123456789 \ 
                           --source_id 1 \
                           --image_folder path/to/images/ \ 
@@ -191,6 +191,16 @@ The following describes what is expected in the csv files:
 1  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg  1252     971   
 2  mcr_lter1_fringingreef_pole1-2_qu1_20080415.jpg   548    1054  
 ```  
+
+Example of usage:
+```python 
+python CoralNet_API.py --username JohnDoe \
+                       --password 123456789 \ 
+                       --source_id_1 4085 \
+                       --source_id_2 3420 \
+                       --csv_path path/to/annotations.csv \ 
+                       --headless True
+```
 
 If you do not want to use the script via commandline, you can also use the GUI version 
 `CoralNet_API_GUI.py`, which will walk you through the steps.
