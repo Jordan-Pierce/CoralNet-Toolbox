@@ -1,5 +1,3 @@
-import os.path
-
 from CoralNet import *
 
 
@@ -7,10 +5,78 @@ from CoralNet import *
 # Functions for downloading all of CoralNet
 # -------------------------------------------------------------------------------------------------
 
-def download_coralnet_labelsets(driver, output_dir=None):
+
+def download_coralnet_sources(driver, output_dir):
+    """
+    Downloads a list of all the public sources currently on CoralNet.
+    """
+
+    print("\n###############################################")
+    print("CoralNet Source Dataframe")
+    print("###############################################\n")
+
+    # Variable to hold the list of sources
+    sources = None
+
+    # Go to the images page
+    driver.get(CORALNET_SOURCE_URL)
+
+    print("NOTE: Downloading CoralNet Source Dataframe")
+
+    try:
+        # Parse the HTML response using BeautifulSoup
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+        # Find all the instances of sources
+        links = soup.find_all('ul', class_='object_list')[0].find_all("li")
+
+        # Lists to store the source IDs and names
+        source_urls = []
+        source_ids = []
+        source_names = []
+
+        # Now, get all the source IDs and names on the page
+        for link in tqdm(links):
+            # Parse the information
+            url = CORALNET_URL + link.find("a").get("href")
+            source_id = url.split("/")[-2]
+            source_name = link.find("a").text.strip()
+
+            # Check what is grabbed it actually a source
+            if source_id.isnumeric():
+                source_urls.append(url)
+                source_ids.append(source_id)
+                source_names.append(source_name)
+
+        # Store as a dict
+        sources = {'Source_ID': source_ids,
+                   'Source_Name': source_names,
+                   'Source_URL': source_urls}
+
+        # Create a dataframe
+        sources = pd.DataFrame(sources)
+        sources.to_csv(f"{output_dir}CoralNet_Source_ID_Dataframe.csv")
+
+        if os.path.exists(f"{output_dir}CoralNet_Source_ID_Dataframe.csv"):
+            print("NOTE: CoralNet Source Dataframe saved successfully")
+        else:
+            raise Exception("ERROR: Could not download Source ID Dataframe; "
+                            "check that variable CoralNet URL is correct.")
+    except Exception as e:
+        print(f"Error: Unable to get source Dataframe from CoralNet.\n{e}")
+        sources = None
+
+    return driver, sources
+
+
+def download_coralnet_labelsets(driver, output_dir):
     """
     Download a list of all labelsets in CoralNet.
     """
+
+    print("\n###############################################")
+    print("CoralNet Labelset Dataframe")
+    print("###############################################\n")
 
     # Variable to hold the list of sources
     labelset = None
@@ -18,7 +84,7 @@ def download_coralnet_labelsets(driver, output_dir=None):
     # Go to the images page
     driver.get(CORALNET_LABELSET_URL)
 
-    print("NOTE: Downloading CoralNet Labelset List")
+    print("NOTE: Downloading CoralNet Labelset Dataframe")
 
     try:
         # Parse the HTML response using BeautifulSoup
@@ -74,96 +140,27 @@ def download_coralnet_labelsets(driver, output_dir=None):
                                                'Popularity %',
                                                'Short Code',
                                                'Duplicate',
-                                               'Duplicate_Notes',
+                                               'Duplicate Notes',
                                                'Verified',
                                                'Has Calcification Rates'])
 
-        # See if the user wants to save locally
-        if output_dir:
+        # Save locally
+        labelset.to_csv(f"{output_dir}CoralNet_Labelset_Dataframe.csv")
 
-            # Save locally
-            labelset.to_csv(f"{output_dir}CoralNet_Labelset_List.csv")
-
-            # Check that it was saved
-            if os.path.exists(f"{output_dir}CoralNet_Labelset_List.csv"):
-                print("NOTE: Labelset list saved successfully")
-            else:
-                raise Exception("ERROR: Could not download Labelset list; "
-                                "check that variable Labelset URL is correct.")
+        if os.path.exists(f"{output_dir}CoralNet_Labelset_Dataframe.csv"):
+            print("NOTE: Labelset Dataframe saved successfully")
+        else:
+            raise Exception("ERROR: Could not download Labelset Dataframe; "
+                            "check that variable Labelset URL is correct.")
 
     except Exception as e:
-        print(f"Error: Unable to get labelset list from CoralNet.\n{e}")
+        print(f"Error: Unable to get Labelset Dataframe from CoralNet.\n{e}")
         labelset = None
 
     return driver, labelset
 
 
-def download_coralnet_sources(driver, output_dir=None):
-    """
-    Downloads a list of all the public sources currently on CoralNet.
-    """
-
-    # Variable to hold the list of sources
-    sources = None
-
-    # Go to the images page
-    driver.get(CORALNET_SOURCE_URL)
-
-    print("NOTE: Downloading CoralNet Source List")
-
-    try:
-        # Parse the HTML response using BeautifulSoup
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-        # Find all the instances of sources
-        links = soup.find_all('ul', class_='object_list')[0].find_all("li")
-
-        # Lists to store the source IDs and names
-        source_urls = []
-        source_ids = []
-        source_names = []
-
-        # Now, get all the source IDs and names on the page
-        for link in tqdm(links):
-            # Parse the information
-            url = CORALNET_URL + link.find("a").get("href")
-            source_id = url.split("/")[-2]
-            source_name = link.find("a").text.strip()
-
-            # Check what is grabbed it actually a source
-            if source_id.isnumeric():
-                source_urls.append(url)
-                source_ids.append(source_id)
-                source_names.append(source_name)
-
-        # Store as a dict
-        sources = {'Source_ID': source_ids,
-                   'Source_Name': source_names,
-                   'Source_URL': source_urls}
-
-        # Create a dataframe
-        sources = pd.DataFrame(sources)
-
-        # Check if user wants to save locally:
-        if output_dir:
-
-            # Save locally
-            sources.to_csv(f"{output_dir}CoralNet_Source_ID_List.csv")
-
-            # Check that it was saved
-            if os.path.exists(f"{output_dir}CoralNet_Source_ID_List.csv"):
-                print("NOTE: CoralNet Source list saved successfully")
-            else:
-                raise Exception("ERROR: Could not download Source ID list; "
-                                "check that variable CoralNet URL is correct.")
-    except Exception as e:
-        print(f"Error: Unable to get source list from CoralNet.\n{e}")
-        sources = None
-
-    return driver, sources
-
-
-def get_sources_with(driver, labelsets, output_dir=None):
+def get_sources_with(driver, labelsets, output_dir):
     """
     Downloads a list of sources that contain the specified labelsets.
     """
@@ -171,7 +168,7 @@ def get_sources_with(driver, labelsets, output_dir=None):
     # Go to the images page
     driver.get(CORALNET_LABELSET_URL)
 
-    print("NOTE: Downloading list of sources")
+    print("NOTE: Downloading dataframe of sources")
 
     try:
         source_list = []
@@ -210,28 +207,23 @@ def get_sources_with(driver, labelsets, output_dir=None):
 
         # If the list of source ids is not empty, save locally
         if source_list:
-
             # Convert to dataframe
             source_list = pd.DataFrame(source_list, columns=['Source_ID',
                                                              'Source_Name',
                                                              'Source_URL',
                                                              'Contains'])
-            # Check to see if use wants to save locally
-            if output_dir:
-
-                # Save locally
-                source_list.to_csv(f"{output_dir}Desired_Source_ID_List.csv")
-
-                # Check that it exists
-                if os.path.exists(f"{output_dir}Desired_Source_ID_List.csv"):
-                    print("NOTE: Source ID List saved successfully")
-                else:
-                    raise Exception("ERROR: Could not save Source ID List")
+            # Save locally
+            source_list.to_csv(f"{output_dir}Desired_Source_ID_Dataframet.csv")
+            # Check that it exists
+            if os.path.exists(f"{output_dir}Desired_Source_ID_Dataframe.csv"):
+                print("NOTE: Source ID dataframe saved successfully")
+            else:
+                raise Exception("ERROR: Could not save Source ID dataframe")
         else:
             raise Exception("ERROR: No sources found")
 
     except Exception as e:
-        print(f"ERROR: Unable to get list of Source IDs\n{e}")
+        print(f"ERROR: Unable to get dataframe of Source IDs\n{e}")
         source_list = None
 
     return driver, source_list
@@ -265,7 +257,7 @@ def download_metadata(driver, source_id, source_dir=None):
         print(f"ERROR: {e} or you do not have permission to access it")
         sys.exit(1)
 
-    print(f"NOTE: Downloading model metadata for {source_id}")
+    print(f"\nNOTE: Downloading model metadata for {source_id}")
 
     try:
         # Convert the page to soup
@@ -305,11 +297,11 @@ def download_metadata(driver, source_id, source_dir=None):
 
         # Convert list to dataframe
         meta = pd.DataFrame(meta, columns=['Classifier nbr',
-                                           'Accuracy %',
-                                           'N_Images',
-                                           'Train_Time',
+                                           'Accuracy',
+                                           'Trained on',
                                            'Date',
-                                           'Model_ID'])
+                                           'Traintime',
+                                           'Global id'])
 
         if source_dir:
             # Save the metadata
@@ -350,7 +342,7 @@ def download_labelset(driver, source_id, source_dir):
         print(f"ERROR: {e} or you do not have permission to access it")
         sys.exit(1)
 
-    print(f"NOTE: Downloading labelset for {source_id}")
+    print(f"\nNOTE: Downloading labelset for {source_id}")
 
     try:
         # Find the "Export Label to CSV" button
@@ -419,7 +411,7 @@ def download_images(dataframe, source_dir):
     image_dir = source_dir + "images/"
     os.makedirs(image_dir, exist_ok=True)
 
-    print(f"NOTE: Downloading {len(dataframe)} images")
+    print(f"\nNOTE: Downloading {len(dataframe)} images")
 
     # To hold the expired images
     expired_images = []
@@ -431,8 +423,8 @@ def download_images(dataframe, source_dir):
 
             for index, row in dataframe.iterrows():
                 # Get the image name and URL from the dataframe
-                name = row['image_name']
-                url = row['image_url']
+                name = row['Name']
+                url = row['Image URL']
                 path = image_dir + name
                 # Add the download task to the executor
                 results.append(executor.submit(download_image, url, path))
@@ -573,7 +565,7 @@ def get_images(driver, source_id):
         print(f"ERROR: {e} or you do not have permission to access it")
         sys.exit(1)
 
-    print(f"NOTE: Crawling all pages for source {source_id}")
+    print(f"\nNOTE: Crawling all pages for source {source_id}")
 
     # Create lists to store the URLs and titles
     image_page_urls = []
@@ -611,11 +603,11 @@ def get_images(driver, source_id):
                     pbar.refresh()
 
                 else:
-                    print("NOTE: Finished crawling all pages")
+                    print("\nNOTE: Finished crawling all pages")
                     break
 
-            images = pd.DataFrame({'image_page': image_page_urls,
-                                   'image_name': image_names})
+            images = pd.DataFrame({'Image Page': image_page_urls,
+                                   'Name': image_names})
 
     except Exception as e:
         print(f"ERROR: Issue with crawling pages")
@@ -688,7 +680,7 @@ def download_annotations(driver, source_id, source_dir):
                 raise Exception(f"ERROR: {status} or you do not have permission to access it")
 
             # Download the annotations
-            print(f"NOTE: Downloading annotations for source {source_id}")
+            print(f"\nNOTE: Downloading annotations for source {source_id}")
 
             # Parse the HTML response using BeautifulSoup
             soup = BeautifulSoup(response.text, "html.parser")
@@ -747,6 +739,10 @@ def download_data(driver, source_id, output_dir):
     data for multiple sources concurrently.
     """
 
+    print("\n###############################################")
+    print(f"Downloading Source {source_id}")
+    print("###############################################\n")
+
     # The directory to store the output
     source_dir = os.path.abspath(output_dir) + f"\\{str(source_id)}\\"
     image_dir = source_dir + "images\\"
@@ -791,9 +787,9 @@ def download_data(driver, source_id, output_dir):
 
         if images is not None:
             # Get the image page URLs
-            image_pages = images['image_page'].tolist()
+            image_pages = images['Image Page'].tolist()
             # Get the image AWS URLs
-            driver, images['image_url'] = get_image_urls(driver, image_pages)
+            driver, images['Image URL'] = get_image_urls(driver, image_pages)
 
             # Download the images to the specified directory
             download_images(images, source_dir)
@@ -888,14 +884,9 @@ def main():
     # -------------------------------------------------------------------------
     # Get the browser
     # -------------------------------------------------------------------------
-    options = Options()
-
-    if args.headless.lower() == 'true':
-        # Set headless mode
-        options.add_argument("--headless")
-
+    headless = True if args.headless.lower() == 'true' else False
     # Pass the options object while creating the driver
-    driver = check_for_browsers(options=options)
+    driver = check_for_browsers(headless)
     # Store the credentials in the driver
     driver.capabilities['credentials'] = {
         'username': username,
@@ -910,7 +901,6 @@ def main():
 
     try:
         for source_id in args.source_ids:
-            print(f"\nNOTE: Downloading data for source {source_id}")
             driver, m, l, i, a = download_data(driver, source_id, output_dir)
 
     except Exception as e:

@@ -1,15 +1,36 @@
-import re
-import glob
-import random
-import datetime
-from PIL import Image
-from io import BytesIO
-
 from CoralNet_Download import *
+
 
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
+
+
+def get_source_meta(driver, source_id_1, source_id_2=None):
+    """Downloads just the information from source needed to do API calls;
+    source id 1 refers to the source containing images, and source id 2
+    refers to a source for a different model (if desired)"""
+
+    print("\n###############################################")
+    print(f"Downloading Source Metadata")
+    print("###############################################\n")
+
+    # Variables for the model
+    source_id = source_id_1 if source_id_2 is None else source_id_2
+    driver, meta = download_metadata(driver, source_id)
+
+    # Check if a model exists
+    if meta is None:
+        raise Exception(f"ERROR: No model found for the source {source_id}.")
+
+    # Get the images for the source
+    driver, source_images = get_images(driver, source_id_1)
+
+    # Check if there are any images
+    if source_images is None:
+        raise Exception(f"ERROR: No images found in the source {source_id_1}.")
+
+    return driver, meta, source_images
 
 
 def in_N_seconds(wait):
@@ -57,67 +78,6 @@ def is_expired(url):
     return expired
 
 
-def sample_points_for_url(url, num_samples=200, method='stratified'):
-    """
-    Generates a set of sample coordinates within a given image size.
-    """
-
-    x = None
-    y = None
-    samples = None
-
-    # Check if the URL is expired
-    if is_expired(url):
-        print(f"ERROR: URL is expiring soon; skipping.\n{url}")
-
-    else:
-        # Request the image from AWS
-        response = requests.get(url)
-
-        # Read it to get the size
-        img = Image.open(BytesIO(response.content))
-        width, height = img.size
-
-        x_coordinates = []
-        y_coordinates = []
-        samples = []
-
-        # Generate samples
-        if method == 'uniform':
-            x_coords = np.linspace(0, width - 1, int(np.sqrt(num_samples)))
-            y_coords = np.linspace(0, height - 1, int(np.sqrt(num_samples)))
-            for x in x_coords:
-                for y in y_coords:
-                    x_coordinates.append(int(x))
-                    y_coordinates.append(int(y))
-                    samples.append({'row': int(y), 'column': int(x)})
-        # Generate samples
-        elif method == 'random':
-            for i in range(num_samples):
-                x = random.randint(0, width - 1)
-                y = random.randint(0, height - 1)
-                x_coordinates.append(x)
-                y_coordinates.append(y)
-                samples.append({'row': y, 'column': x})
-        # Generate samples
-        elif method == 'stratified':
-            n = int(np.sqrt(num_samples))
-            x_range = np.linspace(0, width - 1, n + 1)
-            y_range = np.linspace(0, height - 1, n + 1)
-            for i in range(n):
-                for j in range(n):
-                    x = np.random.uniform(x_range[i], x_range[i + 1])
-                    y = np.random.uniform(y_range[j], y_range[j + 1])
-                    x_coordinates.append(int(x))
-                    y_coordinates.append(int(y))
-                    samples.append({'row': int(y), 'column': int(x)})
-        # Store in numpy arrays
-        x = np.array(x_coordinates).astype(int)
-        y = np.array(y_coordinates).astype(int)
-
-    return x, y, samples
-
-
 def check_job_status(response, coralnet_token):
     """
     Sends a request to retrieve the completed annotations and returns the
@@ -146,12 +106,14 @@ def check_job_status(response, coralnet_token):
             # Get the current time
             now = time.strftime("%H:%M:%S")
             # Create the message
-            message = f"Status: {status_str}\tID: {ids}\tTime: {now}"
-            message += f"\tTotal: {t}\tSuccess: {s}\tFailures: {f}"
-
+            message = "\nJOB ID {: <8} Status: {: <8}\n".format(ids, status_str)
+            message += "Images: {: <8} " \
+                       "Predictions: {: <8} " \
+                       "Failures: {: <8} " \
+                       "Time: {: <8}".format(t, s, f, now)
         else:
             # It's done with all images
-            message = "Completed Job"
+            message = "Completed Job!"
     else:
         # CoralNet is getting too many requests, sleep for a second.
         message = f"CoralNet: {current_status['errors'][0]['detail']}"
@@ -169,10 +131,10 @@ def print_job_status(queue, active, completed, expired):
     """
     Print the current status of jobs and images being processed.
     """
-    print(f"JOBS: Queued: {len(queue)} \t"
-          f"Active: {len(active)} \t"
-          f"Completed: {len(completed)} \t"
-          f"Expired Images: {len(expired)}")
+    print("\nJOBS: Queued: {: <8} "
+          "Active: {: <8} "
+          "Completed: {: <8} "
+          "Expired Images: {: <8}".format(len(queue), len(active), len(completed), len(expired)))
 
 
 def convert_to_csv(status, image_names, output_dir):
@@ -200,16 +162,14 @@ def convert_to_csv(status, image_names, output_dir):
         for point in data['attributes']['points']:
             # Create a dictionary to store the data for each point
             p = dict()
-            p['image_name'] = image_name
-            p['column'] = point['column']
-            p['row'] = point['row']
+            p['Name'] = image_name
+            p['Row'] = point['row']
+            p['Column'] = point['column']
 
             # Loop through each classification for each point
             for index, classification in enumerate(point['classifications']):
-                p['score_' + str(index + 1)] = classification['score']
-                p['label_id_' + str(index + 1)] = classification['label_id']
-                p['label_code_' + str(index + 1)] = classification['label_code']
-                p['label_name_' + str(index + 1)] = classification['label_name']
+                p['Machine confidence ' + str(index + 1)] = classification['score']
+                p['Machine suggestion ' + str(index + 1)] = classification['label_code']
 
             # Concatenate the data for each point into a single DataFrame
             p = pd.DataFrame.from_dict([p])
@@ -230,16 +190,8 @@ def convert_to_csv(status, image_names, output_dir):
     return model_predictions, expired
 
 
-# -----------------------------------------------------------------------------
-# Main Function
-# -----------------------------------------------------------------------------
-
-def main():
+def api(driver, images, points, model_url, coralnet_token, headers, predictions_dir):
     """
-    This is the main part of the script. We loop through each image, get the
-    points for that image, and then make predictions for those points. We then
-    save the predictions to a CSV file in the `SOURCE_PREDICTIONS` folder.
-
     There are multiple loops in this section. The first loop continues until all
     images have been processed. The first inner for loop prepares the data for the
     model, by creating a JSON object that contains the image URL and the points.
@@ -260,191 +212,13 @@ def main():
     images, and update the URLs. It will then re-run the predictions for those
     images.
     """
+    print("\n###############################################")
+    print(f"Getting Predictions from Model")
+    print("###############################################")
 
-    parser = argparse.ArgumentParser(description='CoralNet arguments')
+    # Total number of images
+    total_images = len(images['Name'].unique())
 
-    parser.add_argument('--username', type=str,
-                        default=os.getenv('CORALNET_USERNAME'),
-                        help='Username for CoralNet account')
-
-    parser.add_argument('--password', type=str,
-                        default=os.getenv('CORALNET_PASSWORD'),
-                        help='Password for CoralNet account')
-
-    parser.add_argument('--csv_path', type=str,
-                        help='A path to a csv file, or folder containing '
-                             'multiple csv files. Each csv file should '
-                             'contain following: image_name, row, column')
-
-    parser.add_argument('--source_id', type=int,
-                        help='The ID of the source being used.')
-
-    parser.add_argument('--output_dir', type=str, default="../CoralNet_Data/",
-                        help='A root directory where all predictions will be '
-                             'saved to.')
-
-    args = parser.parse_args()
-
-    try:
-        # Check to see if the csv file exists
-        assert os.path.exists(args.csv_path)
-
-        # Determine if it's a single file or a folder
-        if os.path.isfile(args.csv_path):
-            # If file, just read it in
-            DATA = pd.read_csv(args.csv_path)
-        elif os.path.isdir(args.csv_path):
-            # If folder, read in all csv files, concatenate them together
-            csv_files = glob.glob(args.csv_path + "/*.csv")
-            DATA = pd.DataFrame()
-            for csv_file in csv_files:
-                DATA = pd.concat([DATA, pd.read_csv(csv_file)])
-        else:
-            raise Exception(f"ERROR: {args.csv_path} is invalid.")
-
-        # Check to see if the csv file has the expected columns
-        assert 'image_name' in DATA.columns
-
-    except Exception as e:
-        raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
-
-    # Source information
-    SOURCE_ID = str(args.source_id)
-
-    # ----------------------------------------
-    # Authenticate
-    # ----------------------------------------
-    try:
-        # Username, Password
-        USERNAME = args.username
-        PASSWORD = args.password
-
-        # Authenticate
-        authenticate(USERNAME, PASSWORD)
-        CORALNET_TOKEN, HEADERS = get_token(USERNAME, PASSWORD)
-    except Exception as e:
-        raise Exception(f"ERROR: {e}")
-
-    # Set the options for the driver
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--disable-images")
-
-    # Pass the options object while creating the driver
-    driver = check_for_browsers(options=options)
-    # Store the credentials in the driver
-    driver.capabilities['credentials'] = {
-        'username': USERNAME,
-        'password': PASSWORD
-    }
-    # Login to CoralNet
-    driver, _ = login(driver)
-
-    # Variables for the model
-    driver, meta = download_metadata(driver, SOURCE_ID)
-
-    # Check if the model exists
-    if meta is None:
-        raise Exception(f"ERROR: No model found for the source {SOURCE_ID}.")
-
-    # Get the model ID and URL
-    MODEL_ID = meta['Model_ID'][0]
-    MODEL_URL = CORALNET_URL + f"/api/classifier/{MODEL_ID}/deploy/"
-
-    # Get the images for the source
-    driver, SOURCE_IMAGES = get_images(driver, SOURCE_ID)
-
-    # Check if there are any images
-    if SOURCE_IMAGES is None:
-        raise Exception(f"ERROR: No images found in the source {SOURCE_ID}.")
-
-    # Set the data root directory
-    DATA_ROOT = args.output_dir + "/"
-
-    # Where the output predictions will be stored
-    SOURCE_DIR = DATA_ROOT + SOURCE_ID + "/"
-    SOURCE_POINTS = SOURCE_DIR + "points/"
-    SOURCE_PREDICTIONS = SOURCE_DIR + "predictions/"
-
-    # Create a folder to contain predictions and points
-    os.makedirs(SOURCE_DIR, exist_ok=True)
-    os.makedirs(SOURCE_POINTS, exist_ok=True)
-    os.makedirs(SOURCE_PREDICTIONS, exist_ok=True)
-
-    # Get the images desired for predictions; make sure it's not file path.
-    images = DATA['image_name'].unique().tolist()
-    images = [os.path.basename(image) for image in images]
-
-    try:
-        # We will get the information needed from the source images dataframe
-        IMAGES = SOURCE_IMAGES[SOURCE_IMAGES['image_name'].isin(images)].copy()
-        print(f"NOTE: Found {len(IMAGES)} images in the source {SOURCE_ID}")
-
-        # Get the image AWS URLs for the images of interest
-        image_pages = IMAGES['image_page'].tolist()
-        driver, IMAGES['image_url'] = get_image_urls(driver, image_pages)
-
-    except Exception as e:
-        raise Exception(f"ERROR: Image names in {args.csv_path} do not match any of "
-                        f"those in the source {SOURCE_ID}. Make sure they have already "
-                        f"been uploaded to the source before using the API script.\n{e}")
-
-    # Check if we have row and column information available, else sample points
-    if 'row' not in DATA.columns or 'column' not in DATA.columns:
-        if input(f"NOTE: No row or column information was found in {args.csv_path}\n. "
-                 f"Do you want randomly sample 200 points? (y/n): ").lower() == 'n':
-
-            # Exit the script
-            print("NOTE: Exiting script")
-            sys.exit(0)
-
-        # Create points for each of the desired images
-        for image in images:
-
-            # We use the IMAGES dataframe to get the URL of the image
-            image_df = IMAGES[IMAGES['image_name'] == image]
-            image_url = image_df['image_url'].values[0]
-
-            # Then we sample points from the image
-            x, y, samples = sample_points_for_url(image_url, 200, 'stratified')
-
-            # If the image expired, skip it
-            if not samples:
-                continue
-
-            # Save the points to a csv file in the SOURCE_POINTS folder
-            df = pd.DataFrame(samples); df['image_name'] = image
-            df.to_csv(SOURCE_POINTS + image + ".csv")
-
-            # Check if the file was saved successfully
-            if os.path.exists(SOURCE_POINTS + image + ".csv"):
-                print(f"NOTE: Points for {image} saved successfully")
-            else:
-                print(f"ERROR: Could not save points for {image}")
-
-        # Get all the points for all the images that were just created
-        POINT_PATHS = glob.glob(SOURCE_POINTS + "*.csv")
-
-        # This dataframe will contain all the points for all the images
-        # The columns are `image_name`, `Row`, and `Column`.
-        POINTS = pd.DataFrame()
-
-        # We then concatenate all the points into a single dataframe
-        for path in POINT_PATHS:
-            points = pd.read_csv(path)
-            points['image_name'] = os.path.basename(path)
-            POINTS = pd.concat([POINTS, points])
-
-    else:
-        # We will use the points provided in the CSV file
-        POINTS = DATA[['image_name', 'row', 'column']]
-
-    # Make sure we exclude any images that do not have points, otherwise the API will fail
-    IMAGES = IMAGES[IMAGES['image_name'].isin(POINTS['image_name'].unique())]
-
-    # ---------------------------------------------------------------------------------------------
-    # We will now get the predictions for each of the images
-    # ---------------------------------------------------------------------------------------------
     # Jobs that are currently queued
     queued_jobs = []
     queued_imgs = []
@@ -470,12 +244,12 @@ def main():
         payload_data = []
         payload_imgs = []
 
-        for index, row in IMAGES.iterrows():
+        for index, row in images.iterrows():
             # Loops through each image requested, gets points, adds to a queue
 
             # Get the current image name and url
-            name = row['image_name']
-            url = row['image_url']
+            name = row['Name']
+            url = row['Image URL']
 
             # If this image has already been completed, skip it.
             if name in completed_imgs:
@@ -491,8 +265,10 @@ def main():
 
             # The image url has not expired, so we can queue the image
             elif not is_expired(url):
-                points = POINTS[POINTS['image_name'].str.contains(name)]
-                points = points[['row', 'column']].to_dict(orient="records")
+                p = points[points['Name'].str.contains(name)]
+                # Because CoralNet isn't consistent...
+                p = p.rename(columns={'Row': 'row', 'Column': 'column'})
+                p = p[['row', 'column']].to_dict(orient="records")
 
                 # Add the data to the list for payloads
                 payload_imgs.append(name)
@@ -502,7 +278,7 @@ def main():
                         "attributes": {
                             "name": name,
                             "url": url,
-                            "points": points
+                            "points": p
                         }
                     })
 
@@ -521,8 +297,8 @@ def main():
             payload = {'data': payload_data[_: _ + data_per_payload]}
             # Use the payload to construct the job
             job = {
-                "headers": HEADERS,
-                "model_url": MODEL_URL,
+                "headers": headers,
+                "model_url": model_url,
                 "image_names": image_names,
                 "data": json.dumps(payload, indent=4),
 
@@ -544,11 +320,11 @@ def main():
 
                 # Break when active gets to 5
                 if len(active_jobs) >= 5:
-                    print("NOTE: Five jobs already active; checking status")
+                    print("\nNOTE: Five jobs already active; checking status")
                     break  # Breaks from both loops
 
                 # Upload the image and the sampled points to CoralNet
-                print(f"NOTE: Attempting to upload {len(names)} images")
+                print(f"\nNOTE: Attempting to upload {len(names)} images")
 
                 # Sends the requests to the `source` and in exchange, receives
                 # a message telling if it was received correctly.
@@ -557,7 +333,7 @@ def main():
                                          headers=job["headers"])
                 if response.ok:
                     # If it was received
-                    print(f"NOTE: Successfully uploaded: {len(names)} images")
+                    print(f"NOTE: Successfully uploaded {len(names)} images")
 
                     # Add to active jobs
                     active_jobs.append(response)
@@ -591,7 +367,7 @@ def main():
                         queued_imgs.remove(names)
 
             # If all images have expired, break from the loop
-            if IMAGES['image_name'].isin(expired_imgs).all():
+            if images['Name'].isin(expired_imgs).all():
                 print("NOTE: All images have expired")
                 break
 
@@ -609,18 +385,18 @@ def main():
             for i, (job, names) in enumerate(list(zip(active_jobs, active_imgs))):
 
                 # Check the status of the current job
-                current_status, message, wait = check_job_status(job, CORALNET_TOKEN)
+                current_status, message, wait = check_job_status(job, coralnet_token)
 
                 # Print the message
-                print(f"NOTE: {message}")
+                print(f"{message}")
 
                 # Current job finished, output the results, remove from queue
-                if message == "Completed Job":
+                if "Completed" in message:
 
                     # Convert to csv, and save locally, check for expired images
                     predictions, expired = convert_to_csv(current_status,
                                                           names,
-                                                          SOURCE_PREDICTIONS)
+                                                          predictions_dir)
 
                     # Deal with images after the job has been completed
                     for name in names:
@@ -635,8 +411,11 @@ def main():
                     print(f"NOTE: Adding {len(names)} images to completed")
                     completed_jobs.append(current_status)
 
+                    # Update progress bar
+                    print(f"progress: {len(completed_imgs)}/{total_images}")
+
                     # Remove from active jobs, images list
-                    print(f"NOTE: Removing {len(names)} images from active")
+                    print(f"NOTE: Removing {len(names)} images from active\n")
                     active_imgs.remove(names)
                     active_jobs.remove(job)
 
@@ -646,32 +425,172 @@ def main():
             # After checking the current status, break if another job can be added
             # Else wait and check the status of the active jobs again.
             if len(active_jobs) < 5 and len(queued_jobs) > 0:
-                print(f"NOTE: Active jobs {len(active_jobs)}; adding another.")
+                print(f"NOTE: Active jobs {len(active_jobs)}; adding another.\n")
                 break
 
         # Check to see everything has been completed, breaking the loop
         if not queued_jobs and not active_jobs and not expired_imgs:
-            print("NOTE: All images have been processed; exiting loop.")
+            print("NOTE: All images have been processed; exiting loop.\n")
             finished = True
 
         # If there are no queued jobs, and no active jobs, but there are images in
         # expired, get just the AWS URL for the expired images and update dataframe.
         if not queued_jobs and not active_jobs and expired_imgs:
-            print(f"NOTE: Updating {len(expired_imgs)} expired images' URL")
+            print(f"NOTE: Updating {len(expired_imgs)} expired images' URL\n")
 
             # Get the subset of images dataframe containing only the expired images
-            IMAGES = IMAGES[IMAGES['image_name'].isin(expired_imgs)].copy()
+            images = images[images['Name'].isin(expired_imgs)].copy()
 
             # Get the unexpired AWS image URLs
-            driver, new_urls = get_image_urls(driver, IMAGES['image_page'].tolist())
-            IMAGES['image_url'] = new_urls
+            driver, new_urls = get_image_urls(driver, images['Image Page'].tolist())
+            images['Image URL'] = new_urls
 
             # Reset the expired images list
             expired_imgs = []
+
+    # Close the driver
+    driver.close()
+
+    return
+
+
+# -----------------------------------------------------------------------------
+# Main Function
+# -----------------------------------------------------------------------------
+
+def main():
+    """
+    This is the main part of the script. We loop through each image, get the
+    points for that image, and then make predictions for those points. We then
+    save the predictions to a CSV file in the predictions directory.
+    """
+
+    parser = argparse.ArgumentParser(description='CoralNet arguments')
+
+    parser.add_argument('--username', type=str,
+                        default=os.getenv('CORALNET_USERNAME'),
+                        help='Username for CoralNet account')
+
+    parser.add_argument('--password', type=str,
+                        default=os.getenv('CORALNET_PASSWORD'),
+                        help='Password for CoralNet account')
+
+    parser.add_argument('--csv_path', type=str,
+                        help='A path to a csv file, or folder containing '
+                             'multiple csv files. Each csv file should '
+                             'contain following: name, row, column')
+
+    parser.add_argument('--source_id_1', type=str, required=True,
+                        help='The ID of the Source containing images.')
+
+    parser.add_argument('--source_id_2', type=str, default=None,
+                        help='The ID of the Source containing the model to use, if different.')
+
+    parser.add_argument('--output_dir', type=str, default="../CoralNet_Data/",
+                        help='A root directory where all predictions will be '
+                             'saved to.')
+
+    args = parser.parse_args()
+
+    # ----------------------------------------
+    # Check the data
+    # ----------------------------------------
+    try:
+        # Check to see if the csv file exists
+        assert os.path.exists(args.csv_path)
+
+        # Determine if it's a single file or a folder
+        if os.path.isfile(args.csv_path):
+            # If a file, just read it in
+            POINTS = pd.read_csv(args.csv_path)
+        elif os.path.isdir(args.csv_path):
+            # If a folder, read in all csv files, concatenate them together
+            csv_files = glob.glob(args.csv_path + "/*.csv")
+            POINTS = pd.DataFrame()
+            for csv_file in csv_files:
+                POINTS = pd.concat([POINTS, pd.read_csv(csv_file)])
+        else:
+            raise Exception(f"ERROR: {args.csv_path} is invalid.")
+
+        # Check to see if the csv file has the expected columns
+        assert 'Name' in POINTS.columns
+        assert 'Row' in POINTS.columns
+        assert 'Column' in POINTS.columns
+        assert len(POINTS) > 0
+
+    except Exception as e:
+        raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
+
+    # ----------------------------------------
+    # Authenticate te user
+    # ----------------------------------------
+    try:
+        # Username, Password
+        USERNAME = args.username
+        PASSWORD = args.password
+        authenticate(USERNAME, PASSWORD)
+        CORALNET_TOKEN, HEADERS = get_token(USERNAME, PASSWORD)
+    except Exception as e:
+        raise Exception(f"ERROR: {e}")
+
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    driver = check_for_browsers(headless=True)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': USERNAME,
+        'password': PASSWORD
+    }
+    # Login to CoralNet
+    driver, _ = login(driver)
+
+    # ----------------------------------------
+    # Get Source information
+    # ----------------------------------------
+    try:
+        SOURCE_ID = args.source_id_1
+        driver, meta, SOURCE_IMAGES = get_source_meta(driver, args.source_id_1, args.source_id_2)
+
+        # Get the images desired for predictions; make sure it's not file path.
+        images = POINTS['Name'].unique().tolist()
+        images = [os.path.basename(image) for image in images]
+
+        # We will get the information needed from the source images dataframe
+        IMAGES = SOURCE_IMAGES[SOURCE_IMAGES['Name'].isin(images)].copy()
+        print(f"NOTE: Found the {len(IMAGES)} images in source {SOURCE_ID}")
+
+        # Get the image AWS URLs for the images of interest
+        image_pages = IMAGES['Image Page'].tolist()
+        driver, IMAGES['Image URL'] = get_image_urls(driver, image_pages)
+
+    except Exception as e:
+        print(f"ERROR: Issue with getting Source Metadata.\n{e}")
+        sys.exit()
+
+    # Set the model ID and URL
+    MODEL_ID = meta['Global id'].max()
+    MODEL_URL = CORALNET_URL + f"/api/classifier/{MODEL_ID}/deploy/"
+
+    # Set the data root directory
+    DATA_ROOT = os.path.abspath(args.output_dir) + "\\"
+    os.makedirs(DATA_ROOT, exist_ok=True)
+
+    # Where the output predictions will be stored
+    SOURCE_DIR = DATA_ROOT + SOURCE_ID + "\\"
+    PREDICTIONS_DIR = SOURCE_DIR + "predictions\\"
+
+    # Create a folder to contain predictions and points
+    os.makedirs(SOURCE_DIR, exist_ok=True)
+    os.makedirs(PREDICTIONS_DIR, exist_ok=True)
+
+    # ---------------------------------------------------------------------------------------------
+    # Make calls to the API
+    # ---------------------------------------------------------------------------------------------
+    api(driver, IMAGES, POINTS, MODEL_URL, CORALNET_TOKEN, HEADERS, PREDICTIONS_DIR)
 
     print("Done.")
 
 
 if __name__ == "__main__":
     main()
-

@@ -3,29 +3,31 @@ import io
 import sys
 import time
 import tqdm
+import glob
 import json
 import requests
-import argparse
+import datetime
 from tqdm import tqdm
 
+import argparse
+from gooey import Gooey, GooeyParser
+
+import re
 import numpy as np
 import pandas as pd
+from bs4 import BeautifulSoup
 
 import concurrent
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 
-from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import Select
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
-from webdriver_manager.firefox import GeckoDriverManager
-from webdriver_manager.microsoft import EdgeChromiumDriverManager
 from selenium.webdriver.support import expected_conditions as EC
+
 
 # -------------------------------------------------------------------------------------------------
 # Constants
@@ -46,35 +48,21 @@ LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
 # Image Formats
 IMG_FORMATS = ["jpg", "jpeg", "png", "tif", "tiff", "bmp"]
 
-# CoralNet functional groups
-FUNC_GROUPS_LIST = [
-    "Other Invertebrates",
-    "Hard coral",
-    "Soft Substrate",
-    "Hard Substrate",
-    "Other",
-    "Algae",
-    "Seagrass"]
-
-# Mapping from group to ID
-FUNC_GROUPS_DICT = {
-    "Other Invertebrates": "14",
-    "Hard coral": "10",
-    "Soft Substrate": "15",
-    "Hard Substrate": "16",
-    "Other": "18",
-    "Algae": "19",
-    "Seagrass": "20"}
-
 
 # -------------------------------------------------------------------------------------------------
 # Functions to authenticate with CoralNet
 # -------------------------------------------------------------------------------------------------
 
+
 def authenticate(username, password):
     """
     Authenticate with CoralNet; used to make sure user has the correct credentials.
     """
+
+    print("\n###############################################")
+    print("Authentication")
+    print("###############################################\n")
+    print(f"NOTE: Authenticating user {username}")
 
     # Send a GET request to the login page to retrieve the login form
     response = requests.get(LOGIN_URL)
@@ -120,41 +108,32 @@ def authenticate(username, password):
             print(f"NOTE: Authentication successful for {username}")
 
 
-def check_for_browsers(options):
+def check_for_browsers(headless):
     """
     Check if Chrome, Firefox, and Edge browsers are installed.
     """
 
-    # Needed to avoid timeouts when running in headless mode
-    options.add_experimental_option('extensionLoadTimeout', 3600000)
+    print("\n###############################################")
+    print("Browser")
+    print("###############################################\n")
 
-    # Greedy search for Chrome, Firefox, and Edge browsers
+    options = Options()
+
+    if headless:
+        # Add headless argument
+        options.add_argument('headless')
+        # Needed to avoid timeouts when running in headless mode
+        options.add_experimental_option('extensionLoadTimeout', 3600000)
+
+    # heck for Chrome, Firefox, and Edge browsers
     try:
-        ChromeDriverManager().install()
-        browser = webdriver.Chrome(options=options)
+        exe_path = ChromeDriverManager().install()
+        browser = webdriver.Chrome(executable_path=exe_path, options=options)
         print("NOTE: Using Google Chrome")
         return browser
 
     except Exception as e:
-        print("Warning: Google Chrome could not be used")
-
-    try:
-        GeckoDriverManager().install()
-        browser = webdriver.Firefox(options=options)
-        print("NOTE: Using Mozilla Firefox")
-        return browser
-
-    except Exception as e:
-        print("Warning: Firefox could not be used")
-
-    try:
-        EdgeChromiumDriverManager().install()
-        browser = webdriver.Edge(options=options)
-        print("NOTE: Using Microsoft Edge")
-        return browser
-
-    except Exception as e:
-        print("Warning: Microsoft Edge could not be used")
+        print("WARNING: Google Chrome could not be used")
 
     print("ERROR: No browsers are installed. Exiting")
     sys.exit(1)
@@ -164,6 +143,10 @@ def login(driver):
     """
     Log in to CoralNet using Selenium.
     """
+
+    print("\n###############################################")
+    print("Login")
+    print("###############################################\n")
 
     # Create a variable for success
     success = False
@@ -217,9 +200,6 @@ def check_permissions(driver):
     Check if the user has permission to access the page.
     """
 
-    # Variable to determine success
-    success = False
-
     try:
         # First check that this is existing source the user has access to
         path = "content-container"
@@ -228,26 +208,13 @@ def check_permissions(driver):
 
         # Check the status
         if not status.text:
-            print(f"ERROR: Unable to access page information; unknown issue")
-
-        elif "Page could not be found" in status.text:
-            print(f"ERROR: {status.text.split('.')[0]}")
-
-        elif "don't have permission" in status.text:
-            print(f"ERROR: {status.text.split('.')[0]}")
-
-        elif "create a labelset before uploading annotations" in status.text:
-            print(f"ERROR: {status.text.split('.')[0]}")
-
-        else:
-            # The page is fine
-            success = True
+            raise Exception(f"ERROR: Unable to access page information")
 
     except Exception as e:
-        print(f"ERROR: Unknown issue. Exiting.")
+        print(f"ERROR: {e} Exiting.")
         sys.exit(1)
 
-    return driver, success
+    return driver, status
 
 
 def get_token(username, password):
@@ -266,7 +233,7 @@ def get_token(username, password):
 
     if response.ok:
 
-        print("NOTE: Token retrieved successfully")
+        print("NOTE: API token retrieved successfully")
 
         # Get the coralnet token returned to the user
         CORALNET_TOKEN = json.loads(response.content.decode())['token']
@@ -276,6 +243,6 @@ def get_token(username, password):
                    "Content-type": "application/vnd.api+json"}
 
     else:
-        raise ValueError(f"ERROR: Could not retrieve token\n{response.content}")
+        raise ValueError(f"ERROR: Could not retrieve API token\n{response.content}")
 
     return CORALNET_TOKEN, HEADERS
