@@ -4,8 +4,7 @@ import glob
 sys.path.append('../')
 
 import pandas as pd
-from thefuzz import fuzz
-from thefuzz import process
+
 
 # -------------------------------------------------------------------------------------------------
 # Constants
