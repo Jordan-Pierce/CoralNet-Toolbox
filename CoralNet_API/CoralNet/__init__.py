@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
@@ -47,6 +48,26 @@ LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
 
 # Image Formats
 IMG_FORMATS = ["jpg", "jpeg", "png", "tif", "tiff", "bmp"]
+
+# CoralNet functional groups
+FUNC_GROUPS_LIST = [
+    "Other Invertebrates",
+    "Hard coral",
+    "Soft Substrate",
+    "Hard Substrate",
+    "Other",
+    "Algae",
+    "Seagrass"]
+
+# Mapping from group to ID
+FUNC_GROUPS_DICT = {
+    "Other Invertebrates": "14",
+    "Hard coral": "10",
+    "Soft Substrate": "15",
+    "Hard Substrate": "16",
+    "Other": "18",
+    "Algae": "19",
+    "Seagrass": "20"}
 
 
 # -------------------------------------------------------------------------------------------------

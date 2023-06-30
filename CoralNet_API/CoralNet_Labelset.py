@@ -170,7 +170,7 @@ def create_labelset(driver, source_id, labelset):
 
         # Click the submit button if it's present
         if submit_button.is_displayed():
-            # submit_button.click()
+            submit_button.click()
             print(f"NOTE: Submitted labelset {labelset['Name']}, {labelset['Short Code']}")
             success = True
         else:
