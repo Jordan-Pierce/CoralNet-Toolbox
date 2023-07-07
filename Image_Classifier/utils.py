@@ -16,6 +16,7 @@ from tensorflow.keras import backend as K
 # -------------------------------------------------------------------------------------------------
 IMAGE_FORMATS = ["jpg", "jpeg", "png", "tif", "tiff", "bmp"]
 
+
 # -------------------------------------------------------------------------------------------------
 # Functions
 # -------------------------------------------------------------------------------------------------
@@ -61,7 +62,7 @@ def crop_patch(image, y, x, patch_size=224):
     patch = image[top: bottom, left: right, :]
 
     # Check if the sub-image size is smaller than N x N
-    if patch.shape[0] < patch_size or patch.shape[1] < patch_size:
+    if patch.shape[0] != patch_size or patch.shape[1] != patch_size:
 
         # Pad the sub-image with zeros
         patch = np.pad(patch, ((top_pad, bottom_pad),
@@ -70,6 +71,9 @@ def crop_patch(image, y, x, patch_size=224):
 
     # Check if the percentage of padded zeros is more than 50%
     if np.mean(patch == 0) > 0.75:
+        patch = None
+
+    if patch.shape[0] != patch_size or patch.shape[1] != patch_size:
         patch = None
 
     return patch
@@ -93,8 +97,8 @@ def crop_patches(image_df, output_dir):
         try:
             # Extract the patch
             patch = crop_patch(image, r['Row'], r['Column'])
-            name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}"
-            path = output_dir + r['Label'] + "/" + name + ".png"
+            name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}.png"
+            path = output_dir + r['Label'] + "/" + name
             # If it's not mostly empty, crop it
             if not os.path.exists(path) and patch is not None:
                 imsave(fname=path, arr=patch)
