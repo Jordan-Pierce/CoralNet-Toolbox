@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/CoralNet_Tools.iml" filepath="$PROJECT_DIR$/.idea/CoralNet_Tools.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/CoralNet-Toolbox.iml" filepath="$PROJECT_DIR$/.idea/CoralNet-Toolbox.iml" />
     </modules>
   </component>
 </project>

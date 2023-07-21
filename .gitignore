@@ -1,3 +1,6 @@
 *.hd
+*hdf5
+*.idea
 *__pycache__/
-/CoralNet_API/VISCORE/Data/
+/Data/4085/
+/Data/4189/

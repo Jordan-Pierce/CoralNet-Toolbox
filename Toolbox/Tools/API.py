@@ -1,4 +1,5 @@
-from CoralNet_Download import *
+from . import *
+from Download import *
 
 
 # -----------------------------------------------------------------------------
@@ -116,9 +117,9 @@ def check_job_status(response, coralnet_token):
             message = "Completed Job!"
     else:
         # CoralNet is getting too many requests, sleep for a second.
-        message = f"CoralNet: {current_status['errors'][0]['detail']}"
+        message = f"Tools: {current_status['errors'][0]['detail']}"
         try:
-            # Try to wait the amount of time requested by CoralNet
+            # Try to wait the amount of time requested by Tools
             match = re.search(r'\d+', message)
             wait = int(match.group())
         except:
@@ -151,7 +152,7 @@ def convert_to_csv(status, image_names, output_dir):
 
     for (data, image_name) in list(zip(status['data'], image_names)):
 
-        # Check if the image has expired after uploading to CoralNet
+        # Check if the image has expired after uploading to Tools
         if 'errors' in data['attributes']:
             expired.append(image_name)
             continue
@@ -190,7 +191,7 @@ def convert_to_csv(status, image_names, output_dir):
     return model_predictions, expired
 
 
-def api(driver, images, points, model_url, coralnet_token, headers, predictions_dir):
+def api(args):
     """
     There are multiple loops in this section. The first loop continues until all
     images have been processed. The first inner for loop prepares the data for the
@@ -212,6 +213,107 @@ def api(driver, images, points, model_url, coralnet_token, headers, predictions_
     images, and update the URLs. It will then re-run the predictions for those
     images.
     """
+    # -------------------------------------------------------------------------
+    # Check the data
+    # -------------------------------------------------------------------------
+    try:
+
+        # Check to see if the csv file exists
+        assert os.path.exists(args.csv_path)
+
+        # Determine if it's a single file or a folder
+        if os.path.isfile(args.csv_path):
+            # If a file, just read it in
+            points = pd.read_csv(args.csv_path)
+        elif os.path.isdir(args.csv_path):
+            # If a folder, read in all csv files, concatenate them together
+            csv_files = glob.glob(args.csv_path + "/*.csv")
+            points = pd.DataFrame()
+            for csv_file in csv_files:
+                points = pd.concat([points, pd.read_csv(csv_file)])
+        else:
+            raise Exception(f"ERROR: {args.csv_path} is invalid.")
+
+        # Check to see if the csv file has the expected columns
+        assert 'Name' in points.columns
+        assert 'Row' in points.columns
+        assert 'Column' in points.columns
+        assert len(points) > 0
+
+        points = points[['Name', 'Row', 'Column']]
+        print(points)
+
+    except Exception as e:
+        raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
+
+    # -------------------------------------------------------------------------
+    # Authenticate te user
+    # -------------------------------------------------------------------------
+    try:
+        # Username, Password
+        username = args.username
+        password = args.password
+        authenticate(username, password)
+        coralnet_token, headers = get_token(username, password)
+    except Exception as e:
+        raise Exception(f"ERROR: {e}")
+
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    driver = check_for_browsers(headless=True)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': username,
+        'password': password
+    }
+    # Login to Tools
+    driver, _ = login(driver)
+
+    # -------------------------------------------------------------------------
+    # Get Source information
+    # -------------------------------------------------------------------------
+    try:
+        source_id = args.source_id_1
+        driver, meta, source_images = get_source_meta(driver,
+                                                      args.source_id_1,
+                                                      args.source_id_2)
+
+        if meta is None:
+            raise Exception(f"ERROR: Cannot make predictions using Source {source_id}")
+
+        # Get the images desired for predictions; make sure it's not file path.
+        images = points['Name'].unique().tolist()
+        images = [os.path.basename(image) for image in images]
+
+        # We will get the information needed from the source images dataframe
+        images = source_images[source_images['Name'].isin(images)].copy()
+        print(f"NOTE: Found the {len(images)} images in source {source_id}")
+
+        # Get the image AWS URLs for the images of interest
+        image_pages = images['Image Page'].tolist()
+        driver, images['Image URL'] = get_image_urls(driver, image_pages)
+
+    except Exception as e:
+        print(f"ERROR: Issue with getting Source Metadata.\n{e}")
+        return
+
+    # Set the model ID and URL
+    model_id = meta['Global id'].max()
+    model_url = CORALNET_URL + f"/api/classifier/{model_id}/deploy/"
+
+    # Set the data root directory
+    data_root = os.path.abspath(args.output_dir) + "\\"
+    os.makedirs(data_root, exist_ok=True)
+
+    # Where the output predictions will be stored
+    source_dir = data_root + source_id + "\\"
+    predictions_dir = source_dir + "predictions\\"
+
+    # Create a folder to contain predictions and points
+    os.makedirs(source_dir, exist_ok=True)
+    os.makedirs(predictions_dir, exist_ok=True)
+
     print("\n###############################################")
     print(f"Getting Predictions from Model")
     print("###############################################")
@@ -265,7 +367,8 @@ def api(driver, images, points, model_url, coralnet_token, headers, predictions_
 
             # The image url has not expired, so we can queue the image
             elif not is_expired(url):
-                p = points[points['Name'].str.contains(name)]
+                # Get the points for just this image
+                p = points[points['Name'] == name]
                 # Because CoralNet isn't consistent...
                 p = p.rename(columns={'Row': 'row', 'Column': 'column'})
                 p = p[['row', 'column']].to_dict(orient="records")
@@ -323,7 +426,7 @@ def api(driver, images, points, model_url, coralnet_token, headers, predictions_
                     print("\nNOTE: Five jobs already active; checking status")
                     break  # Breaks from both loops
 
-                # Upload the image and the sampled points to CoralNet
+                # Upload the image and the sampled points to Tools
                 print(f"\nNOTE: Attempting to upload {len(names)} images")
 
                 # Sends the requests to the `source` and in exchange, receives
@@ -344,11 +447,11 @@ def api(driver, images, points, model_url, coralnet_token, headers, predictions_
                     queued_imgs.remove(names)
 
                 else:
-                    # There was an error uploading to CoralNet; get the message
+                    # There was an error uploading to Tools; get the message
                     message = json.loads(response.text)['errors'][0]['detail']
 
                     # Print the message
-                    print(f"CoralNet: {message}")
+                    print(f"Tools: {message}")
 
                     if "5 jobs active" in message:
                         # Max number of jobs reached, so we need to wait
@@ -465,7 +568,7 @@ def main():
     save the predictions to a CSV file in the predictions directory.
     """
 
-    parser = argparse.ArgumentParser(description='CoralNet arguments')
+    parser = argparse.ArgumentParser(description='API arguments')
 
     parser.add_argument('--username', type=str,
                         default=os.getenv('CORALNET_USERNAME'),
@@ -486,110 +589,19 @@ def main():
     parser.add_argument('--source_id_2', type=str, default=None,
                         help='The ID of the Source containing the model to use, if different.')
 
-    parser.add_argument('--output_dir', type=str, default="../CoralNet_Data/",
+    parser.add_argument('--output_dir', type=str, default="../Data/",
                         help='A root directory where all predictions will be '
                              'saved to.')
 
     args = parser.parse_args()
 
-    # ----------------------------------------
-    # Check the data
-    # ----------------------------------------
     try:
-        # Check to see if the csv file exists
-        assert os.path.exists(args.csv_path)
-
-        # Determine if it's a single file or a folder
-        if os.path.isfile(args.csv_path):
-            # If a file, just read it in
-            POINTS = pd.read_csv(args.csv_path)
-        elif os.path.isdir(args.csv_path):
-            # If a folder, read in all csv files, concatenate them together
-            csv_files = glob.glob(args.csv_path + "/*.csv")
-            POINTS = pd.DataFrame()
-            for csv_file in csv_files:
-                POINTS = pd.concat([POINTS, pd.read_csv(csv_file)])
-        else:
-            raise Exception(f"ERROR: {args.csv_path} is invalid.")
-
-        # Check to see if the csv file has the expected columns
-        assert 'Name' in POINTS.columns
-        assert 'Row' in POINTS.columns
-        assert 'Column' in POINTS.columns
-        assert len(POINTS) > 0
+        # Call the api function
+        api(args)
+        print("Done.")
 
     except Exception as e:
-        raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
-
-    # ----------------------------------------
-    # Authenticate te user
-    # ----------------------------------------
-    try:
-        # Username, Password
-        USERNAME = args.username
-        PASSWORD = args.password
-        authenticate(USERNAME, PASSWORD)
-        CORALNET_TOKEN, HEADERS = get_token(USERNAME, PASSWORD)
-    except Exception as e:
-        raise Exception(f"ERROR: {e}")
-
-    # -------------------------------------------------------------------------
-    # Get the browser
-    # -------------------------------------------------------------------------
-    driver = check_for_browsers(headless=True)
-    # Store the credentials in the driver
-    driver.capabilities['credentials'] = {
-        'username': USERNAME,
-        'password': PASSWORD
-    }
-    # Login to CoralNet
-    driver, _ = login(driver)
-
-    # ----------------------------------------
-    # Get Source information
-    # ----------------------------------------
-    try:
-        SOURCE_ID = args.source_id_1
-        driver, meta, SOURCE_IMAGES = get_source_meta(driver, args.source_id_1, args.source_id_2)
-
-        # Get the images desired for predictions; make sure it's not file path.
-        images = POINTS['Name'].unique().tolist()
-        images = [os.path.basename(image) for image in images]
-
-        # We will get the information needed from the source images dataframe
-        IMAGES = SOURCE_IMAGES[SOURCE_IMAGES['Name'].isin(images)].copy()
-        print(f"NOTE: Found the {len(IMAGES)} images in source {SOURCE_ID}")
-
-        # Get the image AWS URLs for the images of interest
-        image_pages = IMAGES['Image Page'].tolist()
-        driver, IMAGES['Image URL'] = get_image_urls(driver, image_pages)
-
-    except Exception as e:
-        print(f"ERROR: Issue with getting Source Metadata.\n{e}")
-        sys.exit()
-
-    # Set the model ID and URL
-    MODEL_ID = meta['Global id'].max()
-    MODEL_URL = CORALNET_URL + f"/api/classifier/{MODEL_ID}/deploy/"
-
-    # Set the data root directory
-    DATA_ROOT = os.path.abspath(args.output_dir) + "\\"
-    os.makedirs(DATA_ROOT, exist_ok=True)
-
-    # Where the output predictions will be stored
-    SOURCE_DIR = DATA_ROOT + SOURCE_ID + "\\"
-    PREDICTIONS_DIR = SOURCE_DIR + "predictions\\"
-
-    # Create a folder to contain predictions and points
-    os.makedirs(SOURCE_DIR, exist_ok=True)
-    os.makedirs(PREDICTIONS_DIR, exist_ok=True)
-
-    # ---------------------------------------------------------------------------------------------
-    # Make calls to the API
-    # ---------------------------------------------------------------------------------------------
-    api(driver, IMAGES, POINTS, MODEL_URL, CORALNET_TOKEN, HEADERS, PREDICTIONS_DIR)
-
-    print("Done.")
+        print(f"ERROR: {e}")
 
 
 if __name__ == "__main__":

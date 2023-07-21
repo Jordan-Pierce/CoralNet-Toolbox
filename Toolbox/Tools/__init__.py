@@ -29,6 +29,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support import expected_conditions as EC
 
+# Used to ensure log is output rapidly
+os.environ['PYTHONUNBUFFERED'] = 'True'
 
 # -------------------------------------------------------------------------------------------------
 # Constants
@@ -69,6 +71,11 @@ FUNC_GROUPS_DICT = {
     "Algae": "19",
     "Seagrass": "20"}
 
+# Make the cache directory
+CACHE_DIR = "./cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+CORALNET_LABELSET_FILE = os.path.abspath(("cache\\CoralNet_Labelset_List.csv"))
 
 # -------------------------------------------------------------------------------------------------
 # Functions to authenticate with CoralNet
@@ -267,3 +274,55 @@ def get_token(username, password):
         raise ValueError(f"ERROR: Could not retrieve API token\n{response.content}")
 
     return CORALNET_TOKEN, HEADERS
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# For gooey dropdown
+# ----------------------------------------------------------------------------------------------------------------------
+
+def get_updated_labelset_list():
+    """For Gooey, gets all the labelsets currently in CoralNet for the dropdown menu"""
+
+    if os.path.exists(CORALNET_LABELSET_FILE):
+        return pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
+
+    names = []
+
+    try:
+
+        # Make a GET request to the image page URL using the authenticated session
+        response = requests.get(CORALNET_LABELSET_URL)
+        cookies = response.cookies
+
+        # Convert the webpage to soup
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Get the table with all labelset information
+        table = soup.find_all('tr', attrs={"data-label-id": True})
+
+        # Loop through each row, grab the information, store in lists
+        names = []
+        urls = []
+
+        for row in tqdm(table):
+            # Grab attributes from row
+            attributes = row.find_all("td")
+            # Extract each attribute, store in variable
+            name = attributes[0].text
+            url = CORALNET_URL + attributes[0].find("a").get("href")
+            names.append(name)
+            urls.append(url)
+
+        # Cache so it's faster the next time
+        pd.DataFrame(list(zip(names, urls)), columns=['Name', 'URL']).to_csv(CORALNET_LABELSET_FILE)
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return names
+
+
+def print_progress(prg, prg_total):
+    """Formatted for Gooey"""
+    print("progress: {}/{}".format(prg, prg_total))

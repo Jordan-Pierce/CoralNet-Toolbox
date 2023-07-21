@@ -1,5 +1,9 @@
-from CoralNet import *
+from . import *
 
+
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
 
 def generate_short_code(label, prefix, used_short_codes, num_chars=3):
     """
@@ -58,9 +62,9 @@ def get_short_code(label, prefix, used_short_codes, num_chars=4):
     return short_code
 
 
-def create_labelset(driver, source_id, labelset):
+def create_labelset(driver, source_id, labelset_dict):
     """
-    Create a labelset given a labelset, which is a dict containing:
+    Create a CoralNet labelset given a labelset dict containing:
         Name - name of labelset
         Short Code - unique short code for label
         Functional Group - one of the pre-defined functional groups
@@ -77,15 +81,16 @@ def create_labelset(driver, source_id, labelset):
     # First check that all the contents of labelset are valid
     try:
         # Character limitations, string for description
-        assert len(str(labelset['Name'])) <= 45
-        assert len(str(labelset['Short Code'])) <= 10
-        assert str(labelset['Functional Group']) in FUNC_GROUPS_LIST
-        assert str(labelset['Description']) != ""
+        assert len(str(labelset_dict['Name'])) <= 45
+        assert len(str(labelset_dict['Short Code'])) <= 10
+        assert str(labelset_dict['Functional Group']) in FUNC_GROUPS_LIST
+        assert str(labelset_dict['Description']) != ""
 
         # Ensure that the image path is absolute
-        labelset['Image Path'] = os.path.abspath(labelset['Image Path'])
-        assert os.path.exists(labelset['Image Path'])
-        assert labelset['Image Path'].split(".")[-1] in IMG_FORMATS
+        labelset_dict['Image Path'] = os.path.abspath(labelset_dict['Image Path'])
+        assert os.path.exists(labelset_dict['Image Path'])
+        assert labelset_dict['Image Path'].split(".")[-1] in IMG_FORMATS
+        print("NOTE: Labelset criteria met")
 
     except Exception as e:
         print(f"ERROR: Labelset provided does not match criteria; exiting")
@@ -123,7 +128,7 @@ def create_labelset(driver, source_id, labelset):
 
         # Send a string to the input field
         input_field.clear()
-        input_field.send_keys(labelset['Name'])
+        input_field.send_keys(labelset_dict['Name'])
 
         # Wait for the presence of the input field
         path = "id_default_code"
@@ -132,7 +137,7 @@ def create_labelset(driver, source_id, labelset):
 
         # Send a string to the input field
         input_field.clear()
-        input_field.send_keys(labelset['Short Code'])
+        input_field.send_keys(labelset_dict['Short Code'])
 
         # Wait for the presence of the select element
         path = "id_group"
@@ -141,7 +146,7 @@ def create_labelset(driver, source_id, labelset):
 
         # Select the "Other" option
         select = Select(select_element)
-        select.select_by_value(FUNC_GROUPS_DICT[labelset['Functional Group']])
+        select.select_by_value(FUNC_GROUPS_DICT[labelset_dict['Functional Group']])
 
         # Wait for the presence of the textarea field
         path = "id_description"
@@ -150,7 +155,7 @@ def create_labelset(driver, source_id, labelset):
 
         # Send a string to the textarea field
         textarea_field.clear()
-        textarea_field.send_keys(labelset['Description'])
+        textarea_field.send_keys(labelset_dict['Description'])
 
         # Wait for the presence of the select element
         path = "id_thumbnail"
@@ -159,9 +164,9 @@ def create_labelset(driver, source_id, labelset):
 
         try:
             # Set the local file path to the file input field
-            file_input.send_keys(labelset['Image Path'])
+            file_input.send_keys(labelset_dict['Image Path'])
         except Exception as e:
-            raise Exception(f"ERROR: Could not submit {labelset['Image Path']}")
+            raise Exception(f"ERROR: Could not submit {labelset_dict['Image Path']}")
 
         # Wait for the presence of the submit button
         path = "//input[@type='submit' and @value='Create Label']"
@@ -170,13 +175,122 @@ def create_labelset(driver, source_id, labelset):
 
         # Click the submit button if it's present
         if submit_button.is_displayed():
-            submit_button.click()
-            print(f"NOTE: Submitted labelset {labelset['Name']}, {labelset['Short Code']}")
+            # submit_button.click()
+            print(f"NOTE: Button clicked...")
+            print(f"NOTE: Submitted labelset {labelset_dict['Name']}, {labelset_dict['Short Code']}")
             success = True
         else:
             raise Exception("ERROR: Submit Labelset button not enabled")
 
     except Exception as e:
-        print(f"ERROR: Could not create labelset {labelset['Name']}\n{e}")
+        print(f"ERROR: Could not create labelset {labelset_dict['Name']}\n{e}")
 
     return driver, success
+
+
+def labelset(args):
+    """
+    Sets up to create a labelset in a source on CoralNet
+    """
+    # -------------------------------------------------------------------------
+    # Authenticate the user
+    # -------------------------------------------------------------------------
+    try:
+        username = args.username
+        password = args.password
+
+        # Ensure the user provided a username and password.
+        authenticate(username, password)
+    except Exception as e:
+        print(f"ERROR: Could not download data.\n{e}")
+        return
+
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    if isinstance(args.headless, str):
+        headless = True if args.headless.lower() == 'true' else False
+    else:
+        # Gooey is weird
+        headless = not args.headless
+
+    # Pass the options object while creating the driver
+    driver = check_for_browsers(headless)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': username,
+        'password': password
+    }
+
+    # Source of labelset to be created for
+    source_id = args.source_id
+
+    # Labelset dictionary
+    labelset_dict = {'Name': args.labelset_name,
+                     'Short Code': args.short_code,
+                     'Functional Group': args.func_group,
+                     'Description': args.desc,
+                     'Image Path': args.image_path}
+
+    # Log in to CoralNet
+    driver, _ = login(driver)
+    # Create the labelset
+    driver, _ = create_labelset(driver, source_id, labelset_dict)
+    # Close the browser
+    driver.close()
+
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+
+def main():
+    """
+
+    """
+
+    parser = argparse.ArgumentParser(description='Labelset arguments')
+
+    parser.add_argument('--username', type=str,
+                        default=os.getenv('CORALNET_USERNAME'),
+                        help='Username for CoralNet account')
+
+    parser.add_argument('--password', type=str,
+                        default=os.getenv('CORALNET_PASSWORD'),
+                        help='Password for CoralNet account')
+
+    parser.add_argument('--source_id', type=int,
+                        help='Source ID to create a labelset for')
+
+    parser.add_argument('--labelset_name', type=str, default="",
+                        help='The labelset name')
+
+    parser.add_argument('--short_code', type=str, default="",
+                        help='The labelset short code')
+
+    parser.add_argument('--func_group', type=str, default="",
+                        help='The labelset functional group')
+
+    parser.add_argument('--desc', type=str, default="",
+                        help='The labelset description')
+
+    parser.add_argument('--image_path', type=str, default="",
+                        help='The labelset thumbnail image')
+
+    parser.add_argument('--headless', type=str, default='True',
+                        choices=['True', 'False'],
+                        help='Run browser in headless mode')
+
+    args = parser.parse_args()
+
+    try:
+        # Call the upload function
+        labelset(args)
+        print("Done.")
+
+    except Exception as e:
+        print(f"ERROR: {e}")
+
+
+if __name__ == "__main__":
+    main()

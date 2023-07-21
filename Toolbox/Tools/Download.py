@@ -1,4 +1,4 @@
-from CoralNet import *
+from . import *
 
 
 # -------------------------------------------------------------------------------------------------
@@ -12,7 +12,7 @@ def download_coralnet_sources(driver, output_dir):
     """
 
     print("\n###############################################")
-    print("CoralNet Source Dataframe")
+    print("Downloading CoralNet Source Dataframe")
     print("###############################################\n")
 
     # Variable to hold the list of sources
@@ -55,9 +55,9 @@ def download_coralnet_sources(driver, output_dir):
 
         # Create a dataframe
         sources = pd.DataFrame(sources)
-        sources.to_csv(f"{output_dir}CoralNet_Source_ID_Dataframe.csv")
+        sources.to_csv(f"{output_dir}\\CoralNet_Source_ID_Dataframe.csv")
 
-        if os.path.exists(f"{output_dir}CoralNet_Source_ID_Dataframe.csv"):
+        if os.path.exists(f"{output_dir}\\CoralNet_Source_ID_Dataframe.csv"):
             print("NOTE: CoralNet Source Dataframe saved successfully")
         else:
             raise Exception("ERROR: Could not download Source ID Dataframe; "
@@ -75,7 +75,7 @@ def download_coralnet_labelsets(driver, output_dir):
     """
 
     print("\n###############################################")
-    print("CoralNet Labelset Dataframe")
+    print("Downloading CoralNet Labelset Dataframe")
     print("###############################################\n")
 
     # Variable to hold the list of sources
@@ -145,9 +145,9 @@ def download_coralnet_labelsets(driver, output_dir):
                                                'Has Calcification Rates'])
 
         # Save locally
-        labelset.to_csv(f"{output_dir}CoralNet_Labelset_Dataframe.csv")
+        labelset.to_csv(f"{output_dir}\\CoralNet_Labelset_Dataframe.csv")
 
-        if os.path.exists(f"{output_dir}CoralNet_Labelset_Dataframe.csv"):
+        if os.path.exists(f"{output_dir}\\CoralNet_Labelset_Dataframe.csv"):
             print("NOTE: Labelset Dataframe saved successfully")
         else:
             raise Exception("ERROR: Could not download Labelset Dataframe; "
@@ -160,18 +160,32 @@ def download_coralnet_labelsets(driver, output_dir):
     return driver, labelset
 
 
-def get_sources_with(driver, labelsets, output_dir):
+def get_sources_with(driver, choices, output_dir):
     """
     Downloads a list of sources that contain the specified labelsets.
     """
 
-    # Go to the images page
-    driver.get(CORALNET_LABELSET_URL)
+    print("\n###############################################")
+    print("Downloading CoralNet Sources 'With' Dataframe")
+    print("###############################################\n")
 
-    print("NOTE: Downloading dataframe of sources")
+    # Variable to hold sources of interest
+    source_list = []
 
     try:
-        source_list = []
+        labelsets = pd.read_csv(CORALNET_LABELSET_FILE)
+    except Exception as e:
+        print(f"ERROR: {CORALNET_LABELSET_FILE} could not located")
+        print(f"ERROR: Cannot download Sources 'With' Dataframe")
+        return driver, source_list
+
+    # Go to the images page
+    driver.get(CORALNET_LABELSET_URL)
+    print("NOTE: Downloading Soucess 'With' Dataframe")
+
+    try:
+        # Get the subset of interested choices
+        labelsets = labelsets[labelsets['Name'].isin(choices)]
 
         # Loop through all labelset URLs
         for i, r in tqdm(labelsets.iterrows()):
@@ -194,7 +208,7 @@ def get_sources_with(driver, labelsets, output_dir):
                 source_id = a_tag.get("href").split("/")[-2]
                 source_id = source_id if source_id.isnumeric() else None
                 # Get the URL
-                source_url = f"{CORALNET_URL}/label/{source_id}/"
+                source_url = f"{CORALNET_URL}/source/{source_id}/"
                 # Get the source name
                 source_name = a_tag.text.strip()
 
@@ -207,23 +221,26 @@ def get_sources_with(driver, labelsets, output_dir):
 
         # If the list of source ids is not empty, save locally
         if source_list:
+            # Set the output file to be saved in cache directory
+            output_file = f"{output_dir}\\Sources_With_Dataframe.csv"
+
             # Convert to dataframe
-            source_list = pd.DataFrame(source_list, columns=['Source_ID',
-                                                             'Source_Name',
-                                                             'Source_URL',
+            source_list = pd.DataFrame(source_list, columns=['Source ID',
+                                                             'Source Name',
+                                                             'Source URL',
                                                              'Contains'])
             # Save locally
-            source_list.to_csv(f"{output_dir}Desired_Source_ID_Dataframet.csv")
+            source_list.to_csv(f"{output_file}")
             # Check that it exists
-            if os.path.exists(f"{output_dir}Desired_Source_ID_Dataframe.csv"):
-                print("NOTE: Source ID dataframe saved successfully")
+            if os.path.exists(f"{output_file}"):
+                print("NOTE: Sources 'With' dataframe saved successfully")
             else:
-                raise Exception("ERROR: Could not save Source ID dataframe")
+                raise Exception("ERROR: Could not save Sources 'With' dataframe")
         else:
-            raise Exception("ERROR: No sources found")
+            raise Exception("ERROR: No sources found that match the provided criteria")
 
     except Exception as e:
-        print(f"ERROR: Unable to get dataframe of Source IDs\n{e}")
+        print(f"{e}")
         source_list = None
 
     return driver, source_list
@@ -816,6 +833,76 @@ def download_data(driver, source_id, output_dir):
     return driver, meta, labelset, images, annotations
 
 
+def download(args):
+    """Download function that takes in input from argparse (cmd, or gui),
+        and initiates the downloading"""
+
+    # -------------------------------------------------------------------------
+    # Authenticate the user
+    # -------------------------------------------------------------------------
+    try:
+        username = args.username
+        password = args.password
+
+        # Ensure the user provided a username and password.
+        authenticate(username, password)
+    except Exception as e:
+        print(f"ERROR: Could not download data.\n{e}")
+        return
+
+    # Output directory
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    if isinstance(args.headless, str):
+        headless = True if args.headless.lower() == 'true' else False
+    else:
+        # Gooey is weird
+        headless = not args.headless
+
+    # Pass the options object while creating the driver
+    driver = check_for_browsers(headless)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': username,
+        'password': password
+    }
+    # Login to CoralNet
+    driver, _ = login(driver)
+
+    # -------------------------------------------------------------------------
+    # Download the dataframes if prompted
+    # -------------------------------------------------------------------------
+    if args.source_df:
+        driver, _ = download_coralnet_sources(driver, CACHE_DIR)
+
+    if args.labelset_df:
+        driver, _ = download_coralnet_labelsets(driver, CACHE_DIR)
+
+    if args.sources_with:
+        driver, _ = get_sources_with(driver, args.sources_with, CACHE_DIR)
+
+    # -------------------------------------------------------------------------
+    # Download the data for each source
+    # -------------------------------------------------------------------------
+    try:
+        for source_id in args.source_ids:
+            if not source_id: continue
+            driver, m, l, i, a = download_data(driver, source_id, output_dir)
+
+    except Exception as e:
+        raise Exception(f"ERROR: Could not download data\n{e}")
+
+    finally:
+        # Close the browser
+        driver.close()
+
+    return
+
+
 # -----------------------------------------------------------------------------
 # Main function
 # -----------------------------------------------------------------------------
@@ -835,7 +922,7 @@ def main():
     BE RESPONSIBLE WITH YOUR DOWNLOADS. DO NOT OVERWHELM THE SERVERS.
     """
 
-    parser = argparse.ArgumentParser(description='CoralNet arguments')
+    parser = argparse.ArgumentParser(description='Download arguments')
 
     parser.add_argument('--username', type=str,
                         default=os.getenv('CORALNET_USERNAME'),
@@ -848,7 +935,7 @@ def main():
     parser.add_argument('--source_ids', type=int, nargs='+',
                         help='A list of source IDs to download.')
 
-    parser.add_argument('--output_dir', type=str, default="../CoralNet_Data/",
+    parser.add_argument('--output_dir', type=str, default="../Data/",
                         help='A root directory where all downloads will be '
                              'saved to.')
 
@@ -858,61 +945,14 @@ def main():
 
     args = parser.parse_args()
 
-    # A list of sources to download
-    source_ids = args.source_ids
-    if source_ids is None:
-        print("ERROR: Please provide a list of source IDs.")
-        sys.exit(1)
-
-    # -------------------------------------------------------------------------
-    # Authenticate the user
-    # -------------------------------------------------------------------------
     try:
-        username = args.username
-        password = args.password
-
-        # Ensure the user provided a username and password.
-        authenticate(username, password)
-    except Exception as e:
-        print(f"ERROR: Could not download data.\n{e}")
-        sys.exit(1)
-
-    # Output directory
-    output_dir = args.output_dir
-    os.makedirs(output_dir, exist_ok=True)
-
-    # -------------------------------------------------------------------------
-    # Get the browser
-    # -------------------------------------------------------------------------
-    headless = True if args.headless.lower() == 'true' else False
-    # Pass the options object while creating the driver
-    driver = check_for_browsers(headless)
-    # Store the credentials in the driver
-    driver.capabilities['credentials'] = {
-        'username': username,
-        'password': password
-    }
-    # Login to CoralNet
-    driver, _ = login(driver)
-
-    # -------------------------------------------------------------------------
-    # Download the data
-    # -------------------------------------------------------------------------
-
-    try:
-        for source_id in args.source_ids:
-            driver, m, l, i, a = download_data(driver, source_id, output_dir)
+        # Call the download function
+        download(args)
+        print("Done.")
 
     except Exception as e:
-        raise Exception(f"ERROR: Could not download data\n{e}")
-
-    finally:
-        # Close the browser
-        driver.close()
-
-    print("Done.")
+        print(f"ERROR: {e}")
 
 
 if __name__ == "__main__":
     main()
-

@@ -1,9 +1,9 @@
-# CoralNet_Tools  
+# CoralNet Toolbox  
 
 
 <p align="center">
-  <img src="./Figures/CoralNet_Tools_Logo.png" alt="CoralNet_Tools_Logo">
-</p>
+  <img src="./Figures/CoralNet_Toolbox.png" alt="CoralNet_Toolbox">
+</p
 
 ---
 
