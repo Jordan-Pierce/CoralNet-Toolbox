@@ -17,7 +17,7 @@ CoralNet allows users to upload photos of coral reefs and annotate them with det
 about the coral species and other features present in the images. The platform also provides tools 
 for analyzing the annotated images, and create patch-based image classifiers. 
 
-### ***Tools***
+### **Tools**
 
 The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated
 with those on CoralNet, including:
@@ -31,7 +31,7 @@ with those on CoralNet, including:
 - `Visualize`: Visualize points, patches superimposed on images
 
 <p align="center">
-  <img src="./Figures/CoralNet_Toolbox.gif" alt="CoralNet_Toolbox_Gif">
+  <img src="./Figures/CoralNet-Toolbox.gif" alt="CoralNet_Toolbox_Gif">
 </p
 
 #### **Future Features**
