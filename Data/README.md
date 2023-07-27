@@ -1,8 +1,7 @@
-# CoralNet Data
+# Data
 
-This is an example of how the scripts expect data to be stored, and how they will be downloaded 
-from CoralNet. Additionally, if you the CoralNet API and Image Classifier code, they will also 
-utilize this folder structure to store predictions and training data, respectively.
+This is an example of how the `CoralNet-Toolbox` expects data to be stored, and how they will be downloaded 
+from CoralNet. It is recommended to follow this format, though it's not necessary.
 
 ```python
 output_dir/
@@ -11,24 +10,34 @@ output_dir/
         images/
         predictions/
         patches/
-            train/
-            valid/
-            test/
+            class_1/
+            class_2/
+            class_3/
+        model/
+            logs/
+            weights/
         annotations.csv
         labelset.csv
         images.csv
         metadata.csv
+        patches.csv
+        predictions.csv
         
     source_id_2/
         images/
         predictions/
         patches/
-            train/
-            valid/
-            test/
+            class_1/
+            class_2/
+            class_3/
+        model/
+            logs/
+            weights/
         annotations.csv
         labelset.csv
         images.csv
         metadata.csv
+        patches.csv
+        predictions.csv
         
 ```

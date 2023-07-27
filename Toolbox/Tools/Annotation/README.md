@@ -11,17 +11,8 @@
   name, top-left X, Y, and image patch name.  
 - Resolution of the local machine needs to be adjusted to be 100% for the entire GUI to be 
   within screen.
-- Use the `utils.py` script to convert the output .txt file into a format that can be 
+- Use the script to convert the output .txt file into a format that can be 
   uploaded to CoralNet.
 
 **This tool was developed by Dr. Yuri Rzhanov of the Center for Coastal and Ocean Mapping/Joint 
 Hydrographic Center.**
-
-### Converting to CSV
-
-This notebook can be used to convert and merge the .txt files output from 
-the Patch Exaction Tool. The .txt files have a xy value that represents 
-the top-left corner (i.e., origin) of the patch extracted, though for 
-CoralNet, these need to be the center. The notebook expects all .txt files 
-to placed in the same directory, and the `patch_size` variable to be 
-set to the size the patch was when originally extracted.
