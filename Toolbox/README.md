@@ -1,13 +1,13 @@
-# CoralNet API
+# CoralNet-Toolbox (in development)
 
-This repository provides a Python library for accessing data on CoralNet 
+This codebase provides a Python library for accessing data on CoralNet 
 through code, which allows users to programmatically interact with CoralNet and 
 perform tasks such as uploading and downloading data, and annotating images.
 
 
 ## Getting Started
 
-For all of these scripts, it is recommended to set your CoralNet `Username` and 
+For most of these scripts, it is recommended to set your CoralNet `Username` and 
 `Password` as an environment variables, as these will be read as the defaults when 
 running all the script via command line:
 ```python
@@ -20,12 +20,16 @@ export CORALNET_USERNAME=myusername
 export CORALNET_PASSWORD=mypassword
 ```
 
-In this folder is a `requirements.txt` file that can be used to install all dependencies needed 
+In root directory is a `requirements.txt` file that can be used to install all dependencies needed 
 for these scripts (install using conda)
 
 `$ conda create --name coralnet_api --file requirements.txt`
 
-## CoralNet Download ⬇️
+## Tools
+
+Below is a description of each tool available for use.
+
+## Download ⬇️
 
 This code can be used to download all data (model metadata, labelset, images, annotations) 
 from any public source, or a private source if your account has access to. The 
@@ -40,11 +44,11 @@ script is set up to work via command line, and expects the following:
 
 Example of use:
 ```python 
-python CoralNet_Download.py --username JohnDoe \
-                            --password 123456789 \ 
-                            --source_ids 4085 3420 \
-                            --output_dir ../CoralNet_Data/
-                            --headless True
+python Download.py --username JohnDoe \
+                   --password 123456789 \ 
+                   --source_ids 4085 3420 \
+                   --output_dir ../CoralNet_Data/
+                   --headless True
 ```
 
 If you previously set the environmental variables `CORALNET_USERNAME` and 
@@ -70,30 +74,23 @@ output_dir/
         images.csv
         metadata.csv
 ```
-Although `CoralNet_Download.py` will just download the data for each public 
+Although `Download.py` will just download the data for each public 
 source desired, it also contains functions that would allow you to:
 - Identify all labelsets on CoralNet (`download_coralnet_labelsets`)
 - Identify all public sources CoralNet (`download_coralnet_sources`)
 - Download all public sources given a list of desired labelsets (`get_sources_with`)
 - Download all data from all the public sources in CoralNet
 
-Overall, the `CoralNet_Download.py` script is meant to offer researchers 
+Overall, the `Download.py` script is meant to offer researchers 
 convenient ways to access and download CoralNet data for further analysis and 
 processing. **Please do not abuse CoralNet**: its services are an invaluable 
 and useful resource to the coral research community.
-
-If you do not want to use the script via commandline, you can also use the GUI version 
-`CoralNet_Download_GUI.py`, which will walk you through the steps.
-
-<p align="center">
-  <img src="./Figures/CoralNet_Download_GUI.JPG" alt="CoralNet_Download" width="500" height="500">
-</p>
 
 **Things to note:**
 - Downloading annotations takes the most time
 
 
-## Upload CoralNet ⬆️
+## Upload ⬆️
 
 This code can be used to automate the process of uploading images, 
 annotations, and a labelset given a source ID. The script is set up to work via 
@@ -130,13 +127,13 @@ The following describes what is expected of the annotations, and labelset:
 
 Example of usage:
 ```python 
-python CoralNet_Upload.py --username JohnDoe \
-                          --password 123456789 \ 
-                          --source_id 1 \
-                          --image_folder path/to/images/ \ 
-                          --annotations annotations.csv \
-                          --labelset labelset.csv
-                          --headless True
+python Upload.py --username JohnDoe \
+                 --password 123456789 \ 
+                 --source_id 1 \
+                 --image_folder path/to/images/ \ 
+                 --annotations annotations.csv \
+                 --labelset labelset.csv
+                 --headless True
 ```
 
 If you previously set the environmental variables `CORALNET_USERNAME` and 
@@ -154,11 +151,11 @@ passing the respective variables via command line.
   - annotations
 
 
-## CoralNet API ☁️
+## API ☁️
 
 CoralNet's API can be very useful for getting model predictions from any public source, though 
-the ability to do so is not universally accessible. This code can be used to have an existing source's model perform predictions 
-on publicly available images. 
+the ability to do so is not universally accessible. This code can be used to have an existing source's 
+model perform predictions on publicly available images. 
 
 CoralNet's API expects URLs that are publicly available;it will the image and make predictions 
 for it, given a list of points. In the original [tutorial](https://coralnet.ucsd.edu/pages/help/api/tutorials/) 
@@ -194,20 +191,13 @@ The following describes what is expected in the csv files:
 
 Example of usage:
 ```python 
-python CoralNet_API.py --username JohnDoe \
-                       --password 123456789 \ 
-                       --source_id_1 4085 \
-                       --source_id_2 3420 \
-                       --csv_path path/to/annotations.csv \ 
-                       --headless True
+python API.py --username JohnDoe \
+              --password 123456789 \ 
+              --source_id_1 4085 \
+              --source_id_2 3420 \
+              --csv_path path/to/annotations.csv \ 
+              --headless True
 ```
-
-If you do not want to use the script via commandline, you can also use the GUI version 
-`CoralNet_API_GUI.py`, which will walk you through the steps.
-
-<p align="center">
-  <img src="./Figures/CoralNet_API_GUI.JPG" alt="CoralNet_API" width="600" height="500">
-</p>
 
 **Things to note:**
 - Images you want predictions for must be uploaded to a source before using this script; it 
@@ -232,13 +222,14 @@ Before jumping into the scripts, it might be useful to play around with
 functions for each script via notebook. The notebooks contain examples and 
 comments that may be useful for understanding and altering the code as 
 needed. The notebooks are as follows:
-- `CoralNet_API.ipynb` - Notebook for making predictions via CoralNet's API.
-- `CoralNet_Download.ipynb` - Notebook for downloading data from CoralNet.
-- `CoralNet_Labelset.ipynb` - Notebook for creating labelsets on CoralNet.
-- `CoralNet_Uplod.ipynb` - Notebook for uploading data to CoralNet.
+- `API.ipynb` - Notebook for making predictions via CoralNet's API.
+- `Download.ipynb` - Notebook for downloading data from CoralNet.
+- `Labelset.ipynb` - Notebook for creating labelsets on CoralNet.
+- `Uplod.ipynb` - Notebook for uploading data to CoralNet.
 
 
 ## TODO
-- Create fast, lightweight executables for Download and API
+- Update this page to list all available tools
+- Create `.exe` for `toolbox.py`
 
 **Suggestions are welcome!**

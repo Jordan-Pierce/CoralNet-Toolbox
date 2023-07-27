@@ -7,9 +7,6 @@ utilize this folder structure to store predictions and training data, respective
 ```python
 output_dir/
 
-    CoralNet_Labelset_Dataframe.csv
-    CoralNet_Source_ID_Dataframe.csv
-    
     source_id_1/
         images/
         predictions/
