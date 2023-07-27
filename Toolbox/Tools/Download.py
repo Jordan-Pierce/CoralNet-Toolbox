@@ -1,4 +1,4 @@
-from . import *
+from Toolbox.Tools import *
 
 
 # -------------------------------------------------------------------------------------------------
@@ -889,9 +889,17 @@ def download(args):
     # Download the data for each source
     # -------------------------------------------------------------------------
     try:
-        for source_id in args.source_ids:
-            if not source_id: continue
+        for idx, source_id in enumerate(args.source_ids):
+
+            # Skip
+            if not source_id:
+                continue
+
+            # Download all data from source
             driver, m, l, i, a = download_data(driver, source_id, output_dir)
+
+            # Gooey
+            print_progress(idx+1, len(args.source_ids))
 
     except Exception as e:
         raise Exception(f"ERROR: Could not download data\n{e}")

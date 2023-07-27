@@ -1,6 +1,4 @@
-from . import *
-from Download import *
-
+from Toolbox.Tools import *
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -294,6 +292,9 @@ def api(args):
         image_pages = images['Image Page'].tolist()
         driver, images['Image URL'] = get_image_urls(driver, image_pages)
 
+        # Gooey
+        prg_total = len(images)
+
     except Exception as e:
         print(f"ERROR: Issue with getting Source Metadata.\n{e}")
         return
@@ -514,13 +515,13 @@ def api(args):
                     print(f"NOTE: Adding {len(names)} images to completed")
                     completed_jobs.append(current_status)
 
-                    # Update progress bar
-                    print(f"progress: {len(completed_imgs)}/{total_images}")
-
                     # Remove from active jobs, images list
                     print(f"NOTE: Removing {len(names)} images from active\n")
                     active_imgs.remove(names)
                     active_jobs.remove(job)
+
+                    # Gooey
+                    print_progress(len(completed_imgs), total_images)
 
                 # Wait for the specified time before checking the status again
                 time.sleep(wait)
@@ -598,7 +599,7 @@ def main():
     try:
         # Call the api function
         api(args)
-        print("Done.")
+        print("Done.\n")
 
     except Exception as e:
         print(f"ERROR: {e}")

@@ -6,14 +6,14 @@ import glob
 import argparse
 from tqdm import tqdm
 import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 
-import math
 import numpy as np
 import pandas as pd
 from PIL import Image
 from skimage.io import imread, imsave
 
-from . import print_progress
+from Toolbox.Tools import *
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -88,7 +88,7 @@ def process_patch_extractor_output(log_files, output_dir):
         patches.append([patch_name, patch_path, label, image_name, image_path])
 
         # Gooey
-        print_progress(i, len(dfs))
+        print_progress(i + 1, len(dfs))
 
     # Make the directory in case it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -172,6 +172,45 @@ def crop_patch(image, y, x, patch_size=224):
     return patch
 
 
+def process_image(image_name, image_dir, annotation_df, output_dir):
+    # Get the name and path
+    image_prefix = image_name.split(".")[0]
+    image_path = os.path.join(image_dir, image_name)
+
+    if not os.path.exists(image_path):
+        print(f"ERROR: Image {image_path} does not exist; skipping")
+        return
+
+    # Open the image as np array just once
+    image = imread(image_path)
+    # Get the annotations specific to this image
+    image_df = annotation_df[annotation_df['Name'] == image_name]
+
+    # List to hold patches
+    patches = []
+
+    # Loop through each annotation for this image
+    for i, r in image_df.iterrows():
+        try:
+            # Extract the patch
+            patch = crop_patch(image, r['Row'], r['Column'])
+            name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}.png"
+            path = os.path.join(output_dir, 'patches', r['Label'], name)
+
+            # If it's not mostly empty, crop it
+            if patch is not None:
+                # Save the patch
+                imsave(fname=path, arr=patch)
+                # Add to list
+                patches.append([name, path, r['Label'], image_name, image_path])
+
+        except Exception as e:
+            print(f"ERROR: {e}")
+            continue
+
+    return patches
+
+
 def crop_patches(annotation_file, image_dir, output_dir):
     """
     Given an image dataframe, this function will crop a patch for each annotation
@@ -188,59 +227,31 @@ def crop_patches(annotation_file, image_dir, output_dir):
 
     # Make sub-folders for all the class categories
     for label in annotation_df['Label'].unique():
-        os.makedirs(f"{output_dir}\\patches\\{label}", exist_ok=True)
-
-    # List to hold patches, dataframe
-    patches = []
+        os.makedirs(os.path.join(output_dir, 'patches', label), exist_ok=True)
 
     # All unique images in the annotation dataframe
     image_names = annotation_df['Name'].unique()
 
+    # All patches
+    patches = []
+
     # For gooey
-    prg = 0
     prg_total = len(annotation_df)
 
-    for image_name in image_names:
+    # Using ThreadPoolExecutor to process each image concurrently
+    with ThreadPoolExecutor() as executor:
+        future_to_patches = {
+            executor.submit(process_image, image_name, image_dir, annotation_df, output_dir): image_name
+            for image_name in image_names
+        }
 
-        # Get the name and path
-        image_prefix = image_name.split(".")[0]
-        image_path = f"{image_dir}\\{image_name}"
-
-        if not os.path.exists(image_path):
-            print(f"ERROR: Image {image_path} does not exist; skipping")
-            continue
-
-        # Open the image as np array just once
-        image = imread(image_path)
-        # Get the annotations specific to this image
-        image_df = annotation_df[annotation_df['Name'] == image_name]
-
-        # Loop through each annotation for this image
-        for i, r in image_df.iterrows():
-
-            # Gooey
-            prg += 1
-            print_progress(prg, prg_total)
-
-            try:
-                # Extract the patch
-                patch = crop_patch(image, r['Row'], r['Column'])
-                name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}.png"
-                path = f"{output_dir}\\patches\\{r['Label']}\\{name}"
-
-                # If it's not mostly empty, crop it
-                if not os.path.exists(path) and patch is not None:
-                    # Save the patch
-                    imsave(fname=path, arr=patch)
-                    # Add to list
-                    patches.append([name, path, r['Label'], image_name, image_path])
-
-            except Exception as e:
-                print(f"ERROR: {e}")
-                continue
+        for future in concurrent.futures.as_completed(future_to_patches):
+            image_name = future_to_patches[future]
+            patches.extend(future.result())
+            print_progress(len(patches), prg_total)
 
     # Save patches dataframe
-    patches_path = f"{output_dir}\\patches.csv"
+    patches_path = os.path.join(output_dir, 'patches.csv')
     patches_df = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Image Name', 'Image Path'])
     patches_df.to_csv(patches_path)
 

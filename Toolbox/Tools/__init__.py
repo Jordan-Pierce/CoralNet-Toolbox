@@ -77,6 +77,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 CORALNET_LABELSET_FILE = os.path.abspath(("cache\\CoralNet_Labelset_List.csv"))
 
+
 # -------------------------------------------------------------------------------------------------
 # Functions to authenticate with CoralNet
 # -------------------------------------------------------------------------------------------------
@@ -321,6 +322,32 @@ def get_updated_labelset_list():
         pass
 
     return names
+
+
+def get_available_models():
+    """
+
+    """
+    available_models = []
+    try:
+        import tensorflow.keras.applications as models
+
+        model_names = [m for m in dir(models) if callable(getattr(models, m))]
+        model_names = [m for m in model_names if 'include_preprocessing' in getattr(models, m).__code__.co_varnames]
+        available_models = model_names
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return available_models
+
+
+def get_available_losses():
+    """
+
+    """
+    return ['binary_crossentropy', 'categorical_crossentropy', 'KLDivergence']
 
 
 def print_progress(prg, prg_total):

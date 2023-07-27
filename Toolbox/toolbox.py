@@ -1,17 +1,16 @@
-from Tools import *
 from Tools.API import *
 from Tools.Upload import *
 from Tools.Download import *
 from Tools.Labelset import *
 from Tools.Viscore import *
-from Tools.Train import *
+from Tools.Classifier import *
 from Tools.Patches import *
 
 from gooey import Gooey, GooeyParser
 
 
 @Gooey(dump_build_config=True,
-       program_name="CoralNet Tools",
+       program_name="CoralNet Toolbox",
        default_size=(900, 600),  # width, height
        console=True,
        progress_regex=r"^progress: (?P<current>\d+)/(?P<total>\d+)$",
@@ -424,6 +423,72 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # Train
     # ------------------------------------------------------------------------------------------------------------------
+    classifier_parser = subs.add_parser('Classifier')
+
+    # Panel 1
+    classifier_parser_panel_1 = classifier_parser.add_argument_group('Patch-Based Classifier',
+                                                                     'Use the following to train your own patch-based '
+                                                                     'image classifier.')
+
+    classifier_parser_panel_1.add_argument('--patches', required=True, type=str,
+                                           default="",
+                                           metavar="Patch Data",
+                                           help='Patches dataframe file',
+                                           widget="FileChooser")
+
+    classifier_parser_panel_1.add_argument('--output_dir', required=True,
+                                           metavar='Output Directory',
+                                           default=os.path.abspath("..\\Data"),
+                                           help='Root directory where output will be saved',
+                                           widget="DirChooser")
+
+    # Panel 2
+    classifier_parser_panel_2 = classifier_parser.add_argument_group('Parameters',
+                                                                     'Choose the parameters for training the model')
+
+    classifier_parser_panel_2.add_argument('--model_name', type=str, required=True,
+                                           metavar="Pretrained Encoder",
+                                           help='Encoder, pre-trained on ImageNet dataset',
+                                           widget='FilterableDropdown', choices=get_available_models())
+
+    classifier_parser_panel_2.add_argument('--loss_function', type=str, required=True,
+                                           metavar="Loss Function",
+                                           help='Loss function for training model',
+                                           widget='FilterableDropdown', choices=get_available_losses())
+
+    classifier_parser_panel_2.add_argument('--weighted_loss', default=True,
+                                           metavar="Weighted Loss Function",
+                                           help='Recommended; useful if class categories are imbalanced',
+                                           action="store_true",
+                                           widget='BlockCheckbox')
+
+    classifier_parser_panel_2.add_argument('--augment_data', default=True,
+                                           metavar="Augment Data",
+                                           help='Recommended; useful if class categories are imbalanced',
+                                           action="store_true",
+                                           widget='BlockCheckbox')
+
+    classifier_parser_panel_2.add_argument('--dropout_rate', type=float, default=0.5,
+                                           metavar="Drop Out",
+                                           help='Recommended; useful if class categories are imbalanced')
+
+    classifier_parser_panel_2.add_argument('--num_epochs', type=int, default=25,
+                                           metavar="Number of Epochs",
+                                           help='The number of iterations the model is given the training dataset')
+
+    classifier_parser_panel_2.add_argument('--batch_size', type=int, default=32,
+                                           metavar="Batch Size",
+                                           help='The number of samples per batch; GPU dependent')
+
+    classifier_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0001,
+                                           metavar="Learning Rate",
+                                           help='The floating point value used to incrementally adjust model weights')
+
+    classifier_parser_panel_2.add_argument('--tensorboard', default=True,
+                                           metavar="Tensorboard",
+                                           help='Open Tensorboard for viewing model training in real-time',
+                                           action="store_true",
+                                           widget='BlockCheckbox')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Parser
@@ -461,8 +526,8 @@ def main():
         if args.annotation_file:
             crop_patches(args.annotation_file, args.image_dir, args.output_dir)
 
-    if args.command == 'Train':
-        pass
+    if args.command == 'Classifier':
+        train_classifier(args)
 
     print('Done.')
 
