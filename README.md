@@ -15,33 +15,35 @@ these important ecosystems and their inhabitants.
 
 CoralNet allows users to upload photos of coral reefs and annotate them with detailed information 
 about the coral species and other features present in the images. The platform also provides tools 
-for analyzing the annotated images, such as image classification and semantic segmentation.
+for analyzing the annotated images, and create patch-based image classifiers. 
 
-### **Tools Available in this Repository**
-This repository contains a collection of tools that can be used to interact with CoralNet and 
-perform various tasks related to analyzing the annotated images. The following is a list of the 
-tools currently available:
+### ***Tools***
 
-#### **CoralNet_API**
-CoralNet_API is a Python library for accessing the CoralNet API, which allows users to 
-programmatically interact with CoralNet and perform tasks such as uploading and downloading data, 
-and annotating images. This library can be used to automate tasks and integrate CoralNet 
-functionality into other applications.
+The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated
+with those on CoralNet, including:
+- `API`: Easily use the CoralNet API to get predictions from any source model
+- `Download`: Download all data associated with a source
+- `Upload`: Upload images, annotations, and labelsets to a source
+- `Labelset`: Create a custom labelset
+- `Viscore`: Upload annotations made in Viscore's VPI to CoralNet
+- `Classifier`: Create your own patch-based image classifier, locally
+- `Annotate`: Create your own patches, locally
+- `Visualize`: Visualize points, patches superimposed on images
 
-#### **Image_Classifier**
-Image_Classifier is a set of tools for training your own patch-based image classifier using the 
-images and annotations downloaded from CoralNet, or those that you create using the Patch_Extractor 
-tool. This tool can be used to classify images based on the presence of specific features or coral
-species.
+<p align="center">
+  <img src="./Figures/CoralNet_Toolbox.gif" alt="CoralNet_Toolbox_Gif">
+</p
 
-#### **Patch_Extractor**
-Patch_Extractor is a tool for dividing annotated images into smaller patches, which can be useful 
-for training machine learning models on the annotated data. This tool can be used to generate 
-training datasets for image classification or semantic segmentation.
+#### **Future Features**
+- `Inference`: Perform inference using a locally trained model
+- `Analysis`: Calculate CPCe statistics from locally trained model's predictions
+- `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
+- `Segment`: Create segmentation masks for each image using `MSS`, `SAM`
+- `GAN`: Synthesize samples using generative AI
 
 #### **How to use**
-To use these tools, you need to have access to the CoralNet platform. Once you have an account, 
-you can use the CoralNet_API library to programmatically interact with the platform and perform 
+To use these tools, you should have access to the CoralNet platform. Once you have an account, 
+you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
 various tasks.
 
 ### **Conclusion**

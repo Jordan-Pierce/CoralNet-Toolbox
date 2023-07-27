@@ -421,7 +421,16 @@ def train_classifier(args):
                             verbose=2,
                             class_weight=class_weight)
     except Exception as e:
-        raise Exception(f"ERROR: There was an issue with training; see error below\n\n\n{e}")
+        print(f"ERROR: There was an issue with training! The issue is likely that "
+              f"the batch size is too high for the chosen model, given your GPU. "
+              f"Read the Error.txt file in the Logs Directory")
+
+        # Write the error to text file
+        with open(f"{LOGS_DIR}Error.txt", 'a') as file:
+            file.write(f"Caught exception: {str(e)}\n")
+
+        # Exit early
+        sys.exit(1)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Plot and save results
@@ -494,7 +503,6 @@ def train_classifier(args):
     plt.show()
 
     print(f"NOTE: Confusion Matrix saved in {LOGS_DIR}")
-
 
     # --- ROC
     # Convert the true labels to binary format
