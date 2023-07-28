@@ -6,6 +6,7 @@ from Tools.Viscore import *
 from Tools.Classifier import *
 from Tools.Patches import *
 from Tools.Annotate import *
+from Tools.Viusalize import *
 
 from gooey import Gooey, GooeyParser
 
@@ -381,6 +382,26 @@ def main():
                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
+    # Visualize
+    # ------------------------------------------------------------------------------------------------------------------
+    visualize_parser = subs.add_parser('Visualize')
+
+    # Panel 1
+    visualize_parser_panel_1 = visualize_parser.add_argument_group('Visualize',
+                                                                   'View annotations superimposed on each image; toggle'
+                                                                   'annotations to be seen as points or squares.')
+
+    visualize_parser_panel_1.add_argument('--annotations', required=False, type=str,
+                                          metavar="Annotations",
+                                          help='The path to the annotations dataframe',
+                                          widget="FileChooser")
+
+    visualize_parser_panel_1.add_argument('--image_dir', required=True,
+                                          metavar='Image Directory',
+                                          help='A directory where all images are located.',
+                                          widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
     # Annotate
     # ------------------------------------------------------------------------------------------------------------------
     annotate_parser = subs.add_parser('Annotate')
@@ -413,8 +434,8 @@ def main():
                                                                'annotation files into patches for training.')
 
     patches_parser_panel_1.add_argument('--annotation_file', required=False, type=str,
-                                        metavar="Patch_Extractor File",
-                                        help='CoralNet formatted annotation file, provided by CoralNet, or above tool',
+                                        metavar="Annotation File",
+                                        help='CoralNet annotation file, or one created using the Annotation tool',
                                         widget="FileChooser")
 
     patches_parser_panel_1.add_argument('--image_dir', required=False,
@@ -527,6 +548,9 @@ def main():
     if args.command == 'Viscore':
         args.annotations = viscore_to_coralnet(args)
         upload(args)
+
+    if args.command == 'Visualize':
+        visualize(args)
 
     if args.command == 'Annotate':
         annotate(args)
