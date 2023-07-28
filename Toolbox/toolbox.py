@@ -5,6 +5,7 @@ from Tools.Labelset import *
 from Tools.Viscore import *
 from Tools.Classifier import *
 from Tools.Patches import *
+from Tools.Annotate import *
 
 from gooey import Gooey, GooeyParser
 
@@ -79,7 +80,7 @@ def main():
                                     widget="DirChooser")
 
     api_parser_panel_1.add_argument('--csv_path', required=True, type=str,
-                                    metavar="Annotation File",
+                                    metavar="Patch_Extractor File",
                                     help='A path to a csv file containing the following: Name, Row, Column',
                                     widget="FileChooser")
 
@@ -266,7 +267,7 @@ def main():
                                        widget="FileChooser")
 
     upload_parser_panel_1.add_argument('--annotations', required=False, type=str,
-                                       metavar="Annotation File",
+                                       metavar="Patch_Extractor File",
                                        help='A path the annotation csv file. '
                                             'The file should contain the following: Name, Row, Column, Label',
                                        widget="FileChooser")
@@ -317,7 +318,7 @@ def main():
     viscore_parser_panel_1.add_argument('--images', required=False,
                                         metavar='Image Directory',
                                         help='A directory where all images are located.',
-                                        widget="DirChooser")  # can it be multiple widgets?
+                                        widget="DirChooser")
 
     viscore_parser_panel_1.add_argument('--labelset', required=False, type=str,
                                         metavar="Labelset File",
@@ -341,7 +342,7 @@ def main():
                                                                'which projects dots are retained through filtering.')
 
     viscore_parser_panel_2.add_argument('--viscore_labels', required=False, type=str,
-                                        metavar="Viscore Annotation File",
+                                        metavar="Viscore Patch_Extractor File",
                                         help='A path to the annotation csv file output from Viscore',
                                         widget="FileChooser")
 
@@ -376,8 +377,30 @@ def main():
                                         metavar='Output Directory',
                                         default=None,
                                         help='A root directory where the updated Viscore labels will be saved to; '
-                                             'defaults to the same directory as Viscore Annotation File',
+                                             'defaults to the same directory as Viscore Patch_Extractor File',
                                         widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Annotate
+    # ------------------------------------------------------------------------------------------------------------------
+    annotate_parser = subs.add_parser('Annotate')
+
+    # Panel 1 - Download CoralNet Data given a source
+    annotate_parser_panel_1 = annotate_parser.add_argument_group('Annotate',
+                                                                 'Extract patches manually, which can be used as '
+                                                                 'annotations in CoralNet, or used to train a model '
+                                                                 'locally.')
+
+    annotate_parser_panel_1.add_argument('--patch_extractor_path', required=True, type=str,
+                                         metavar="Patch Extractor Path",
+                                         help='The path to the CNNDataExtractor.exe',
+                                         default=os.path.abspath('./Tools/Patch_Extractor/CNNDataExtractor.exe'),
+                                         widget="FileChooser")
+
+    annotate_parser_panel_1.add_argument('--image_dir', required=True,
+                                         metavar='Image Directory',
+                                         help='A directory where all images are located.',
+                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Patches
@@ -385,39 +408,24 @@ def main():
     patches_parser = subs.add_parser('Patches')
 
     # Panel 1
-    patches_parser_panel_1 = patches_parser.add_argument_group('Patch Extractor',
-                                                               'Use the following to convert the log files output '
-                                                               'from the Patch Extractor tool into a CoralNet '
-                                                               'formatted annotation file.')
-
-    patches_parser_panel_1.add_argument('--patch_extractor_output', required=False, type=str, nargs='+',
-                                        metavar="Patch Extractor Output Log(s)",
-                                        help='File(s) output from the Patch Extractor tool; will create a CoralNet '
-                                             'formatted annotation file',
-                                        widget="MultiFileChooser")
-
-    # Panel 2
-    patches_parser_panel_2 = patches_parser.add_argument_group('Crop Patches',
+    patches_parser_panel_1 = patches_parser.add_argument_group('Crop Patches',
                                                                'Use the following to convert CoralNet formatted '
                                                                'annotation files into patches for training.')
 
-    patches_parser_panel_2.add_argument('--annotation_file', required=False, type=str,
-                                        metavar="Annotation File",
+    patches_parser_panel_1.add_argument('--annotation_file', required=False, type=str,
+                                        metavar="Patch_Extractor File",
                                         help='CoralNet formatted annotation file, provided by CoralNet, or above tool',
                                         widget="FileChooser")
 
-    patches_parser_panel_2.add_argument('--image_dir', required=False,
+    patches_parser_panel_1.add_argument('--image_dir', required=False,
                                         metavar='Image Directory',
                                         help='Directory containing images; only needed to create patches',
                                         widget="DirChooser")
 
-    # Panel 3
-    patches_parser_panel_3 = patches_parser.add_argument_group('Output Directory')
-
-    patches_parser_panel_3.add_argument('--output_dir', required=True,
+    patches_parser_panel_1.add_argument('--output_dir', required=True,
                                         metavar='Output Directory',
                                         default=os.path.abspath("..\\Data"),
-                                        help='Root directory where output will be saved for either of the above tools',
+                                        help='Root directory where output will be saved',
                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -520,11 +528,11 @@ def main():
         args.annotations = viscore_to_coralnet(args)
         upload(args)
 
+    if args.command == 'Annotate':
+        annotate(args)
+
     if args.command == 'Patches':
-        if args.patch_extractor_output:
-            process_patch_extractor_output(args.patch_extractor_output, args.output_dir)
-        if args.annotation_file:
-            crop_patches(args.annotation_file, args.image_dir, args.output_dir)
+        crop_patches(args.annotation_file, args.image_dir, args.output_dir)
 
     if args.command == 'Classifier':
         train_classifier(args)

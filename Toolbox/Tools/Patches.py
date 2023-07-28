@@ -21,96 +21,6 @@ from Toolbox.Tools import *
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def process_patch_extractor_output(log_files, output_dir):
-    """Processes the output of the patch extractor tool to fit the CoralNet Annotation file format,
-    as well as Patches annotation file format for locally training."""
-
-    print("\n###############################################")
-    print("Converting Patch Extractor Output")
-    print("###############################################\n")
-
-    # To hold all the annotations
-    dfs = pd.DataFrame()
-
-    # If user has multiple
-    for log_file in log_files:
-
-        if not os.path.exists(log_file):
-            raise Exception(f"ERROR: File {log_file} not found")
-
-        # Read the file, set column names; Label is the path to patch
-        df = pd.read_csv(log_file, header=None, delimiter='\t')
-        df.columns = ['Name', 'Column', 'Row', 'Label']
-
-        # Concatenate
-        dfs = pd.concat((dfs, df))
-
-    if len(dfs) == 0:
-        raise Exception("ERROR: No annotations found; check the files you provided")
-
-    # Now the annotations are formatted to be what CoralNet expects
-    annotations = []
-    patches = []
-
-    for i, r in tqdm(dfs.iterrows()):
-
-        # Basename of image
-        image_path = r['Name']
-        image_name = os.path.basename(image_path)
-
-        # Assumed directory containing patches (unless moved)
-        dir_name = os.path.dirname(image_path)
-
-        # Patch path
-        patch_name = r['Label']
-        patch_path = f"{dir_name}\\{patch_name}"
-
-        if not os.path.exists(patch_path):
-            print(f"ERROR: Could not find patch {patch_name} in {dir_name}")
-            continue
-
-        # The best delimiter I can think of
-        label = r['Label'].split('_A_')[0]
-        # Column and Row of top-left pixel
-        column = r['Column']
-        row = r['Row']
-
-        # Width and height of patch
-        w, h = Image.open(patch_path).size
-
-        # Updating column and row
-        column = column + (h // 2)
-        row = row + (w // 2)
-
-        # Annotations for CoralNet
-        annotations.append([image_name, row, column, label])
-        # Patch dataframe for training locally
-        patches.append([patch_name, patch_path, label, image_name, image_path])
-
-        # Gooey
-        print_progress(i + 1, len(dfs))
-
-    # Make the directory in case it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save as csv files
-    annotations_path = f"{output_dir}\\annotations.csv"
-    pd.DataFrame(annotations, columns=['Name', 'Row', 'Column', 'Label']).to_csv(annotations_path)
-
-    if os.path.exists(annotations_path):
-        print(f"NOTE: Annotations dataframe saved to {annotations_path}")
-    else:
-        print("ERROR: Annotations dataframe could not be saved")
-
-    patches_path = f"{output_dir}\\patches.csv"
-    pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Image Name', 'Image_Path']).to_csv(patches_path)
-
-    if os.path.exists(patches_path):
-        print(f"NOTE: Patches dataframe saved to {patches_path}")
-    else:
-        print(f"ERROR: Patches dataframe could not be saved")
-
-
 def crop_patch(image, y, x, patch_size=224):
     """
     Given an image, and a Y, X location, this function will extract the patch.
@@ -223,7 +133,7 @@ def crop_patches(annotation_file, image_dir, output_dir):
     if os.path.exists(annotation_file):
         annotation_df = pd.read_csv(annotation_file)
     else:
-        raise Exception(f"ERROR: Annotation file {annotation_file} does not exist")
+        raise Exception(f"ERROR: Patch_Extractor file {annotation_file} does not exist")
 
     # Make sub-folders for all the class categories
     for label in annotation_df['Label'].unique():
@@ -272,9 +182,6 @@ def main():
 
     parser = argparse.ArgumentParser(description='Patch arguments')
 
-    parser.add_argument('--patch_extractor_output', type=str, nargs="+", default=[],
-                        help='The path to log file(s) output from the Patch Extractor tool')
-
     parser.add_argument('--annotation_file', type=str, nargs="+", default=[],
                         help='The path to annotation file(s); expects CoralNet format')
 
@@ -285,12 +192,7 @@ def main():
 
     try:
 
-        if args.patch_extractor_output:
-            process_patch_extractor_output(args.patch_extractor_output, args.output_dir)
-
-        if args.annotation_file:
-            crop_patches(args.annotation_file, args.output_dir)
-
+        crop_patches(args.annotation_file, args.output_dir)
         print("Done.")
 
     except Exception as e:
