@@ -189,13 +189,13 @@ def main():
 
     args = parser.parse_args()
 
-    # try:
-    #     # Call the annotate function
-    annotate(args)
-    print("Done.\n")
+    try:
+        # Call the annotate function
+        annotate(args)
+        print("Done.\n")
 
-    # except Exception as e:
-    #     print(f"ERROR: {e}")
+    except Exception as e:
+        print(f"ERROR: {e}")
 
 
 if __name__ == "__main__":
