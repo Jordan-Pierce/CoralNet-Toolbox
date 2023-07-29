@@ -29,6 +29,8 @@ with those on CoralNet, including:
 - `Classifier`: Create your own patch-based image classifier, locally
 - `Annotate`: Create your own patches, locally
 - `Visualize`: Visualize points, patches superimposed on images
+- `Patches`: Extract patches from images given an annotation file
+- `Points`: Sample points from images (Uniform, Random, Stratified)
 
 <p align="center">
   <img src="./Figures/CoralNet-Toolbox.gif" alt="CoralNet_Toolbox_Gif">
@@ -57,7 +59,7 @@ hobbyists interested in learning more about these important ecosystems.
 If used in project or publication, please attribute your use of this repository with the following:
     
 ```
-@misc{CoralNet Tools,
+@misc{CoralNet-Toolbox,
   author = {Pierce, Jordan and Edwards, Clint and Vieham, Shay and Rojano, Sarah and Cook, Sophie and Battista, Tim},
   title = {CoralNet Tools},
   year = {2022},

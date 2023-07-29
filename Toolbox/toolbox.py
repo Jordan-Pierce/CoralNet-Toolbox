@@ -4,6 +4,7 @@ from Tools.Download import *
 from Tools.Labelset import *
 from Tools.Viscore import *
 from Tools.Classifier import *
+from Tools.Points import *
 from Tools.Patches import *
 from Tools.Annotate import *
 from Tools.Viusalize import *
@@ -81,7 +82,7 @@ def main():
                                     widget="DirChooser")
 
     api_parser_panel_1.add_argument('--csv_path', required=True, type=str,
-                                    metavar="Patch_Extractor File",
+                                    metavar="Points File",
                                     help='A path to a csv file containing the following: Name, Row, Column',
                                     widget="FileChooser")
 
@@ -406,7 +407,7 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     annotate_parser = subs.add_parser('Annotate')
 
-    # Panel 1 - Download CoralNet Data given a source
+    # Panel 1
     annotate_parser_panel_1 = annotate_parser.add_argument_group('Annotate',
                                                                  'Extract patches manually, which can be used as '
                                                                  'annotations in CoralNet, or used to train a model '
@@ -422,6 +423,38 @@ def main():
                                          metavar='Image Directory',
                                          help='A directory where all images are located.',
                                          widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Points
+    # ------------------------------------------------------------------------------------------------------------------
+    points_parser = subs.add_parser('Points')
+
+    # Panel 1
+    points_parser_panel_1 = points_parser.add_argument_group('Points',
+                                                             'Sample points for each image; points can be used '
+                                                             'with the API or Inference tools. Methods include '
+                                                             'uniform, random, and stratified-random. Samples are '
+                                                             'saved in the Output Directory as a dataframe.')
+
+    points_parser_panel_1.add_argument('--image_files', required=True, type=str, nargs='+',
+                                       metavar="Image Files",
+                                       help='Images to create sampled points for',
+                                       widget="MultiFileChooser")
+
+    points_parser_panel_1.add_argument('--output_dir', required=True,
+                                       metavar='Output Directory',
+                                       default=None,
+                                       help='Root directory where output will be saved',
+                                       widget="DirChooser")
+
+    points_parser_panel_1.add_argument('--sample_method', required=True, type=str,
+                                       metavar="Sample Method",
+                                       help='Method used to sample points from each image',
+                                       widget="Dropdown", choices=['Uniform', 'Random', 'Stratified'])
+
+    points_parser_panel_1.add_argument('--num_points', required=True, type=int, default=200,
+                                       metavar="Number of Points",
+                                       help='The number of points to sample from each image')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Patches
@@ -440,7 +473,7 @@ def main():
 
     patches_parser_panel_1.add_argument('--image_dir', required=False,
                                         metavar='Image Directory',
-                                        help='Directory containing images; only needed to create patches',
+                                        help='Directory containing images associated with annotation file',
                                         widget="DirChooser")
 
     patches_parser_panel_1.add_argument('--output_dir', required=True,
@@ -555,8 +588,11 @@ def main():
     if args.command == 'Annotate':
         annotate(args)
 
+    if args.command == 'Points':
+        points(args)
+
     if args.command == 'Patches':
-        crop_patches(args.annotation_file, args.image_dir, args.output_dir)
+        patches(args)
 
     if args.command == 'Classifier':
         train_classifier(args)

@@ -158,6 +158,11 @@ def visualize(args):
 
     """
     # Set the backend to 'TkAgg' for an external viewer
+
+    print("\n###############################################")
+    print("Visualize")
+    print("###############################################\n")
+
     matplotlib.use('TkAgg')
 
     # Pass the variables

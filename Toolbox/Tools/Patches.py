@@ -29,7 +29,7 @@ def crop_patch(image, y, x, patch_size=224):
     height, width, _ = image.shape
 
     # N x N
-    size = int(patch_size // 2)
+    size = patch_size // 2
 
     # If padding is needed
     top_pad = 0
@@ -57,7 +57,7 @@ def crop_patch(image, y, x, patch_size=224):
 
     # Right of patch, else edge of image
     right = x + size
-    if size > width:
+    if right > width:
         right_pad = right - width
         right = width
 
@@ -65,19 +65,11 @@ def crop_patch(image, y, x, patch_size=224):
     patch = image[top: bottom, left: right, :]
 
     # Check if the sub-image size is smaller than N x N
-    if patch.shape[0] != patch_size or patch.shape[1] != patch_size:
+    if patch.shape[0] < patch_size or patch.shape[1] < patch_size:
         # Pad the sub-image with zeros if it's along the border
         patch = np.pad(patch, ((top_pad, bottom_pad),
                                (left_pad, right_pad),
                                (0, 0)))
-
-    # Check if the percentage of padded zeros is more than 50%
-    if np.mean(patch == 0) > 0.75:
-        patch = None
-
-    # If for some reason it's not the right size, ignore (fixed this)
-    if patch.shape[0] != patch_size or patch.shape[1] != patch_size:
-        patch = None
 
     return patch
 
@@ -121,7 +113,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir):
     return patches
 
 
-def crop_patches(annotation_file, image_dir, output_dir):
+def patches(args):
     """
     Given an image dataframe, this function will crop a patch for each annotation
     """
@@ -129,6 +121,11 @@ def crop_patches(annotation_file, image_dir, output_dir):
     print("\n###############################################")
     print("Cropping Patches")
     print("###############################################\n")
+
+    # Set the variables
+    image_dir = args.image_dir
+    annotation_file = args.annotation_file
+    output_dir = args.output_dir
 
     if os.path.exists(annotation_file):
         annotation_df = pd.read_csv(annotation_file)
@@ -161,12 +158,18 @@ def crop_patches(annotation_file, image_dir, output_dir):
             print_progress(len(patches), prg_total)
 
     # Save patches dataframe
-    patches_path = os.path.join(output_dir, 'patches.csv')
-    patches_df = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Image Name', 'Image Path'])
-    patches_df.to_csv(patches_path)
+    output_path = os.path.join(output_dir, 'patches.csv')
+    patches = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Image Name', 'Image Path'])
 
-    if os.path.exists(patches_path):
-        print(f"NOTE: Patches dataframe saved to {patches_path}")
+    if os.path.exists(output_path):
+        previous_patches = pd.read_csv(output_path, index_col=0)
+        patches = pd.concat((previous_patches, patches))
+
+    # Save
+    patches.to_csv(output_path)
+
+    if os.path.exists(output_path):
+        print(f"NOTE: Patches dataframe saved to {output_path}")
     else:
         print(f"ERROR: Patches dataframe could not be saved")
 
@@ -185,6 +188,9 @@ def main():
     parser.add_argument('--annotation_file', type=str, nargs="+", default=[],
                         help='The path to annotation file(s); expects CoralNet format')
 
+    parser.add_argument('--image_dir', type=str, required=True,
+                        help='Directory with images associated with annotation file')
+
     parser.add_argument('--output_dir', type=str, default=os.path.abspath("../../Data"),
                         help='A root directory where all output will be saved to.')
 
@@ -192,7 +198,7 @@ def main():
 
     try:
 
-        crop_patches(args.annotation_file, args.output_dir)
+        patches(args)
         print("Done.")
 
     except Exception as e:
