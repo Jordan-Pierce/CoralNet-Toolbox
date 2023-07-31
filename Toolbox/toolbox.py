@@ -269,7 +269,7 @@ def main():
                                        widget="FileChooser")
 
     upload_parser_panel_1.add_argument('--annotations', required=False, type=str,
-                                       metavar="Patch_Extractor File",
+                                       metavar="Annotation File",
                                        help='A path the annotation csv file. '
                                             'The file should contain the following: Name, Row, Column, Label',
                                        widget="FileChooser")
@@ -344,7 +344,7 @@ def main():
                                                                'which projects dots are retained through filtering.')
 
     viscore_parser_panel_2.add_argument('--viscore_labels', required=False, type=str,
-                                        metavar="Viscore Patch_Extractor File",
+                                        metavar="Viscore Annotation File",
                                         help='A path to the annotation csv file output from Viscore',
                                         widget="FileChooser")
 
@@ -379,7 +379,7 @@ def main():
                                         metavar='Output Directory',
                                         default=None,
                                         help='A root directory where the updated Viscore labels will be saved to; '
-                                             'defaults to the same directory as Viscore Patch_Extractor File',
+                                             'defaults to the same directory as Viscore Annotation File',
                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------

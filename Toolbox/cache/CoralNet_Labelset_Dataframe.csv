@@ -29,7 +29,7 @@
 27,5729,Acropora abrotanoides,https://coralnet.ucsd.edu/label/5729/,Hard coral,56,ACROABRO,False,,False,False
 28,5421,Acropora abrotanoides/robusta,https://coralnet.ucsd.edu/label/5421/,Hard coral,39,AABR,False,,False,False
 29,5246,Acropora abrotanoides/robusta_bleached,https://coralnet.ucsd.edu/label/5246/,Hard coral,0,AABR_BL,False,,False,False
-30,4505,Acropora aculeus,https://coralnet.ucsd.edu/label/4505/,Hard coral,52,AcrAcu,False,,True,False
+30,4505,Acropora aculeus,https://coralnet.ucsd.edu/label/4505/,Hard coral,51,AcrAcu,False,,True,False
 31,6276,Acropora acuminata,https://coralnet.ucsd.edu/label/6276/,Hard coral,26,acuminata,False,,False,False
 32,6289,Acropora anthocercis,https://coralnet.ucsd.edu/label/6289/,Hard coral,26,anthocerci,False,,False,False
 33,1547,Acropora arabensis,https://coralnet.ucsd.edu/label/1547/,Hard coral,59,AcrArab,False,,True,False
@@ -37,7 +37,7 @@
 35,4924,Acropora_arborescent,https://coralnet.ucsd.edu/label/4924/,Hard coral,57,acrarb,True,Duplicate of Acropora (arborescent),False,False
 36,603,Acropora (arborescent table),https://coralnet.ucsd.edu/label/603/,Hard coral,61,Acr_arbTab,False,,True,False
 37,6283,Acropora aspera,https://coralnet.ucsd.edu/label/6283/,Hard coral,26,aspera,False,,False,False
-38,4507,Acropora austera,https://coralnet.ucsd.edu/label/4507/,Hard coral,52,ACRau,False,,False,False
+38,4507,Acropora austera,https://coralnet.ucsd.edu/label/4507/,Hard coral,51,ACRau,False,,False,False
 39,4474,Acropora azurea,https://coralnet.ucsd.edu/label/4474/,Hard coral,55,ACRaz,False,,False,False
 40,5489,Acropora branching,https://coralnet.ucsd.edu/label/5489/,Hard coral,0,AcroBr,True,Duplicate of Acropora (branching),False,False
 41,204,Acropora (branching),https://coralnet.ucsd.edu/label/204/,Hard coral,82,Acr_bra,False,,True,True
@@ -69,7 +69,7 @@
 67,2069,Acropora corymbose small,https://coralnet.ucsd.edu/label/2069/,Hard coral,49,acr_cor,False,,False,False
 68,1412,Acropora corymbose/tabular/plate,https://coralnet.ucsd.edu/label/1412/,Hard coral,81,BRA_TAB-Ac,False,,False,False
 69,2594,Acropora corymbose/tabular/plate Bleached,https://coralnet.ucsd.edu/label/2594/,Hard coral,64,BRA_TAB-B*,False,,False,False
-70,3354,Acropora cytherea,https://coralnet.ucsd.edu/label/3354/,Hard coral,61,AcrCyth,False,,True,False
+70,3354,Acropora cytherea,https://coralnet.ucsd.edu/label/3354/,Hard coral,60,AcrCyth,False,,True,False
 71,4515,Acropora cytherea bleached,https://coralnet.ucsd.edu/label/4515/,Hard coral,25,ACYT_BL,False,,False,False
 72,6270,Acropora cytheria,https://coralnet.ucsd.edu/label/6270/,Hard coral,38,cytheria,False,,False,False
 73,6290,Acropora dendrum,https://coralnet.ucsd.edu/label/6290/,Hard coral,26,dendrum,False,,False,False
@@ -85,7 +85,7 @@
 83,1744,Acropora echinata1,https://coralnet.ucsd.edu/label/1744/,Hard coral,0,AE1,False,,False,False
 84,1745,Acropora echinata2,https://coralnet.ucsd.edu/label/1745/,Hard coral,0,AE2,False,,False,False
 85,6297,Acropora elegans,https://coralnet.ucsd.edu/label/6297/,Hard coral,25,elegans,False,,False,False
-86,2384,Acropora elseyi,https://coralnet.ucsd.edu/label/2384/,Hard coral,49,AcrEls,False,,True,False
+86,2384,Acropora elseyi,https://coralnet.ucsd.edu/label/2384/,Hard coral,48,AcrEls,False,,True,False
 87,605,Acropora (encrusting),https://coralnet.ucsd.edu/label/605/,Hard coral,71,Acr_enc,False,,True,False
 88,5025,Acropora_encrusting,https://coralnet.ucsd.edu/label/5025/,Hard coral,56,acrenc,True,Duplicate of Acropora (encrusting),False,False
 89,3360,Acropora Encrusting,https://coralnet.ucsd.edu/label/3360/,Hard coral,40,ACE**,True,Duplicate of Acropora (encrusting),False,False
@@ -93,7 +93,7 @@
 91,149,Acropora florida,https://coralnet.ucsd.edu/label/149/,Hard coral,57,AcrFlo,False,,True,False
 92,125,Acropora formosa,https://coralnet.ucsd.edu/label/125/,Hard coral,67,ACfor,True,Duplicate of Acropora muricata,False,False
 93,1938,Acropora formosa (muricata) group,https://coralnet.ucsd.edu/label/1938/,Hard coral,54,Acr_f_m_gr,False,,False,False
-94,2379,Acropora gemmifera,https://coralnet.ucsd.edu/label/2379/,Hard coral,57,AcrGem,False,,True,False
+94,2379,Acropora gemmifera,https://coralnet.ucsd.edu/label/2379/,Hard coral,56,AcrGem,False,,True,False
 95,4516,Acropora gemmifera bleached,https://coralnet.ucsd.edu/label/4516/,Hard coral,0,AGEM_BL,False,,False,False
 96,6271,Acropora glauca,https://coralnet.ucsd.edu/label/6271/,Hard coral,26,glauca,False,,False,False
 97,5418,Acropora globiceps,https://coralnet.ucsd.edu/label/5418/,Hard coral,50,AGLO,False,,False,False
@@ -108,27 +108,27 @@
 106,1939,Acropora humilis group,https://coralnet.ucsd.edu/label/1939/,Hard coral,40,Acr_hum_gr,False,,False,False
 107,127,Acropora hyacinthus,https://coralnet.ucsd.edu/label/127/,Hard coral,65,AcrHya,False,,True,False
 108,1942,Acropora hyacinthus group,https://coralnet.ucsd.edu/label/1942/,Hard coral,45,Acr_hya_gr,False,,False,False
-109,4476,Acropora intermedia,https://coralnet.ucsd.edu/label/4476/,Hard coral,60,ACRin,False,,False,False
+109,4476,Acropora intermedia,https://coralnet.ucsd.edu/label/4476/,Hard coral,59,ACRin,False,,False,False
 110,6272,Acropora japonica,https://coralnet.ucsd.edu/label/6272/,Hard coral,26,japonica,False,,False,False
 111,6300,Acropora kirstyae,https://coralnet.ucsd.edu/label/6300/,Hard coral,26,kirstyae,False,,False,False
 112,6304,Acropora kosurini,https://coralnet.ucsd.edu/label/6304/,Hard coral,26,kosurini,False,,False,False
 113,4103,Acropora latistella,https://coralnet.ucsd.edu/label/4103/,Hard coral,61,Acr_lat,False,,False,False
-114,4477,Acropora listeri,https://coralnet.ucsd.edu/label/4477/,Hard coral,35,ACRli,False,,False,False
+114,4477,Acropora listeri,https://coralnet.ucsd.edu/label/4477/,Hard coral,33,ACRli,False,,False,False
 115,6286,Acropora loisetteae,https://coralnet.ucsd.edu/label/6286/,Hard coral,26,loisetteae,False,,False,False
 116,7299,Acropora Lokani,https://coralnet.ucsd.edu/label/7299/,Hard coral,7,A. lokani,False,,False,False
 117,6305,Acropora longicyathus,https://coralnet.ucsd.edu/label/6305/,Hard coral,26,longicyath,False,,False,False
 118,2380,Acropora loripes,https://coralnet.ucsd.edu/label/2380/,Hard coral,36,AcrLor,False,,True,False
 119,6269,Acropora lutkeni,https://coralnet.ucsd.edu/label/6269/,Hard coral,26,lutkeni,False,,False,False
-120,4478,Acropora microclados,https://coralnet.ucsd.edu/label/4478/,Hard coral,41,ACRmc,False,,False,False
-121,4479,Acropora microphthalma,https://coralnet.ucsd.edu/label/4479/,Hard coral,57,ACRmi,False,,False,False
-122,126,Acropora millepora,https://coralnet.ucsd.edu/label/126/,Hard coral,69,AcrMille,False,,True,False
+120,4478,Acropora microclados,https://coralnet.ucsd.edu/label/4478/,Hard coral,40,ACRmc,False,,False,False
+121,4479,Acropora microphthalma,https://coralnet.ucsd.edu/label/4479/,Hard coral,56,ACRmi,False,,False,False
+122,126,Acropora millepora,https://coralnet.ucsd.edu/label/126/,Hard coral,68,AcrMille,False,,True,False
 123,2385,Acropora monticulosa,https://coralnet.ucsd.edu/label/2385/,Hard coral,42,AcrMon,False,,True,False
 124,6301,Acropora multiacuta,https://coralnet.ucsd.edu/label/6301/,Hard coral,26,multiacuta,False,,False,False
 125,2386,Acropora muricata,https://coralnet.ucsd.edu/label/2386/,Hard coral,70,AcrMur,False,,True,False
 126,5336,Acropora muricata bleached,https://coralnet.ucsd.edu/label/5336/,Hard coral,57,AMUR-BL,False,,False,False
-127,4480,Acropora nana,https://coralnet.ucsd.edu/label/4480/,Hard coral,46,ACRna,False,,False,False
+127,4480,Acropora nana,https://coralnet.ucsd.edu/label/4480/,Hard coral,45,ACRna,False,,False,False
 128,2387,Acropora nasuta,https://coralnet.ucsd.edu/label/2387/,Hard coral,49,AcrNas,False,,True,False
-129,5883,Acropora NonBranching Bleached,https://coralnet.ucsd.edu/label/5883/,Hard coral,36,ANB,False,,False,False
+129,5883,Acropora NonBranching Bleached,https://coralnet.ucsd.edu/label/5883/,Hard coral,37,ANB,False,,False,False
 130,5884,Acropora NonBranching Dead,https://coralnet.ucsd.edu/label/5884/,Hard coral,51,AND,False,,False,False
 131,5881,Acropora NonBranching Healthy,https://coralnet.ucsd.edu/label/5881/,Hard coral,65,ANH,False,,False,False
 132,5882,Acropora NonBranching Paling,https://coralnet.ucsd.edu/label/5882/,Hard coral,54,ANP,False,,False,False
@@ -150,7 +150,7 @@
 148,1937,Acropora robusta group,https://coralnet.ucsd.edu/label/1937/,Hard coral,53,Acr_rob_gr,False,,False,False
 149,7123,Acropora Robusta (RUN),https://coralnet.ucsd.edu/label/7123/,Hard coral,30,ACROROBU,False,,False,False
 150,2382,Acropora samoensis,https://coralnet.ucsd.edu/label/2382/,Hard coral,32,AcrSam,False,,True,False
-151,4481,Acropora sarmentosa,https://coralnet.ucsd.edu/label/4481/,Hard coral,35,ACRsa,False,,False,False
+151,4481,Acropora sarmentosa,https://coralnet.ucsd.edu/label/4481/,Hard coral,33,ACRsa,False,,False,False
 152,2383,Acropora secale,https://coralnet.ucsd.edu/label/2383/,Hard coral,40,AcrSec,False,,True,False
 153,6292,Acropora selago,https://coralnet.ucsd.edu/label/6292/,Hard coral,26,selago,False,,False,False
 154,5506,Acropora Simple,https://coralnet.ucsd.edu/label/5506/,Hard coral,57,AcrSim,False,,False,False
@@ -167,7 +167,7 @@
 165,5420,Acropora spp. branching_bleached,https://coralnet.ucsd.edu/label/5420/,Hard coral,0,ASBR_BL,False,,False,False
 166,5490,Acropora spp._other,https://coralnet.ucsd.edu/label/5490/,Hard coral,48,ACRSP,False,,False,False
 167,5491,Acropora spp._other_bleached,https://coralnet.ucsd.edu/label/5491/,Hard coral,48,ACRSP_BL,False,,False,False
-168,5457,Acropora spp._staghorn,https://coralnet.ucsd.edu/label/5457/,Hard coral,58,ACSTA,False,,False,False
+168,5457,Acropora spp._staghorn,https://coralnet.ucsd.edu/label/5457/,Hard coral,61,ACSTA,False,,False,False
 169,2434,Acropora squarrosa,https://coralnet.ucsd.edu/label/2434/,Hard coral,55,AcrSqu,False,,True,False
 170,6281,Acropora striata,https://coralnet.ucsd.edu/label/6281/,Hard coral,26,striata,False,,False,False
 171,1941,Acropora subgenus Isopora,https://coralnet.ucsd.edu/label/1941/,Hard coral,46,Acr_Iso,True,Duplicate of Isopora,False,False
@@ -272,14 +272,14 @@
 270,4959,Astreopora_encrusting,https://coralnet.ucsd.edu/label/4959/,Hard coral,54,astenc,True,Duplicate of Astreopora (encrusting),False,False
 271,6325,Astreopora expansa,https://coralnet.ucsd.edu/label/6325/,Hard coral,26,expansa,False,,False,False
 272,4937,Astreopora_foliose,https://coralnet.ucsd.edu/label/4937/,Hard coral,27,astfol,False,,False,False
-273,3972,Astreopora gracilis,https://coralnet.ucsd.edu/label/3972/,Hard coral,53,AstreoGra,False,,True,False
-274,4502,Astreopora incrustans,https://coralnet.ucsd.edu/label/4502/,Hard coral,44,AstreoInc,False,,True,False
+273,3972,Astreopora gracilis,https://coralnet.ucsd.edu/label/3972/,Hard coral,52,AstreoGra,False,,True,False
+274,4502,Astreopora incrustans,https://coralnet.ucsd.edu/label/4502/,Hard coral,43,AstreoInc,False,,True,False
 275,6926,Astreopora_laminar,https://coralnet.ucsd.edu/label/6926/,Hard coral,25,Astreo_la,False,,False,False
 276,6326,Astreopora listeri,https://coralnet.ucsd.edu/label/6326/,Hard coral,26,listeri,False,,False,False
 277,6327,Astreopora macrostoma,https://coralnet.ucsd.edu/label/6327/,Hard coral,28,macrostoma,False,,False,False
 278,613,Astreopora (massive),https://coralnet.ucsd.edu/label/613/,Hard coral,62,Astreo_mas,False,,True,False
 279,4958,Astreopora_massive,https://coralnet.ucsd.edu/label/4958/,Hard coral,46,astmas,False,,False,False
-280,4483,Astreopora myriophthalma,https://coralnet.ucsd.edu/label/4483/,Hard coral,57,AstreoMyr,False,,True,False
+280,4483,Astreopora myriophthalma,https://coralnet.ucsd.edu/label/4483/,Hard coral,56,AstreoMyr,False,,True,False
 281,4484,Astreopora ocellata,https://coralnet.ucsd.edu/label/4484/,Hard coral,54,AstreoOce,False,,True,False
 282,612,Astreopora Plate Like,https://coralnet.ucsd.edu/label/612/,Hard coral,45,AstPlat,False,,False,False
 283,6328,Astreopora randalli,https://coralnet.ucsd.edu/label/6328/,Hard coral,26,randalli,False,,False,False
@@ -402,7 +402,7 @@
 400,6797,Bleached Montastraea cavernosa,https://coralnet.ucsd.edu/label/6797/,Hard coral,0,BLEMONC,False,,False,False
 401,2325,Bleached Montastrea Encrusting,https://coralnet.ucsd.edu/label/2325/,Hard coral,0,BlMonEnc,False,,False,False
 402,2326,Bleached Montastrea Sub-Massive,https://coralnet.ucsd.edu/label/2326/,Hard coral,34,BlMonSM,False,,False,False
-403,212,Bleached Montipora,https://coralnet.ucsd.edu/label/212/,Hard coral,76,B_Monti,False,,True,False
+403,212,Bleached Montipora,https://coralnet.ucsd.edu/label/212/,Hard coral,75,B_Monti,False,,True,False
 404,2072,Bleached Montipora capitata,https://coralnet.ucsd.edu/label/2072/,Hard coral,66,BMCAP,False,,False,False
 405,2075,Bleached  Montipora flabellata,https://coralnet.ucsd.edu/label/2075/,Hard coral,37,BMFLA,False,,False,False
 406,2186,Bleached Montipora flabellata,https://coralnet.ucsd.edu/label/2186/,Hard coral,69,B_MontiFla,False,,True,False
@@ -712,7 +712,7 @@
 710,5320,Corymbose Acro <20cm,https://coralnet.ucsd.edu/label/5320/,Hard coral,42,CORYA20,False,,False,False
 711,5322,Corymbose Acro >50cm,https://coralnet.ucsd.edu/label/5322/,Hard coral,37,CORYA50,False,,False,False
 712,190,Coscinaraea,https://coralnet.ucsd.edu/label/190/,Hard coral,75,Cosci,False,,True,True
-713,1577,Coscinaraea columna,https://coralnet.ucsd.edu/label/1577/,Hard coral,51,CoCol,False,,True,False
+713,1577,Coscinaraea columna,https://coralnet.ucsd.edu/label/1577/,Hard coral,50,CoCol,False,,True,False
 714,6934,Coscinaraea_columnar,https://coralnet.ucsd.edu/label/6934/,Hard coral,0,Cos_col,False,,False,False
 715,6437,Coscinaraea crassa,https://coralnet.ucsd.edu/label/6437/,Hard coral,26,Coscrassa,False,,False,False
 716,2279,Coscinaraea (encrusting),https://coralnet.ucsd.edu/label/2279/,Hard coral,41,Co_enc,False,,True,False
@@ -741,18 +741,18 @@
 739,1275,CRED-Echinophyllia spp,https://coralnet.ucsd.edu/label/1275/,Hard coral,68,*ECHL,True,Duplicate of Echinophyllia,False,True
 740,1276,CRED-Echinopora spp,https://coralnet.ucsd.edu/label/1276/,Hard coral,69,*ECHP,True,Duplicate of Echinopora,False,True
 741,1264,CRED-Encrusting hard coral,https://coralnet.ucsd.edu/label/1264/,Hard coral,75,*ENC,True,Duplicate of Hard Coral (encrusting),False,True
-742,1277,CRED-Euphyllia spp,https://coralnet.ucsd.edu/label/1277/,Hard coral,66,*EUSP,True,Duplicate of Euphyllia,False,True
+742,1277,CRED-Euphyllia spp,https://coralnet.ucsd.edu/label/1277/,Hard coral,67,*EUSP,True,Duplicate of Euphyllia,False,True
 743,1278,CRED-Favia spp,https://coralnet.ucsd.edu/label/1278/,Hard coral,68,*FASP,True,Duplicate of Dipsastraea,False,True
 744,1279,CRED-Favites spp,https://coralnet.ucsd.edu/label/1279/,Hard coral,75,*FAVS,True,Duplicate of Favites,False,True
-745,6181,CRED-Fimbriaphyllia spp,https://coralnet.ucsd.edu/label/6181/,Hard coral,45,Fimbri,False,,False,False
+745,6181,CRED-Fimbriaphyllia spp,https://coralnet.ucsd.edu/label/6181/,Hard coral,47,Fimbri,False,,False,False
 746,1265,CRED-Foliose hard coral,https://coralnet.ucsd.edu/label/1265/,Hard coral,75,*FOL,True,Duplicate of Hard Coral (foliose),False,True
 747,1267,CRED-Free-living hard coral,https://coralnet.ucsd.edu/label/1267/,Hard coral,67,*FREE,True,Duplicate of Hard Coral (free-living),False,True
-748,1280,CRED-Fungia spp,https://coralnet.ucsd.edu/label/1280/,Hard coral,67,*FUSP,True,Duplicate of Fungia,False,True
-749,1281,CRED-Galaxea spp,https://coralnet.ucsd.edu/label/1281/,Hard coral,69,*GASP,True,Duplicate of Galaxea,False,True
+748,1280,CRED-Fungia spp,https://coralnet.ucsd.edu/label/1280/,Hard coral,68,*FUSP,True,Duplicate of Fungia,False,True
+749,1281,CRED-Galaxea spp,https://coralnet.ucsd.edu/label/1281/,Hard coral,70,*GASP,True,Duplicate of Galaxea,False,True
 750,1283,CRED-Goniastrea spp,https://coralnet.ucsd.edu/label/1283/,Hard coral,71,*GONS,True,Duplicate of Goniastrea,False,True
 751,1282,CRED-Goniopora/Alveopora spp,https://coralnet.ucsd.edu/label/1282/,Hard coral,68,*GOAL,False,,False,True
 752,1284,CRED-Heliopora spp,https://coralnet.ucsd.edu/label/1284/,Hard coral,73,*HCOE,True,Duplicate of Heliopora,False,True
-753,1285,CRED-Hydnophora spp,https://coralnet.ucsd.edu/label/1285/,Hard coral,68,*HYSP,True,Duplicate of Hydnophora,False,True
+753,1285,CRED-Hydnophora spp,https://coralnet.ucsd.edu/label/1285/,Hard coral,69,*HYSP,True,Duplicate of Hydnophora,False,True
 754,1286,CRED-Isopora spp,https://coralnet.ucsd.edu/label/1286/,Hard coral,71,*ISSP,True,Duplicate of Isopora,False,True
 755,1287,CRED-Leptastrea spp,https://coralnet.ucsd.edu/label/1287/,Hard coral,69,*LEPT,True,Duplicate of Leptastrea,False,True
 756,1290,CRED-Leptoria spp,https://coralnet.ucsd.edu/label/1290/,Hard coral,68,*LPHY,True,Duplicate of Leptoria,False,True
@@ -766,7 +766,7 @@
 764,1294,CRED-Montipora spp_encrusting,https://coralnet.ucsd.edu/label/1294/,Hard coral,78,*MOEN,True,Duplicate of Montipora (encrusting),False,True
 765,1295,CRED-Montipora spp_foliose,https://coralnet.ucsd.edu/label/1295/,Hard coral,76,*MOFO,True,Duplicate of Montipora (foliose),False,True
 766,1297,CRED-Oulophyllia spp,https://coralnet.ucsd.edu/label/1297/,Hard coral,66,*OUSP,True,Duplicate of Oulophyllia,False,True
-767,1298,CRED-Pachyseris spp,https://coralnet.ucsd.edu/label/1298/,Hard coral,69,*PACS,True,Duplicate of Pachyseris,False,True
+767,1298,CRED-Pachyseris spp,https://coralnet.ucsd.edu/label/1298/,Hard coral,70,*PACS,True,Duplicate of Pachyseris,False,True
 768,1300,CRED-Pavona spp_encrusting,https://coralnet.ucsd.edu/label/1300/,Hard coral,70,*PAEN,False,,False,True
 769,1301,CRED-Pavona spp_foliose,https://coralnet.ucsd.edu/label/1301/,Hard coral,71,*PAFO,False,,False,True
 770,1299,CRED-Pavona spp_massive,https://coralnet.ucsd.edu/label/1299/,Hard coral,70,*PAMA,False,,False,True
@@ -827,7 +827,7 @@
 825,6936,Cynarina_massive,https://coralnet.ucsd.edu/label/6936/,Hard coral,0,Cyna_mas,False,,False,False
 826,61,Cyphastrea,https://coralnet.ucsd.edu/label/61/,Hard coral,81,Cypha,False,,True,True
 827,2077,Cyphastrea agassizi,https://coralnet.ucsd.edu/label/2077/,Hard coral,45,CyphAga,False,,True,False
-828,4485,Cyphastrea chalcidicum,https://coralnet.ucsd.edu/label/4485/,Hard coral,55,CYPch,False,,False,False
+828,4485,Cyphastrea chalcidicum,https://coralnet.ucsd.edu/label/4485/,Hard coral,54,CYPch,False,,False,False
 829,7379,Cyphastrea_columnar,https://coralnet.ucsd.edu/label/7379/,Hard coral,39,cypcol,False,,False,False
 830,4931,Cyphastrea_encrusting,https://coralnet.ucsd.edu/label/4931/,Hard coral,59,cypenc,False,,False,False
 831,6508,Cyphastrea japonica,https://coralnet.ucsd.edu/label/6508/,Hard coral,26,Cypjaponic,False,,False,False
@@ -835,7 +835,7 @@
 833,1555,Cyphastrea microphthalma,https://coralnet.ucsd.edu/label/1555/,Hard coral,64,CyphMic,False,,True,False
 834,1030,Cyphastrea ocellina,https://coralnet.ucsd.edu/label/1030/,Hard coral,68,CyphOce,False,,True,False
 835,2170,Cyphastrea ocellina bleached,https://coralnet.ucsd.edu/label/2170/,Hard coral,41,Cypoc BL,False,,False,False
-836,1556,Cyphastrea serailia,https://coralnet.ucsd.edu/label/1556/,Hard coral,59,CyphSer,False,,True,False
+836,1556,Cyphastrea serailia,https://coralnet.ucsd.edu/label/1556/,Hard coral,58,CyphSer,False,,True,False
 837,1960,Cyphastrea spp.,https://coralnet.ucsd.edu/label/1960/,Hard coral,55,Cyp_spp,True,Duplicate of Cyphastrea,False,False
 838,2284,Cyphastrea (sub-massive),https://coralnet.ucsd.edu/label/2284/,Hard coral,49,Cyph_subm,False,,True,False
 839,6170,Damselfish chimneys,https://coralnet.ucsd.edu/label/6170/,Hard coral,43,dam_chim,False,,False,False
@@ -946,15 +946,15 @@
 944,5031,Dipsastraea_massive,https://coralnet.ucsd.edu/label/5031/,Hard coral,60,dipmas,False,,False,False
 945,6516,Dipsastraea mathaii,https://coralnet.ucsd.edu/label/6516/,Hard coral,26,Dipmathaii,False,,False,False
 946,968,Dipsastraea matthai,https://coralnet.ucsd.edu/label/968/,Hard coral,63,DipsMatt,False,,True,False
-947,3885,Dipsastraea maxima,https://coralnet.ucsd.edu/label/3885/,Hard coral,44,DipsMax,False,,True,False
+947,3885,Dipsastraea maxima,https://coralnet.ucsd.edu/label/3885/,Hard coral,43,DipsMax,False,,True,False
 948,6517,Dipsastraea mirabilis,https://coralnet.ucsd.edu/label/6517/,Hard coral,25,Dipmirabil,False,,False,False
-949,3054,Dipsastraea pallida,https://coralnet.ucsd.edu/label/3054/,Hard coral,59,DipsPal,False,,True,False
+949,3054,Dipsastraea pallida,https://coralnet.ucsd.edu/label/3054/,Hard coral,58,DipsPal,False,,True,False
 950,6518,Dipsastraea rosaria,https://coralnet.ucsd.edu/label/6518/,Hard coral,26,Diprosaria,False,,False,False
 951,6519,Dipsastraea rotumana,https://coralnet.ucsd.edu/label/6519/,Hard coral,26,Diprotuman,False,,False,False
-952,3055,Dipsastraea speciosa,https://coralnet.ucsd.edu/label/3055/,Hard coral,57,DipsSpe,False,,True,False
-953,1965,Dipsastraea spp.,https://coralnet.ucsd.edu/label/1965/,Hard coral,51,Dip_spp,True,Duplicate of Dipsastraea,False,False
+952,3055,Dipsastraea speciosa,https://coralnet.ucsd.edu/label/3055/,Hard coral,56,DipsSpe,False,,True,False
+953,1965,Dipsastraea spp.,https://coralnet.ucsd.edu/label/1965/,Hard coral,50,Dip_spp,True,Duplicate of Dipsastraea,False,False
 954,6520,Dipsastraea truncata,https://coralnet.ucsd.edu/label/6520/,Hard coral,26,Diptruncat,False,,False,False
-955,4506,Dipsastraea veroni,https://coralnet.ucsd.edu/label/4506/,Hard coral,46,DipsVer,False,,True,False
+955,4506,Dipsastraea veroni,https://coralnet.ucsd.edu/label/4506/,Hard coral,45,DipsVer,False,,True,False
 956,6521,Dipsastraea vietnamensis,https://coralnet.ucsd.edu/label/6521/,Hard coral,26,Dipvietnam,False,,False,False
 957,1398,Diseased Coral,https://coralnet.ucsd.edu/label/1398/,Hard coral,68,DISCORAL,False,,False,False
 958,2049,Distichopora,https://coralnet.ucsd.edu/label/2049/,Hard coral,43,Disticho,False,,True,False
@@ -962,7 +962,7 @@
 960,6938,Distichopora_branching_closed,https://coralnet.ucsd.edu/label/6938/,Hard coral,0,Dis_b_c,False,,False,False
 961,381,Dlabyrinthiformis,https://coralnet.ucsd.edu/label/381/,Hard coral,69,DLAB,True,Duplicate of Diploria labyrinthiformis,False,False
 962,379,Dstokesi,https://coralnet.ucsd.edu/label/379/,Hard coral,60,DSTO,True,Duplicate of Dichocoenia stokesi,False,False
-963,7251,Duncanopsammia,https://coralnet.ucsd.edu/label/7251/,Hard coral,36,DUN,False,,False,False
+963,7251,Duncanopsammia,https://coralnet.ucsd.edu/label/7251/,Hard coral,39,DUN,False,,False,False
 964,6479,Echinomorpha nishihirai,https://coralnet.ucsd.edu/label/6479/,Hard coral,46,Echnishihi,False,,False,False
 965,192,Echinophyllia,https://coralnet.ucsd.edu/label/192/,Hard coral,76,Echinophyl,False,,True,True
 966,1558,Echinophyllia aspera,https://coralnet.ucsd.edu/label/1558/,Hard coral,56,EcAsp,False,,False,False
@@ -989,7 +989,7 @@
 987,5318,Encrusting 20-50cm,https://coralnet.ucsd.edu/label/5318/,Hard coral,50,ENC2050,False,,False,False
 988,5317,Encrusting <20cm,https://coralnet.ucsd.edu/label/5317/,Hard coral,52,ENC20,False,,False,False
 989,5319,Encrusting >50cm,https://coralnet.ucsd.edu/label/5319/,Hard coral,46,ENC50,False,,False,False
-990,5709,Encrusting coral,https://coralnet.ucsd.edu/label/5709/,Hard coral,61,ENC,False,,False,False
+990,5709,Encrusting coral,https://coralnet.ucsd.edu/label/5709/,Hard coral,62,ENC,False,,False,False
 991,4598,Encrusting Coral (PALE),https://coralnet.ucsd.edu/label/4598/,Hard coral,58,PEncr,False,,False,False
 992,3350,Encrusting Coscinaraea species,https://coralnet.ucsd.edu/label/3350/,Hard coral,18,Cos_Enc,False,,False,False
 993,399,Encrusting gorgonians,https://coralnet.ucsd.edu/label/399/,Hard coral,0,ENGR,False,,False,False
@@ -1034,9 +1034,9 @@
 1032,1554,Favites acuticollis,https://coralnet.ucsd.edu/label/1554/,Hard coral,55,FavAcu,False,,True,False
 1033,6525,Favites chinensis,https://coralnet.ucsd.edu/label/6525/,Hard coral,26,Favchinens,False,,False,False
 1034,6526,Favites colemani,https://coralnet.ucsd.edu/label/6526/,Hard coral,26,Favcoleman,False,,False,False
-1035,4486,Favites complanata,https://coralnet.ucsd.edu/label/4486/,Hard coral,54,FavCom,False,,True,False
+1035,4486,Favites complanata,https://coralnet.ucsd.edu/label/4486/,Hard coral,53,FavCom,False,,True,False
 1036,5037,Favites_encrusting,https://coralnet.ucsd.edu/label/5037/,Hard coral,67,faienc,False,,False,False
-1037,1950,Favites flexuosa,https://coralnet.ucsd.edu/label/1950/,Hard coral,61,FavFlex,False,,True,False
+1037,1950,Favites flexuosa,https://coralnet.ucsd.edu/label/1950/,Hard coral,60,FavFlex,False,,True,False
 1038,971,Favites halicora,https://coralnet.ucsd.edu/label/971/,Hard coral,61,FavHal,False,,True,False
 1039,6527,Favites magnistellata,https://coralnet.ucsd.edu/label/6527/,Hard coral,26,Favmagnist,False,,False,False
 1040,3314,Favites (massive),https://coralnet.ucsd.edu/label/3314/,Hard coral,58,Fav_mass,False,,True,False
@@ -1114,7 +1114,7 @@
 1112,5044,Goniopora_encrusting,https://coralnet.ucsd.edu/label/5044/,Hard coral,48,gnienc,False,,False,False
 1113,6218,Goniopora fruticosa,https://coralnet.ucsd.edu/label/6218/,Hard coral,51,GonFru,False,,False,False
 1114,5893,Goniopora Healthy,https://coralnet.ucsd.edu/label/5893/,Hard coral,55,GOH,False,,False,False
-1115,1572,Goniopora lobata,https://coralnet.ucsd.edu/label/1572/,Hard coral,47,GonioLob,False,,True,False
+1115,1572,Goniopora lobata,https://coralnet.ucsd.edu/label/1572/,Hard coral,46,GonioLob,False,,True,False
 1116,5045,Goniopora_massive,https://coralnet.ucsd.edu/label/5045/,Hard coral,51,gnimas,False,,False,False
 1117,6394,Goniopora minor,https://coralnet.ucsd.edu/label/6394/,Hard coral,26,Gonminor,False,,False,False
 1118,5894,Goniopora Paling,https://coralnet.ucsd.edu/label/5894/,Hard coral,25,GOP,False,,False,False
@@ -1124,7 +1124,7 @@
 1122,6398,Goniopora somaliensis,https://coralnet.ucsd.edu/label/6398/,Hard coral,26,Gonsomalie,False,,False,False
 1123,6399,Goniopora stokesi,https://coralnet.ucsd.edu/label/6399/,Hard coral,26,Gonstokesi,False,,False,False
 1124,6400,Goniopora tenuidens,https://coralnet.ucsd.edu/label/6400/,Hard coral,26,Gontenuide,False,,False,False
-1125,4487,Gonistrea pectinata,https://coralnet.ucsd.edu/label/4487/,Hard coral,56,GOSpe,False,,False,False
+1125,4487,Gonistrea pectinata,https://coralnet.ucsd.edu/label/4487/,Hard coral,55,GOSpe,False,,False,False
 1126,2525,Gustavia,https://coralnet.ucsd.edu/label/2525/,Hard coral,0,GUS,False,,False,False
 1127,1997,Gyrosmilia,https://coralnet.ucsd.edu/label/1997/,Hard coral,62,Gyr,False,,False,False
 1128,624,Halomitra,https://coralnet.ucsd.edu/label/624/,Hard coral,71,Hal,False,,False,False
@@ -1220,7 +1220,7 @@
 1218,1963,Hydnophora microconos,https://coralnet.ucsd.edu/label/1963/,Hard coral,66,Hyd_mic,False,,False,False
 1219,3084,Hydnophora pilosa,https://coralnet.ucsd.edu/label/3084/,Hard coral,50,HyPil,False,,False,False
 1220,3614,Hydnophora Plating,https://coralnet.ucsd.edu/label/3614/,Hard coral,37,HydPla,False,,False,False
-1221,4509,Hydnophora rigida,https://coralnet.ucsd.edu/label/4509/,Hard coral,46,HYDri,False,,False,False
+1221,4509,Hydnophora rigida,https://coralnet.ucsd.edu/label/4509/,Hard coral,45,HYDri,False,,False,False
 1222,5434,Hydnophora spp._bleached,https://coralnet.ucsd.edu/label/5434/,Hard coral,29,HYSP_BL,False,,False,False
 1223,3412,Hydnophora Submassive,https://coralnet.ucsd.edu/label/3412/,Hard coral,40,HydSub,False,,False,False
 1224,5777,hydrozoa branco,https://coralnet.ucsd.edu/label/5777/,Hard coral,0,hydro,False,,False,False
@@ -1297,7 +1297,7 @@
 1295,3606,Leptoseris yabei,https://coralnet.ucsd.edu/label/3606/,Hard coral,40,Lyabei,False,,False,False
 1296,3437,Lettuce Coral,https://coralnet.ucsd.edu/label/3437/,Hard coral,57,LETT,False,,False,False
 1297,4467,LHI,https://coralnet.ucsd.edu/label/4467/,Hard coral,0,Pdam fluo,False,,False,False
-1298,1610,Lithophyllon,https://coralnet.ucsd.edu/label/1610/,Hard coral,66,Litho,False,,False,False
+1298,1610,Lithophyllon,https://coralnet.ucsd.edu/label/1610/,Hard coral,67,Litho,False,,False,False
 1299,3480,Lithophyllon_,https://coralnet.ucsd.edu/label/3480/,Hard coral,0,Lithoph,False,,False,False
 1300,6458,Lithophyllon concinna,https://coralnet.ucsd.edu/label/6458/,Hard coral,26,Litconcinn,False,,False,False
 1301,5058,Lithophyllon_encrusting,https://coralnet.ucsd.edu/label/5058/,Hard coral,43,litenc,False,,False,False
@@ -1327,7 +1327,7 @@
 1325,7643,LiveUpight,https://coralnet.ucsd.edu/label/7643/,Hard coral,31,LiveUprigh,False,,False,False
 1326,1611,Lobactis,https://coralnet.ucsd.edu/label/1611/,Hard coral,42,Lobac,False,,False,False
 1327,5055,Lobactis_massive,https://coralnet.ucsd.edu/label/5055/,Hard coral,39,lbamas,False,,False,False
-1328,1828,Lobactis scutaria,https://coralnet.ucsd.edu/label/1828/,Hard coral,72,LobScut,False,,True,False
+1328,1828,Lobactis scutaria,https://coralnet.ucsd.edu/label/1828/,Hard coral,71,LobScut,False,,True,False
 1329,2395,Lobe coral-Algal overgrowth,https://coralnet.ucsd.edu/label/2395/,Hard coral,42,LobAlgae,False,,False,False
 1330,2398,Lobe coral-Bleached,https://coralnet.ucsd.edu/label/2398/,Hard coral,0,LobBleach,False,,False,False
 1331,2396,Lobe coral-Healthy,https://coralnet.ucsd.edu/label/2396/,Hard coral,0,LobHealthy,False,,False,False
@@ -1335,7 +1335,7 @@
 1333,2394,Lobe coral-Trematodiasis,https://coralnet.ucsd.edu/label/2394/,Hard coral,0,LobPimple,False,,False,False
 1334,68,Lobophyllia,https://coralnet.ucsd.edu/label/68/,Hard coral,80,Lobophyl,False,,True,True
 1335,6488,Lobophyllia agaricia,https://coralnet.ucsd.edu/label/6488/,Hard coral,26,Lobagarici,False,,False,False
-1336,1966,Lobophyllia corymbosa,https://coralnet.ucsd.edu/label/1966/,Hard coral,40,Lob_cor,False,,False,False
+1336,1966,Lobophyllia corymbosa,https://coralnet.ucsd.edu/label/1966/,Hard coral,39,Lob_cor,False,,False,False
 1337,6489,Lobophyllia dentata,https://coralnet.ucsd.edu/label/6489/,Hard coral,26,Lobdentata,False,,False,False
 1338,6490,Lobophyllia diminuta,https://coralnet.ucsd.edu/label/6490/,Hard coral,26,Lobdiminut,False,,False,False
 1339,5269,Lobophyllia_encrusting,https://coralnet.ucsd.edu/label/5269/,Hard coral,56,lobenc,False,,False,False
@@ -1346,16 +1346,16 @@
 1344,1967,Lobophyllia hemprichii,https://coralnet.ucsd.edu/label/1967/,Hard coral,45,LoboHemp,False,,True,False
 1345,6495,Lobophyllia ishigakiensis,https://coralnet.ucsd.edu/label/6495/,Hard coral,26,Lobishigak,False,,False,False
 1346,5060,Lobophyllia_massive,https://coralnet.ucsd.edu/label/5060/,Hard coral,57,lobmas,False,,False,False
-1347,4498,Lobophyllia  radians,https://coralnet.ucsd.edu/label/4498/,Hard coral,50,SYMra,False,,False,False
-1348,4497,Lobophyllia  recta,https://coralnet.ucsd.edu/label/4497/,Hard coral,53,SYMre,False,,False,False
+1347,4498,Lobophyllia  radians,https://coralnet.ucsd.edu/label/4498/,Hard coral,49,SYMra,False,,False,False
+1348,4497,Lobophyllia  recta,https://coralnet.ucsd.edu/label/4497/,Hard coral,51,SYMre,False,,False,False
 1349,6496,Lobophyllia robusta,https://coralnet.ucsd.edu/label/6496/,Hard coral,26,Lobrobusta,False,,False,False
 1350,6497,Lobophyllia rowleyensis,https://coralnet.ucsd.edu/label/6497/,Hard coral,26,Lobrowleye,False,,False,False
 1351,6498,Lobophyllia serratus,https://coralnet.ucsd.edu/label/6498/,Hard coral,26,Lobserratu,False,,False,False
-1352,4508,Lobophyllia(Symphyllia) agaricia,https://coralnet.ucsd.edu/label/4508/,Hard coral,45,SYMag,False,,False,False
+1352,4508,Lobophyllia(Symphyllia) agaricia,https://coralnet.ucsd.edu/label/4508/,Hard coral,44,SYMag,False,,False,False
 1353,6499,Lobophyllia valenciennesii,https://coralnet.ucsd.edu/label/6499/,Hard coral,26,Lobvalenci,False,,False,False
 1354,6500,Lobophyllia vitiensis,https://coralnet.ucsd.edu/label/6500/,Hard coral,26,Lobvitiens,False,,False,False
 1355,7519,Lobophyllidae,https://coralnet.ucsd.edu/label/7519/,Hard coral,30,C_lobo,False,,False,False
-1356,6023,Long Dead Coral,https://coralnet.ucsd.edu/label/6023/,Hard coral,39,LongDC,False,,False,False
+1356,6023,Long Dead Coral,https://coralnet.ucsd.edu/label/6023/,Hard coral,40,LongDC,False,,False,False
 1357,6998,Lophelia_NA,https://coralnet.ucsd.edu/label/6998/,Hard coral,0,Lo_na,False,,False,False
 1358,2140,Lophelia pertusa,https://coralnet.ucsd.edu/label/2140/,Hard coral,57,LophPer,False,,False,False
 1359,6730,Lytechinus williamsi,https://coralnet.ucsd.edu/label/6730/,Hard coral,14,U-LWIL,False,,False,False
@@ -1395,7 +1395,7 @@
 1393,1420,Massive colonies with visible polyps,https://coralnet.ucsd.edu/label/1420/,Hard coral,55,MASE_VIS_O,False,,False,False
 1394,5711,Massive coral,https://coralnet.ucsd.edu/label/5711/,Hard coral,66,MAC,False,,False,False
 1395,3436,Massive / Encrusting Coral,https://coralnet.ucsd.edu/label/3436/,Hard coral,0,MASENC,False,,False,False
-1396,3096,Massive  Hard  Coral,https://coralnet.ucsd.edu/label/3096/,Hard coral,59,MHC,True,Duplicate of Hard Coral (massive),False,False
+1396,3096,Massive  Hard  Coral,https://coralnet.ucsd.edu/label/3096/,Hard coral,58,MHC,True,Duplicate of Hard Coral (massive),False,False
 1397,1421,"Massive, Submassive, Encrusting: Colonies of",https://coralnet.ucsd.edu/label/1421/,Hard coral,41,MASE_VIS_I,False,,False,False
 1398,1422,"Massive, Submassive, Encrusting colonies of P",https://coralnet.ucsd.edu/label/1422/,Hard coral,57,MASE_INV_P,False,,False,False
 1399,3729,Massive/SubMassive/Encrusting: Montipora,https://coralnet.ucsd.edu/label/3729/,Hard coral,0,MASE_SM_Mo,False,,False,False
@@ -1407,7 +1407,7 @@
 1405,3503,menj,https://coralnet.ucsd.edu/label/3503/,Hard coral,0,1,False,,False,False
 1406,3505,menj 2,https://coralnet.ucsd.edu/label/3505/,Hard coral,0,m2,False,,False,False
 1407,201,Merulina,https://coralnet.ucsd.edu/label/201/,Hard coral,78,Merulina,False,,True,True
-1408,4488,Merulina ampliata,https://coralnet.ucsd.edu/label/4488/,Hard coral,60,MERam,False,,False,False
+1408,4488,Merulina ampliata,https://coralnet.ucsd.edu/label/4488/,Hard coral,59,MERam,False,,False,False
 1409,5065,Merulina_encrusting,https://coralnet.ucsd.edu/label/5065/,Hard coral,45,meuenc,False,,False,False
 1410,5066,Merulina_foliose,https://coralnet.ucsd.edu/label/5066/,Hard coral,48,meufol,False,,False,False
 1411,6961,Merulina_laminar,https://coralnet.ucsd.edu/label/6961/,Hard coral,0,Mer_la,False,,False,False
@@ -1454,7 +1454,7 @@
 1452,6965,Montipora_branching_open,https://coralnet.ucsd.edu/label/6965/,Hard coral,0,Mon_b_o,False,,False,False
 1453,7520,Montipora (brown) encrusting,https://coralnet.ucsd.edu/label/7520/,Hard coral,50,MontiBrEnc,False,,False,False
 1454,7523,Montipora (brown) plating,https://coralnet.ucsd.edu/label/7523/,Hard coral,31,MontiBrPla,False,,False,False
-1455,4490,Montipora cactus,https://coralnet.ucsd.edu/label/4490/,Hard coral,54,MONca,False,,False,False
+1455,4490,Montipora cactus,https://coralnet.ucsd.edu/label/4490/,Hard coral,52,MONca,False,,False,False
 1456,6357,Montipora caliculata,https://coralnet.ucsd.edu/label/6357/,Hard coral,26,caliculata,False,,False,False
 1457,438,Montipora capitata,https://coralnet.ucsd.edu/label/438/,Hard coral,82,MontiCap,False,,True,False
 1458,2182,Montipora capitata algal overgrowth,https://coralnet.ucsd.edu/label/2182/,Hard coral,56,Moncap AO,False,,False,False
@@ -1470,13 +1470,13 @@
 1468,6355,Montipora confusa,https://coralnet.ucsd.edu/label/6355/,Hard coral,26,confusa,False,,False,False
 1469,6342,Montipora corbettensis,https://coralnet.ucsd.edu/label/6342/,Hard coral,26,corbettens,False,,False,False
 1470,6343,Montipora crassituberculata,https://coralnet.ucsd.edu/label/6343/,Hard coral,26,crassitube,False,,False,False
-1471,2436,Montipora danae,https://coralnet.ucsd.edu/label/2436/,Hard coral,56,MontiDan,False,,True,False
+1471,2436,Montipora danae,https://coralnet.ucsd.edu/label/2436/,Hard coral,55,MontiDan,False,,True,False
 1472,6349,Montipora delicatula,https://coralnet.ucsd.edu/label/6349/,Hard coral,26,delicatula,False,,False,False
 1473,4743,Montipora digitata,https://coralnet.ucsd.edu/label/4743/,Hard coral,46,Mondig,False,,False,False
 1474,7493,Montipora (digitate),https://coralnet.ucsd.edu/label/7493/,Hard coral,0,MONTI_Di,False,,False,False
 1475,6966,Montipora_digitate,https://coralnet.ucsd.edu/label/6966/,Hard coral,0,Mon_di,False,,False,False
 1476,5959,Montipora(disc+column),https://coralnet.ucsd.edu/label/5959/,Hard coral,33,Mon_dc,False,,False,False
-1477,3966,Montipora efflorescens,https://coralnet.ucsd.edu/label/3966/,Hard coral,54,Mon_eff,False,,False,False
+1477,3966,Montipora efflorescens,https://coralnet.ucsd.edu/label/3966/,Hard coral,53,Mon_eff,False,,False,False
 1478,6344,Montipora effusa,https://coralnet.ucsd.edu/label/6344/,Hard coral,26,effusa,False,,False,False
 1479,621,Montipora (encrusting),https://coralnet.ucsd.edu/label/621/,Hard coral,76,Monti_encr,False,,True,True
 1480,4928,Montipora_encrusting,https://coralnet.ucsd.edu/label/4928/,Hard coral,58,monenc,False,,False,False
@@ -1494,11 +1494,11 @@
 1492,5565,Montipora foliosa,https://coralnet.ucsd.edu/label/5565/,Hard coral,29,Monti fol,False,,False,False
 1493,2064,Montipora (foliose),https://coralnet.ucsd.edu/label/2064/,Hard coral,75,Monti_fol,False,,True,True
 1494,5068,Montipora_foliose,https://coralnet.ucsd.edu/label/5068/,Hard coral,59,monfol,False,,False,False
-1495,3875,Montipora foveolata,https://coralnet.ucsd.edu/label/3875/,Hard coral,56,MonFov,False,,False,False
+1495,3875,Montipora foveolata,https://coralnet.ucsd.edu/label/3875/,Hard coral,55,MonFov,False,,False,False
 1496,6346,Montipora friabilis,https://coralnet.ucsd.edu/label/6346/,Hard coral,26,friabilis,False,,False,False
 1497,618,Montipora funnel corallites,https://coralnet.ucsd.edu/label/618/,Hard coral,0,Montfun,False,,False,False
 1498,6334,Montipora gaimardi,https://coralnet.ucsd.edu/label/6334/,Hard coral,26,gaimardi,False,,False,False
-1499,4491,Montipora grisea,https://coralnet.ucsd.edu/label/4491/,Hard coral,51,MONgr,False,,False,False
+1499,4491,Montipora grisea,https://coralnet.ucsd.edu/label/4491/,Hard coral,49,MONgr,False,,False,False
 1500,6337,Montipora hispida,https://coralnet.ucsd.edu/label/6337/,Hard coral,26,hispida,False,,False,False
 1501,6350,Montipora hodgsoni,https://coralnet.ucsd.edu/label/6350/,Hard coral,26,hodgsoni,False,,False,False
 1502,3967,Montipora hoffmeisteri,https://coralnet.ucsd.edu/label/3967/,Hard coral,42,Mon_hof,False,,False,False
@@ -1512,9 +1512,9 @@
 1510,6347,Montipora marshallensis,https://coralnet.ucsd.edu/label/6347/,Hard coral,26,marshallen,False,,False,False
 1511,5069,Montipora_massive,https://coralnet.ucsd.edu/label/5069/,Hard coral,60,monmas,False,,False,False
 1512,3965,Montipora meandrina,https://coralnet.ucsd.edu/label/3965/,Hard coral,42,Mon_mea,False,,False,False
-1513,3907,Montipora millepora,https://coralnet.ucsd.edu/label/3907/,Hard coral,55,MonMil,False,,False,False
-1514,4492,Montipora mollis,https://coralnet.ucsd.edu/label/4492/,Hard coral,57,MONml,False,,False,False
-1515,4499,Montipora monasteriata,https://coralnet.ucsd.edu/label/4499/,Hard coral,58,MONmo,False,,False,False
+1513,3907,Montipora millepora,https://coralnet.ucsd.edu/label/3907/,Hard coral,54,MonMil,False,,False,False
+1514,4492,Montipora mollis,https://coralnet.ucsd.edu/label/4492/,Hard coral,56,MONml,False,,False,False
+1515,4499,Montipora monasteriata,https://coralnet.ucsd.edu/label/4499/,Hard coral,57,MONmo,False,,False,False
 1516,4988,Montipora Mounding,https://coralnet.ucsd.edu/label/4988/,Hard coral,55,Mont Mound,False,,False,False
 1517,6360,Montipora nodosa,https://coralnet.ucsd.edu/label/6360/,Hard coral,26,nodosa,False,,False,False
 1518,787,Montipora Nonencrusting,https://coralnet.ucsd.edu/label/787/,Hard coral,0,MONE,False,,False,False
@@ -1537,23 +1537,23 @@
 1535,6336,Montipora samarensis,https://coralnet.ucsd.edu/label/6336/,Hard coral,26,samarensis,False,,False,False
 1536,6339,Montipora setosa,https://coralnet.ucsd.edu/label/6339/,Hard coral,26,setosa,False,,False,False
 1537,617,Montipora small corallites,https://coralnet.ucsd.edu/label/617/,Hard coral,18,Montsm,False,,False,False
-1538,1550,Montipora spongiosa,https://coralnet.ucsd.edu/label/1550/,Hard coral,55,MontiSpon,False,,True,False
+1538,1550,Montipora spongiosa,https://coralnet.ucsd.edu/label/1550/,Hard coral,54,MontiSpon,False,,True,False
 1539,6362,Montipora spongodes,https://coralnet.ucsd.edu/label/6362/,Hard coral,26,spongodes,False,,False,False
 1540,1944,Montipora spp.,https://coralnet.ucsd.edu/label/1944/,Hard coral,57,Mon_spp,True,Duplicate of Montipora,False,False
 1541,5440,Montipora spp._bleached,https://coralnet.ucsd.edu/label/5440/,Hard coral,57,MOSP_BL,False,,False,False
 1542,6358,Montipora spumosa,https://coralnet.ucsd.edu/label/6358/,Hard coral,26,spumosa,False,,False,False
-1543,154,Montipora stellata,https://coralnet.ucsd.edu/label/154/,Hard coral,52,MontiStel,False,,True,False
+1543,154,Montipora stellata,https://coralnet.ucsd.edu/label/154/,Hard coral,51,MontiStel,False,,True,False
 1544,1864,Montipora studeri,https://coralnet.ucsd.edu/label/1864/,Hard coral,56,M.studeri,False,,False,False
 1545,2063,Montipora submassive,https://coralnet.ucsd.edu/label/2063/,Hard coral,46,Monti_subm,False,,False,False
 1546,2329,Montipora Sub-Massive,https://coralnet.ucsd.edu/label/2329/,Hard coral,61,MontSubM,False,,False,False
 1547,2335,Montipora Tabulate,https://coralnet.ucsd.edu/label/2335/,Hard coral,33,MontTbl,False,,False,False
 1548,6359,Montipora taiwanensis,https://coralnet.ucsd.edu/label/6359/,Hard coral,26,taiwanensi,False,,False,False
 1549,6363,Montipora tuberculosa,https://coralnet.ucsd.edu/label/6363/,Hard coral,29,tuberculos,False,,False,False
-1550,3358,Montipora turgescens,https://coralnet.ucsd.edu/label/3358/,Hard coral,62,Mon_tur,False,,False,False
+1550,3358,Montipora turgescens,https://coralnet.ucsd.edu/label/3358/,Hard coral,61,Mon_tur,False,,False,False
 1551,6348,Montipora turtlensis,https://coralnet.ucsd.edu/label/6348/,Hard coral,26,turtlensis,False,,False,False
-1552,4493,Montipora undata,https://coralnet.ucsd.edu/label/4493/,Hard coral,55,MONun,False,,False,False
+1552,4493,Montipora undata,https://coralnet.ucsd.edu/label/4493/,Hard coral,54,MONun,False,,False,False
 1553,3906,Montipora venosa,https://coralnet.ucsd.edu/label/3906/,Hard coral,36,MonVen,False,,False,False
-1554,4494,Montipora verrucosa,https://coralnet.ucsd.edu/label/4494/,Hard coral,61,MONve,False,,False,False
+1554,4494,Montipora verrucosa,https://coralnet.ucsd.edu/label/4494/,Hard coral,60,MONve,False,,False,False
 1555,6354,Montipora verruculosus,https://coralnet.ucsd.edu/label/6354/,Hard coral,26,verruculos,False,,False,False
 1556,6356,Montipora vietnamensis,https://coralnet.ucsd.edu/label/6356/,Hard coral,26,vietnamens,False,,False,False
 1557,619,Montipora with verrucae,https://coralnet.ucsd.edu/label/619/,Hard coral,0,Montver,False,,False,False
@@ -1637,13 +1637,13 @@
 1635,6678,Orbicella spp. - Bleached,https://coralnet.ucsd.edu/label/6678/,Hard coral,9,CB-ORB,False,,False,False
 1636,6657,Orbicella spp. - Intermediately bleached,https://coralnet.ucsd.edu/label/6657/,Hard coral,18,CI-ORB,False,,False,False
 1637,5887,Other Branch Bleached,https://coralnet.ucsd.edu/label/5887/,Hard coral,51,OBBB,False,,False,False
-1638,5888,Other Branch Dead,https://coralnet.ucsd.edu/label/5888/,Hard coral,55,OBD,False,,False,False
+1638,5888,Other Branch Dead,https://coralnet.ucsd.edu/label/5888/,Hard coral,54,OBD,False,,False,False
 1639,5885,Other Branch Healthy,https://coralnet.ucsd.edu/label/5885/,Hard coral,62,OBH,False,,False,False
 1640,5886,Other Branch Paling,https://coralnet.ucsd.edu/label/5886/,Hard coral,55,OBP,False,,False,False
 1641,3634,Other coral or algae,https://coralnet.ucsd.edu/label/3634/,Hard coral,50,OthCor,False,,False,False
 1642,175,Other hard coral,https://coralnet.ucsd.edu/label/175/,Hard coral,80,OTH-HC,False,,False,False
 1643,2601,Other Hard Coral Bleached (white),https://coralnet.ucsd.edu/label/2601/,Hard coral,66,OTH-HC-B*,False,,False,False
-1644,100,Other scleractinians,https://coralnet.ucsd.edu/label/100/,Hard coral,70,HC_other,False,,False,False
+1644,100,Other scleractinians,https://coralnet.ucsd.edu/label/100/,Hard coral,71,HC_other,False,,False,False
 1645,5380,Oulastrea,https://coralnet.ucsd.edu/label/5380/,Hard coral,50,ous,False,,False,False
 1646,6436,Oulastrea crispata,https://coralnet.ucsd.edu/label/6436/,Hard coral,29,Oulcrispat,False,,False,False
 1647,5372,Oulastrea_ encrusting,https://coralnet.ucsd.edu/label/5372/,Hard coral,40,oustenc,False,,False,False
@@ -1669,7 +1669,7 @@
 1667,6971,Pachyseris_laminar,https://coralnet.ucsd.edu/label/6971/,Hard coral,13,Pach_la,False,,False,False
 1668,2882,Pachyseris plating,https://coralnet.ucsd.edu/label/2882/,Hard coral,54,PAC-PLA,False,,False,False
 1669,6386,Pachyseris rugosa,https://coralnet.ucsd.edu/label/6386/,Hard coral,26,rugosa,False,,False,False
-1670,4504,Pachyseris speciosa,https://coralnet.ucsd.edu/label/4504/,Hard coral,48,PACsp,False,,False,False
+1670,4504,Pachyseris speciosa,https://coralnet.ucsd.edu/label/4504/,Hard coral,47,PACsp,False,,False,False
 1671,1945,Pachyseris spp.,https://coralnet.ucsd.edu/label/1945/,Hard coral,18,Pac_spp,True,Duplicate of Pachyseris,False,False
 1672,7255,Palauastrea ramosa,https://coralnet.ucsd.edu/label/7255/,Hard coral,21,PALRAM,False,,False,False
 1673,4569,Paled massive/submassive,https://coralnet.ucsd.edu/label/4569/,Hard coral,53,P_lobe,False,,False,False
@@ -1679,7 +1679,7 @@
 1677,3225,Paracyathus,https://coralnet.ucsd.edu/label/3225/,Hard coral,49,Paracya,False,,True,False
 1678,472,Paracyathus pulchellus_Phyllangia americana,https://coralnet.ucsd.edu/label/472/,Hard coral,57,CUP,False,,False,False
 1679,1582,Paracyathus stokesi,https://coralnet.ucsd.edu/label/1582/,Hard coral,0,PaSto,False,,False,False
-1680,5381,Paragoniastrea,https://coralnet.ucsd.edu/label/5381/,Hard coral,54,paa,False,,False,False
+1680,5381,Paragoniastrea,https://coralnet.ucsd.edu/label/5381/,Hard coral,55,paa,False,,False,False
 1681,3516,Paragoniastrea australensis,https://coralnet.ucsd.edu/label/3516/,Hard coral,59,Para_austr,False,,False,False
 1682,6543,Paragoniastrea australIensis,https://coralnet.ucsd.edu/label/6543/,Hard coral,26,Paraustral,False,,False,False
 1683,6544,Paragoniastrea deformis,https://coralnet.ucsd.edu/label/6544/,Hard coral,26,Pardeformi,False,,False,False
@@ -1687,7 +1687,7 @@
 1685,5821,Paragoniastrea_massive,https://coralnet.ucsd.edu/label/5821/,Hard coral,29,pagmas,False,,False,False
 1686,1951,Paragoniastrea russelli,https://coralnet.ucsd.edu/label/1951/,Hard coral,55,ParagRus,False,,True,False
 1687,6972,Paragoniastrea_submassive,https://coralnet.ucsd.edu/label/6972/,Hard coral,7,Para_sub,False,,False,False
-1688,5382,Paramontastraea,https://coralnet.ucsd.edu/label/5382/,Hard coral,52,par,False,,False,False
+1688,5382,Paramontastraea,https://coralnet.ucsd.edu/label/5382/,Hard coral,53,par,False,,False,False
 1689,2157,Paramontastraea peresi,https://coralnet.ucsd.edu/label/2157/,Hard coral,59,ParamPer,False,,True,False
 1690,3971,Paramontastraea salebrosa,https://coralnet.ucsd.edu/label/3971/,Hard coral,40,PSal,False,,False,False
 1691,5946,Paramontastrea,https://coralnet.ucsd.edu/label/5946/,Hard coral,0,Paramont,False,,False,False
@@ -1704,8 +1704,8 @@
 1702,4553,Partially bleached massive,https://coralnet.ucsd.edu/label/4553/,Hard coral,0,PBlM,False,,False,False
 1703,5406,Partially Bleached Orbicella Annularis,https://coralnet.ucsd.edu/label/5406/,Hard coral,55,PBOA,False,,False,False
 1704,5408,Partially Bleached Orbicella faveolata,https://coralnet.ucsd.edu/label/5408/,Hard coral,55,PBOF,False,,False,False
-1705,6022,Partially Dead Coral,https://coralnet.ucsd.edu/label/6022/,Hard coral,47,PDC,False,,False,False
-1706,6021,Partially Live Coral,https://coralnet.ucsd.edu/label/6021/,Hard coral,36,PLC,False,,False,False
+1705,6022,Partially Dead Coral,https://coralnet.ucsd.edu/label/6022/,Hard coral,48,PDC,False,,False,False
+1706,6021,Partially Live Coral,https://coralnet.ucsd.edu/label/6021/,Hard coral,38,PLC,False,,False,False
 1707,393,Pastreoides,https://coralnet.ucsd.edu/label/393/,Hard coral,64,PASTR,True,Duplicate of Porites astreoides,False,False
 1708,72,Pavona,https://coralnet.ucsd.edu/label/72/,Hard coral,82,Pavona,False,,True,False
 1709,1946,Pavona cactus,https://coralnet.ucsd.edu/label/1946/,Hard coral,58,PavCac,False,,True,False
@@ -1787,7 +1787,7 @@
 1785,4495,Platygyra pini,https://coralnet.ucsd.edu/label/4495/,Hard coral,62,PLApi,False,,False,False
 1786,6553,Platygyra ryukyuensis,https://coralnet.ucsd.edu/label/6553/,Hard coral,26,Plaryukyue,False,,False,False
 1787,763,Platygyra ryukyuensis 1,https://coralnet.ucsd.edu/label/763/,Hard coral,64,Pryu,False,,False,False
-1788,2112,Platygyra sinensis,https://coralnet.ucsd.edu/label/2112/,Hard coral,59,PlSinen,False,,False,False
+1788,2112,Platygyra sinensis,https://coralnet.ucsd.edu/label/2112/,Hard coral,58,PlSinen,False,,False,False
 1789,1958,Platygyra spp.,https://coralnet.ucsd.edu/label/1958/,Hard coral,48,Pla_spp,True,Duplicate of Platygyra,False,False
 1790,2340,Platygyra Sub-Massive,https://coralnet.ucsd.edu/label/2340/,Hard coral,47,PlatSM,False,,False,False
 1791,6554,Platygyra verweyi,https://coralnet.ucsd.edu/label/6554/,Hard coral,26,Plaverweyi,False,,False,False
@@ -1854,7 +1854,7 @@
 1852,3532,POLYPHYLLIA,https://coralnet.ucsd.edu/label/3532/,Hard coral,54,POLPHIL,False,,False,False
 1853,5091,Polyphyllia_massive,https://coralnet.ucsd.edu/label/5091/,Hard coral,27,polmas,False,,False,False
 1854,6467,Polyphyllia talpina,https://coralnet.ucsd.edu/label/6467/,Hard coral,26,Poltalpina,False,,False,False
-1855,74,Porites,https://coralnet.ucsd.edu/label/74/,Hard coral,85,Porites,False,,True,True
+1855,74,Porites,https://coralnet.ucsd.edu/label/74/,Hard coral,86,Porites,False,,True,True
 1856,7085,Porites algal overgrowth,https://coralnet.ucsd.edu/label/7085/,Hard coral,14,PorAO,False,,False,False
 1857,1973,Porites annae,https://coralnet.ucsd.edu/label/1973/,Hard coral,59,Por_ann,False,,False,False
 1858,6408,Porites aranetai,https://coralnet.ucsd.edu/label/6408/,Hard coral,26,Poraraneta,False,,False,False
@@ -1879,7 +1879,7 @@
 1877,5092,Porites_columnar,https://coralnet.ucsd.edu/label/5092/,Hard coral,63,potcol,False,,False,False
 1878,444,Porites compressa,https://coralnet.ucsd.edu/label/444/,Hard coral,83,PorComp,False,,True,False
 1879,2206,Porites compressa algal overgrowth,https://coralnet.ucsd.edu/label/2206/,Hard coral,62,Porcom AO,False,,False,False
-1880,5394,Porites compressa branching,https://coralnet.ucsd.edu/label/5394/,Hard coral,56,PCOM_B,False,,False,False
+1880,5394,Porites compressa branching,https://coralnet.ucsd.edu/label/5394/,Hard coral,57,PCOM_B,False,,False,False
 1881,5395,Porites compressa encrusting,https://coralnet.ucsd.edu/label/5395/,Hard coral,25,PCOM-E,False,,False,False
 1882,2570,Porites compressa morpho 1 fingers,https://coralnet.ucsd.edu/label/2570/,Hard coral,58,POR_Com_fi,False,,False,False
 1883,2571,Porites compressa morpho 2 fused branches,https://coralnet.ucsd.edu/label/2571/,Hard coral,40,POR_Com_fu,False,,False,False
@@ -1888,11 +1888,11 @@
 1886,2207,Porites compressa trematodiasis,https://coralnet.ucsd.edu/label/2207/,Hard coral,57,Porcom TR,False,,False,False
 1887,7196,Porites compressa with star predation,https://coralnet.ucsd.edu/label/7196/,Hard coral,0,PCOM_STAR,False,,False,False
 1888,6401,Porites cumulatus,https://coralnet.ucsd.edu/label/6401/,Hard coral,26,Porcumulat,False,,False,False
-1889,132,Porites cylindrica,https://coralnet.ucsd.edu/label/132/,Hard coral,77,PorCyl,False,,True,False
+1889,132,Porites cylindrica,https://coralnet.ucsd.edu/label/132/,Hard coral,76,PorCyl,False,,True,False
 1890,5904,Porites Dead,https://coralnet.ucsd.edu/label/5904/,Hard coral,50,POD,False,,False,False
 1891,6226,Porites deformis,https://coralnet.ucsd.edu/label/6226/,Hard coral,56,PorDef,False,,False,False
 1892,6411,Porites densa,https://coralnet.ucsd.edu/label/6411/,Hard coral,26,Pordensa,False,,False,False
-1893,6185,Porites_Digitate,https://coralnet.ucsd.edu/label/6185/,Hard coral,51,PorDig,False,,False,False
+1893,6185,Porites_Digitate,https://coralnet.ucsd.edu/label/6185/,Hard coral,52,PorDig,False,,False,False
 1894,2477,Porites digitiform,https://coralnet.ucsd.edu/label/2477/,Hard coral,46,PDIG,False,,False,False
 1895,1177,Porites divaricata,https://coralnet.ucsd.edu/label/1177/,Hard coral,67,PorDiv,False,,True,True
 1896,445,Porites duerdeni,https://coralnet.ucsd.edu/label/445/,Hard coral,55,PDUER,False,,False,False
@@ -1950,7 +1950,7 @@
 1948,6659,Porites mounding- Intermediate bleaching,https://coralnet.ucsd.edu/label/6659/,Hard coral,18,CI-PMOU,False,,False,False
 1949,6412,Porites murrayensis,https://coralnet.ucsd.edu/label/6412/,Hard coral,26,Pormurraye,False,,False,False
 1950,6404,Porites negrosensis,https://coralnet.ucsd.edu/label/6404/,Hard coral,26,Pornegrose,False,,False,False
-1951,4503,Porites nigrescens,https://coralnet.ucsd.edu/label/4503/,Hard coral,54,PORni,False,,False,False
+1951,4503,Porites nigrescens,https://coralnet.ucsd.edu/label/4503/,Hard coral,53,PORni,False,,False,False
 1952,1646,Porites nodifera,https://coralnet.ucsd.edu/label/1646/,Hard coral,53,PoNod,False,,False,False
 1953,2569,Porites nodular branches,https://coralnet.ucsd.edu/label/2569/,Hard coral,48,POR_NOD,False,,False,False
 1954,788,Porites non-massive,https://coralnet.ucsd.edu/label/788/,Hard coral,43,PONM,False,,False,False
@@ -2039,9 +2039,9 @@
 2037,5659,Reef Star Acropora (digitate),https://coralnet.ucsd.edu/label/5659/,Hard coral,58,CDrs,False,,False,False
 2038,5657,Reef Star Acropora (tabulate),https://coralnet.ucsd.edu/label/5657/,Hard coral,57,2CTArs,False,,False,False
 2039,5665,Reef Star Dead Acropora (branching),https://coralnet.ucsd.edu/label/5665/,Hard coral,56,dCBArs,False,,False,False
-2040,7779,Reef Star dead Acropora (digitate),https://coralnet.ucsd.edu/label/7779/,Hard coral,5,dCDArs,False,,False,False
+2040,7779,Reef Star dead Acropora (digitate),https://coralnet.ucsd.edu/label/7779/,Hard coral,19,dCDArs,False,,False,False
 2041,6182,Reef Star Dead Acropora (tabulate),https://coralnet.ucsd.edu/label/6182/,Hard coral,50,dCTArs,False,,False,False
-2042,5668,Reef Star Dead Non-Acropora (branching),https://coralnet.ucsd.edu/label/5668/,Hard coral,50,dCBNArs,False,,False,False
+2042,5668,Reef Star Dead Non-Acropora (branching),https://coralnet.ucsd.edu/label/5668/,Hard coral,51,dCBNArs,False,,False,False
 2043,6620,Reef Star Encrusting,https://coralnet.ucsd.edu/label/6620/,Hard coral,36,CErs,False,,False,False
 2044,6621,Reef Star Foliose,https://coralnet.ucsd.edu/label/6621/,Hard coral,21,CFrs,False,,False,False
 2045,5656,Reef Star Non-Acropora (branching),https://coralnet.ucsd.edu/label/5656/,Hard coral,56,2CBNArs,False,,False,False
@@ -2053,7 +2053,7 @@
 2051,7782,Renilla,https://coralnet.ucsd.edu/label/7782/,Hard coral,17,Ren,False,,False,False
 2052,5948,Rhizopsammia,https://coralnet.ucsd.edu/label/5948/,Hard coral,0,Rhizopsam,False,,False,False
 2053,7000,Rhizotrochus_NA,https://coralnet.ucsd.edu/label/7000/,Hard coral,0,Rhi_na,False,,False,False
-2054,2045,RS-Coelastrea,https://coralnet.ucsd.edu/label/2045/,Hard coral,48,Coelas,False,,False,False
+2054,2045,RS-Coelastrea,https://coralnet.ucsd.edu/label/2045/,Hard coral,50,Coelas,False,,False,False
 2055,2044,RS-Coeloseris,https://coralnet.ucsd.edu/label/2044/,Hard coral,49,Coel,True,Duplicate of Coeloseris,False,False
 2056,2047,RS-Porites columnar,https://coralnet.ucsd.edu/label/2047/,Hard coral,65,PoColumn,False,,False,False
 2057,3531,Sandalolitha,https://coralnet.ucsd.edu/label/3531/,Hard coral,57,SANDALTH,False,,False,False
@@ -2061,7 +2061,7 @@
 2059,6987,Sandalolitha_massive,https://coralnet.ucsd.edu/label/6987/,Hard coral,0,San_mas,False,,False,False
 2060,6469,Sandalolitha robusta,https://coralnet.ucsd.edu/label/6469/,Hard coral,26,Sanrobusta,False,,False,False
 2061,76,Sandolitha,https://coralnet.ucsd.edu/label/76/,Hard coral,67,Sando,False,,False,False
-2062,2421,Sarcothelia edmonsonii,https://coralnet.ucsd.edu/label/2421/,Hard coral,27,Sedmon,False,,False,False
+2062,2421,Sarcothelia edmonsonii,https://coralnet.ucsd.edu/label/2421/,Hard coral,52,Sedmon,False,,False,False
 2063,1964,Scapophyllia,https://coralnet.ucsd.edu/label/1964/,Hard coral,67,Scapophyll,False,,True,False
 2064,5919,Scapophyllia_columnar,https://coralnet.ucsd.edu/label/5919/,Hard coral,33,scacol,False,,False,False
 2065,6555,Scapophyllia cylindrica,https://coralnet.ucsd.edu/label/6555/,Hard coral,26,Scacylindr,False,,False,False
@@ -2082,7 +2082,7 @@
 2080,2356,Seriatopora Branching,https://coralnet.ucsd.edu/label/2356/,Hard coral,57,SerBr,False,,False,False
 2081,6988,Seriatopora_branching_closed,https://coralnet.ucsd.edu/label/6988/,Hard coral,0,Ser_b_c,False,,False,False
 2082,5099,Seriatopora_bushy,https://coralnet.ucsd.edu/label/5099/,Hard coral,51,serbus,False,,False,False
-2083,4496,Seriatopora caliendrum,https://coralnet.ucsd.edu/label/4496/,Hard coral,61,SERca,False,,False,False
+2083,4496,Seriatopora caliendrum,https://coralnet.ucsd.edu/label/4496/,Hard coral,60,SERca,False,,False,False
 2084,6432,Seriatopora guttata,https://coralnet.ucsd.edu/label/6432/,Hard coral,26,Serguttata,False,,False,False
 2085,6433,Seriatopora hystrix,https://coralnet.ucsd.edu/label/6433/,Hard coral,40,Serhystrix,False,,False,False
 2086,6434,Seriatopora stellata,https://coralnet.ucsd.edu/label/6434/,Hard coral,26,Serstellat,False,,False,False
@@ -2136,7 +2136,7 @@
 2134,6991,Stylophora_branching_closed,https://coralnet.ucsd.edu/label/6991/,Hard coral,0,Stylpoh_b_,False,,False,False
 2135,5102,Stylophora_bushy,https://coralnet.ucsd.edu/label/5102/,Hard coral,57,stybus,False,,False,False
 2136,1971,Stylophora mordax,https://coralnet.ucsd.edu/label/1971/,Hard coral,34,Sty_mor,False,,False,False
-2137,782,Stylophora pistillata,https://coralnet.ucsd.edu/label/782/,Hard coral,72,StPis,False,,True,False
+2137,782,Stylophora pistillata,https://coralnet.ucsd.edu/label/782/,Hard coral,71,StPis,False,,True,False
 2138,6435,Stylophora subseriata,https://coralnet.ucsd.edu/label/6435/,Hard coral,29,Stysubseri,False,,False,False
 2139,5283,Submassive 20-50cm,https://coralnet.ucsd.edu/label/5283/,Hard coral,53,SBMS2050,False,,False,False
 2140,5282,Submassive <20cm,https://coralnet.ucsd.edu/label/5282/,Hard coral,49,SBMS20,False,,False,False
@@ -2209,10 +2209,10 @@
 2207,6993,Turbinaria_laminar,https://coralnet.ucsd.edu/label/6993/,Hard coral,34,Tur_la,False,,False,False
 2208,5109,Turbinaria_massive,https://coralnet.ucsd.edu/label/5109/,Hard coral,46,turmas,False,,False,False
 2209,3325,Turbinaria mesenterina,https://coralnet.ucsd.edu/label/3325/,Hard coral,51,TurMes,False,,True,False
-2210,1564,Turbinaria peltata,https://coralnet.ucsd.edu/label/1564/,Hard coral,56,TurPel,False,,True,False
+2210,1564,Turbinaria peltata,https://coralnet.ucsd.edu/label/1564/,Hard coral,55,TurPel,False,,True,False
 2211,6416,Turbinaria radicalis,https://coralnet.ucsd.edu/label/6416/,Hard coral,26,Turradical,False,,False,False
 2212,1566,Turbinaria reniformis,https://coralnet.ucsd.edu/label/1566/,Hard coral,57,TurRen,False,,True,False
-2213,6231,Turbinaria stellulata,https://coralnet.ucsd.edu/label/6231/,Hard coral,43,TSTE,False,,False,False
+2213,6231,Turbinaria stellulata,https://coralnet.ucsd.edu/label/6231/,Hard coral,42,TSTE,False,,False,False
 2214,7024,Turf Algae-covered Acanthastrea,https://coralnet.ucsd.edu/label/7024/,Hard coral,19,TAACA,False,,False,False
 2215,7019,Turf Algae-covered Acropora,https://coralnet.ucsd.edu/label/7019/,Hard coral,43,5TAACR,False,,False,False
 2216,7026,Turf Algae-covered Cyphastrea,https://coralnet.ucsd.edu/label/7026/,Hard coral,34,TACYP,False,,False,False
@@ -2539,7 +2539,7 @@
 2537,1016,Anthopleura xanthogrammica,https://coralnet.ucsd.edu/label/1016/,Other Invertebrates,0,ANXA,False,,False,False
 2538,3447,Anthothoe chilensis,https://coralnet.ucsd.edu/label/3447/,Other Invertebrates,52,anemocomu,False,,False,False
 2539,3991,Anthozoa,https://coralnet.ucsd.edu/label/3991/,Other Invertebrates,47,ANTH,False,,False,False
-2540,7742,Antillogorgia americana,https://coralnet.ucsd.edu/label/7742/,Other Invertebrates,34,AntiAme,False,,False,False
+2540,7742,Antillogorgia americana,https://coralnet.ucsd.edu/label/7742/,Other Invertebrates,35,AntiAme,False,,False,False
 2541,1388,Antillogorgia spp.,https://coralnet.ucsd.edu/label/1388/,Other Invertebrates,68,ANTSPP,False,,False,False
 2542,989,Antipatharia,https://coralnet.ucsd.edu/label/989/,Other Invertebrates,62,Ant,False,,False,False
 2543,5218,Antipatharia_arborescent,https://coralnet.ucsd.edu/label/5218/,Other Invertebrates,0,antarb,False,,False,False
@@ -2553,7 +2553,7 @@
 2551,7137,Aplidium conicum,https://coralnet.ucsd.edu/label/7137/,Other Invertebrates,0,Apl.con,False,,False,False
 2552,7139,Aplidium elegans,https://coralnet.ucsd.edu/label/7139/,Other Invertebrates,0,Apl.ele,False,,False,False
 2553,3694,Aplidium fuscum,https://coralnet.ucsd.edu/label/3694/,Other Invertebrates,0,Aplidium f,False,,False,False
-2554,1466,Aplidium glabrum,https://coralnet.ucsd.edu/label/1466/,Other Invertebrates,60,AGL,False,,False,False
+2554,1466,Aplidium glabrum,https://coralnet.ucsd.edu/label/1466/,Other Invertebrates,59,AGL,False,,False,False
 2555,4053,Aplidium imbutum,https://coralnet.ucsd.edu/label/4053/,Other Invertebrates,0,APLI,False,,False,False
 2556,688,Aplidium solidum,https://coralnet.ucsd.edu/label/688/,Other Invertebrates,31,APSO,False,,False,False
 2557,487,Aplidium sp.,https://coralnet.ucsd.edu/label/487/,Other Invertebrates,69,Aplid,False,,False,False
@@ -2720,7 +2720,7 @@
 2718,1471,Balanus/Amphibalanus spp.,https://coralnet.ucsd.edu/label/1471/,Other Invertebrates,68,BAS,False,,False,False
 2719,2432,Balanus balanus,https://coralnet.ucsd.edu/label/2432/,Other Invertebrates,21,BABA,False,,False,False
 2720,567,Balanus crenatus,https://coralnet.ucsd.edu/label/567/,Other Invertebrates,68,BACR,False,,False,False
-2721,3415,Balanus eburneus,https://coralnet.ucsd.edu/label/3415/,Other Invertebrates,53,Bal Eburn,False,,False,False
+2721,3415,Balanus eburneus,https://coralnet.ucsd.edu/label/3415/,Other Invertebrates,54,Bal Eburn,False,,False,False
 2722,994,Balanus glandula,https://coralnet.ucsd.edu/label/994/,Other Invertebrates,65,BAGL,False,,False,False
 2723,7240,Balanus laevis,https://coralnet.ucsd.edu/label/7240/,Other Invertebrates,0,b laevis,False,,False,False
 2724,692,Balanus nubilis,https://coralnet.ucsd.edu/label/692/,Other Invertebrates,59,BANB,False,,False,False
@@ -2736,7 +2736,7 @@
 2734,2553,Barnacless,https://coralnet.ucsd.edu/label/2553/,Other Invertebrates,0,Bar,False,,False,False
 2735,3342,Barnacle - Tessoropora rosea,https://coralnet.ucsd.edu/label/3342/,Other Invertebrates,47,Barnacle,False,,False,False
 2736,1122,"Barnacle, unidentified",https://coralnet.ucsd.edu/label/1122/,Other Invertebrates,55,BAUN,False,,False,False
-2737,5670,Barrel Sponge,https://coralnet.ucsd.edu/label/5670/,Other Invertebrates,50,BSPo,False,,False,False
+2737,5670,Barrel Sponge,https://coralnet.ucsd.edu/label/5670/,Other Invertebrates,51,BSPo,False,,False,False
 2738,6234,Bartholomea annulata,https://coralnet.ucsd.edu/label/6234/,Other Invertebrates,29,Bartholome,False,,False,False
 2739,4687,Beania sp.,https://coralnet.ucsd.edu/label/4687/,Other Invertebrates,29,BeaniaSP,False,,False,False
 2740,5123,Bebryce_fan,https://coralnet.ucsd.edu/label/5123/,Other Invertebrates,0,bebfan,False,,False,False
@@ -2803,7 +2803,7 @@
 2801,6064,Botryllus niger,https://coralnet.ucsd.edu/label/6064/,Other Invertebrates,0,BON,False,,False,False
 2802,4275,Botryllus planus,https://coralnet.ucsd.edu/label/4275/,Other Invertebrates,54,Botry plan,False,,False,False
 2803,1475,Botryllus schlosseri,https://coralnet.ucsd.edu/label/1475/,Other Invertebrates,72,BSC,False,,False,False
-2804,4235,Botryllus sp.,https://coralnet.ucsd.edu/label/4235/,Other Invertebrates,58,BOTsp,False,,False,False
+2804,4235,Botryllus sp.,https://coralnet.ucsd.edu/label/4235/,Other Invertebrates,59,BOTsp,False,,False,False
 2805,3903,Botryllus sp1,https://coralnet.ucsd.edu/label/3903/,Other Invertebrates,38,Bot_1,False,,False,False
 2806,4678,Botryllus tabori,https://coralnet.ucsd.edu/label/4678/,Other Invertebrates,41,BotryTabo,False,,False,False
 2807,4640,Botryllus tuberatus,https://coralnet.ucsd.edu/label/4640/,Other Invertebrates,57,BotryTube,False,,False,False
@@ -2823,7 +2823,7 @@
 2821,1795,Briareum,https://coralnet.ucsd.edu/label/1795/,Other Invertebrates,75,GORG-BRI,False,,False,False
 2822,1380,Briareum asbestinum,https://coralnet.ucsd.edu/label/1380/,Other Invertebrates,66,BRIASB,False,,False,False
 2823,5151,Briareum_encrusting,https://coralnet.ucsd.edu/label/5151/,Other Invertebrates,47,brienc,False,,False,False
-2824,5521,Briozoo,https://coralnet.ucsd.edu/label/5521/,Other Invertebrates,45,Bryo-1,False,,False,False
+2824,5521,Briozoo,https://coralnet.ucsd.edu/label/5521/,Other Invertebrates,46,Bryo-1,False,,False,False
 2825,4925,Briozoo-sp.1,https://coralnet.ucsd.edu/label/4925/,Other Invertebrates,39,BRY-1,False,,False,False
 2826,4941,Briozoo-sp.2,https://coralnet.ucsd.edu/label/4941/,Other Invertebrates,34,BRY-2,False,,False,False
 2827,5001,Briozoo-sp-4,https://coralnet.ucsd.edu/label/5001/,Other Invertebrates,47,BRY-4,False,,False,False
@@ -2869,7 +2869,7 @@
 2867,7124,Bubaris vermiculata,https://coralnet.ucsd.edu/label/7124/,Other Invertebrates,0,Bub.ver,False,,False,False
 2868,1476,Buccinum undatum,https://coralnet.ucsd.edu/label/1476/,Other Invertebrates,25,BUC,False,,False,False
 2869,955,Bugula californica,https://coralnet.ucsd.edu/label/955/,Other Invertebrates,57,BUCA,False,,False,False
-2870,6848,Bugula neritina,https://coralnet.ucsd.edu/label/6848/,Other Invertebrates,12,BugNer,False,,False,False
+2870,6848,Bugula neritina,https://coralnet.ucsd.edu/label/6848/,Other Invertebrates,21,BugNer,False,,False,False
 2871,1477,Bugula neritina (canopy),https://coralnet.ucsd.edu/label/1477/,Other Invertebrates,58,BNC,False,,False,False
 2872,1478,Bugula neritina (substratum),https://coralnet.ucsd.edu/label/1478/,Other Invertebrates,27,BNS,False,,False,False
 2873,1480,Bugula simplex (canopy),https://coralnet.ucsd.edu/label/1480/,Other Invertebrates,47,BSI,False,,False,False
@@ -3037,7 +3037,7 @@
 3035,965,Clinocardium spp.,https://coralnet.ucsd.edu/label/965/,Other Invertebrates,0,CLIN,False,,False,False
 3036,146,Cliona,https://coralnet.ucsd.edu/label/146/,Other Invertebrates,75,Clio,False,,False,True
 3037,695,Cliona californiana,https://coralnet.ucsd.edu/label/695/,Other Invertebrates,54,CLCA,False,,False,True
-3038,1147,Cliona celata,https://coralnet.ucsd.edu/label/1147/,Other Invertebrates,60,CLCE,False,,False,True
+3038,1147,Cliona celata,https://coralnet.ucsd.edu/label/1147/,Other Invertebrates,59,CLCE,False,,False,True
 3039,7358,Cliona chilensis,https://coralnet.ucsd.edu/label/7358/,Other Invertebrates,9,CLIOCH,False,,False,False
 3040,3585,Cliona delitrix,https://coralnet.ucsd.edu/label/3585/,Other Invertebrates,60,CD,False,,False,True
 3041,7553,Cliona_encrusting,https://coralnet.ucsd.edu/label/7553/,Other Invertebrates,17,clienc,False,,False,False
@@ -3050,7 +3050,7 @@
 3048,1797,Clionid spp.,https://coralnet.ucsd.edu/label/1797/,Other Invertebrates,65,CLIONI,False,,False,True
 3049,3131,Clytia gracilis,https://coralnet.ucsd.edu/label/3131/,Other Invertebrates,45,CLYG,False,,False,False
 3050,4643,Clytia sp.,https://coralnet.ucsd.edu/label/4643/,Other Invertebrates,34,ClytiaSP,False,,False,False
-3051,7864,cnemidocarpa bicornuta,https://coralnet.ucsd.edu/label/7864/,Other Invertebrates,17,cnem bi,False,,False,False
+3051,7864,cnemidocarpa bicornuta,https://coralnet.ucsd.edu/label/7864/,Other Invertebrates,24,cnem bi,False,,False,False
 3052,571,Cnemidocarpa finmarkiensis,https://coralnet.ucsd.edu/label/571/,Other Invertebrates,50,CNFI,False,,False,False
 3053,5386,Cnemidocarpa irene,https://coralnet.ucsd.edu/label/5386/,Other Invertebrates,22,CnemIre,False,,False,False
 3054,4052,Cnemidocarpa verrucosa,https://coralnet.ucsd.edu/label/4052/,Other Invertebrates,45,CNEM,False,,False,False
@@ -3097,7 +3097,7 @@
 3095,2890,Corynactis,https://coralnet.ucsd.edu/label/2890/,Other Invertebrates,33,Corynactis,False,,False,False
 3096,1020,Corynactis californica,https://coralnet.ucsd.edu/label/1020/,Other Invertebrates,40,CORY,False,,False,False
 3097,3444,Corynactis carnea,https://coralnet.ucsd.edu/label/3444/,Other Invertebrates,65,coralimorf,False,,False,False
-3098,7850,Coscinasterias muricata,https://coralnet.ucsd.edu/label/7850/,Other Invertebrates,31,Coscinaste,False,,False,False
+3098,7850,Coscinasterias muricata,https://coralnet.ucsd.edu/label/7850/,Other Invertebrates,24,Coscinaste,False,,False,False
 3099,4100,Coscinoderma,https://coralnet.ucsd.edu/label/4100/,Other Invertebrates,40,Cosc_sp,False,,False,False
 3100,3811,Cosmasterias lurida,https://coralnet.ucsd.edu/label/3811/,Other Invertebrates,54,C.lurida,False,,False,False
 3101,413,Cplicifera,https://coralnet.ucsd.edu/label/413/,Other Invertebrates,58,CPLI,False,,False,False
@@ -3114,7 +3114,7 @@
 3112,1045,Crassostrea gigas,https://coralnet.ucsd.edu/label/1045/,Other Invertebrates,0,CRGI,False,,False,False
 3113,1812,Crassostrea virginica,https://coralnet.ucsd.edu/label/1812/,Other Invertebrates,53,Crasso vir,False,,False,False
 3114,1314,CRED-Anemone,https://coralnet.ucsd.edu/label/1314/,Other Invertebrates,72,*AMNE,True,Duplicate of Anemone,False,False
-3115,1315,CRED-Bivalve,https://coralnet.ucsd.edu/label/1315/,Other Invertebrates,59,*BI,True,Duplicate of Bivalve,False,False
+3115,1315,CRED-Bivalve,https://coralnet.ucsd.edu/label/1315/,Other Invertebrates,60,*BI,True,Duplicate of Bivalve,False,False
 3116,1316,CRED-Bryozoan,https://coralnet.ucsd.edu/label/1316/,Other Invertebrates,67,*BRY,True,Duplicate of Bryozoan,False,False
 3117,1317,CRED-Corallimorph,https://coralnet.ucsd.edu/label/1317/,Other Invertebrates,73,*CMOR,True,Duplicate of Corallimorpharia,False,False
 3118,1318,CRED-Giant clam,https://coralnet.ucsd.edu/label/1318/,Other Invertebrates,64,*GC,True,Duplicate of Tridacna: Giant clam,False,False
@@ -3299,7 +3299,7 @@
 3297,1003,Disporella separata,https://coralnet.ucsd.edu/label/1003/,Other Invertebrates,0,DISE,False,,False,False
 3298,3707,Disporella sp.,https://coralnet.ucsd.edu/label/3707/,Other Invertebrates,57,Disporel,False,,False,False
 3299,7168,Distaplia bermudensis,https://coralnet.ucsd.edu/label/7168/,Other Invertebrates,24,Dis.ber,False,,False,False
-3300,6833,Distaplia corolla,https://coralnet.ucsd.edu/label/6833/,Other Invertebrates,47,DisCo,False,,False,False
+3300,6833,Distaplia corolla,https://coralnet.ucsd.edu/label/6833/,Other Invertebrates,50,DisCo,False,,False,False
 3301,7594,Distaplia magnilarvae,https://coralnet.ucsd.edu/label/7594/,Other Invertebrates,31,D_mag,False,,False,False
 3302,713,Distaplia occidentalis,https://coralnet.ucsd.edu/label/713/,Other Invertebrates,42,DIOC,False,,False,False
 3303,4144,Distaplia sp,https://coralnet.ucsd.edu/label/4144/,Other Invertebrates,0,DISTAP,False,,False,False
@@ -3359,7 +3359,7 @@
 3357,1162,Echinometra mathaei,https://coralnet.ucsd.edu/label/1162/,Other Invertebrates,74,EMath,False,,False,False
 3358,1823,Echinometra oblonga,https://coralnet.ucsd.edu/label/1823/,Other Invertebrates,50,EOBL,False,,False,False
 3359,2579,Echinometra spp,https://coralnet.ucsd.edu/label/2579/,Other Invertebrates,58,MINV_Ech,False,,False,False
-3360,3081,Echinometra viridis,https://coralnet.ucsd.edu/label/3081/,Other Invertebrates,54,Ech_vir,False,,False,False
+3360,3081,Echinometra viridis,https://coralnet.ucsd.edu/label/3081/,Other Invertebrates,55,Ech_vir,False,,False,False
 3361,6770,Echinomuricea,https://coralnet.ucsd.edu/label/6770/,Other Invertebrates,0,Echcea,False,,False,False
 3362,3833,Echinomuricea indomalaccensis,https://coralnet.ucsd.edu/label/3833/,Other Invertebrates,0,Ei,False,,False,False
 3363,3402,Echinostrephus aciculatus,https://coralnet.ucsd.edu/label/3402/,Other Invertebrates,44,ECAC,False,,False,False
@@ -3390,7 +3390,7 @@
 3388,525,Encrusting Bryozoan,https://coralnet.ucsd.edu/label/525/,Other Invertebrates,67,EncBry,False,,False,False
 3389,400,Encrusting gorgonian,https://coralnet.ucsd.edu/label/400/,Other Invertebrates,67,ENGR1,False,,False,False
 3390,7433,Encrusting porifera,https://coralnet.ucsd.edu/label/7433/,Other Invertebrates,31,ENCRUSPORI,False,,False,False
-3391,7566,encrusting sessile invertebrate,https://coralnet.ucsd.edu/label/7566/,Other Invertebrates,30,encru_SI,False,,False,False
+3391,7566,encrusting sessile invertebrate,https://coralnet.ucsd.edu/label/7566/,Other Invertebrates,31,encru_SI,False,,False,False
 3392,3100,Encrusting Soft Coral,https://coralnet.ucsd.edu/label/3100/,Other Invertebrates,60,EnSC,False,,False,False
 3393,147,Encrusting sponge,https://coralnet.ucsd.edu/label/147/,Other Invertebrates,82,ENSP,False,,False,False
 3394,3009,Encrusting Sponge (LOF),https://coralnet.ucsd.edu/label/3009/,Other Invertebrates,67,ESP,False,,False,False
@@ -3470,7 +3470,7 @@
 3468,7659,Exosphaeroma gigas,https://coralnet.ucsd.edu/label/7659/,Other Invertebrates,0,EXO GIG,False,,False,False
 3469,1506,Facelina bostoniensis,https://coralnet.ucsd.edu/label/1506/,Other Invertebrates,28,FAC,False,,False,False
 3470,3104,Fan-shaped Soft Coral,https://coralnet.ucsd.edu/label/3104/,Other Invertebrates,51,FSC,False,,False,False
-3471,3041,Fan Worm,https://coralnet.ucsd.edu/label/3041/,Other Invertebrates,38,WORM fan,False,,False,False
+3471,3041,Fan Worm,https://coralnet.ucsd.edu/label/3041/,Other Invertebrates,42,WORM fan,False,,False,False
 3472,5993,Farrea,https://coralnet.ucsd.edu/label/5993/,Other Invertebrates,50,FAR,False,,False,False
 3473,4576,Feather Duster Worms,https://coralnet.ucsd.edu/label/4576/,Other Invertebrates,45,Feat_dust,False,,False,False
 3474,5738,Fenestrulina malusii,https://coralnet.ucsd.edu/label/5738/,Other Invertebrates,43,FeMa,False,,False,False
@@ -3513,7 +3513,7 @@
 3511,6819,Geodia regina,https://coralnet.ucsd.edu/label/6819/,Other Invertebrates,0,GEOREG,False,,False,False
 3512,3020,Geodia sp.,https://coralnet.ucsd.edu/label/3020/,Other Invertebrates,41,Geod,False,,False,False
 3513,1024,Gersemia rubiformis,https://coralnet.ucsd.edu/label/1024/,Other Invertebrates,53,GERU,False,,False,False
-3514,1509,Gersemia rubiformis (canopy),https://coralnet.ucsd.edu/label/1509/,Other Invertebrates,45,GRC,False,,False,False
+3514,1509,Gersemia rubiformis (canopy),https://coralnet.ucsd.edu/label/1509/,Other Invertebrates,46,GRC,False,,False,False
 3515,1510,Gersemia rubiformis (substratum),https://coralnet.ucsd.edu/label/1510/,Other Invertebrates,28,GRS,False,,False,False
 3516,6761,Gibbula spp.,https://coralnet.ucsd.edu/label/6761/,Other Invertebrates,0,Gibb,False,,False,False
 3517,7715,Glabraster antarctica,https://coralnet.ucsd.edu/label/7715/,Other Invertebrates,13,Gla ant,False,,False,False
@@ -3534,7 +3534,7 @@
 3532,5703,Gray Encrusting sponge,https://coralnet.ucsd.edu/label/5703/,Other Invertebrates,0,GRAY_SPG,False,,False,False
 3533,7556,Gray Moon Sponge,https://coralnet.ucsd.edu/label/7556/,Other Invertebrates,0,Moon,False,,False,False
 3534,3529,Gray Sponge,https://coralnet.ucsd.edu/label/3529/,Other Invertebrates,46,GSP,False,,False,False
-3535,7857,green lipped mussel,https://coralnet.ucsd.edu/label/7857/,Other Invertebrates,36,glm,False,,False,False
+3535,7857,green lipped mussel,https://coralnet.ucsd.edu/label/7857/,Other Invertebrates,28,glm,False,,False,False
 3536,5767,Green Scuzz,https://coralnet.ucsd.edu/label/5767/,Other Invertebrates,39,GrScuzz,False,,False,False
 3537,3067,Green sponge,https://coralnet.ucsd.edu/label/3067/,Other Invertebrates,50,SpoGreen,False,,False,False
 3538,3119,Gregarian Ascidian,https://coralnet.ucsd.edu/label/3119/,Other Invertebrates,34,GA,False,,False,False
@@ -3564,7 +3564,7 @@
 3562,1514,Haliclona spp.,https://coralnet.ucsd.edu/label/1514/,Other Invertebrates,36,HALS,False,,False,False
 3563,7798,HaliclonaYellow,https://coralnet.ucsd.edu/label/7798/,Other Invertebrates,16,YellowSpo,False,,False,False
 3564,7437,Halicnemia papillosa,https://coralnet.ucsd.edu/label/7437/,Other Invertebrates,0,HALICNEMIA,False,,False,False
-3565,7849,Haliotis iris,https://coralnet.ucsd.edu/label/7849/,Other Invertebrates,21,Haliotis,False,,False,False
+3565,7849,Haliotis iris,https://coralnet.ucsd.edu/label/7849/,Other Invertebrates,12,Haliotis,False,,False,False
 3566,874,Haliotis kamtschatkana,https://coralnet.ucsd.edu/label/874/,Other Invertebrates,0,Hka,False,,False,False
 3567,7750,Haliotis sp,https://coralnet.ucsd.edu/label/7750/,Other Invertebrates,0,PAUA,False,,False,False
 3568,3672,Halisarca dujardinii,https://coralnet.ucsd.edu/label/3672/,Other Invertebrates,0,Halis_duja,False,,False,False
@@ -3578,7 +3578,7 @@
 3576,7571,Haywardipora spp.,https://coralnet.ucsd.edu/label/7571/,Other Invertebrates,5,Hayward,False,,False,False
 3577,633,Heliopora,https://coralnet.ucsd.edu/label/633/,Other Invertebrates,78,Heliop,False,,True,True
 3578,5475,Heliopora_bushy,https://coralnet.ucsd.edu/label/5475/,Other Invertebrates,51,helbus,False,,False,False
-3579,1936,Heliopora coerulea,https://coralnet.ucsd.edu/label/1936/,Other Invertebrates,71,HelCoe,False,,True,False
+3579,1936,Heliopora coerulea,https://coralnet.ucsd.edu/label/1936/,Other Invertebrates,70,HelCoe,False,,True,False
 3580,5268,Heliopora_encrusting,https://coralnet.ucsd.edu/label/5268/,Other Invertebrates,48,helenc,False,,False,False
 3581,6918,Helioseris,https://coralnet.ucsd.edu/label/6918/,Other Invertebrates,0,helios,False,,False,False
 3582,4603,Hemigellius pilosus,https://coralnet.ucsd.edu/label/4603/,Other Invertebrates,21,Hmp,False,,False,False
@@ -3639,7 +3639,7 @@
 3637,7471,Hydractinia pacifica,https://coralnet.ucsd.edu/label/7471/,Other Invertebrates,15,HYDRAC,False,,False,False
 3638,1025,Hydrallmania distans,https://coralnet.ucsd.edu/label/1025/,Other Invertebrates,27,HYDI,False,,False,False
 3639,4135,Hydroactinia angusta,https://coralnet.ucsd.edu/label/4135/,Other Invertebrates,0,HYDang,False,,False,False
-3640,1155,Hydro-bryo complex,https://coralnet.ucsd.edu/label/1155/,Other Invertebrates,68,HBCO,False,,False,False
+3640,1155,Hydro-bryo complex,https://coralnet.ucsd.edu/label/1155/,Other Invertebrates,69,HBCO,False,,False,False
 3641,267,Hydrocoral,https://coralnet.ucsd.edu/label/267/,Other Invertebrates,51,hydrocoral,False,,True,False
 3642,4168,Hydrocorals: Branching,https://coralnet.ucsd.edu/label/4168/,Other Invertebrates,50,HydrC_Br,False,,False,False
 3643,4191,Hydrocorals: Submass/Encr,https://coralnet.ucsd.edu/label/4191/,Other Invertebrates,21,HydrC_Encr,False,,False,False
@@ -3711,7 +3711,7 @@
 3709,966,Isostichopus badionotus,https://coralnet.ucsd.edu/label/966/,Other Invertebrates,27,IsoBad,False,,False,False
 3710,876,Janolus fuscus,https://coralnet.ucsd.edu/label/876/,Other Invertebrates,0,Jfu,False,,False,False
 3711,1529,Jassa marmorata,https://coralnet.ucsd.edu/label/1529/,Other Invertebrates,48,JAS,False,,False,False
-3712,7844,Jasus,https://coralnet.ucsd.edu/label/7844/,Other Invertebrates,17,Jasus,False,,False,False
+3712,7844,Jasus,https://coralnet.ucsd.edu/label/7844/,Other Invertebrates,7,Jasus,False,,False,False
 3713,4181,Jellies,https://coralnet.ucsd.edu/label/4181/,Other Invertebrates,29,Jellies,False,,False,False
 3714,3146,Jugaria quadrangularis,https://coralnet.ucsd.edu/label/3146/,Other Invertebrates,26,JUQU,False,,False,False
 3715,4105,Junceella,https://coralnet.ucsd.edu/label/4105/,Other Invertebrates,59,Junceella,False,,True,False
@@ -3721,7 +3721,7 @@
 3719,3311,Keyhole limpet,https://coralnet.ucsd.edu/label/3311/,Other Invertebrates,0,Fissurella,False,,False,False
 3720,3387,Khang,https://coralnet.ucsd.edu/label/3387/,Other Invertebrates,0,Khang,False,,False,False
 3721,3987,Kidderia bicolor,https://coralnet.ucsd.edu/label/3987/,Other Invertebrates,0,KID,False,,False,False
-3722,7845,Kina,https://coralnet.ucsd.edu/label/7845/,Other Invertebrates,0,Kina,False,,False,False
+3722,7845,Kina,https://coralnet.ucsd.edu/label/7845/,Other Invertebrates,23,Kina,False,,False,False
 3723,7582,Kirchenpaueria halecioides,https://coralnet.ucsd.edu/label/7582/,Other Invertebrates,28,K_hal,False,,False,False
 3724,4549,Kirkpatrickia variolosa,https://coralnet.ucsd.edu/label/4549/,Other Invertebrates,30,Krva,False,,False,False
 3725,5134,Klyxum_bushy,https://coralnet.ucsd.edu/label/5134/,Other Invertebrates,0,klybus,False,,False,False
@@ -3751,7 +3751,7 @@
 3749,5519,Leptogorgia chilensis,https://coralnet.ucsd.edu/label/5519/,Other Invertebrates,32,Lepchi,False,,False,False
 3750,481,Leptogorgia hebes,https://coralnet.ucsd.edu/label/481/,Other Invertebrates,61,LepHeb,False,,False,False
 3751,468,Leptogorgia punicea,https://coralnet.ucsd.edu/label/468/,Other Invertebrates,54,LepPu,False,,False,False
-3752,469,Leptogorgia virgulata,https://coralnet.ucsd.edu/label/469/,Other Invertebrates,63,LepVi,False,,False,False
+3752,469,Leptogorgia virgulata,https://coralnet.ucsd.edu/label/469/,Other Invertebrates,64,LepVi,False,,False,False
 3753,1531,Leptosia sp.,https://coralnet.ucsd.edu/label/1531/,Other Invertebrates,18,TOS,False,,False,False
 3754,1057,Leucandra spp.,https://coralnet.ucsd.edu/label/1057/,Other Invertebrates,36,LEUD,False,,False,False
 3755,3935,Leucetta,https://coralnet.ucsd.edu/label/3935/,Other Invertebrates,22,Leuc_sp,False,,False,False
@@ -3837,7 +3837,7 @@
 3835,7350,Mesonea radians,https://coralnet.ucsd.edu/label/7350/,Other Invertebrates,0,MRAD,False,,False,False
 3836,7720,Metacarcinus edwardsii,https://coralnet.ucsd.edu/label/7720/,Other Invertebrates,22,Met edwa,False,,False,False
 3837,1068,Metacarcinus magister,https://coralnet.ucsd.edu/label/1068/,Other Invertebrates,0,Mem,False,,False,False
-3838,4653,Metandrocarpa sp.,https://coralnet.ucsd.edu/label/4653/,Other Invertebrates,30,MetanSP,False,,False,False
+3838,4653,Metandrocarpa sp.,https://coralnet.ucsd.edu/label/4653/,Other Invertebrates,25,MetanSP,False,,False,False
 3839,727,Metandrocarpa taylori,https://coralnet.ucsd.edu/label/727/,Other Invertebrates,62,META,False,,False,False
 3840,7708,Metarcinus edwardsii,https://coralnet.ucsd.edu/label/7708/,Other Invertebrates,0,Met edw,False,,False,False
 3841,576,Metridium farcimen,https://coralnet.ucsd.edu/label/576/,Other Invertebrates,67,MEFA,False,,False,False
@@ -3864,7 +3864,7 @@
 3862,1793,Millepora squarrosa,https://coralnet.ucsd.edu/label/1793/,Other Invertebrates,54,MIS,False,,False,True
 3863,1803,Millepora squarrosa 2,https://coralnet.ucsd.edu/label/1803/,Other Invertebrates,0,MSQU,False,,False,False
 3864,6868,Millepora striata,https://coralnet.ucsd.edu/label/6868/,Other Invertebrates,53,MILS,False,,False,False
-3865,4489,Millepora tenera,https://coralnet.ucsd.edu/label/4489/,Other Invertebrates,60,MILte,False,,False,False
+3865,4489,Millepora tenera,https://coralnet.ucsd.edu/label/4489/,Other Invertebrates,58,MILte,False,,False,False
 3866,1071,Mimulus foliatus,https://coralnet.ucsd.edu/label/1071/,Other Invertebrates,0,Mif,False,,False,False
 3867,3665,Miniacina miniacea,https://coralnet.ucsd.edu/label/3665/,Other Invertebrates,54,Mini_mini,False,,False,False
 3868,553,Mithraculus forceps,https://coralnet.ucsd.edu/label/553/,Other Invertebrates,33,Mithfor,False,,False,False
@@ -3940,7 +3940,7 @@
 3938,5539,MSP8_Sponge,https://coralnet.ucsd.edu/label/5539/,Other Invertebrates,34,MSP8_SP,False,,False,False
 3939,5540,MSP9_Sponge,https://coralnet.ucsd.edu/label/5540/,Other Invertebrates,41,MSP9_SP,False,,False,False
 3940,3343,Mulberry Shell - Morula marginabla,https://coralnet.ucsd.edu/label/3343/,Other Invertebrates,27,Morula,False,,False,False
-3941,7384,Munida gregaria,https://coralnet.ucsd.edu/label/7384/,Other Invertebrates,44,MUNIGREGA,False,,False,False
+3941,7384,Munida gregaria,https://coralnet.ucsd.edu/label/7384/,Other Invertebrates,45,MUNIGREGA,False,,False,False
 3942,1073,Munida quadrispina,https://coralnet.ucsd.edu/label/1073/,Other Invertebrates,0,Muq,False,,False,False
 3943,470,Murica pendula,https://coralnet.ucsd.edu/label/470/,Other Invertebrates,61,MurPen,False,,False,False
 3944,5517,Muricea californica,https://coralnet.ucsd.edu/label/5517/,Other Invertebrates,39,Murcal,False,,False,False
@@ -4033,7 +4033,7 @@
 4031,3629,Odontaster penicillatus,https://coralnet.ucsd.edu/label/3629/,Other Invertebrates,41,O.penicill,False,,False,False
 4032,3941,Odontaster validus,https://coralnet.ucsd.edu/label/3941/,Other Invertebrates,39,OdVal,False,,False,False
 4033,4829,OI_SP,https://coralnet.ucsd.edu/label/4829/,Other Invertebrates,0,OI_SP,False,,False,False
-4034,6615,Olive Sponge,https://coralnet.ucsd.edu/label/6615/,Other Invertebrates,48,oliv_spong,False,,False,False
+4034,6615,Olive Sponge,https://coralnet.ucsd.edu/label/6615/,Other Invertebrates,47,oliv_spong,False,,False,False
 4035,7068,Onchidella indolens,https://coralnet.ucsd.edu/label/7068/,Other Invertebrates,0,ONIN,False,,False,False
 4036,1615,Onchidoris bilamellata,https://coralnet.ucsd.edu/label/1615/,Other Invertebrates,0,ONB,False,,False,False
 4037,1616,Onchidoris muricata,https://coralnet.ucsd.edu/label/1616/,Other Invertebrates,15,ONM,False,,False,False
@@ -4054,7 +4054,7 @@
 4052,3162,Orange encrusting bryozoan 2,https://coralnet.ucsd.edu/label/3162/,Other Invertebrates,56,BROR2,False,,False,False
 4053,3180,Orange encrusting bryozoan 4,https://coralnet.ucsd.edu/label/3180/,Other Invertebrates,39,BROR4,False,,False,False
 4054,5500,Orange encrusting bryozoan (generic),https://coralnet.ucsd.edu/label/5500/,Other Invertebrates,53,orange_brz,False,,False,False
-4055,7135,Orange encrusting sponge,https://coralnet.ucsd.edu/label/7135/,Other Invertebrates,36,Inc.Spo,False,,False,False
+4055,7135,Orange encrusting sponge,https://coralnet.ucsd.edu/label/7135/,Other Invertebrates,35,Inc.Spo,False,,False,False
 4056,6244,Orange-Erect-Branching-Sponge,https://coralnet.ucsd.edu/label/6244/,Other Invertebrates,39,OEBS,False,,False,False
 4057,3160,Orange gelatinous bryozoan,https://coralnet.ucsd.edu/label/3160/,Other Invertebrates,33,BROG,False,,False,False
 4058,5705,Orange Keyhole sponge,https://coralnet.ucsd.edu/label/5705/,Other Invertebrates,52,ORANGE_SPG,False,,False,False
@@ -4075,7 +4075,7 @@
 4073,3223,Ostrea sp.2,https://coralnet.ucsd.edu/label/3223/,Other Invertebrates,0,Ostr_sp2,False,,False,False
 4074,3224,Ostrea sp.3,https://coralnet.ucsd.edu/label/3224/,Other Invertebrates,0,Ostr_sp3,False,,False,False
 4075,4913,Ostreidae,https://coralnet.ucsd.edu/label/4913/,Other Invertebrates,56,MOLL-OSTR,False,,False,False
-4076,7087,Ostreidae spp,https://coralnet.ucsd.edu/label/7087/,Other Invertebrates,17,Ostr,False,,False,False
+4076,7087,Ostreidae spp,https://coralnet.ucsd.edu/label/7087/,Other Invertebrates,25,Ostr,False,,False,False
 4077,4004,Oswaldella spp,https://coralnet.ucsd.edu/label/4004/,Other Invertebrates,28,OSW,False,,False,False
 4078,7799,OtherAlive,https://coralnet.ucsd.edu/label/7799/,Other Invertebrates,7,O_a,False,,False,False
 4079,3117,Other Branching Bryozoan,https://coralnet.ucsd.edu/label/3117/,Other Invertebrates,45,OBB,False,,False,False
@@ -4241,7 +4241,7 @@
 4239,2610,PNG-Tunicate-Solitary,https://coralnet.ucsd.edu/label/2610/,Other Invertebrates,42,PNGTS,False,,False,False
 4240,577,Pododesmus macrochisma,https://coralnet.ucsd.edu/label/577/,Other Invertebrates,61,PDMC,False,,False,False
 4241,3709,Pododesmus sp.,https://coralnet.ucsd.edu/label/3709/,Other Invertebrates,45,Podod,False,,False,False
-4242,6906,Polyandrocarpa anguinea,https://coralnet.ucsd.edu/label/6906/,Other Invertebrates,18,PolAng,False,,False,False
+4242,6906,Polyandrocarpa anguinea,https://coralnet.ucsd.edu/label/6906/,Other Invertebrates,26,PolAng,False,,False,False
 4243,3732,Polycera marplatensis,https://coralnet.ucsd.edu/label/3732/,Other Invertebrates,0,Nudi.COLOR,False,,False,False
 4244,4015,Polychaeta,https://coralnet.ucsd.edu/label/4015/,Other Invertebrates,60,POLYCH,False,,False,False
 4245,7735,Polychaeta 2,https://coralnet.ucsd.edu/label/7735/,Other Invertebrates,24,POLYCH2,False,,False,False
@@ -4267,7 +4267,7 @@
 4265,7593,Polysiphonia sp.,https://coralnet.ucsd.edu/label/7593/,Other Invertebrates,42,Polys,False,,False,False
 4266,4648,Polysyncraton sp.,https://coralnet.ucsd.edu/label/4648/,Other Invertebrates,46,PolySP,False,,False,False
 4267,3651,Polysyncraton_spp,https://coralnet.ucsd.edu/label/3651/,Other Invertebrates,0,Polysyncra,False,,False,False
-4268,7781,Polyzoa opuntia,https://coralnet.ucsd.edu/label/7781/,Other Invertebrates,0,Polyzoa,False,,False,False
+4268,7781,Polyzoa opuntia,https://coralnet.ucsd.edu/label/7781/,Other Invertebrates,13,Polyzoa,False,,False,False
 4269,3647,Pomatoceros_spp,https://coralnet.ucsd.edu/label/3647/,Other Invertebrates,0,Pomato,False,,False,False
 4270,7676,Porania antarctica,https://coralnet.ucsd.edu/label/7676/,Other Invertebrates,9,POR ANT,False,,False,False
 4271,1620,Porania pulvillus,https://coralnet.ucsd.edu/label/1620/,Other Invertebrates,0,POR,False,,False,False
@@ -4351,7 +4351,7 @@
 4349,5388,Pyura vitatta,https://coralnet.ucsd.edu/label/5388/,Other Invertebrates,30,PyuraVita,False,,False,False
 4350,4631,Pyuridae,https://coralnet.ucsd.edu/label/4631/,Other Invertebrates,55,Pyura,False,,False,False
 4351,6732,Ragactis lucida,https://coralnet.ucsd.edu/label/6732/,Other Invertebrates,30,OI-RLUC,False,,False,False
-4352,7865,Rapana_eggs,https://coralnet.ucsd.edu/label/7865/,Other Invertebrates,11,Rhe,False,,False,False
+4352,7865,Rapana_eggs,https://coralnet.ucsd.edu/label/7865/,Other Invertebrates,16,Rhe,False,,False,False
 4353,7792,Rapana venosa,https://coralnet.ucsd.edu/label/7792/,Other Invertebrates,28,Rapa,False,,False,False
 4354,657,raspailia,https://coralnet.ucsd.edu/label/657/,Other Invertebrates,29,RAS,False,,False,False
 4355,5704,Red-Brown branching sponge,https://coralnet.ucsd.edu/label/5704/,Other Invertebrates,0,RB_SPG,False,,False,False
@@ -4433,7 +4433,7 @@
 4431,905,Scyra acutifrons,https://coralnet.ucsd.edu/label/905/,Other Invertebrates,0,Sac,False,,False,False
 4432,836,S. droebachiensis,https://coralnet.ucsd.edu/label/836/,Other Invertebrates,47,Sdr,False,,False,False
 4433,135,Sea anemone,https://coralnet.ucsd.edu/label/135/,Other Invertebrates,71,ANEM,True,Duplicate of Anemone,False,False
-4434,7044,sea anenome,https://coralnet.ucsd.edu/label/7044/,Other Invertebrates,46,aneno,False,,False,False
+4434,7044,sea anenome,https://coralnet.ucsd.edu/label/7044/,Other Invertebrates,48,aneno,False,,False,False
 4435,145,Sea cucumber,https://coralnet.ucsd.edu/label/145/,Other Invertebrates,73,cucumber,False,,True,False
 4436,7109,Sea cucumber: embedded,https://coralnet.ucsd.edu/label/7109/,Other Invertebrates,0,cuc_embed,False,,False,False
 4437,346,Sea cucumbers:Benthic,https://coralnet.ucsd.edu/label/346/,Other Invertebrates,55,ESCB,False,,False,False
@@ -4475,14 +4475,14 @@
 4473,2092,SINV_SPO_FAN,https://coralnet.ucsd.edu/label/2092/,Other Invertebrates,65,SINV_SPO_F,False,,False,False
 4474,4761,Siphonaria gigas,https://coralnet.ucsd.edu/label/4761/,Other Invertebrates,0,Sgi,False,,False,False
 4475,6882,Siphonaria lessoni,https://coralnet.ucsd.edu/label/6882/,Other Invertebrates,22,S lessoni,False,,False,False
-4476,7671,Siphonaria lessonii,https://coralnet.ucsd.edu/label/7671/,Other Invertebrates,0,SIP LES,False,,False,False
+4476,7671,Siphonaria lessonii,https://coralnet.ucsd.edu/label/7671/,Other Invertebrates,17,SIP LES,False,,False,False
 4477,2975,Siphonaria sp,https://coralnet.ucsd.edu/label/2975/,Other Invertebrates,28,Siph,False,,False,False
 4478,5163,Siphonogorgia_fan,https://coralnet.ucsd.edu/label/5163/,Other Invertebrates,0,sipfan,False,,False,False
 4479,4511,small Ciona intestinal,https://coralnet.ucsd.edu/label/4511/,Other Invertebrates,48,SmC,False,,False,False
 4480,3310,Small Crab,https://coralnet.ucsd.edu/label/3310/,Other Invertebrates,0,SmCrb,False,,False,False
 4481,5375,Smaragdinella calyculata,https://coralnet.ucsd.edu/label/5375/,Other Invertebrates,15,Smar,False,,False,False
 4482,5376,Smaragdinella egg mass,https://coralnet.ucsd.edu/label/5376/,Other Invertebrates,0,S eggs,False,,False,False
-4483,7083,Smenospongia aurea,https://coralnet.ucsd.edu/label/7083/,Other Invertebrates,33,S aurea,False,,False,False
+4483,7083,Smenospongia aurea,https://coralnet.ucsd.edu/label/7083/,Other Invertebrates,34,S aurea,False,,False,False
 4484,1042,Smenospongia cerebriformis,https://coralnet.ucsd.edu/label/1042/,Other Invertebrates,36,SmenCere,False,,False,False
 4485,3664,Smittina cervicornis,https://coralnet.ucsd.edu/label/3664/,Other Invertebrates,0,Smitt_cerv,False,,False,False
 4486,4663,Smittina smittiella,https://coralnet.ucsd.edu/label/4663/,Other Invertebrates,40,SmitSmitt,False,,False,False
@@ -4502,7 +4502,7 @@
 4500,1174,softcoral_ nephtheidae,https://coralnet.ucsd.edu/label/1174/,Other Invertebrates,67,NEP,False,,False,False
 4501,556,Soft Coral plumes,https://coralnet.ucsd.edu/label/556/,Other Invertebrates,70,SCplu,False,,False,False
 4502,1173,softcoral_xeniidae,https://coralnet.ucsd.edu/label/1173/,Other Invertebrates,0,XENII,False,,False,False
-4503,3265,Solanderia spp.,https://coralnet.ucsd.edu/label/3265/,Other Invertebrates,35,Solspp,False,,False,False
+4503,3265,Solanderia spp.,https://coralnet.ucsd.edu/label/3265/,Other Invertebrates,37,Solspp,False,,False,False
 4504,840,Solaster dawsoni,https://coralnet.ucsd.edu/label/840/,Other Invertebrates,0,Sda,False,,False,False
 4505,841,Solaster endeca,https://coralnet.ucsd.edu/label/841/,Other Invertebrates,0,Sen,False,,False,False
 4506,842,Solaster stimpsoni,https://coralnet.ucsd.edu/label/842/,Other Invertebrates,0,Sst,False,,False,False
@@ -4578,7 +4578,7 @@
 4576,5312,Sponge massive white,https://coralnet.ucsd.edu/label/5312/,Other Invertebrates,18,WHSPM,False,,False,False
 4577,5530,Sponge_MSP1,https://coralnet.ucsd.edu/label/5530/,Other Invertebrates,34,MSP1_SP,False,,False,False
 4578,7655,SPONGEor,https://coralnet.ucsd.edu/label/7655/,Other Invertebrates,0,chabihaude,False,,False,False
-4579,2168,Sponge Other,https://coralnet.ucsd.edu/label/2168/,Other Invertebrates,75,SpgOth,False,,False,False
+4579,2168,Sponge Other,https://coralnet.ucsd.edu/label/2168/,Other Invertebrates,76,SpgOth,False,,False,False
 4580,3622,Sponge: Papilae,https://coralnet.ucsd.edu/label/3622/,Other Invertebrates,0,SpongePAPI,False,,False,False
 4581,5209,Sponge_papillate,https://coralnet.ucsd.edu/label/5209/,Other Invertebrates,0,spopap,False,,False,False
 4582,5204,Sponge_pedunculate,https://coralnet.ucsd.edu/label/5204/,Other Invertebrates,0,spoped,False,,False,False
@@ -4668,7 +4668,7 @@
 4666,740,Styela clava,https://coralnet.ucsd.edu/label/740/,Other Invertebrates,52,STCL,False,,False,False
 4667,953,Styela gibbsii,https://coralnet.ucsd.edu/label/953/,Other Invertebrates,0,STGI,False,,False,False
 4668,7498,Styela Montereyensis,https://coralnet.ucsd.edu/label/7498/,Other Invertebrates,7,STMO,False,,False,False
-4669,3681,Styela plicata,https://coralnet.ucsd.edu/label/3681/,Other Invertebrates,52,StyelaPlic,False,,False,False
+4669,3681,Styela plicata,https://coralnet.ucsd.edu/label/3681/,Other Invertebrates,53,StyelaPlic,False,,False,False
 4670,952,Styela spp.,https://coralnet.ucsd.edu/label/952/,Other Invertebrates,46,STYE,False,,False,False
 4671,4059,Styela wandeli,https://coralnet.ucsd.edu/label/4059/,Other Invertebrates,19,PYUse,False,,False,False
 4672,4634,Styelidae,https://coralnet.ucsd.edu/label/4634/,Other Invertebrates,38,Styel,False,,False,False
@@ -4698,7 +4698,7 @@
 4696,1737,symplegma brakenhielmi,https://coralnet.ucsd.edu/label/1737/,Other Invertebrates,58,SYMP_BRA,False,,False,False
 4697,6905,Symplegma rubra,https://coralnet.ucsd.edu/label/6905/,Other Invertebrates,40,SymRub,False,,False,False
 4698,495,Symplegma sp.,https://coralnet.ucsd.edu/label/495/,Other Invertebrates,56,Sympl,False,,False,False
-4699,1134,synaptula,https://coralnet.ucsd.edu/label/1134/,Other Invertebrates,48,synap,False,,False,False
+4699,1134,synaptula,https://coralnet.ucsd.edu/label/1134/,Other Invertebrates,49,synap,False,,False,False
 4700,4681,Synnetum aegyptiacum,https://coralnet.ucsd.edu/label/4681/,Other Invertebrates,42,SynnAegy,False,,False,False
 4701,745,Synoicum parfustis,https://coralnet.ucsd.edu/label/745/,Other Invertebrates,0,SYPA,False,,False,False
 4702,4142,Synoicum sp,https://coralnet.ucsd.edu/label/4142/,Other Invertebrates,0,SYN,False,,False,False
@@ -4761,7 +4761,7 @@
 4759,2031,Tridacna crocea clam,https://coralnet.ucsd.edu/label/2031/,Other Invertebrates,27,Tri_crocea,False,,False,False
 4760,5316,Tridacna_encrusting,https://coralnet.ucsd.edu/label/5316/,Other Invertebrates,18,trienc,False,,False,False
 4761,6847,Tridacna: gant clam,https://coralnet.ucsd.edu/label/6847/,Other Invertebrates,0,Tridac,False,,False,False
-4762,637,Tridacna: Giant clam,https://coralnet.ucsd.edu/label/637/,Other Invertebrates,75,GiCl,False,,True,False
+4762,637,Tridacna: Giant clam,https://coralnet.ucsd.edu/label/637/,Other Invertebrates,76,GiCl,False,,True,False
 4763,5945,Tridacna Giant Clam tissue,https://coralnet.ucsd.edu/label/5945/,Other Invertebrates,44,GiClTi,False,,False,False
 4764,1978,Tridacna maxima,https://coralnet.ucsd.edu/label/1978/,Other Invertebrates,38,Tridacna m,False,,False,False
 4765,1141,Trididemnum alexi,https://coralnet.ucsd.edu/label/1141/,Other Invertebrates,0,TRAL,False,,False,False
@@ -4781,7 +4781,7 @@
 4779,1629,Tritonia plebeia,https://coralnet.ucsd.edu/label/1629/,Other Invertebrates,0,TRI,False,,False,False
 4780,3980,Tritoniella belli,https://coralnet.ucsd.edu/label/3980/,Other Invertebrates,0,TRIT,False,,False,False
 4781,4154,Tritoniella belli.,https://coralnet.ucsd.edu/label/4154/,Other Invertebrates,0,TRIT.,False,,False,False
-4782,4529,Trophon geversianus,https://coralnet.ucsd.edu/label/4529/,Other Invertebrates,25,T.geversia,False,,False,False
+4782,4529,Trophon geversianus,https://coralnet.ucsd.edu/label/4529/,Other Invertebrates,29,T.geversia,False,,False,False
 4783,3975,Trophon leptocharteres,https://coralnet.ucsd.edu/label/3975/,Other Invertebrates,0,TRLep,False,,False,False
 4784,3976,Trophon nucelliformis,https://coralnet.ucsd.edu/label/3976/,Other Invertebrates,19,TRNuc,False,,False,False
 4785,5803,Tropiometra afra,https://coralnet.ucsd.edu/label/5803/,Other Invertebrates,37,TroAfra,False,,False,False
@@ -4799,7 +4799,7 @@
 4797,3620,Tunicate (colonial),https://coralnet.ucsd.edu/label/3620/,Other Invertebrates,67,Tun_col,False,,True,False
 4798,1101,"Tunicate, compound unidentified",https://coralnet.ucsd.edu/label/1101/,Other Invertebrates,54,TUCM,False,,False,False
 4799,1838,Tunicate_red,https://coralnet.ucsd.edu/label/1838/,Other Invertebrates,0,Tnc,False,,False,False
-4800,4270,Tunicates,https://coralnet.ucsd.edu/label/4270/,Other Invertebrates,50,Tunic,False,,False,False
+4800,4270,Tunicates,https://coralnet.ucsd.edu/label/4270/,Other Invertebrates,51,Tunic,False,,False,False
 4801,1102,"Tunicate, social unidentified",https://coralnet.ucsd.edu/label/1102/,Other Invertebrates,35,TSOU,False,,False,False
 4802,5333,Tunicate (solitary),https://coralnet.ucsd.edu/label/5333/,Other Invertebrates,56,Tun_sol,False,,False,False
 4803,750,Tunicate solitary unidentified,https://coralnet.ucsd.edu/label/750/,Other Invertebrates,52,TSUN,False,,False,False
@@ -4836,7 +4836,7 @@
 4834,4946,Unknown-3,https://coralnet.ucsd.edu/label/4946/,Other Invertebrates,25,UNK-3,False,,False,False
 4835,4947,Unknown-4,https://coralnet.ucsd.edu/label/4947/,Other Invertebrates,19,UNK-4,False,,False,False
 4836,4972,Unknown-5,https://coralnet.ucsd.edu/label/4972/,Other Invertebrates,42,UNK-5,False,,False,False
-4837,4977,Unknown-8,https://coralnet.ucsd.edu/label/4977/,Other Invertebrates,48,UNK-8,False,,False,False
+4837,4977,Unknown-8,https://coralnet.ucsd.edu/label/4977/,Other Invertebrates,49,UNK-8,False,,False,False
 4838,4982,Unknown-9,https://coralnet.ucsd.edu/label/4982/,Other Invertebrates,39,UNK-9,False,,False,False
 4839,518,Unknown Bryozoan,https://coralnet.ucsd.edu/label/518/,Other Invertebrates,52,UnkBry,False,,False,False
 4840,517,Unknown Hydroid,https://coralnet.ucsd.edu/label/517/,Other Invertebrates,65,UnkHyd,False,,False,False
@@ -4909,7 +4909,7 @@
 4907,1993,Xestospongia aff. carbonaria,https://coralnet.ucsd.edu/label/1993/,Other Invertebrates,44,Xes_car,False,,False,False
 4908,985,Xestospongia edapha,https://coralnet.ucsd.edu/label/985/,Other Invertebrates,0,XEED,False,,False,False
 4909,2002,Xestospongia exigua,https://coralnet.ucsd.edu/label/2002/,Other Invertebrates,15,Xes_exi,False,,False,False
-4910,5200,Xestospongia_massive,https://coralnet.ucsd.edu/label/5200/,Other Invertebrates,41,xesmas,False,,False,False
+4910,5200,Xestospongia_massive,https://coralnet.ucsd.edu/label/5200/,Other Invertebrates,42,xesmas,False,,False,False
 4911,5928,Xestospongia muta,https://coralnet.ucsd.edu/label/5928/,Other Invertebrates,48,Xestospong,False,,False,False
 4912,409,Xmuta,https://coralnet.ucsd.edu/label/409/,Other Invertebrates,63,XMUT,False,,False,False
 4913,486,Yellow digits,https://coralnet.ucsd.edu/label/486/,Other Invertebrates,59,Digit,False,,False,False
@@ -4930,11 +4930,11 @@
 4928,5216,Zoanthus_massive,https://coralnet.ucsd.edu/label/5216/,Other Invertebrates,0,zoamas,False,,False,False
 4929,6733,Zoanthus pulchellus,https://coralnet.ucsd.edu/label/6733/,Other Invertebrates,51,OI-ZPUL,False,,False,False
 4930,4715,Zoanthus sansibaricus,https://coralnet.ucsd.edu/label/4715/,Other Invertebrates,23,Z.sansibar,False,,False,False
-4931,6173,Zoanthus sociatus_,https://coralnet.ucsd.edu/label/6173/,Other Invertebrates,64,ZOSO,False,,False,False
+4931,6173,Zoanthus sociatus_,https://coralnet.ucsd.edu/label/6173/,Other Invertebrates,65,ZOSO,False,,False,False
 4932,3210,Zooanthid,https://coralnet.ucsd.edu/label/3210/,Other Invertebrates,71,Zoo,False,,False,False
 4933,7448,Zygochlamys patagonica,https://coralnet.ucsd.edu/label/7448/,Other Invertebrates,5,ZYGO PATAG,False,,False,False
 4934,3065,Actinia tenebrosa,https://coralnet.ucsd.edu/label/3065/,Soft Substrate,26,AcTen,False,,False,False
-4935,7862,Aplidium benhami,https://coralnet.ucsd.edu/label/7862/,Soft Substrate,33,apl ben,False,,False,False
+4935,7862,Aplidium benhami,https://coralnet.ucsd.edu/label/7862/,Soft Substrate,26,apl ben,False,,False,False
 4936,4099,ARMS-Bali-SoftCoral,https://coralnet.ucsd.edu/label/4099/,Soft Substrate,60,CN2,False,,False,False
 4937,1905,ARMS-CREP-Sediment,https://coralnet.ucsd.edu/label/1905/,Soft Substrate,73,_SED,True,Duplicate of Sediment,False,False
 4938,4148,bed sand,https://coralnet.ucsd.edu/label/4148/,Soft Substrate,57,BSAND,False,,False,False
@@ -4946,11 +4946,11 @@
 4944,5414,Campanulariidae,https://coralnet.ucsd.edu/label/5414/,Soft Substrate,0,CAMP,False,,False,False
 4945,6801,Cascalho,https://coralnet.ucsd.edu/label/6801/,Soft Substrate,56,SUBCA,False,,False,False
 4946,4284,Cement,https://coralnet.ucsd.edu/label/4284/,Soft Substrate,57,Cemt,False,,False,False
-4947,7614,Coleogorgia,https://coralnet.ucsd.edu/label/7614/,Soft Substrate,20,Coleo,False,,False,False
+4947,7614,Coleogorgia,https://coralnet.ucsd.edu/label/7614/,Soft Substrate,22,Coleo,False,,False,False
 4948,5818,Coral rubble,https://coralnet.ucsd.edu/label/5818/,Soft Substrate,63,Rubble_cor,False,,False,False
 4949,1344,CRED-Fine sediment,https://coralnet.ucsd.edu/label/1344/,Soft Substrate,74,*FINE,True,Duplicate of sediment (fine),False,False
 4950,1347,CRED-Sand,https://coralnet.ucsd.edu/label/1347/,Soft Substrate,79,*SAND,True,Duplicate of Sand,False,False
-4951,7863,crella incrustans,https://coralnet.ucsd.edu/label/7863/,Soft Substrate,25,crella inc,False,,False,False
+4951,7863,crella incrustans,https://coralnet.ucsd.edu/label/7863/,Soft Substrate,27,crella inc,False,,False,False
 4952,2098,CREP-T1 Sediment,https://coralnet.ucsd.edu/label/2098/,Soft Substrate,65,*SED,True,Duplicate of Sediment,False,False
 4953,6739,Debris Mix,https://coralnet.ucsd.edu/label/6739/,Soft Substrate,49,B-DMIX,False,,False,False
 4954,6741,Debris Shell,https://coralnet.ucsd.edu/label/6741/,Soft Substrate,64,B-DSHE,False,,False,False
@@ -5079,7 +5079,7 @@
 5077,3283,Boulder,https://coralnet.ucsd.edu/label/3283/,Hard Substrate,78,Bold,False,,False,False
 5078,5117,boulder_stable_substrate,https://coralnet.ucsd.edu/label/5117/,Hard Substrate,43,boulss,False,,False,False
 5079,6229,Broken serpulid rubble,https://coralnet.ucsd.edu/label/6229/,Hard Substrate,56,BSR,False,,False,False
-5080,6211,Cave - Medium,https://coralnet.ucsd.edu/label/6211/,Hard Substrate,41,CAVM,False,,False,False
+5080,6211,Cave - Medium,https://coralnet.ucsd.edu/label/6211/,Hard Substrate,42,CAVM,False,,False,False
 5081,6210,Cave - Small,https://coralnet.ucsd.edu/label/6210/,Hard Substrate,37,CAVS,False,,False,False
 5082,5487,CCA Dead,https://coralnet.ucsd.edu/label/5487/,Hard Substrate,61,CCA Dead,False,,False,False
 5083,6261,CCA on Padina,https://coralnet.ucsd.edu/label/6261/,Hard Substrate,24,CCAonPadin,False,,False,False
@@ -5096,7 +5096,7 @@
 5094,3181,Coral:Dead coral coral,https://coralnet.ucsd.edu/label/3181/,Hard Substrate,26,**DC,True,Duplicate of Dead coral,False,False
 5095,6607,corallith-forming,https://coralnet.ucsd.edu/label/6607/,Hard Substrate,42,corallith,False,,False,False
 5096,3175,Coral:Rock,https://coralnet.ucsd.edu/label/3175/,Hard Substrate,0,Rc,False,,False,True
-5097,6043,Coral Rock with Algae,https://coralnet.ucsd.edu/label/6043/,Hard Substrate,62,CoralRA,False,,False,False
+5097,6043,Coral Rock with Algae,https://coralnet.ucsd.edu/label/6043/,Hard Substrate,63,CoralRA,False,,False,False
 5098,2790,Coral skeleton,https://coralnet.ucsd.edu/label/2790/,Hard Substrate,45,COSK,False,,False,False
 5099,3184,corals:rock,https://coralnet.ucsd.edu/label/3184/,Hard Substrate,28,Rc*,False,,False,False
 5100,3357,Coral:Stonycoral:Millepora,https://coralnet.ucsd.edu/label/3357/,Hard Substrate,0,Mille_Por,False,,False,False
@@ -5173,7 +5173,7 @@
 5171,5436,Isopora spp._recently dead,https://coralnet.ucsd.edu/label/5436/,Hard Substrate,38,ISSP_RD,False,,False,False
 5172,1739,Kurkar,https://coralnet.ucsd.edu/label/1739/,Hard Substrate,48,KURKAR,False,,False,False
 5173,7089,Large boulder: 50-100cm,https://coralnet.ucsd.edu/label/7089/,Hard Substrate,0,lg_boulder,False,,False,False
-5174,7766,large shell debris,https://coralnet.ucsd.edu/label/7766/,Hard Substrate,14,lgshell_SU,False,,False,False
+5174,7766,large shell debris,https://coralnet.ucsd.edu/label/7766/,Hard Substrate,28,lgshell_SU,False,,False,False
 5175,7205,Leptastrea species with star predation,https://coralnet.ucsd.edu/label/7205/,Hard Substrate,0,LESP_STAR,False,,False,False
 5176,5438,Leptastrea spp._recently dead,https://coralnet.ucsd.edu/label/5438/,Hard Substrate,37,LESP_RD,False,,False,False
 5177,7204,Leptastrea transversa with star predation,https://coralnet.ucsd.edu/label/7204/,Hard Substrate,0,LTRA_STAR,False,,False,False
@@ -5202,7 +5202,7 @@
 5200,6688,MSP2_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6688/,Hard Substrate,27,MSP2_BRYO,False,,False,False
 5201,6689,MSP3_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6689/,Hard Substrate,11,MSP3_BRYO,False,,False,False
 5202,6690,MSP4_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6690/,Hard Substrate,34,MSP4_BRYO,False,,False,False
-5203,6691,MSP5_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6691/,Hard Substrate,46,MSP5_BRYO,False,,False,False
+5203,6691,MSP5_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6691/,Hard Substrate,51,MSP5_BRYO,False,,False,False
 5204,6692,MSP6_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6692/,Hard Substrate,32,MSP6_BRYO,False,,False,False
 5205,6697,MSP7_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6697/,Hard Substrate,31,MSP7_BRYO,False,,False,False
 5206,6698,MSP8_BRYOZOAIRE,https://coralnet.ucsd.edu/label/6698/,Hard Substrate,20,MSP8_BRYO,False,,False,False
@@ -5240,7 +5240,7 @@
 5238,5444,Pavona spp. massive_recently dead,https://coralnet.ucsd.edu/label/5444/,Hard Substrate,0,PAMA_RD,False,,False,False
 5239,5445,Pavona spp._recently dead,https://coralnet.ucsd.edu/label/5445/,Hard Substrate,50,PASP_RD,False,,False,False
 5240,5999,Pebble,https://coralnet.ucsd.edu/label/5999/,Hard Substrate,63,PEBL,False,,False,False
-5241,6884,Perumytilus purpuratus,https://coralnet.ucsd.edu/label/6884/,Hard Substrate,53,P purp,False,,False,False
+5241,6884,Perumytilus purpuratus,https://coralnet.ucsd.edu/label/6884/,Hard Substrate,56,P purp,False,,False,False
 5242,5859,Phymastrea spp._recently dead,https://coralnet.ucsd.edu/label/5859/,Hard Substrate,0,PHYM_RD,False,,False,False
 5243,5781,placa,https://coralnet.ucsd.edu/label/5781/,Hard Substrate,0,placa,False,,False,False
 5244,5786,placa cinzenta,https://coralnet.ucsd.edu/label/5786/,Hard Substrate,46,placa vazi,False,,False,False
@@ -5315,9 +5315,9 @@
 5313,2825,Vermetus triquetrus (dead),https://coralnet.ucsd.edu/label/2825/,Hard Substrate,44,Dvermtriq,False,,False,False
 5314,2620,Very Thin Sediment over Rock,https://coralnet.ucsd.edu/label/2620/,Hard Substrate,39,VThnSedRck,False,,False,True
 5315,1700,White Hard Substrate,https://coralnet.ucsd.edu/label/1700/,Hard Substrate,52,HSUB_WHT,False,,False,False
-5316,2155,Wood,https://coralnet.ucsd.edu/label/2155/,Hard Substrate,54,Wood,False,,False,False
+5316,2155,Wood,https://coralnet.ucsd.edu/label/2155/,Hard Substrate,56,Wood,False,,False,False
 5317,7091,Wood - anthropogenic,https://coralnet.ucsd.edu/label/7091/,Hard Substrate,0,wood_anth,False,,False,False
-5318,7092,Wood - natural,https://coralnet.ucsd.edu/label/7092/,Hard Substrate,28,wood_nat,False,,False,False
+5318,7092,Wood - natural,https://coralnet.ucsd.edu/label/7092/,Hard Substrate,23,wood_nat,False,,False,False
 5319,514,Wreck,https://coralnet.ucsd.edu/label/514/,Hard Substrate,66,Wreck,False,,False,False
 5320,7867,3D Printed Coral,https://coralnet.ucsd.edu/label/7867/,Other,0,3D Coral,False,,False,False
 5321,3633,Abiotic,https://coralnet.ucsd.edu/label/3633/,Other,57,Abtc,False,,False,False
@@ -5401,7 +5401,7 @@
 5399,7463,Brown_algal_dots,https://coralnet.ucsd.edu/label/7463/,Other,41,DOT,False,,False,False
 5400,4386,Brown Ascidian,https://coralnet.ucsd.edu/label/4386/,Other,45,BrAscid,False,,False,False
 5401,4510,brown background,https://coralnet.ucsd.edu/label/4510/,Other,54,BB,False,,False,False
-5402,6611,Brown Chrysophyte,https://coralnet.ucsd.edu/label/6611/,Other,40,chrys_brn,False,,False,False
+5402,6611,Brown Chrysophyte,https://coralnet.ucsd.edu/label/6611/,Other,43,chrys_brn,False,,False,False
 5403,7832,Brown Crusts,https://coralnet.ucsd.edu/label/7832/,Other,0,Brown Cr,False,,False,False
 5404,7461,Brown_filamentous_algae,https://coralnet.ucsd.edu/label/7461/,Other,40,BFA,False,,False,False
 5405,3070,Cable Tie,https://coralnet.ucsd.edu/label/3070/,Other,48,CableTie,False,,False,False
@@ -5521,7 +5521,7 @@
 5519,4748,Drink Bottles – Green,https://coralnet.ucsd.edu/label/4748/,Other,36,DBGreen,False,,False,False
 5520,4750,Drink Bottles – Large (>5L),https://coralnet.ucsd.edu/label/4750/,Other,30,DBLarge,False,,False,False
 5521,4749,Drink Bottles – Transparent,https://coralnet.ucsd.edu/label/4749/,Other,33,DBTransp,False,,False,False
-5522,6019,Drupella,https://coralnet.ucsd.edu/label/6019/,Other,47,DRP,False,,False,False
+5522,6019,Drupella,https://coralnet.ucsd.edu/label/6019/,Other,48,DRP,False,,False,False
 5523,5722,Dysidea,https://coralnet.ucsd.edu/label/5722/,Other,37,Dysi_fragi,False,,False,False
 5524,5240,Echinometra_other_life,https://coralnet.ucsd.edu/label/5240/,Other,0,echoth,False,,False,False
 5525,5548,Echinometridae_other_life,https://coralnet.ucsd.edu/label/5548/,Other,34,ecoth,False,,False,False
@@ -5535,7 +5535,7 @@
 5533,373,Encrusting biota unknow,https://coralnet.ucsd.edu/label/373/,Other,60,ENBU,False,,False,False
 5534,3431,Encrusting Organism on hard substrate,https://coralnet.ucsd.edu/label/3431/,Other,46,EOHS,False,,False,False
 5535,4384,Encrusting Tunicate,https://coralnet.ucsd.edu/label/4384/,Other,54,EncrTuni,False,,False,False
-5536,2243,Epiphyte on eelgrass,https://coralnet.ucsd.edu/label/2243/,Other,48,EGEPI,False,,False,False
+5536,2243,Epiphyte on eelgrass,https://coralnet.ucsd.edu/label/2243/,Other,50,EGEPI,False,,False,False
 5537,5721,Eponge encroutante orange,https://coralnet.ucsd.edu/label/5721/,Other,29,EEO,False,,False,False
 5538,6098,Equipment,https://coralnet.ucsd.edu/label/6098/,Other,54,EQ,False,,False,False
 5539,7294,erythropodium - bleached,https://coralnet.ucsd.edu/label/7294/,Other,0,ERYB,False,,False,False
@@ -5585,7 +5585,7 @@
 5583,7484,Green_filamentous_algae,https://coralnet.ucsd.edu/label/7484/,Other,0,GFAL,False,,False,False
 5584,7465,Green_turf,https://coralnet.ucsd.edu/label/7465/,Other,40,GTurf,False,,False,False
 5585,7464,Green_turf-CCA,https://coralnet.ucsd.edu/label/7464/,Other,30,GTCCA,False,,False,False
-5586,123,Ground,https://coralnet.ucsd.edu/label/123/,Other,54,W_GRD,False,,False,False
+5586,123,Ground,https://coralnet.ucsd.edu/label/123/,Other,52,W_GRD,False,,False,False
 5587,7536,Gturf-Green_algal_stain,https://coralnet.ucsd.edu/label/7536/,Other,0,Gturf-Gast,False,,False,False
 5588,7004,Halimione portulacoides,https://coralnet.ucsd.edu/label/7004/,Other,0,HalP,False,,False,False
 5589,7005,Halophilia,https://coralnet.ucsd.edu/label/7005/,Other,68,halphil,False,,False,False
@@ -5766,7 +5766,7 @@
 5764,7482,PLUG,https://coralnet.ucsd.edu/label/7482/,Other,34,PLUG,False,,False,False
 5765,5764,Polychaete tubes rubble,https://coralnet.ucsd.edu/label/5764/,Other,33,PcR,False,,False,False
 5766,7486,Polymer,https://coralnet.ucsd.edu/label/7486/,Other,0,polymer,False,,False,False
-5767,6742,Poor photo/dark/unidentifiable,https://coralnet.ucsd.edu/label/6742/,Other,55,M-POOR,False,,False,False
+5767,6742,Poor photo/dark/unidentifiable,https://coralnet.ucsd.edu/label/6742/,Other,56,M-POOR,False,,False,False
 5768,3631,Power head pump,https://coralnet.ucsd.edu/label/3631/,Other,41,Pwrhd,False,,False,False
 5769,6844,PuhiBay,https://coralnet.ucsd.edu/label/6844/,Other,0,PB,False,,False,False
 5770,1848,PVC,https://coralnet.ucsd.edu/label/1848/,Other,74,PVC,False,,False,False
@@ -5803,7 +5803,7 @@
 5801,3586,Scopalina ruetzleri,https://coralnet.ucsd.edu/label/3586/,Other,57,SR,False,,False,False
 5802,944,Scorpaenichthys marmoratus,https://coralnet.ucsd.edu/label/944/,Other,0,Smr,False,,False,False
 5803,945,Sculpin unidentified,https://coralnet.ucsd.edu/label/945/,Other,0,Scu,False,,False,False
-5804,7848,Scutus,https://coralnet.ucsd.edu/label/7848/,Other,27,scutus,False,,False,False
+5804,7848,Scutus,https://coralnet.ucsd.edu/label/7848/,Other,22,scutus,False,,False,False
 5805,2791,Scuzz,https://coralnet.ucsd.edu/label/2791/,Other,65,Scz,False,,False,False
 5806,7650,Sea floor,https://coralnet.ucsd.edu/label/7650/,Other,0,FLOOR,False,,False,False
 5807,3800,Seagrass wrack,https://coralnet.ucsd.edu/label/3800/,Other,56,SWra,False,,False,False
@@ -5980,7 +5980,7 @@
 5978,6779,Acetabularia crenulata,https://coralnet.ucsd.edu/label/6779/,Algae,0,A.cre,False,,False,False
 5979,2536,Acetabularia spp.,https://coralnet.ucsd.edu/label/2536/,Algae,62,ACET,False,,False,False
 5980,5863,acrochaetium microscopicum,https://coralnet.ucsd.edu/label/5863/,Algae,44,A.micro,False,,False,False
-5981,820,Acrosiphonia spp.,https://coralnet.ucsd.edu/label/820/,Algae,49,ACRO,False,,False,False
+5981,820,Acrosiphonia spp.,https://coralnet.ucsd.edu/label/820/,Algae,52,ACRO,False,,False,False
 5982,7559,Acrosorium ciliolatum,https://coralnet.ucsd.edu/label/7559/,Algae,15,ACCI,False,,False,False
 5983,4406,Actinotrichia fragilis,https://coralnet.ucsd.edu/label/4406/,Algae,0,Acfrag,False,,False,False
 5984,2024,Actinotrichia sp.,https://coralnet.ucsd.edu/label/2024/,Algae,48,Act_spe,False,,False,False
@@ -6016,7 +6016,7 @@
 6014,643,Algae (foliose),https://coralnet.ucsd.edu/label/643/,Algae,67,AL_fol,False,,True,False
 6015,4257,"Algae, foliose",https://coralnet.ucsd.edu/label/4257/,Algae,48,AFol,True,Duplicate of Algae (foliose),False,False
 6016,1654,Algae: Large Visible Globules,https://coralnet.ucsd.edu/label/1654/,Algae,61,MACR_GLOB,False,,False,False
-6017,7516,Algae (leathery),https://coralnet.ucsd.edu/label/7516/,Algae,39,A_leat,False,,False,False
+6017,7516,Algae (leathery),https://coralnet.ucsd.edu/label/7516/,Algae,41,A_leat,False,,False,False
 6018,404,Algae matrix,https://coralnet.ucsd.edu/label/404/,Algae,73,AMAT,False,,False,False
 6019,4263,"Algae, microalge",https://coralnet.ucsd.edu/label/4263/,Algae,58,AMicro,False,,False,False
 6020,1607,Algae: Other,https://coralnet.ucsd.edu/label/1607/,Algae,75,ALGAE_OTH,False,,False,False
@@ -6045,7 +6045,7 @@
 6043,6843,Antithamnion spp,https://coralnet.ucsd.edu/label/6843/,Algae,47,Antispp,False,,False,False
 6044,4826,A_OTH,https://coralnet.ucsd.edu/label/4826/,Algae,62,A_OTH,False,,False,False
 6045,7344,Apoglossum,https://coralnet.ucsd.edu/label/7344/,Algae,0,APOG,False,,False,False
-6046,7794,Apoglossum ruscifolium,https://coralnet.ucsd.edu/label/7794/,Algae,28,Apoglos,False,,False,False
+6046,7794,Apoglossum ruscifolium,https://coralnet.ucsd.edu/label/7794/,Algae,30,Apoglos,False,,False,False
 6047,4224,Apophlaea,https://coralnet.ucsd.edu/label/4224/,Algae,0,APO,False,,False,False
 6048,5846,ARMS-Brown algae,https://coralnet.ucsd.edu/label/5846/,Algae,58,_BRAL,False,,False,False
 6049,1872,ARMS-CREP-Blue-green macroalga,https://coralnet.ucsd.edu/label/1872/,Algae,65,_BGMA,False,,False,False
@@ -6065,7 +6065,7 @@
 6063,5847,ARMS-Green algae,https://coralnet.ucsd.edu/label/5847/,Algae,61,_GRAL,False,,False,False
 6064,5848,ARMS-Red algae,https://coralnet.ucsd.edu/label/5848/,Algae,62,_RDAL,False,,False,False
 6065,6076,Arthrocardia,https://coralnet.ucsd.edu/label/6076/,Algae,0,ATH,False,,False,False
-6066,647,Articulate Calcareous Algae (ACA),https://coralnet.ucsd.edu/label/647/,Algae,62,ACA,False,,False,False
+6066,647,Articulate Calcareous Algae (ACA),https://coralnet.ucsd.edu/label/647/,Algae,63,ACA,False,,False,False
 6067,3111,Articulated Calcareous Macroalgae,https://coralnet.ucsd.edu/label/3111/,Algae,41,ACM,False,,False,False
 6068,3563,Articulated coralline algae,https://coralnet.ucsd.edu/label/3563/,Algae,72,ArtCA,False,,False,False
 6069,7366,Artificial - Fleshy Algae,https://coralnet.ucsd.edu/label/7366/,Algae,34,Ar_FA,False,,False,False
@@ -6081,7 +6081,7 @@
 6079,1869,Asparagopsis taxiformis,https://coralnet.ucsd.edu/label/1869/,Algae,74,AspaTax,False,,True,False
 6080,5866,Asparagopsis with cyanobacteria,https://coralnet.ucsd.edu/label/5866/,Algae,54,Asp.cyan,False,,False,False
 6081,4528,Asperococcus ensiformis,https://coralnet.ucsd.edu/label/4528/,Algae,39,Asperococ,False,,False,False
-6082,3727,Asteronema breviarticulatum,https://coralnet.ucsd.edu/label/3727/,Algae,34,ABREV,False,,False,False
+6082,3727,Asteronema breviarticulatum,https://coralnet.ucsd.edu/label/3727/,Algae,41,ABREV,False,,False,False
 6083,4846,A-TAL,https://coralnet.ucsd.edu/label/4846/,Algae,64,A-TAL,False,,False,False
 6084,432,Avrainvillea,https://coralnet.ucsd.edu/label/432/,Algae,69,Avrainvil,False,,True,False
 6085,3549,Avrainvillea amadelpha,https://coralnet.ucsd.edu/label/3549/,Algae,41,AVAM,False,,False,False
@@ -6100,14 +6100,14 @@
 6098,7271,Black Algal Film,https://coralnet.ucsd.edu/label/7271/,Algae,24,BLACK1,False,,False,False
 6099,535,Black crust,https://coralnet.ucsd.edu/label/535/,Algae,73,BlackCru,False,,False,False
 6100,7340,Black Tar Algae,https://coralnet.ucsd.edu/label/7340/,Algae,40,BLTAR,False,,False,False
-6101,7312,Black Turf,https://coralnet.ucsd.edu/label/7312/,Algae,47,BT,False,,False,False
+6101,7312,Black Turf,https://coralnet.ucsd.edu/label/7312/,Algae,48,BT,False,,False,False
 6102,3336,Bladder Weed - Colpomenia sinuosa,https://coralnet.ucsd.edu/label/3336/,Algae,0,COLPOMENIA,False,,False,False
 6103,3075,Bleached Acanthophora nayadiformis,https://coralnet.ucsd.edu/label/3075/,Algae,39,BleacAcan,False,,False,False
 6104,6895,Bleached Acrosiphonia,https://coralnet.ucsd.edu/label/6895/,Algae,19,BACRO,False,,False,False
 6105,6852,Bleached Alaria,https://coralnet.ucsd.edu/label/6852/,Algae,21,BALMA,False,,False,False
 6106,3091,bleached algae,https://coralnet.ucsd.edu/label/3091/,Algae,53,BleaAlg,False,,False,False
 6107,4460,bleached cca,https://coralnet.ucsd.edu/label/4460/,Algae,53,B_CCA,False,,False,False
-6108,6860,Bleached Chondracanthus sp.,https://coralnet.ucsd.edu/label/6860/,Algae,15,BCHCA,False,,False,False
+6108,6860,Bleached Chondracanthus sp.,https://coralnet.ucsd.edu/label/6860/,Algae,23,BCHCA,False,,False,False
 6109,2957,Bleached cladophora,https://coralnet.ucsd.edu/label/2957/,Algae,41,BleaCL,False,,False,False
 6110,2441,Bleached Crustose Coralline Algae,https://coralnet.ucsd.edu/label/2441/,Algae,52,BCCA,False,,False,False
 6111,2956,Bleached Dictyota dichotoma,https://coralnet.ucsd.edu/label/2956/,Algae,37,Bleadd,False,,False,False
@@ -6120,12 +6120,12 @@
 6118,2841,Bleached Jania rubens,https://coralnet.ucsd.edu/label/2841/,Algae,58,BleacJR,False,,False,False
 6119,4816,bleached Laurencia papillosa,https://coralnet.ucsd.edu/label/4816/,Algae,0,BleaLP,False,,False,False
 6120,6892,Bleached Leathesia marina,https://coralnet.ucsd.edu/label/6892/,Algae,0,BLEATHMAR,False,,False,False
-6121,6890,Bleached Macroalge:Filamentous:Red:Polysiphon,https://coralnet.ucsd.edu/label/6890/,Algae,27,BMFRP,False,,False,False
-6122,6894,Bleached Mastocarpus sp.,https://coralnet.ucsd.edu/label/6894/,Algae,7,BMASTOC,False,,False,False
+6121,6890,Bleached Macroalge:Filamentous:Red:Polysiphon,https://coralnet.ucsd.edu/label/6890/,Algae,28,BMFRP,False,,False,False
+6122,6894,Bleached Mastocarpus sp.,https://coralnet.ucsd.edu/label/6894/,Algae,9,BMASTOC,False,,False,False
 6123,6856,Bleached Mazzaella sp.,https://coralnet.ucsd.edu/label/6856/,Algae,25,BMazza,False,,False,False
 6124,3083,Bleached Padina pavonica,https://coralnet.ucsd.edu/label/3083/,Algae,37,BleaPad,False,,False,False
 6125,2842,Bleached Palisada perforata,https://coralnet.ucsd.edu/label/2842/,Algae,51,BleaPP,False,,False,False
-6126,6891,bleached prionitis sp.,https://coralnet.ucsd.edu/label/6891/,Algae,14,BPRION,False,,False,False
+6126,6891,bleached prionitis sp.,https://coralnet.ucsd.edu/label/6891/,Algae,15,BPRION,False,,False,False
 6127,2880,Bleached ulva,https://coralnet.ucsd.edu/label/2880/,Algae,50,BleaU,False,,False,False
 6128,6206,Bluegreen algae,https://coralnet.ucsd.edu/label/6206/,Algae,60,BGA,False,,False,False
 6129,564,Blue-Green Algae,https://coralnet.ucsd.edu/label/564/,Algae,66,BLGR,False,,False,False
@@ -6150,7 +6150,7 @@
 6148,3870,Branching pink CCA,https://coralnet.ucsd.edu/label/3870/,Algae,48,pCCAb,False,,False,False
 6149,3926,Branching pink CCA on dead massive coral,https://coralnet.ucsd.edu/label/3926/,Algae,42,BpCCAdmC,False,,False,False
 6150,3887,Bright red CCA,https://coralnet.ucsd.edu/label/3887/,Algae,47,BrCCA,False,,False,False
-6151,3921,Brillo Spike Pad,https://coralnet.ucsd.edu/label/3921/,Algae,55,BSP,False,,False,False
+6151,3921,Brillo Spike Pad,https://coralnet.ucsd.edu/label/3921/,Algae,56,BSP,False,,False,False
 6152,4072,Brown algae,https://coralnet.ucsd.edu/label/4072/,Algae,61,BROA,False,,False,False
 6153,5473,Brown_algae_corticated_foliose,https://coralnet.ucsd.edu/label/5473/,Algae,51,brocof,False,,False,False
 6154,7608,Brown Algae - Filamentous,https://coralnet.ucsd.edu/label/7608/,Algae,0,BAF,False,,False,False
@@ -6175,8 +6175,8 @@
 6173,3598,Bryopsis spp.,https://coralnet.ucsd.edu/label/3598/,Algae,68,BrSpp,False,,False,False
 6174,6031,Bryotamnion spp,https://coralnet.ucsd.edu/label/6031/,Algae,0,BrySpp,False,,False,False
 6175,5706,Bubble Algae,https://coralnet.ucsd.edu/label/5706/,Algae,50,BUB_ALG,False,,False,False
-6176,7763,bull kelp blade,https://coralnet.ucsd.edu/label/7763/,Algae,50,bullBL_KE,False,,False,False
-6177,7762,bull kelp stipe,https://coralnet.ucsd.edu/label/7762/,Algae,30,bullST_KE,False,,False,False
+6176,7763,bull kelp blade,https://coralnet.ucsd.edu/label/7763/,Algae,55,bullBL_KE,False,,False,False
+6177,7762,bull kelp stipe,https://coralnet.ucsd.edu/label/7762/,Algae,36,bullST_KE,False,,False,False
 6178,7104,bushy cylindrical red algae,https://coralnet.ucsd.edu/label/7104/,Algae,48,bushy_red,False,,False,False
 6179,4301,Bushy Dictyota,https://coralnet.ucsd.edu/label/4301/,Algae,42,B_Dictyota,False,,False,False
 6180,4298,Bushy Dictyota w/ Sed,https://coralnet.ucsd.edu/label/4298/,Algae,41,B_Dict_Sed,False,,False,False
@@ -6196,12 +6196,12 @@
 6194,569,Callophyllis spp.,https://coralnet.ucsd.edu/label/569/,Algae,63,CALL,False,,False,False
 6195,3316,Canistrocarpus cervicornis,https://coralnet.ucsd.edu/label/3316/,Algae,61,CANI,False,,False,False
 6196,7246,Canistrocarpus sp.,https://coralnet.ucsd.edu/label/7246/,Algae,0,Canistro,False,,False,False
-6197,7737,Carpophyllum flexuosum,https://coralnet.ucsd.edu/label/7737/,Algae,44,CarpFLEX,False,,False,False
-6198,7736,Carpophyllum maschalocarpum,https://coralnet.ucsd.edu/label/7736/,Algae,41,CarpMAS,False,,False,False
+6197,7737,Carpophyllum flexuosum,https://coralnet.ucsd.edu/label/7737/,Algae,50,CarpFLEX,False,,False,False
+6198,7736,Carpophyllum maschalocarpum,https://coralnet.ucsd.edu/label/7736/,Algae,50,CarpMAS,False,,False,False
 6199,7722,Carpophyllum Sp.,https://coralnet.ucsd.edu/label/7722/,Algae,35,Carpophy.,False,,False,False
 6200,423,Caulerpa,https://coralnet.ucsd.edu/label/423/,Algae,80,Caulerpa,False,,True,False
 6201,4324,Caulerpa brachypus,https://coralnet.ucsd.edu/label/4324/,Algae,0,C brach,False,,False,False
-6202,7804,Caulerpa brownii,https://coralnet.ucsd.edu/label/7804/,Algae,0,Caul bro,False,,False,False
+6202,7804,Caulerpa brownii,https://coralnet.ucsd.edu/label/7804/,Algae,26,Caul bro,False,,False,False
 6203,5416,Caulerpaceae,https://coralnet.ucsd.edu/label/5416/,Algae,45,Caul,False,,False,False
 6204,3565,Caulerpa cupressoides,https://coralnet.ucsd.edu/label/3565/,Algae,58,CAULcupre,False,,False,False
 6205,1916,Caulerpa filicoides,https://coralnet.ucsd.edu/label/1916/,Algae,30,Cau_fil,False,,False,False
@@ -6214,7 +6214,7 @@
 6212,4410,Caulerpa peltata,https://coralnet.ucsd.edu/label/4410/,Algae,33,Capel,False,,False,False
 6213,4411,Caulerpa pickeringii,https://coralnet.ucsd.edu/label/4411/,Algae,27,Capic,False,,False,False
 6214,3566,Caulerpa prolifera,https://coralnet.ucsd.edu/label/3566/,Algae,44,CAULprolif,False,,False,False
-6215,508,Caulerpa racemosa,https://coralnet.ucsd.edu/label/508/,Algae,73,CauRac,False,,False,False
+6215,508,Caulerpa racemosa,https://coralnet.ucsd.edu/label/508/,Algae,74,CauRac,False,,False,False
 6216,1917,Caulerpa racemosa var. lamourouxii,https://coralnet.ucsd.edu/label/1917/,Algae,18,Cau_rac_la,False,,False,False
 6217,1918,Caulerpa serrulata,https://coralnet.ucsd.edu/label/1918/,Algae,65,Cau_ser,False,,False,False
 6218,3552,Caulerpa sertualariodes,https://coralnet.ucsd.edu/label/3552/,Algae,0,CASE,False,,False,False
@@ -6225,7 +6225,7 @@
 6223,1920,Caulerpa webbiana,https://coralnet.ucsd.edu/label/1920/,Algae,60,Cau_web,False,,False,False
 6224,6232,Caulerpella ambigua,https://coralnet.ucsd.edu/label/6232/,Algae,25,CAMB,False,,False,False
 6225,7795,C barbata epiphyte,https://coralnet.ucsd.edu/label/7795/,Algae,38,Cbep,False,,False,False
-6226,5309,CCA,https://coralnet.ucsd.edu/label/5309/,Algae,70,CCA1,False,,False,False
+6226,5309,CCA,https://coralnet.ucsd.edu/label/5309/,Algae,69,CCA1,False,,False,False
 6227,83,CCA/Bare Space,https://coralnet.ucsd.edu/label/83/,Algae,79,CCA_bare,False,,False,False
 6228,101,CCA (crustose coralline algae),https://coralnet.ucsd.edu/label/101/,Algae,88,CCA,False,,True,True
 6229,4330,CCA + Dictyota,https://coralnet.ucsd.edu/label/4330/,Algae,43,CCA_Dicty,False,,False,False
@@ -6280,10 +6280,10 @@
 6278,6044,Chaetomorpha Spp.,https://coralnet.ucsd.edu/label/6044/,Algae,43,CHAE,False,,False,False
 6279,4202,Chamaedoris peniculum,https://coralnet.ucsd.edu/label/4202/,Algae,39,Chpe,False,,False,False
 6280,5623,Champia bifida,https://coralnet.ucsd.edu/label/5623/,Algae,52,C-bif,False,,False,False
-6281,7807,Champia chathamensis,https://coralnet.ucsd.edu/label/7807/,Algae,0,Champia ch,False,,False,False
+6281,7807,Champia chathamensis,https://coralnet.ucsd.edu/label/7807/,Algae,44,Champia ch,False,,False,False
 6282,967,Champia/Lomentaria,https://coralnet.ucsd.edu/label/967/,Algae,51,ChaLom,False,,False,False
-6283,7808,Champia novae-zelandiae,https://coralnet.ucsd.edu/label/7808/,Algae,0,Champia no,False,,False,False
-6284,3600,Champia parvula,https://coralnet.ucsd.edu/label/3600/,Algae,52,ChPar,False,,False,False
+6283,7808,Champia novae-zelandiae,https://coralnet.ucsd.edu/label/7808/,Algae,33,Champia no,False,,False,False
+6284,3600,Champia parvula,https://coralnet.ucsd.edu/label/3600/,Algae,53,ChPar,False,,False,False
 6285,6025,Champia spp,https://coralnet.ucsd.edu/label/6025/,Algae,0,ChSpp,False,,False,False
 6286,5553,Chlorodesmis caespitosa,https://coralnet.ucsd.edu/label/5553/,Algae,25,CCAE,False,,False,False
 6287,1922,Chlorodesmis fastigiata,https://coralnet.ucsd.edu/label/1922/,Algae,53,Chl_fas,False,,False,False
@@ -6314,7 +6314,7 @@
 6312,509,Cladophora prolifera,https://coralnet.ucsd.edu/label/509/,Algae,63,ClaPro,False,,False,False
 6313,5555,Cladophora sericea,https://coralnet.ucsd.edu/label/5555/,Algae,0,CSER,False,,False,False
 6314,425,Cladophora sp.,https://coralnet.ucsd.edu/label/425/,Algae,74,Cldph,False,,False,False
-6315,7803,Cladophora vadorum,https://coralnet.ucsd.edu/label/7803/,Algae,36,Cl_vad,False,,False,False
+6315,7803,Cladophora vadorum,https://coralnet.ucsd.edu/label/7803/,Algae,29,Cl_vad,False,,False,False
 6316,3551,Cladophora vagabunda,https://coralnet.ucsd.edu/label/3551/,Algae,0,CLVA,False,,False,False
 6317,4720,Cladophoropsis adhaerens,https://coralnet.ucsd.edu/label/4720/,Algae,0,C.adhaeren,False,,False,False
 6318,4414,Cladophoropsis luxurians,https://coralnet.ucsd.edu/label/4414/,Algae,18,Cllux,False,,False,False
@@ -6325,9 +6325,9 @@
 6323,2643,Clumpy Brown Macroalgae,https://coralnet.ucsd.edu/label/2643/,Algae,42,MacBrnClmp,False,,False,False
 6324,220,Codium,https://coralnet.ucsd.edu/label/220/,Algae,76,Cod,False,,False,False
 6325,510,Codium carolineaum,https://coralnet.ucsd.edu/label/510/,Algae,49,CodCar,False,,False,False
-6326,7809,Codium convolutum,https://coralnet.ucsd.edu/label/7809/,Algae,0,Codium con,False,,False,False
+6326,7809,Codium convolutum,https://coralnet.ucsd.edu/label/7809/,Algae,37,Codium con,False,,False,False
 6327,5166,Codium_corticated_macrophyte,https://coralnet.ucsd.edu/label/5166/,Algae,35,codcom,False,,False,False
-6328,511,Codium fragile,https://coralnet.ucsd.edu/label/511/,Algae,65,CodErc,False,,False,False
+6328,511,Codium fragile,https://coralnet.ucsd.edu/label/511/,Algae,64,CodErc,False,,False,False
 6329,1671,Codium fragile ssp fragile (canopy),https://coralnet.ucsd.edu/label/1671/,Algae,0,CODC,False,,False,False
 6330,1670,Codium fragile ssp fragile (substratum),https://coralnet.ucsd.edu/label/1670/,Algae,0,CODS,False,,False,False
 6331,4416,Codium geppiorum,https://coralnet.ucsd.edu/label/4416/,Algae,0,Cogep,False,,False,False
@@ -6436,11 +6436,11 @@
 6434,1440,Cyanobacteria smothering rubble,https://coralnet.ucsd.edu/label/1440/,Algae,68,CYANO_RB,False,,False,False
 6435,6869,Cyanobacteria turf sandy,https://coralnet.ucsd.edu/label/6869/,Algae,51,CyaTuSy,False,,False,False
 6436,2011,Cyanobacterium sp.,https://coralnet.ucsd.edu/label/2011/,Algae,73,Cya_spe,True,Duplicate of Cyanobacteria,False,False
-6437,6897,Cymathere triplicata,https://coralnet.ucsd.edu/label/6897/,Algae,27,CYTRI,False,,False,False
-6438,7810,Cystophora retroflexa,https://coralnet.ucsd.edu/label/7810/,Algae,0,Cys retro,False,,False,False
+6437,6897,Cymathere triplicata,https://coralnet.ucsd.edu/label/6897/,Algae,29,CYTRI,False,,False,False
+6438,7810,Cystophora retroflexa,https://coralnet.ucsd.edu/label/7810/,Algae,40,Cys retro,False,,False,False
 6439,7811,Cystophora scalaris,https://coralnet.ucsd.edu/label/7811/,Algae,0,Cyst scal,False,,False,False
 6440,7728,Cystophora sp.,https://coralnet.ucsd.edu/label/7728/,Algae,0,Cys.Sp.,False,,False,False
-6441,7812,Cystophora Torulosa,https://coralnet.ucsd.edu/label/7812/,Algae,0,cyst toru,False,,False,False
+6441,7812,Cystophora Torulosa,https://coralnet.ucsd.edu/label/7812/,Algae,44,cyst toru,False,,False,False
 6442,2487,Cystoseira babies-marina,https://coralnet.ucsd.edu/label/2487/,Algae,0,Cyst_ab,False,,False,False
 6443,7785,Cystoseira barbata,https://coralnet.ucsd.edu/label/7785/,Algae,44,Cbar,False,,False,False
 6444,7796,Cystoseira barbata Cladophora epiphyte,https://coralnet.ucsd.edu/label/7796/,Algae,7,CbCl,False,,False,False
@@ -6464,7 +6464,7 @@
 6462,4500,Dead Acanthophora spicifera,https://coralnet.ucsd.edu/label/4500/,Algae,48,DeAcnSp,False,,False,False
 6463,4456,Dead Acropora with sedimented turf,https://coralnet.ucsd.edu/label/4456/,Algae,47,Dacrsed,False,,False,False
 6464,4455,Dead Acropora with sediment free turf,https://coralnet.ucsd.edu/label/4455/,Algae,39,Dacr,False,,False,False
-6465,5943,Dead algae,https://coralnet.ucsd.edu/label/5943/,Algae,45,D_algae,False,,False,False
+6465,5943,Dead algae,https://coralnet.ucsd.edu/label/5943/,Algae,47,D_algae,False,,False,False
 6466,2557,dead corallina,https://coralnet.ucsd.edu/label/2557/,Algae,57,DeCo,False,,False,False
 6467,3645,Dead Halimeda,https://coralnet.ucsd.edu/label/3645/,Algae,64,HaliDead,False,,False,False
 6468,6609,dead_Halimeda_sp,https://coralnet.ucsd.edu/label/6609/,Algae,46,Hal_dead,False,,False,False
@@ -6481,7 +6481,7 @@
 6479,1665,Desmarestia aculeata (substratum),https://coralnet.ucsd.edu/label/1665/,Algae,0,DASUB,False,,False,False
 6480,4073,Desmarestia anceps,https://coralnet.ucsd.edu/label/4073/,Algae,50,DESANC,False,,False,False
 6481,4075,Desmarestia antarctica,https://coralnet.ucsd.edu/label/4075/,Algae,59,DESANT,False,,False,False
-6482,6904,Desmarestia ligulata,https://coralnet.ucsd.edu/label/6904/,Algae,25,DELIG,False,,False,False
+6482,6904,Desmarestia ligulata,https://coralnet.ucsd.edu/label/6904/,Algae,0,DELIG,False,,False,False
 6483,4074,Desmarestia menziesii,https://coralnet.ucsd.edu/label/4074/,Algae,58,DESMEN,False,,False,False
 6484,710,Desmarestia munda,https://coralnet.ucsd.edu/label/710/,Algae,37,DEMU,False,,False,False
 6485,640,Desmarestia sp.,https://coralnet.ucsd.edu/label/640/,Algae,59,DESM,False,,False,False
@@ -6502,7 +6502,7 @@
 6500,7075,Dictyopteris 3,https://coralnet.ucsd.edu/label/7075/,Algae,0,DICP3,False,,False,False
 6501,3837,Dictyopteris australis,https://coralnet.ucsd.edu/label/3837/,Algae,51,Dicaus,False,,False,False
 6502,5632,Dictyopteris delicatula,https://coralnet.ucsd.edu/label/5632/,Algae,57,D-del,False,,False,False
-6503,501,Dictyopteris hoytii,https://coralnet.ucsd.edu/label/501/,Algae,64,DictHo,False,,False,False
+6503,501,Dictyopteris hoytii,https://coralnet.ucsd.edu/label/501/,Algae,65,DictHo,False,,False,False
 6504,6074,Dictyopteris jamaicensis,https://coralnet.ucsd.edu/label/6074/,Algae,21,DICPJM,False,,False,False
 6505,6046,Dictyopteris jolyana,https://coralnet.ucsd.edu/label/6046/,Algae,50,DICPJO,False,,False,False
 6506,6073,Dictyopteris justii,https://coralnet.ucsd.edu/label/6073/,Algae,0,DICPJT,False,,False,False
@@ -6512,7 +6512,7 @@
 6510,5634,Dictyopteris repens,https://coralnet.ucsd.edu/label/5634/,Algae,35,D-rep,False,,False,False
 6511,5635,Dictyopteris undulata,https://coralnet.ucsd.edu/label/5635/,Algae,35,D-und,False,,False,False
 6512,3828,Dictyosphaerea,https://coralnet.ucsd.edu/label/3828/,Algae,53,DCTpha,True,Duplicate of Dictyosphaeria,False,False
-6513,422,Dictyosphaeria,https://coralnet.ucsd.edu/label/422/,Algae,70,Dictyosph,False,,True,False
+6513,422,Dictyosphaeria,https://coralnet.ucsd.edu/label/422/,Algae,71,Dictyosph,False,,True,False
 6514,1041,Dictyosphaeria cavernosa,https://coralnet.ucsd.edu/label/1041/,Algae,70,DCav,False,,False,False
 6515,5351,Dictyosphaeria_encrusting like,https://coralnet.ucsd.edu/label/5351/,Algae,18,dicspha,False,,False,False
 6516,6028,Dictyosphaeria ocellata,https://coralnet.ucsd.edu/label/6028/,Algae,0,DiOce,False,,False,False
@@ -6524,7 +6524,7 @@
 6522,7224,Dictyota bartayrsii,https://coralnet.ucsd.edu/label/7224/,Algae,37,Dicty bart,False,,False,False
 6523,7099,Dictyota binghamiae,https://coralnet.ucsd.edu/label/7099/,Algae,0,mermaid_gl,False,,False,False
 6524,4308,Dictyota + CCA,https://coralnet.ucsd.edu/label/4308/,Algae,44,DictCCA,False,,False,False
-6525,6070,Dictyota ciliolata,https://coralnet.ucsd.edu/label/6070/,Algae,51,DICTC,False,,False,False
+6525,6070,Dictyota ciliolata,https://coralnet.ucsd.edu/label/6070/,Algae,52,DICTC,False,,False,False
 6526,5169,Dictyota_corticated_foliose,https://coralnet.ucsd.edu/label/5169/,Algae,45,diccof,False,,False,False
 6527,2828,Dictyota dichotoma,https://coralnet.ucsd.edu/label/2828/,Algae,72,ddich,False,,False,False
 6528,4419,Dictyota divaricata,https://coralnet.ucsd.edu/label/4419/,Algae,32,Didiv,False,,False,False
@@ -6536,7 +6536,7 @@
 6534,5637,Dictyota liturata,https://coralnet.ucsd.edu/label/5637/,Algae,40,D-lit,False,,False,False
 6535,4303,Dictyota + Lobophora,https://coralnet.ucsd.edu/label/4303/,Algae,43,DictLobo,False,,False,False
 6536,4304,Dictyota + Lobophora + Sediment,https://coralnet.ucsd.edu/label/4304/,Algae,44,DicLoboSed,False,,False,False
-6537,6069,Dictyota menstrualis,https://coralnet.ucsd.edu/label/6069/,Algae,53,DICTM,False,,False,False
+6537,6069,Dictyota menstrualis,https://coralnet.ucsd.edu/label/6069/,Algae,54,DICTM,False,,False,False
 6538,7565,Dictyota mertensii,https://coralnet.ucsd.edu/label/7565/,Algae,39,DICMER,False,,False,False
 6539,7814,Dictyota Ocellata,https://coralnet.ucsd.edu/label/7814/,Algae,0,dict oce,False,,False,False
 6540,6092,Dictyota Other 2,https://coralnet.ucsd.edu/label/6092/,Algae,0,DICT2,False,,False,False
@@ -6569,12 +6569,12 @@
 6567,4273,Early Gametophyte,https://coralnet.ucsd.edu/label/4273/,Algae,39,E GAM,False,,False,False
 6568,7352,Ecklonia maxima,https://coralnet.ucsd.edu/label/7352/,Algae,34,ECKM,False,,False,False
 6569,7723,Ecklonia radiata,https://coralnet.ucsd.edu/label/7723/,Algae,22,Ecklon,False,,False,False
-6570,6850,Ectocarpaceae,https://coralnet.ucsd.edu/label/6850/,Algae,29,Ectoc,False,,False,False
+6570,6850,Ectocarpaceae,https://coralnet.ucsd.edu/label/6850/,Algae,36,Ectoc,False,,False,False
 6571,7177,Ectocarpales,https://coralnet.ucsd.edu/label/7177/,Algae,0,Ect.,False,,False,False
 6572,6912,Ectocarpus,https://coralnet.ucsd.edu/label/6912/,Algae,43,ectocarpus,False,,False,False
 6573,2124,Ectocarpus Lyngbye,https://coralnet.ucsd.edu/label/2124/,Algae,56,Ectocarp,False,,False,False
 6574,7106,Egregia laevigata,https://coralnet.ucsd.edu/label/7106/,Algae,0,feather_bo,False,,False,False
-6575,5571,Egregia menziesii,https://coralnet.ucsd.edu/label/5571/,Algae,61,EGRMEN,False,,False,False
+6575,5571,Egregia menziesii,https://coralnet.ucsd.edu/label/5571/,Algae,62,EGRMEN,False,,False,False
 6576,6101,Eisenia arborea,https://coralnet.ucsd.edu/label/6101/,Algae,38,EISA,False,,False,False
 6577,1909,Ellisolandia elongata,https://coralnet.ucsd.edu/label/1909/,Algae,64,Ellis,False,,False,False
 6578,4117,Encrsuting Fleshy Algae,https://coralnet.ucsd.edu/label/4117/,Algae,63,_EFA,False,,False,False
@@ -6585,11 +6585,11 @@
 6583,5468,Encrusting macroalgae (non-coralline),https://coralnet.ucsd.edu/label/5468/,Algae,61,ENMA,False,,False,False
 6584,5451,Encrusting macroalgae on dead branching,https://coralnet.ucsd.edu/label/5451/,Algae,47,ENMA_DB,False,,False,False
 6585,5453,Encrusting macroalgae on dead massive,https://coralnet.ucsd.edu/label/5453/,Algae,40,ENMA_DM,False,,False,False
-6586,5511,Encrusting macroalgae on rubble,https://coralnet.ucsd.edu/label/5511/,Algae,52,ENMA_RUB,False,,False,False
+6586,5511,Encrusting macroalgae on rubble,https://coralnet.ucsd.edu/label/5511/,Algae,51,ENMA_RUB,False,,False,False
 6587,6117,Encrusting mastocarpus,https://coralnet.ucsd.edu/label/6117/,Algae,30,MASTENC,False,,False,False
 6588,2651,Encrusting Peysso,https://coralnet.ucsd.edu/label/2651/,Algae,60,PeyEnc,False,,False,False
 6589,7356,Encrusting Pink,https://coralnet.ucsd.edu/label/7356/,Algae,31,ECRP,False,,False,False
-6590,6898,Endocladia sp.,https://coralnet.ucsd.edu/label/6898/,Algae,14,ENDOCLAD,False,,False,False
+6590,6898,Endocladia sp.,https://coralnet.ucsd.edu/label/6898/,Algae,13,ENDOCLAD,False,,False,False
 6591,2623,Endolithic Algae on Rock,https://coralnet.ucsd.edu/label/2623/,Algae,26,EdLtAlgRck,False,,False,True
 6592,3554,Enteromorpha flexuisa,https://coralnet.ucsd.edu/label/3554/,Algae,41,ENFL,False,,False,False
 6593,1433,Epilithic algal matirx smotheting rubble,https://coralnet.ucsd.edu/label/1433/,Algae,81,EAM_RB,False,,False,False
@@ -6616,7 +6616,7 @@
 6614,7269,Flat Branching Brown Algae,https://coralnet.ucsd.edu/label/7269/,Algae,18,BROWN1,False,,False,False
 6615,7101,Flat branching red algae,https://coralnet.ucsd.edu/label/7101/,Algae,53,branch_red,False,,False,False
 6616,7102,Flat leaf red algae,https://coralnet.ucsd.edu/label/7102/,Algae,60,leaf_red,False,,False,False
-6617,2240,Fleshy_Algae,https://coralnet.ucsd.edu/label/2240/,Algae,60,Fles_Algae,True,Duplicate of Algae (fleshy),False,False
+6617,2240,Fleshy_Algae,https://coralnet.ucsd.edu/label/2240/,Algae,61,Fles_Algae,True,Duplicate of Algae (fleshy),False,False
 6618,6613,Fleshy Calcified Algae,https://coralnet.ucsd.edu/label/6613/,Algae,70,flesh_calc,False,,False,False
 6619,6865,Fleshy Green Macroalgae,https://coralnet.ucsd.edu/label/6865/,Algae,0,FGM,False,,False,False
 6620,7755,Fleshy macroalgae,https://coralnet.ucsd.edu/label/7755/,Algae,0,FMA,False,,False,False
@@ -6688,7 +6688,7 @@
 6686,6835,Gracilaria tikvahiae,https://coralnet.ucsd.edu/label/6835/,Algae,34,GracTik,False,,False,False
 6687,1816,Gracilaria verrucosa,https://coralnet.ucsd.edu/label/1816/,Algae,43,Graci verr,False,,False,False
 6688,5609,Gracilariopsis chorda,https://coralnet.ucsd.edu/label/5609/,Algae,0,G-cho,False,,False,False
-6689,6907,Grateloupia filicina,https://coralnet.ucsd.edu/label/6907/,Algae,39,GRA,False,,False,False
+6689,6907,Grateloupia filicina,https://coralnet.ucsd.edu/label/6907/,Algae,41,GRA,False,,False,False
 6690,5915,Grazed CCA,https://coralnet.ucsd.edu/label/5915/,Algae,32,grazed_CCA,False,,False,False
 6691,5916,Grazed CCAG,https://coralnet.ucsd.edu/label/5916/,Algae,25,graze_CCAG,False,,False,False
 6692,2452,Grazed or thin turf,https://coralnet.ucsd.edu/label/2452/,Algae,66,Turf thin,False,,False,False
@@ -6734,7 +6734,7 @@
 6732,3668,Halopteris filicina,https://coralnet.ucsd.edu/label/3668/,Algae,41,Halopt_fil,False,,False,False
 6733,4078,Halopteris obovata,https://coralnet.ucsd.edu/label/4078/,Algae,37,HALO.,False,,False,False
 6734,1907,Halopteris scoparia,https://coralnet.ucsd.edu/label/1907/,Algae,59,Halo,False,,False,False
-6735,7816,Halopteris sp.,https://coralnet.ucsd.edu/label/7816/,Algae,0,Halopteris,False,,False,False
+6735,7816,Halopteris sp.,https://coralnet.ucsd.edu/label/7816/,Algae,30,Halopteris,False,,False,False
 6736,6109,Halosaccion glandiforme,https://coralnet.ucsd.edu/label/6109/,Algae,44,HALOG,False,,False,False
 6737,3826,Halymeniaceae,https://coralnet.ucsd.edu/label/3826/,Algae,52,HYceae,False,,False,False
 6738,538,Halymenia elongata,https://coralnet.ucsd.edu/label/538/,Algae,57,HalyEl,False,,False,False
@@ -6745,8 +6745,8 @@
 6743,3675,Hamelida tuna,https://coralnet.ucsd.edu/label/3675/,Algae,0,Halim_tun,False,,False,False
 6744,5762,Harveylithon canariense,https://coralnet.ucsd.edu/label/5762/,Algae,48,Ha-can,False,,False,False
 6745,5763,Harveylithon roseum,https://coralnet.ucsd.edu/label/5763/,Algae,57,Ha-ros,False,,False,False
-6746,6858,Hedophyllum nigripes,https://coralnet.ucsd.edu/label/6858/,Algae,20,HEDON,False,,False,False
-6747,6102,Hedophyllum sessile,https://coralnet.ucsd.edu/label/6102/,Algae,55,HEDOS,False,,False,False
+6746,6858,Hedophyllum nigripes,https://coralnet.ucsd.edu/label/6858/,Algae,19,HEDON,False,,False,False
+6747,6102,Hedophyllum sessile,https://coralnet.ucsd.edu/label/6102/,Algae,56,HEDOS,False,,False,False
 6748,3574,Heterosiphonia,https://coralnet.ucsd.edu/label/3574/,Algae,40,Heterosiph,False,,False,False
 6749,4326,Hildenbrandia rubra,https://coralnet.ucsd.edu/label/4326/,Algae,45,hilden,False,,False,False
 6750,5734,Hildenbrandia Sp.,https://coralnet.ucsd.edu/label/5734/,Algae,49,HildenSp,False,,False,False
@@ -6757,7 +6757,7 @@
 6755,5817,Homoeostrichus_corticated_foliose,https://coralnet.ucsd.edu/label/5817/,Algae,0,homcof,False,,False,False
 6756,5640,Homoeostrichus formosanus,https://coralnet.ucsd.edu/label/5640/,Algae,44,H-for,False,,False,False
 6757,2885,Hormosira,https://coralnet.ucsd.edu/label/2885/,Algae,0,Hormos,False,,False,False
-6758,7855,Hormosiraceae banksii,https://coralnet.ucsd.edu/label/7855/,Algae,0,Hormobank,False,,False,False
+6758,7855,Hormosiraceae banksii,https://coralnet.ucsd.edu/label/7855/,Algae,38,Hormobank,False,,False,False
 6759,3089,Hydroclathrus,https://coralnet.ucsd.edu/label/3089/,Algae,57,Hydrocl,False,,False,False
 6760,4430,Hydroclathrus clathratus,https://coralnet.ucsd.edu/label/4430/,Algae,49,Hyclat,False,,False,False
 6761,4131,Hydroclathrus Clathrus,https://coralnet.ucsd.edu/label/4131/,Algae,0,HydroCla,False,,False,False
@@ -6803,8 +6803,8 @@
 6801,437,Kappaphycus sp.,https://coralnet.ucsd.edu/label/437/,Algae,64,KAPPA,False,,False,False
 6802,3385,Kelp,https://coralnet.ucsd.edu/label/3385/,Algae,71,KELPA,False,,False,False
 6803,1160,"Kelp, dead holdfast",https://coralnet.ucsd.edu/label/1160/,Algae,50,KEDH,False,,False,False
-6804,7489,Kelp - holdfast,https://coralnet.ucsd.edu/label/7489/,Algae,30,holdfast,False,,False,False
-6805,7103,Lacy red algae,https://coralnet.ucsd.edu/label/7103/,Algae,20,lacy_red,False,,False,False
+6804,7489,Kelp - holdfast,https://coralnet.ucsd.edu/label/7489/,Algae,32,holdfast,False,,False,False
+6805,7103,Lacy red algae,https://coralnet.ucsd.edu/label/7103/,Algae,5,lacy_red,False,,False,False
 6806,4097,Lambia antarctica,https://coralnet.ucsd.edu/label/4097/,Algae,34,LAMB,False,,False,False
 6807,7095,Laminaraia sinclairii,https://coralnet.ucsd.edu/label/7095/,Algae,0,dense_kelp,False,,False,False
 6808,755,Laminaria complanata,https://coralnet.ucsd.edu/label/755/,Algae,0,LAMC,False,,False,False
@@ -6996,7 +6996,7 @@
 6994,2831,Macroalgae: Laminate: Brown: L. variegata,https://coralnet.ucsd.edu/label/2831/,Algae,0,lobov,False,,False,False
 6995,2878,Macroalgae: Laminate: brown: padina,https://coralnet.ucsd.edu/label/2878/,Algae,49,MLBPadina,True,Duplicate of Padina,False,False
 6996,931,Macroalgae: Laminate: brown: Zonaria sp.,https://coralnet.ucsd.edu/label/931/,Algae,57,MALABZ,False,,False,False
-6997,2879,Macroalgae:Laminate:Brown: Zonaria Turneriana,https://coralnet.ucsd.edu/label/2879/,Algae,55,MLBZ,False,,False,False
+6997,2879,Macroalgae:Laminate:Brown: Zonaria Turneriana,https://coralnet.ucsd.edu/label/2879/,Algae,57,MLBZ,False,,False,False
 6998,302,Macroalgae: Laminate: green,https://coralnet.ucsd.edu/label/302/,Algae,59,MALAG,False,,False,False
 6999,2875,Macroalgae: Laminate: green: dictyosphaeria,https://coralnet.ucsd.edu/label/2875/,Algae,0,MLGD,False,,False,False
 7000,2876,Macroalgae: Laminate: green: udotea,https://coralnet.ucsd.edu/label/2876/,Algae,0,MLGU,False,,False,False
@@ -7041,7 +7041,7 @@
 7039,2905,Macroalg:ErectFineBranching:Red:Phacelocarpus,https://coralnet.ucsd.edu/label/2905/,Algae,0,MERPP,False,,False,False
 7040,2894,Macroalg:Filamentous:Red:Polysiphonia,https://coralnet.ucsd.edu/label/2894/,Algae,0,MFRPoly,False,,False,False
 7041,2939,Macroalg: Large Canopy Forming: Phyllosphora,https://coralnet.ucsd.edu/label/2939/,Algae,58,PHYLL,False,,False,False
-7042,4525,Macrocystis pyrifera,https://coralnet.ucsd.edu/label/4525/,Algae,59,pyrifera,False,,False,False
+7042,4525,Macrocystis pyrifera,https://coralnet.ucsd.edu/label/4525/,Algae,60,pyrifera,False,,False,False
 7043,7503,Macrocystis recruit,https://coralnet.ucsd.edu/label/7503/,Algae,11,MAPYR,False,,False,False
 7044,7408,Macrocystis sp.,https://coralnet.ucsd.edu/label/7408/,Algae,0,MACROCYSTI,False,,False,False
 7045,2575,Macrolagae all genera,https://coralnet.ucsd.edu/label/2575/,Algae,50,MALGAE,False,,False,False
@@ -7077,7 +7077,7 @@
 7075,7783,Microzonia,https://coralnet.ucsd.edu/label/7783/,Algae,15,Microzonia,False,,False,False
 7076,3795,Millerella pannosa,https://coralnet.ucsd.edu/label/3795/,Algae,0,MillePa,False,,False,False
 7077,2792,Miscellaneous algae,https://coralnet.ucsd.edu/label/2792/,Algae,58,MisAlg,False,,False,False
-7078,7704,mixed algae species,https://coralnet.ucsd.edu/label/7704/,Algae,59,q,False,,False,False
+7078,7704,mixed algae species,https://coralnet.ucsd.edu/label/7704/,Algae,60,q,False,,False,False
 7079,7663,Monostroma grevillei,https://coralnet.ucsd.edu/label/7663/,Algae,30,MON GRE,False,,False,False
 7080,4096,Monsotroma hariotii,https://coralnet.ucsd.edu/label/4096/,Algae,40,MONO,False,,False,False
 7081,2479,"Montipora capitata, recently dead",https://coralnet.ucsd.edu/label/2479/,Algae,70,MCAP_RD,False,,False,False
@@ -7096,9 +7096,9 @@
 7094,1933,Neomeris spp.,https://coralnet.ucsd.edu/label/1933/,Algae,65,Neo_spp,True,Duplicate of Neomeris,False,False
 7095,4439,Neomeris vanbosseae,https://coralnet.ucsd.edu/label/4439/,Algae,0,Nevan,False,,False,False
 7096,6119,Neorhodomela sp,https://coralnet.ucsd.edu/label/6119/,Algae,40,NEOR,False,,False,False
-7097,3335,Neptune's Necklace - Hormosira banksii,https://coralnet.ucsd.edu/label/3335/,Algae,60,HORMOSIRA.,False,,False,False
+7097,3335,Neptune's Necklace - Hormosira banksii,https://coralnet.ucsd.edu/label/3335/,Algae,59,HORMOSIRA.,False,,False,False
 7098,3379,Nereia spp.,https://coralnet.ucsd.edu/label/3379/,Algae,0,NER,False,,False,False
-7099,729,Nereocystis luetkeana,https://coralnet.ucsd.edu/label/729/,Algae,47,NERO,False,,False,False
+7099,729,Nereocystis luetkeana,https://coralnet.ucsd.edu/label/729/,Algae,42,NERO,False,,False,False
 7100,5190,Neurymenia_corticated_macrophyte,https://coralnet.ucsd.edu/label/5190/,Algae,41,neucom,False,,False,False
 7101,7152,Nitophyllum punctatum,https://coralnet.ucsd.edu/label/7152/,Algae,28,Nit.pun,False,,False,False
 7102,6027,Nitophyllum spp,https://coralnet.ucsd.edu/label/6027/,Algae,0,NiSpp,False,,False,False
@@ -7106,7 +7106,7 @@
 7104,3085,Nutrient Indicator Algae,https://coralnet.ucsd.edu/label/3085/,Algae,66,NIA,False,,False,False
 7105,4071,Ochrophyta,https://coralnet.ucsd.edu/label/4071/,Algae,36,OCH,False,,False,False
 7106,3267,Ochtodes secyndiramea,https://coralnet.ucsd.edu/label/3267/,Algae,52,Ochsec,False,,False,False
-7107,6120,Odonthalia sp.,https://coralnet.ucsd.edu/label/6120/,Algae,40,ODON,False,,False,False
+7107,6120,Odonthalia sp.,https://coralnet.ucsd.edu/label/6120/,Algae,42,ODON,False,,False,False
 7108,5628,Ohelopapa flexilis,https://coralnet.ucsd.edu/label/5628/,Algae,0,O-fle,False,,False,False
 7109,730,Opuntiella californica,https://coralnet.ucsd.edu/label/730/,Algae,51,OPCA,False,,False,False
 7110,3576,Osmundaria obtusiloba,https://coralnet.ucsd.edu/label/3576/,Algae,57,OSMUobtu,False,,False,False
@@ -7196,7 +7196,7 @@
 7194,5620,Peyssonnelia distenta,https://coralnet.ucsd.edu/label/5620/,Algae,38,P-dis,False,,False,False
 7195,7161,Peyssonnelia heteromorpha,https://coralnet.ucsd.edu/label/7161/,Algae,0,Pey.het,False,,False,False
 7196,4356,Peyssonnelia + Hypnea,https://coralnet.ucsd.edu/label/4356/,Algae,32,PeyHypnea,False,,False,False
-7197,4361,Peyssonnelia + Hypnea + Sediment,https://coralnet.ucsd.edu/label/4361/,Algae,28,PeyHypSed,False,,False,False
+7197,4361,Peyssonnelia + Hypnea + Sediment,https://coralnet.ucsd.edu/label/4361/,Algae,29,PeyHypSed,False,,False,False
 7198,5621,Peyssonnelia indica,https://coralnet.ucsd.edu/label/5621/,Algae,42,P-ind,False,,False,False
 7199,4355,Peyssonnelia + Jania,https://coralnet.ucsd.edu/label/4355/,Algae,23,PeyJania,False,,False,False
 7200,4360,Peyssonnelia + Jania + Sediment,https://coralnet.ucsd.edu/label/4360/,Algae,15,PeyJanSed,False,,False,False
@@ -7270,14 +7270,14 @@
 7268,1683,Ptilota serrata (substatum),https://coralnet.ucsd.edu/label/1683/,Algae,0,PTS,False,,False,False
 7269,7871,Pyropia columbina,https://coralnet.ucsd.edu/label/7871/,Algae,0,PYROP,False,,False,False
 7270,4085,Pyropia endiviifolia,https://coralnet.ucsd.edu/label/4085/,Algae,29,PYR,False,,False,False
-7271,6110,Pyropia sp.,https://coralnet.ucsd.edu/label/6110/,Algae,50,PYRO,False,,False,False
+7271,6110,Pyropia sp.,https://coralnet.ucsd.edu/label/6110/,Algae,59,PYRO,False,,False,False
 7272,7154,Radicilingua sp.,https://coralnet.ucsd.edu/label/7154/,Algae,24,Rad.sp.,False,,False,False
 7273,7818,Ralfsia/Brown crusts,https://coralnet.ucsd.edu/label/7818/,Algae,9,brown crus,False,,False,False
-7274,3087,Ralfsia expansa,https://coralnet.ucsd.edu/label/3087/,Algae,61,Rae,False,,False,False
+7274,3087,Ralfsia expansa,https://coralnet.ucsd.edu/label/3087/,Algae,63,Rae,False,,False,False
 7275,4444,Ralfsia spp.,https://coralnet.ucsd.edu/label/4444/,Algae,61,Ralfs,False,,False,False
 7276,4210,Ramicrusta Covered by Sand,https://coralnet.ucsd.edu/label/4210/,Algae,32,RAMS,False,,False,False
 7277,2030,Ramicrusta spp.,https://coralnet.ucsd.edu/label/2030/,Algae,68,Ram_spp,False,,False,False
-7278,4082,Red algae.,https://coralnet.ucsd.edu/label/4082/,Algae,63,REDA,False,,False,False
+7278,4082,Red algae.,https://coralnet.ucsd.edu/label/4082/,Algae,64,REDA,False,,False,False
 7279,597,Red ALgae,https://coralnet.ucsd.edu/label/597/,Algae,67,RAlg,False,,False,False
 7280,7302,Red Algae 2,https://coralnet.ucsd.edu/label/7302/,Algae,0,RED2,False,,False,False
 7281,4935,Red_algae_articulated_calcareous,https://coralnet.ucsd.edu/label/4935/,Algae,18,redart,False,,False,False
@@ -7301,7 +7301,7 @@
 7299,3918,Red branching CCA,https://coralnet.ucsd.edu/label/3918/,Algae,55,R_CCAb,False,,False,False
 7300,3878,Red Calcareous,https://coralnet.ucsd.edu/label/3878/,Algae,49,ReCa,False,,False,False
 7301,6616,Red Calcified Macroalgae,https://coralnet.ucsd.edu/label/6616/,Algae,40,redcalcmac,False,,False,False
-7302,3871,Red CCA,https://coralnet.ucsd.edu/label/3871/,Algae,61,R_CCA,False,,False,False
+7302,3871,Red CCA,https://coralnet.ucsd.edu/label/3871/,Algae,62,R_CCA,False,,False,False
 7303,3917,Red CCA on dead branching coral,https://coralnet.ucsd.edu/label/3917/,Algae,24,/rCCAdbC,False,,False,False
 7304,3916,Red CCA on dead columnar coral,https://coralnet.ucsd.edu/label/3916/,Algae,28,/rCCAdcC,False,,False,False
 7305,3913,Red CCA on dead encrusting coral,https://coralnet.ucsd.edu/label/3913/,Algae,44,/rCCAdeC,False,,False,False
@@ -7321,7 +7321,7 @@
 7319,520,Red Strap/Filamentous Algae,https://coralnet.ucsd.edu/label/520/,Algae,61,RedStrap,False,,False,False
 7320,7477,Red String Algae,https://coralnet.ucsd.edu/label/7477/,Algae,18,RSA,False,,False,False
 7321,3560,Red Thick Filamentous Algae,https://coralnet.ucsd.edu/label/3560/,Algae,58,RedThickFi,False,,False,False
-7322,522,Red Turf,https://coralnet.ucsd.edu/label/522/,Algae,77,RedTurf,False,,False,False
+7322,522,Red Turf,https://coralnet.ucsd.edu/label/522/,Algae,76,RedTurf,False,,False,False
 7323,2531,Red turfing algae,https://coralnet.ucsd.edu/label/2531/,Algae,0,RTAl,False,,False,False
 7324,4381,Red Turf + Sediment,https://coralnet.ucsd.edu/label/4381/,Algae,37,RedTurfSed,False,,False,False
 7325,7285,Red Upright Macroalgae 1,https://coralnet.ucsd.edu/label/7285/,Algae,23,RDUP1,False,,False,False
@@ -7340,14 +7340,14 @@
 7338,4081,Rhodophyta,https://coralnet.ucsd.edu/label/4081/,Algae,60,RHODO,False,,False,False
 7339,7423,Rhodophyta 2,https://coralnet.ucsd.edu/label/7423/,Algae,0,RHODO FIL,False,,False,False
 7340,2133,Rhodymeniales Small Blade,https://coralnet.ucsd.edu/label/2133/,Algae,47,LRBs,False,,False,False
-7341,6837,Rhodymenia pseudopalmata,https://coralnet.ucsd.edu/label/6837/,Algae,36,RhoPseu,False,,False,False
+7341,6837,Rhodymenia pseudopalmata,https://coralnet.ucsd.edu/label/6837/,Algae,43,RhoPseu,False,,False,False
 7342,1716,Rhodymenia Sp.,https://coralnet.ucsd.edu/label/1716/,Algae,65,Rhod,False,,False,False
 7343,7372,Rock - CCA,https://coralnet.ucsd.edu/label/7372/,Algae,39,Ro_CCA,False,,False,False
 7344,7374,Rock - Halimeda,https://coralnet.ucsd.edu/label/7374/,Algae,29,Ro_H,False,,False,False
-7345,7371,Rock - Turf Algae,https://coralnet.ucsd.edu/label/7371/,Algae,56,Ro_TA,False,,False,False
+7345,7371,Rock - Turf Algae,https://coralnet.ucsd.edu/label/7371/,Algae,58,Ro_TA,False,,False,False
 7346,3547,Rodolito Morto,https://coralnet.ucsd.edu/label/3547/,Algae,63,RM,False,,False,False
 7347,3546,Rodolito Vivo,https://coralnet.ucsd.edu/label/3546/,Algae,69,RV,False,,False,False
-7348,3742,Rosenvingea sp.,https://coralnet.ucsd.edu/label/3742/,Algae,60,RSVG,False,,False,False
+7348,3742,Rosenvingea sp.,https://coralnet.ucsd.edu/label/3742/,Algae,62,RSVG,False,,False,False
 7349,2654,Rubble CCA,https://coralnet.ucsd.edu/label/2654/,Algae,58,CCARub,True,Duplicate of CCA growing on rubble,False,False
 7350,2656,Rubble Peysso,https://coralnet.ucsd.edu/label/2656/,Algae,57,PeyRub,False,,False,False
 7351,736,Saccharina bongardiana,https://coralnet.ucsd.edu/label/736/,Algae,32,SACB,False,,False,False
@@ -7385,7 +7385,7 @@
 7383,3728,Sargassum polyphyllum,https://coralnet.ucsd.edu/label/3728/,Algae,0,SPOLY,False,,False,False
 7384,7819,sargassum scabridum,https://coralnet.ucsd.edu/label/7819/,Algae,0,sarg scab,False,,False,False
 7385,5654,Sargassum siliquosum,https://coralnet.ucsd.edu/label/5654/,Algae,0,S-sil,False,,False,False
-7386,7820,Sargassum sinclairii,https://coralnet.ucsd.edu/label/7820/,Algae,25,sarg sincl,False,,False,False
+7386,7820,Sargassum sinclairii,https://coralnet.ucsd.edu/label/7820/,Algae,21,sarg sincl,False,,False,False
 7387,2537,Sargassum spp.,https://coralnet.ucsd.edu/label/2537/,Algae,65,SARG.,True,Duplicate of Sargassum,False,False
 7388,7225,Sargassum subrepandum,https://coralnet.ucsd.edu/label/7225/,Algae,39,Sarg.Subre,False,,False,False
 7389,2802,Sargassum vulgare,https://coralnet.ucsd.edu/label/2802/,Algae,49,Sargas,False,,False,False
@@ -7394,7 +7394,7 @@
 7392,2803,Scytosiphon lomentaria,https://coralnet.ucsd.edu/label/2803/,Algae,44,Scyto,False,,False,False
 7393,3333,Sea Lettuce - Ulva Lactuca,https://coralnet.ucsd.edu/label/3333/,Algae,63,ULVA.,True,Duplicate of Ulva,False,False
 7394,5478,Sebdenia_corticated_foliose,https://coralnet.ucsd.edu/label/5478/,Algae,29,sebcof,False,,False,False
-7395,7769,senescing red algae,https://coralnet.ucsd.edu/label/7769/,Algae,30,senes_RE,False,,False,False
+7395,7769,senescing red algae,https://coralnet.ucsd.edu/label/7769/,Algae,37,senes_RE,False,,False,False
 7396,4290,"Short productive algal turfs (SPATs),",https://coralnet.ucsd.edu/label/4290/,Algae,62,SPAT,False,,False,False
 7397,4448,Short turf sediment free,https://coralnet.ucsd.edu/label/4448/,Algae,49,Sturf,False,,False,False
 7398,4449,Short turf sediment free on rubble,https://coralnet.ucsd.edu/label/4449/,Algae,44,Sturfrub,False,,False,False
@@ -7436,7 +7436,7 @@
 7434,2633,Thick Turf on Rubble,https://coralnet.ucsd.edu/label/2633/,Algae,32,TkTrfRub,False,,False,False
 7435,2649,Thin Patchy CCA,https://coralnet.ucsd.edu/label/2649/,Algae,64,CCAThPch,False,,False,False
 7436,2630,Thin Turf Algae,https://coralnet.ucsd.edu/label/2630/,Algae,71,ThnTrf,False,,False,False
-7437,2635,Thin Turf on Pebbles,https://coralnet.ucsd.edu/label/2635/,Algae,48,TnTrfPeb,False,,False,False
+7437,2635,Thin Turf on Pebbles,https://coralnet.ucsd.edu/label/2635/,Algae,54,TnTrfPeb,False,,False,False
 7438,2632,Thin Turf on Rubble,https://coralnet.ucsd.edu/label/2632/,Algae,27,TnTrfRub,False,,False,False
 7439,431,Tolypiocladia glomerulata,https://coralnet.ucsd.edu/label/431/,Algae,60,TolyGlom,False,,False,False
 7440,4094,Trematocarpus antarcticus,https://coralnet.ucsd.edu/label/4094/,Algae,38,TREM,False,,False,False
@@ -7514,9 +7514,9 @@
 7512,3485,Undaria pinnatifida,https://coralnet.ucsd.edu/label/3485/,Algae,65,U.pinnatif,False,,False,False
 7513,6777,Unicellular Green Algae,https://coralnet.ucsd.edu/label/6777/,Algae,28,UGA,False,,False,False
 7514,687,Unidentified algae,https://coralnet.ucsd.edu/label/687/,Algae,68,ALGA,False,,False,False
-7515,519,Unidentified Brown,https://coralnet.ucsd.edu/label/519/,Algae,68,BROWN,False,,False,False
+7515,519,Unidentified Brown,https://coralnet.ucsd.edu/label/519/,Algae,67,BROWN,False,,False,False
 7516,1688,Unidentified brown blade (canopy),https://coralnet.ucsd.edu/label/1688/,Algae,50,BBC,False,,False,False
-7517,1689,Unidentified brown blade (substratum),https://coralnet.ucsd.edu/label/1689/,Algae,19,BBS,False,,False,False
+7517,1689,Unidentified brown blade (substratum),https://coralnet.ucsd.edu/label/1689/,Algae,21,BBS,False,,False,False
 7518,1691,Unidentified brown branched (canopy),https://coralnet.ucsd.edu/label/1691/,Algae,42,BBD,False,,False,False
 7519,1690,Unidentified brown branched (substratum),https://coralnet.ucsd.edu/label/1690/,Algae,53,BBR,False,,False,False
 7520,1710,Unidentified brown crust,https://coralnet.ucsd.edu/label/1710/,Algae,51,BRC,False,,False,False
@@ -7586,9 +7586,9 @@
 7584,5470,Zonaria_corticated_foliose,https://coralnet.ucsd.edu/label/5470/,Algae,40,zoncof,False,,False,False
 7585,2830,Zonaria diesingiana,https://coralnet.ucsd.edu/label/2830/,Algae,47,zona,False,,False,False
 7586,505,Zonaria tournefortii,https://coralnet.ucsd.edu/label/505/,Algae,68,Zon,False,,False,False
-7587,4794,Amphibolis,https://coralnet.ucsd.edu/label/4794/,Seagrass,54,AMB,False,,False,False
-7588,3797,Amphibolis antarctica,https://coralnet.ucsd.edu/label/3797/,Seagrass,56,AmphAnt,False,,True,False
-7589,6855,Bleached Phyllospadix sp.,https://coralnet.ucsd.edu/label/6855/,Seagrass,37,BPHYLLOS,False,,False,False
+7587,4794,Amphibolis,https://coralnet.ucsd.edu/label/4794/,Seagrass,56,AMB,False,,False,False
+7588,3797,Amphibolis antarctica,https://coralnet.ucsd.edu/label/3797/,Seagrass,54,AmphAnt,False,,True,False
+7589,6855,Bleached Phyllospadix sp.,https://coralnet.ucsd.edu/label/6855/,Seagrass,36,BPHYLLOS,False,,False,False
 7590,6146,Cover - Seagrass Enhalus acoroides,https://coralnet.ucsd.edu/label/6146/,Seagrass,61,C_SG_Enhl,False,,False,False
 7591,6145,Cover - Seagrass Halodule uninervis,https://coralnet.ucsd.edu/label/6145/,Seagrass,56,C_SG_Halo,False,,False,False
 7592,7262,Cymodocea,https://coralnet.ucsd.edu/label/7262/,Seagrass,0,SG_CYM,False,,False,False
@@ -7611,7 +7611,7 @@
 7609,5258,Halophila spinulosa,https://coralnet.ucsd.edu/label/5258/,Seagrass,62,SPIN,False,,False,False
 7610,2108,Halophila stipulacea,https://coralnet.ucsd.edu/label/2108/,Seagrass,78,HalophStip,False,,True,False
 7611,4791,Heterozostera,https://coralnet.ucsd.edu/label/4791/,Seagrass,52,HZos,False,,False,False
-7612,6112,Phyllospadix sp.,https://coralnet.ucsd.edu/label/6112/,Seagrass,58,PHYLLOS,False,,False,False
+7612,6112,Phyllospadix sp.,https://coralnet.ucsd.edu/label/6112/,Seagrass,59,PHYLLOS,False,,False,False
 7613,3799,Posidonia,https://coralnet.ucsd.edu/label/3799/,Seagrass,65,Pos,False,,True,False
 7614,6634,Posidonia mat,https://coralnet.ucsd.edu/label/6634/,Seagrass,30,Pocemat,False,,False,False
 7615,6207,Posidonia  oceanica,https://coralnet.ucsd.edu/label/6207/,Seagrass,62,Poce,False,,False,False
@@ -7623,18 +7623,18 @@
 7621,2564,Seagrass (Enhalus),https://coralnet.ucsd.edu/label/2564/,Seagrass,18,SeaEnh,False,,False,False
 7622,2565,Seagrass (Enhalus acoroides),https://coralnet.ucsd.edu/label/2565/,Seagrass,62,SEnhAco,False,,False,False
 7623,4113,Seagrasses,https://coralnet.ucsd.edu/label/4113/,Seagrass,36,SEAG,True,Duplicate of Seagrass,False,False
-7624,802,Seagrasses: Elliptical Leaves,https://coralnet.ucsd.edu/label/802/,Seagrass,55,SGE,False,,False,False
+7624,802,Seagrasses: Elliptical Leaves,https://coralnet.ucsd.edu/label/802/,Seagrass,53,SGE,False,,False,False
 7625,2247,Seagrasses: Elliptical Leaves: H. ovalis,https://coralnet.ucsd.edu/label/2247/,Seagrass,67,SGEH,False,,False,False
-7626,803,Seagrasses: Strap-like leaves,https://coralnet.ucsd.edu/label/803/,Seagrass,67,SGS,False,,False,False
+7626,803,Seagrasses: Strap-like leaves,https://coralnet.ucsd.edu/label/803/,Seagrass,66,SGS,False,,False,False
 7627,2246,Seagrasses: Strap-like leaves: P. australis,https://coralnet.ucsd.edu/label/2246/,Seagrass,71,SGSP,False,,False,False
-7628,7524,Seagrasses: Strap-like leaves: P. coriacea,https://coralnet.ucsd.edu/label/7524/,Seagrass,0,SGSPC,False,,False,False
-7629,7184,Seagrasses: Strap-like leaves: P. sinuosa,https://coralnet.ucsd.edu/label/7184/,Seagrass,37,SGSPS,False,,False,False
+7628,7524,Seagrasses: Strap-like leaves: P. coriacea,https://coralnet.ucsd.edu/label/7524/,Seagrass,43,SGSPC,False,,False,False
+7629,7184,Seagrasses: Strap-like leaves: P. sinuosa,https://coralnet.ucsd.edu/label/7184/,Seagrass,46,SGSPS,False,,False,False
 7630,2248,Seagrasses: Strap-like leaves: Z. muelleri,https://coralnet.ucsd.edu/label/2248/,Seagrass,69,SGSZ,False,,False,False
-7631,4585,Seagrass: Fern-like leaves,https://coralnet.ucsd.edu/label/4585/,Seagrass,52,SGF,False,,False,False
+7631,4585,Seagrass: Fern-like leaves,https://coralnet.ucsd.edu/label/4585/,Seagrass,0,SGF,False,,False,False
 7632,6693,seagrass species,https://coralnet.ucsd.edu/label/6693/,Seagrass,22,SG,False,,False,False
 7633,7451,Seagrass : Thalassia_testudinum,https://coralnet.ucsd.edu/label/7451/,Seagrass,0,STHT,False,,False,False
 7634,6214,SG_Pinifolia,https://coralnet.ucsd.edu/label/6214/,Seagrass,39,Pini,False,,False,False
-7635,7093,surfgrass,https://coralnet.ucsd.edu/label/7093/,Seagrass,25,surfgrass,False,,False,False
+7635,7093,surfgrass,https://coralnet.ucsd.edu/label/7093/,Seagrass,22,surfgrass,False,,False,False
 7636,1859,Syringodium,https://coralnet.ucsd.edu/label/1859/,Seagrass,73,Syringodiu,False,,True,False
 7637,2827,Syringodium filiforme,https://coralnet.ucsd.edu/label/2827/,Seagrass,56,SyrFil,False,,True,False
 7638,3473,Syringodium isoetifolium,https://coralnet.ucsd.edu/label/3473/,Seagrass,52,SyrIso,False,,True,False

@@ -42,6 +42,7 @@ class ImageViewer:
         # Maximize the figure window (works with 'TkAgg' backend)
         self.fig.canvas.manager.window.state('zoomed')
 
+    # TODO fix speed for rendering, very slow with lots of annotations / images
     def show_image(self):
         self.ax.clear()
         image_path = self.image_files[self.current_index]
@@ -75,7 +76,8 @@ class ImageViewer:
                 class_category = r['Label']
                 color_index = np.where(self.all_class_categories == class_category)[0][0]
                 color = self.color_map[color_index]
-                self.ax.plot(col, row, marker='o', markersize=12, color=color, linestyle='', markeredgecolor='black')
+                self.ax.plot(col, row, marker='o', markersize=8, color=color, linestyle='', markeredgecolor='black')
+
         elif self.show_annotations == 'squares':
             square_size = 224  # Size of the square patch (can be adjusted as needed)
             for _, row in current_annotations.iterrows():

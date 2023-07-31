@@ -50,6 +50,7 @@ def points(args):
         img = Image.open(image_file)
         width, height = img.size
 
+        # TODO modify this idea so that it's the margins of the image
         # At least half patch
         width -= 112
         height -= 112

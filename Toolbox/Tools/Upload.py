@@ -412,6 +412,7 @@ def upload(args):
     else:
         print(f"NOTE: No valid labelset found in {labelset}")
 
+    # TODO make images multifilechooser
     # Data to be uploaded
     images = os.path.abspath(args.images)
     images = glob.glob(images + "/*.*")

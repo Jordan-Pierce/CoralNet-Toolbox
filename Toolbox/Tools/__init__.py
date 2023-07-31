@@ -23,10 +23,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import Select
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support import expected_conditions as EC
 
 # Used to ensure log is output rapidly
@@ -154,15 +152,14 @@ def check_for_browsers(headless):
         # Needed to avoid timeouts when running in headless mode
         options.add_experimental_option('extensionLoadTimeout', 3600000)
 
-    # heck for Chrome, Firefox, and Edge browsers
+    # Check for Chrome, Firefox, and Edge browsers
     try:
-        exe_path = ChromeDriverManager().install()
-        browser = webdriver.Chrome(executable_path=exe_path, options=options)
+        browser = webdriver.Chrome(options=options)
         print("NOTE: Using Google Chrome")
         return browser
 
     except Exception as e:
-        print("WARNING: Google Chrome could not be used")
+        print(f"WARNING: Google Chrome could not be used\n{e}")
 
     print("ERROR: No browsers are installed. Exiting")
     sys.exit(1)
