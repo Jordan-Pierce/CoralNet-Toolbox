@@ -259,8 +259,12 @@ def main():
 
     upload_parser_panel_1.add_argument('--images', required=False,
                                        metavar='Image Directory',
-                                       help='A directory where all images are located.',
+                                       help='Directory containing images to upload.',
                                        widget="DirChooser")
+
+    upload_parser_panel_1.add_argument('--prefix', required=False, default="",
+                                       metavar='Image Name Prefix',
+                                       help='A prefix to add to each image basename')
 
     upload_parser_panel_1.add_argument('--labelset', required=False, type=str,
                                        metavar="Labelset File",
@@ -319,8 +323,12 @@ def main():
 
     viscore_parser_panel_1.add_argument('--images', required=False,
                                         metavar='Image Directory',
-                                        help='A directory where all images are located.',
+                                        help='Directory containing images to upload.',
                                         widget="DirChooser")
+
+    viscore_parser_panel_1.add_argument('--prefix', required=False, default="",
+                                        metavar='Image Name Prefix',
+                                        help='A prefix to add to each image basename')
 
     viscore_parser_panel_1.add_argument('--labelset', required=False, type=str,
                                         metavar="Labelset File",
@@ -360,17 +368,17 @@ def main():
                                         metavar="Random Sample",
                                         help='Value used to randomly sample the number of reprojected dots [0 - 1]')
 
-    viscore_parser_panel_2.add_argument('--reprojection_error', type=float, required=False, default=0.005,
+    viscore_parser_panel_2.add_argument('--reprojection_error', type=float, required=False, default=0.01,
                                         metavar="Reprojection Error Threshold",
                                         help='Value used to filter dots based on their reprojection error; '
                                              'dots with error values larger than the provided threshold are filtered')
 
-    viscore_parser_panel_2.add_argument('--view_index', type=int, required=False, default=15,
+    viscore_parser_panel_2.add_argument('--view_index', type=int, required=False, default=9001,
                                         metavar="VPI View Index",
                                         help='Value used to filter views based on their VPI View Index; '
                                              'indices of VPI image views after provided threshold are filtered')
 
-    viscore_parser_panel_2.add_argument('--view_count', type=int, required=False, default=100,
+    viscore_parser_panel_2.add_argument('--view_count', type=int, required=False, default=9001,
                                         metavar="VPI View Count",
                                         help='Value used to filter views based on the total number of VPI image views; '
                                              'indices of VPI views of dot after provided threshold are filtered')
@@ -579,7 +587,7 @@ def main():
         upload(args)
 
     if args.command == 'Viscore':
-        args.annotations = viscore_to_coralnet(args)
+        args.annotations = viscore(args)
         upload(args)
 
     if args.command == 'Visualize':

@@ -11,6 +11,8 @@ import math
 import numpy as np
 import pandas as pd
 from skimage import io
+
+import matplotlib
 import matplotlib.pyplot as plt
 
 import tensorflow as tf
@@ -36,7 +38,6 @@ from faker import Faker
 from imgaug import augmenters as iaa
 
 from Toolbox.Tools import *
-
 
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
@@ -112,6 +113,10 @@ def train_classifier(args):
     """
 
     """
+
+    print(f"\n#########################################\n"
+          f"Classifier\n"
+          f"#########################################\n")
 
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
@@ -397,7 +402,7 @@ def train_classifier(args):
             process = subprocess.Popen([tensorboard_exe, "--logdir", LOGS_DIR])
 
             # Let it load
-            time.sleep(10)
+            time.sleep(15)
 
         except Exception as e:
             print(f"WARNING: Could not open TensorBoard; check that it is installed\n{e}")

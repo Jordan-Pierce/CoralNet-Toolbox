@@ -148,7 +148,6 @@ def annotate(args):
         annotations = pd.DataFrame(annotations, columns=['Name', 'Row', 'Column', 'Label'])
         annotation_path = f"{root}/annotations.csv"
 
-        # TODO look at the index and see what CoralNet format is
         # If one already exists, add to it
         if os.path.exists(annotation_path):
             existing_annotations = pd.read_csv(annotation_path, index_col=0)

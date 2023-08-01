@@ -3,16 +3,22 @@ import argparse
 import pandas as pd
 from tqdm import tqdm
 
+from Toolbox.Tools.Upload import *
 
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
 
-def viscore_to_coralnet(args):
+
+def viscore(args):
     """
     Converts the dots and cams JSON files to csv files for Tools. The csv
     files are saved in the output directory.
     """
+
+    print("\n###############################################")
+    print("Viscore")
+    print("###############################################\n")
 
     # Get the arguments
     viscore_labels = args.viscore_labels
@@ -40,15 +46,20 @@ def viscore_to_coralnet(args):
         raise Exception(f'ERROR: Issue opening provided paths')
 
     # Apply filtering
-    labels = labels[labels['ReprojectionError'] <= args.reprojection_error]
-    labels = labels[labels['ViewIndex'] <= args.view_index]
-    labels = labels[labels['ViewCount'] <= args.view_count]
-    labels = labels[labels['RandSubCeil'] <= args.rand_sub_ceil]
+    if args.reprojection_error:
+        labels = labels[labels['ReprojectionError'] <= args.reprojection_error]
+    if args.view_index:
+        labels = labels[labels['ViewIndex'] <= args.view_index]
+    if args.view_count:
+        labels = labels[labels['ViewCount'] <= args.view_count]
+    if args.rand_sub_ceil:
+        labels = labels[labels['RandSubCeil'] <= args.rand_sub_ceil]
 
     if len(labels) == 0:
         raise Exception(f"ERROR: All labels were filtered; nothing to convert.")
 
     # To store the updated labels with Tools version of labelsets
+    images = []
     annotations = []
     skipped = []
 
@@ -71,16 +82,25 @@ def viscore_to_coralnet(args):
             skipped.append(str(r['Label']))
             continue
 
-        # Get the values for the updated label csv file
-        # For some reason, Tools uses the Short Code as
-        # the label from within a source
-        name = os.path.basename(r['Name'])
+        # Viscore exports the path to the image, but
+        # CoralNet expects the basename; prepending
+        # the plot name to the image basename.
+        path = r['Name']
+        image_name = os.path.basename(path)
+        prefix = os.path.basename(os.path.dirname(path))
+        name = f"{prefix}-{image_name}"
+
+        # For some reason, CoralNet uses the Short Code as
+        # the label from within a source; make note of that.
         row = int(r['Row'])
         column = int(r['Column'])
         label = str(lbst['Short Code'].item())
-        # Add to the list
-        annotations.append([name, row, column, label])
 
+        # Add to the list; other fields are ignored by CoralNet.
+        images.append(image_name)
+        annotations.append([prefix, image_name, name, row, column, label])
+
+    print(f"NOTE: Updated {len(annotations)} annotations belonging to {len(set(images))} images")
     print(f"NOTE: Skipped {len(skipped)} annotations belonging to {set(skipped)}")
 
     # Save the labels as a csv file
@@ -88,9 +108,9 @@ def viscore_to_coralnet(args):
     basename += f"rand_{str(args.rand_sub_ceil).replace('.', '_')}_"
     basename += f"error_{str(args.reprojection_error).replace('.', '_')}_"
     basename += f"vindex_{str(args.view_index)}_"
-    basename += f"vcount_{str(args.view_count)}_"
-    output_file = f'{output_dir}{basename}.csv'
-    annotations = pd.DataFrame(annotations, columns=['Name', 'Row', 'Column', 'Label'])
+    basename += f"vcount_{str(args.view_count)}"
+    output_file = f"{output_dir}{basename}.csv"
+    annotations = pd.DataFrame(annotations, columns=['Prefix', 'Image Name', 'Name', 'Row', 'Column', 'Label'])
     annotations.to_csv(output_file, index=False)
 
     # Check that file was saved
@@ -115,15 +135,15 @@ def main():
     parser.add_argument('--rand_sub_ceil', type=float, required=False, default=1.0,
                         help='Value used to randomly sample the number of reprojected dots [0 - 1]')
 
-    parser.add_argument('--reprojection_error', type=float, required=False, default=0.005,
+    parser.add_argument('--reprojection_error', type=float, required=False, default=0.01,
                         help='Value used to filter dots based on their reprojection error; '
                              'dots with error values larger than the provided threshold are filtered')
 
-    parser.add_argument('--view_index', type=int, required=False, default=15,
+    parser.add_argument('--view_index', type=int, required=False, default=9001,
                         help='Value used to filter views based on their VPI View Index; '
                              'indices of VPI image views after provided threshold are filtered')
 
-    parser.add_argument('--view_count', type=int, required=False, default=100,
+    parser.add_argument('--view_count', type=int, required=False, default=9001,
                         help='Value used to filter views based on the total number of VPI image views; '
                              'indices of VPI views of dot after provided threshold are filtered')
 
@@ -133,7 +153,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        annotations_file = viscore_to_coralnet(args)
+        annotations_file = viscore(args)
         print('Done.')
 
     except Exception as e:

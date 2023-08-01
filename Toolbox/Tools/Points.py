@@ -50,15 +50,16 @@ def points(args):
         img = Image.open(image_file)
         width, height = img.size
 
-        # TODO modify this idea so that it's the margins of the image
         # At least half patch
-        width -= 112
-        height -= 112
+        min_width = width + 112
+        max_width = width - 112
+        min_height = height + 112
+        max_height = height - 112
 
         # Generate Uniform Samples
         if sample_method == 'Uniform':
-            x_coords = np.linspace(0, width - 1, int(np.sqrt(num_points)))
-            y_coords = np.linspace(0, height - 1, int(np.sqrt(num_points)))
+            x_coords = np.linspace(min_width, max_width - 1, int(np.sqrt(num_points)))
+            y_coords = np.linspace(min_height, max_height - 1, int(np.sqrt(num_points)))
             for x in x_coords:
                 for y in y_coords:
                     samples.append({'Name': image_name,
@@ -69,8 +70,8 @@ def points(args):
         # Generate Random Samples
         elif sample_method == 'Random':
             for i in range(num_points):
-                x = random.randint(0, width - 1)
-                y = random.randint(0, height - 1)
+                x = random.randint(min_width, max_width - 1)
+                y = random.randint(min_height, max_height - 1)
                 samples.append({'Name': image_name,
                                 'Row': int(y),
                                 'Column': int(x),
@@ -79,8 +80,8 @@ def points(args):
         # Generate Stratified Samples
         else:
             n = int(np.sqrt(num_points))
-            x_range = np.linspace(0, width - 1, n + 1)
-            y_range = np.linspace(0, height - 1, n + 1)
+            x_range = np.linspace(min_width, max_width - 1, n + 1)
+            y_range = np.linspace(min_height, max_height - 1, n + 1)
             for i in range(n):
                 for j in range(n):
                     x = np.random.uniform(x_range[i], x_range[i + 1])

@@ -6,7 +6,7 @@ from Toolbox.Tools import *
 # -----------------------------------------------------------------------------
 
 
-def upload_images(driver, source_id, images):
+def upload_images(driver, source_id, images, prefix):
     """
     Upload images to Tools.
     """
@@ -34,6 +34,28 @@ def upload_images(driver, source_id, images):
 
     # Send the files to CoralNet for upload
     try:
+        # Locate the prefix input field
+        path = "id_name_prefix"
+        prefix_input = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, path)))
+
+        # Check if the prefix input field is enabled
+        if prefix_input.is_enabled():
+            print("NOTE: Prefix input field is enabled")
+            print(f"NOTE: Attempting to send prefix")
+            prefix_input.send_keys(prefix)
+
+            # Moves cursor away from prefix box, needed.
+            path = "narrow_column"
+            narrow_column = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CLASS_NAME, path)))
+
+            narrow_column.click()
+
+        else:
+            # Prefix input field is not enabled, something is wrong
+            raise ValueError("ERROR: Prefix input field is not enabled; exiting.")
+
         # Locate the file input field
         path = "//input[@type='file'][@name='files']"
         file_input = WebDriverWait(driver, 10).until(
@@ -364,6 +386,10 @@ def upload(args):
     """Upload function that takes in input from argparse (cmd, or gui),
         and initiates the uploading"""
 
+    print("\n###############################################")
+    print("Upload")
+    print("###############################################\n")
+
     # -------------------------------------------------------------------------
     # Authenticate the user
     # -------------------------------------------------------------------------
@@ -412,11 +438,15 @@ def upload(args):
     else:
         print(f"NOTE: No valid labelset found in {labelset}")
 
-    # TODO make images multifilechooser
     # Data to be uploaded
     images = os.path.abspath(args.images)
     images = glob.glob(images + "/*.*")
     images = [i for i in images if i.split('.')[-1].lower() in IMG_FORMATS]
+
+    # Add a dash to prefix if it's being used, and isn't already there
+    prefix = args.prefix
+    if prefix != "":
+        prefix = f"{prefix}-" if prefix[-1] != "-" else prefix
 
     # Check if there are images to upload
     if len(images) > 0:
@@ -459,7 +489,7 @@ def upload(args):
 
     # Upload images
     if image_upload:
-        driver, _ = upload_images(driver, source_id, images)
+        driver, _ = upload_images(driver, source_id, images, prefix)
 
     # Upload annotations
     if annotation_upload:
@@ -505,8 +535,11 @@ def main():
     parser.add_argument('--source_id', type=int,
                         help='Source ID to upload to.')
 
-    parser.add_argument('--images', type=str, default="",
+    parser.add_argument('--images', type=str,
                         help='A directory where all images are located')
+
+    parser.add_argument('--prefix', type=str, default="",
+                        help='Prefix to add to each image basename')
 
     parser.add_argument('--annotations', type=str, default="",
                         help='The path to the annotations file')

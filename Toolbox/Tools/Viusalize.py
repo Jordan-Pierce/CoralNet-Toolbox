@@ -11,6 +11,7 @@ from matplotlib.widgets import Button
 from matplotlib.widgets import TextBox
 from matplotlib.patches import Rectangle
 
+matplotlib.use('TkAgg')
 
 from Toolbox.Tools import IMG_FORMATS
 
@@ -42,7 +43,6 @@ class ImageViewer:
         # Maximize the figure window (works with 'TkAgg' backend)
         self.fig.canvas.manager.window.state('zoomed')
 
-    # TODO fix speed for rendering, very slow with lots of annotations / images
     def show_image(self):
         self.ax.clear()
         image_path = self.image_files[self.current_index]
@@ -165,8 +165,6 @@ def visualize(args):
     print("Visualize")
     print("###############################################\n")
 
-    matplotlib.use('TkAgg')
-
     # Pass the variables
     image_dir = args.image_dir
     annotations = args.annotations
@@ -184,7 +182,7 @@ def visualize(args):
     if not os.path.exists(annotations):
         print("WARNING: Annotations provided, but they doe not exists; please check input.")
     else:
-        annotations = pd.read_csv(annotations)
+        annotations = pd.read_csv(annotations, index_col=0)
 
     # Create the ImageViewer object with the list of images
     image_viewer = ImageViewer(image_files, annotations)
