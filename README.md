@@ -2,7 +2,7 @@
 
 
 <p align="center">
-  <img src="./Figures/CoralNet_Toolbox.png" alt="CoralNet_Toolbox">
+  <img src="./Figures/CoralNet-Toolbox.png" alt="CoralNet-Toolbox">
 </p
 
 ---
@@ -31,13 +31,14 @@ with those on CoralNet, including:
 - `Visualize`: Visualize points, patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
+- `Inference`: Perform inference using a locally trained model
+
 
 <p align="center">
-  <img src="./Figures/CoralNet-Toolbox.gif" alt="CoralNet_Toolbox_Gif">
+  <img src="./Figures/CoralNet-Toolbox-Features.PNG" alt="CoralNet-Toolbox-Features">
 </p
 
 #### **Future Features**
-- `Inference`: Perform inference using a locally trained model
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 - `Segment`: Create segmentation masks for each image using `MSS`, `SAM`

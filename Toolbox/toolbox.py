@@ -8,6 +8,7 @@ from Tools.Points import *
 from Tools.Patches import *
 from Tools.Annotate import *
 from Tools.Viusalize import *
+from Tools.Inference import *
 
 from gooey import Gooey, GooeyParser
 
@@ -500,11 +501,10 @@ def main():
                                                                      'Use the following to train your own patch-based '
                                                                      'image classifier.')
 
-    classifier_parser_panel_1.add_argument('--patches', required=True, type=str,
-                                           default="",
+    classifier_parser_panel_1.add_argument('--patches', required=True, nargs="+",
                                            metavar="Patch Data",
-                                           help='Patches dataframe file',
-                                           widget="FileChooser")
+                                           help='Patches dataframe file(s)',
+                                           widget="MultiFileChooser")
 
     classifier_parser_panel_1.add_argument('--output_dir', required=True,
                                            metavar='Output Directory',
@@ -546,11 +546,11 @@ def main():
                                            metavar="Number of Epochs",
                                            help='The number of iterations the model is given the training dataset')
 
-    classifier_parser_panel_2.add_argument('--batch_size', type=int, default=32,
+    classifier_parser_panel_2.add_argument('--batch_size', type=int, default=128,
                                            metavar="Batch Size",
                                            help='The number of samples per batch; GPU dependent')
 
-    classifier_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0001,
+    classifier_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0005,
                                            metavar="Learning Rate",
                                            help='The floating point value used to incrementally adjust model weights')
 
@@ -559,6 +559,42 @@ def main():
                                            help='Open Tensorboard for viewing model training in real-time',
                                            action="store_true",
                                            widget='BlockCheckbox')
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Inference
+    # ------------------------------------------------------------------------------------------------------------------
+    inference_parser = subs.add_parser('Inference')
+
+    # Panel 1
+    inference_parser_panel_1 = inference_parser.add_argument_group('Inference',
+                                                                   'Use a locally trained model to make predictions on'
+                                                                   'sampled points.')
+
+    inference_parser_panel_1.add_argument('--images', required=True,
+                                          metavar="Image Directory",
+                                          help='Directory containing images to make predictions on',
+                                          widget="DirChooser")
+
+    inference_parser_panel_1.add_argument('--points', required=True,
+                                          metavar="Points File",
+                                          help='A file containing sampled points',
+                                          widget="FileChooser")
+
+    inference_parser_panel_1.add_argument('--model', required=True,
+                                          metavar="Model Path",
+                                          help='The path to locally trained model (.h5)',
+                                          widget="FileChooser")
+
+    inference_parser_panel_1.add_argument('--class_map', required=True,
+                                          metavar="Class Map File",
+                                          help='The class mapping JSON file',
+                                          widget="FileChooser")
+
+    inference_parser_panel_1.add_argument('--output_dir', required=True,
+                                          metavar='Output Directory',
+                                          default=os.path.abspath("..\\Data"),
+                                          help='Root directory where output will be saved',
+                                          widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Parser
@@ -604,6 +640,9 @@ def main():
 
     if args.command == 'Classifier':
         train_classifier(args)
+
+    if args.command == 'Inference':
+        inference(args)
 
     print('Done.')
 

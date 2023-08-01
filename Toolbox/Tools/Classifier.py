@@ -11,14 +11,11 @@ import math
 import numpy as np
 import pandas as pd
 from skimage import io
-
-import matplotlib
 import matplotlib.pyplot as plt
 
 import tensorflow as tf
 
 keras = tf.keras
-
 from keras import backend as K
 from keras.models import Sequential
 from keras import optimizers
@@ -104,7 +101,6 @@ def f1_score(y_true, y_pred):
 
     return f1
 
-
 # ------------------------------------------------------------------------------------------------------------------
 # Training
 # ------------------------------------------------------------------------------------------------------------------
@@ -151,12 +147,17 @@ def train_classifier(args):
           f"Creating Datasets\n"
           f"#########################################\n")
 
-    if os.path.exists(args.patches):
-        # Patch dataframe
-        patches_df = pd.read_csv(args.patches, index_col=0)
-        patches_df = patches_df.dropna()
-    else:
-        raise Exception(f"ERROR: Patches dataframe {args.patches} does not exist")
+    # If the user provides multiple patch dataframes
+    patches_df = pd.DataFrame()
+
+    for patches in args.patches:
+        if os.path.exists(patches):
+            # Patch dataframe
+            patches = pd.read_csv(patches)
+            patches = patches.dropna()
+            patches_df = pd.concat((patches_df, patches))
+        else:
+            raise Exception(f"ERROR: Patches dataframe {patches} does not exist")
 
     # Names of all images; sets to be split based on images
     image_names = patches_df['Image Name'].unique()
@@ -173,26 +174,29 @@ def train_classifier(args):
 
     # If there isn't one class sample in each train and valid sets
     # Keras will throw an error; hacky way of fixing this.
-    if set(train_df['Label'].unique()) - set(valid_df['Label'].unique()):
-
+    if len(set(train_df['Label'].unique())) - len(set(valid_df['Label'].unique())):
+        print("NOTE: Sampling one of each class category")
         # Holds one sample of each class category
-        one_sample = pd.DataFrame()
+        sample = pd.DataFrame()
         # Gets one sample from patches_df
         for label in patches_df['Label'].unique():
-            sample = patches_df[patches_df['Label'] == label].sample(1)
-            one_sample = pd.concat((one_sample, sample))
+            one_sample = patches_df[patches_df['Label'] == label].sample(n=1)
+            sample = pd.concat((sample, one_sample))
 
-        train_df = pd.concat((one_sample, train_df))
-        valid_df = pd.concat((one_sample, valid_df))
-        test_df = pd.concat((one_sample, test_df))
+        train_df = pd.concat((sample, train_df))
+        valid_df = pd.concat((sample, valid_df))
+        test_df = pd.concat((sample, test_df))
 
     train_df.reset_index(drop=True, inplace=True)
     valid_df.reset_index(drop=True, inplace=True)
     test_df.reset_index(drop=True, inplace=True)
 
     # The number of class categories
-    num_classes = len(train_df['Label'].unique())
-    print(f"NOTE: Number of classes in training set is {num_classes}")
+    class_names = train_df['Label'].unique().tolist()
+    num_classes = len(class_names)
+    print(f"NOTE: Number of classes in training set is {len(train_df['Label'].unique())}")
+    print(f"NOTE: Number of classes in validation set is {len(valid_df['Label'].unique())}")
+    print(f"NOTE: Number of classes in testing set is {len(test_df['Label'].unique())}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Data Exploration
@@ -235,7 +239,7 @@ def train_classifier(args):
 
     # Calculate weights
     if args.weighted_loss:
-        print(f"NOTE: Calculating weights")
+        print(f"NOTE: Calculating weights for weighted loss function")
         class_weight = compute_class_weights(train_df)
     else:
         class_weight = {c: 1.0 for c in range(num_classes)}
@@ -380,7 +384,7 @@ def train_classifier(args):
                       baseline=None,
                       restore_best_weights=True),
 
-        TensorBoard(log_dir=LOGS_DIR, histogram_freq=0)
+        TensorBoard(log_dir=LOGS_DIR, histogram_freq=0),
     ]
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -423,12 +427,11 @@ def train_classifier(args):
                             validation_data=validation_generator,
                             validation_steps=steps_per_epoch_valid,
                             callbacks=callbacks,
-                            verbose=2,
+                            verbose=1,
                             class_weight=class_weight)
     except Exception as e:
-        print(f"ERROR: There was an issue with training! The issue is likely that "
-              f"the batch size is too high for the chosen model, given your GPU. "
-              f"Read the Error.txt file in the Logs Directory")
+        print(f"ERROR: There was an issue with training!\n"
+              f"Read the 'Error.txt file' in the Logs Directory")
 
         # Write the error to text file
         with open(f"{LOGS_DIR}Error.txt", 'a') as file:
@@ -458,15 +461,15 @@ def train_classifier(args):
 
     # ------------------------------------------------------------------------------------------------------------------
     # Make predictions on test set
-    predictions = model.predict_generator(test_generator)
+    probabilities = model.predict_generator(test_generator)
 
     # Collapse the probability distribution to the most likely category
-    predict_classes = np.argmax(predictions, axis=1)
+    predictions = np.argmax(probabilities, axis=1)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Create classification report
     report = classification_report(test_generator.classes,
-                                   predict_classes,
+                                   predictions,
                                    target_names=test_generator.class_indices.keys())
 
     # Save the report to a file
@@ -476,7 +479,7 @@ def train_classifier(args):
 
     # --- Confusion Matrix
     # Calculate the overall accuracy
-    overall_accuracy = accuracy_score(test_generator.classes, predict_classes)
+    overall_accuracy = accuracy_score(test_generator.classes, predictions)
     # Calculate the number of samples
     num_samples = len(test_generator.classes)
     # Convert the accuracy and number of samples to strings
@@ -484,7 +487,7 @@ def train_classifier(args):
     num_samples_str = str(num_samples)
 
     # Calculate the confusion matrix and normalize it
-    cm = confusion_matrix(test_generator.classes, predict_classes)
+    cm = confusion_matrix(test_generator.classes, predictions)
     cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
     cm_normalized = np.round(cm_normalized, decimals=2)
 
@@ -522,7 +525,7 @@ def train_classifier(args):
     roc_auc = dict()
 
     for i in range(num_classes):
-        fpr[i], tpr[i], _ = roc_curve(binary_true_labels[:, i], predictions[:, i])
+        fpr[i], tpr[i], _ = roc_curve(binary_true_labels[:, i], probabilities[:, i])
         roc_auc[i] = auc(fpr[i], tpr[i])
 
     # Plot the ROC curves for each class
@@ -560,16 +563,16 @@ def train_classifier(args):
         # Creating a list to store the sure index
         sure_index = []
         # Looping through all predictions and calculating the sure predictions
-        for i in range(0, len(predictions)):
+        for i in range(0, len(probabilities)):
             # If the difference between the most probable class and the second most probable class
             # is greater than the threshold, add it to the sure index
-            if (sorted(predictions[i])[-1]) - (sorted(predictions[i])[-2]) > threshold:
+            if (sorted(probabilities[i])[-1]) - (sorted(probabilities[i])[-2]) > threshold:
                 sure_index.append(i)
 
         # Calculating the accuracy for the threshold value
         sure_test_y = np.take(test_generator.classes, sure_index, axis=0)
-        sure_pred_y = np.take(predict_classes, sure_index)
-        sure_percentage.append(len(sure_index) / len(predictions))
+        sure_pred_y = np.take(predictions, sure_index)
+        sure_percentage.append(len(sure_index) / len(probabilities))
         class_ACC.append(accuracy_score(sure_test_y, sure_pred_y))
 
     # Plotting the results
@@ -601,7 +604,7 @@ def train_classifier(args):
 def main():
     parser = argparse.ArgumentParser(description='Train an Image Classifier')
 
-    parser.add_argument('--patches', type=str, required=True, default="",
+    parser.add_argument('--patches', required=True, nargs="+",
                         help='The path to the patch labels csv file output the Patches tool')
 
     parser.add_argument('--model_name', type=str, default='EfficientNetV2B0',
@@ -619,10 +622,10 @@ def main():
     parser.add_argument('--dropout_rate', type=float, default=0.5,
                         help='Amount of dropout in model (augmentation)')
 
-    parser.add_argument('--num_epochs', type=int, default=25,
+    parser.add_argument('--num_epochs', type=int, default=1,
                         help='Starting learning rate')
 
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=64,
                         help='Starting learning rate')
 
     parser.add_argument('--learning_rate', type=float, default=0.0001,
