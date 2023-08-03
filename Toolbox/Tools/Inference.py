@@ -126,10 +126,10 @@ def inference(args):
         for i, r in current_points.iterrows():
             patches.append(crop_patch(image, r['Row'], r['Column'], patch_size=224))
             output.append(r)
+            gc.collect()
 
         # Gooey
         print_progress(idx, len(image_files))
-        gc.collect()
 
     # Convert to numpy array
     patches = np.array(patches)
