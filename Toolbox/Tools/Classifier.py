@@ -6,6 +6,7 @@ import subprocess
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+import json
 import glob
 import math
 import numpy as np
@@ -35,6 +36,7 @@ from faker import Faker
 from imgaug import augmenters as iaa
 
 from Toolbox.Tools import *
+
 
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
@@ -100,6 +102,7 @@ def f1_score(y_true, y_pred):
     f1 = 2 * (p * r) / (p + r + K.epsilon())
 
     return f1
+
 
 # ------------------------------------------------------------------------------------------------------------------
 # Training
@@ -330,6 +333,12 @@ def train_classifier(args):
                                                         batch_size=batch_size,
                                                         shuffle=False,
                                                         seed=42)
+
+    # Save the class categories as a JSON file
+    class_indices = test_generator.class_indices
+    class_categories = {v: k for k, v in class_indices.items()}
+    with open(f'{MODEL_DIR}Class_Map.json', 'w') as json_file:
+        json.dump(class_categories, json_file, indent=3)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Building Model

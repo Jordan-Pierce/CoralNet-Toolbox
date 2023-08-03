@@ -67,7 +67,7 @@ def inference(args):
 
     # Points Dataframe
     if os.path.exists(args.points):
-        points = pd.read_csv(args.points, index_col=0)
+        points = pd.read_csv(args.points)
         print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
     else:
         print("ERROR: Points provided doesn't exist.")
@@ -186,7 +186,7 @@ def main():
                         help="Path to Best Model and Weights File (.h5)")
 
     parser.add_argument("--class_map", type=str, required=True,
-                        help="Path to the model's Class Map File (.h5)")
+                        help="Path to the model's Class Map JSON file")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

@@ -258,7 +258,7 @@ def main():
                                        metavar="Source ID",
                                        help='The ID of the source to upload data to.')
 
-    upload_parser_panel_1.add_argument('--images', required=False,
+    upload_parser_panel_1.add_argument('--images', required=False, default="",
                                        metavar='Image Directory',
                                        help='Directory containing images to upload.',
                                        widget="DirChooser")
@@ -267,13 +267,13 @@ def main():
                                        metavar='Image Name Prefix',
                                        help='A prefix to add to each image basename')
 
-    upload_parser_panel_1.add_argument('--labelset', required=False, type=str,
+    upload_parser_panel_1.add_argument('--labelset', required=False, type=str, default="",
                                        metavar="Labelset File",
                                        help='A path to the source labelset csv file. '
                                             'The file should contain the following: Label ID, Short Code',
                                        widget="FileChooser")
 
-    upload_parser_panel_1.add_argument('--annotations', required=False, type=str,
+    upload_parser_panel_1.add_argument('--annotations', required=False, type=str, default="",
                                        metavar="Annotation File",
                                        help='A path the annotation csv file. '
                                             'The file should contain the following: Name, Row, Column, Label',
@@ -322,7 +322,7 @@ def main():
                                         metavar="Source ID",
                                         help='The ID of the source to upload data to.')
 
-    viscore_parser_panel_1.add_argument('--images', required=False,
+    viscore_parser_panel_1.add_argument('--images', required=False, default="",
                                         metavar='Image Directory',
                                         help='Directory containing images to upload.',
                                         widget="DirChooser")

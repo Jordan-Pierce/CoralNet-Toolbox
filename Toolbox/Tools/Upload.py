@@ -428,42 +428,44 @@ def upload(args):
     image_upload = False
     annotation_upload = False
 
-    # Assign the labelset
-    labelset = os.path.abspath(args.labelset)
-
     # Check if there is a labelset to upload
-    if os.path.exists(labelset) and "csv" in labelset.split(".")[-1]:
-        print(f"NOTE: Found labelset to upload")
-        labelset_upload = True
-    else:
-        print(f"NOTE: No valid labelset found in {labelset}")
+    if args.labelset != "":
+        labelset = os.path.abspath(args.labelset)
+
+        if os.path.exists(labelset) and "csv" in labelset.split(".")[-1]:
+            print(f"NOTE: Found labelset to upload")
+            labelset_upload = True
+        else:
+            print(f"NOTE: No valid labelset found in {labelset}")
 
     # Data to be uploaded
-    images = os.path.abspath(args.images)
-    images = glob.glob(images + "/*.*")
-    images = [i for i in images if i.split('.')[-1].lower() in IMG_FORMATS]
+    if args.images != "":
+        images = os.path.abspath(args.images)
+        images = glob.glob(images + "/*.*")
+        images = [i for i in images if i.split('.')[-1].lower() in IMG_FORMATS]
+
+        # Check if there are images to upload
+        if len(images) > 0:
+            print(f"NOTE: Found {len(images)} images to upload")
+            image_upload = True
+        else:
+            print(f"NOTE: No valid images found in {args.images}")
 
     # Add a dash to prefix if it's being used, and isn't already there
-    prefix = args.prefix
-    if prefix != "":
+    if args.prefix != "":
+        prefix = args.prefix
         prefix = f"{prefix}-" if prefix[-1] != "-" else prefix
 
-    # Check if there are images to upload
-    if len(images) > 0:
-        print(f"NOTE: Found {len(images)} images to upload")
-        image_upload = True
-    else:
-        print(f"NOTE: No valid images found in {args.images}")
-
-    # Assign the annotations
-    annotations = os.path.abspath(args.annotations)
-
     # Check if there are annotations to upload
-    if os.path.exists(annotations) and "csv" in annotations.split(".")[-1]:
-        print(f"NOTE: Found annotations to upload")
-        annotation_upload = True
-    else:
-        print(f"NOTE: No valid annotations found in {annotations}")
+    if args.annotations != "":
+        # Assign the annotations
+        annotations = os.path.abspath(args.annotations)
+
+        if os.path.exists(annotations) and "csv" in annotations.split(".")[-1]:
+            print(f"NOTE: Found annotations to upload")
+            annotation_upload = True
+        else:
+            print(f"NOTE: No valid annotations found in {annotations}")
 
     # If there are no images, labelset, or annotations to upload, exit
     if not image_upload and not labelset_upload and not annotation_upload:
