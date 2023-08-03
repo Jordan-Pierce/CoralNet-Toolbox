@@ -445,10 +445,10 @@ def main():
                                                              'uniform, random, and stratified-random. Samples are '
                                                              'saved in the Output Directory as a dataframe.')
 
-    points_parser_panel_1.add_argument('--image_files', required=True, type=str, nargs='+',
-                                       metavar="Image Files",
-                                       help='Images to create sampled points for',
-                                       widget="MultiFileChooser")
+    points_parser_panel_1.add_argument('--images', required=True, type=str,
+                                       metavar="Image Directory",
+                                       help='Directory of images to create sampled points for',
+                                       widget="DirChooser")
 
     points_parser_panel_1.add_argument('--output_dir', required=True,
                                        metavar='Output Directory',

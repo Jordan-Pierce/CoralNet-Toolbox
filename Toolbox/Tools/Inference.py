@@ -1,4 +1,5 @@
 import os
+import gc
 import sys
 import warnings
 import argparse
@@ -38,10 +39,7 @@ def get_class_map(path):
     with open(path, 'r') as json_file:
         class_mapping_dict = json.load(json_file)
 
-    # Reverse the keys and values to create a mapping of class names to indices
-    class_map = {v: k for k, v in class_mapping_dict.items()}
-
-    return class_map
+    return class_mapping_dict
 
 
 def inference(args):
@@ -56,18 +54,18 @@ def inference(args):
 
     # Image files
     if os.path.exists(args.images):
-        images = [i for i in glob.glob(f"{args.images}/*.*") if i.split(".")[-1].lower() in IMG_FORMATS]
-        if not images:
+        image_files = [i for i in glob.glob(f"{args.images}/*.*") if i.split(".")[-1].lower() in IMG_FORMATS]
+        if not image_files:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            print(f"NOTE: Found {len(images)} images in directory provided")
+            print(f"NOTE: Found {len(image_files)} images in directory provided")
     else:
         print("ERROR: Directory provided doesn't exist.")
         sys.exit(1)
 
     # Points Dataframe
     if os.path.exists(args.points):
-        points = pd.read_csv(args.points)
+        points = pd.read_csv(args.points, index_col=0)
         print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
     else:
         print("ERROR: Points provided doesn't exist.")
@@ -109,10 +107,10 @@ def inference(args):
     patches = []
 
     # Subset the images list to only contain those with points
-    images = [i for i in images if os.path.basename(i) in points['Name'].unique()]
+    image_files = [i for i in image_files if os.path.basename(i) in points['Name'].unique()]
 
     # Loop through each image, extract the corresponding patches
-    for idx, image_path in enumerate(images):
+    for idx, image_path in enumerate(image_files):
 
         # Get the points associated
         name = os.path.basename(image_path)
@@ -130,7 +128,8 @@ def inference(args):
             output.append(r)
 
         # Gooey
-        print_progress(idx, len(images))
+        print_progress(idx, len(image_files))
+        gc.collect()
 
     # Convert to numpy array
     patches = np.array(patches)
@@ -138,16 +137,16 @@ def inference(args):
     # Make predictions for this image
     probabilities = model.predict(patches)
     predictions = np.argmax(probabilities, axis=1)
-    class_predictions = np.array([class_map[v] for v in predictions])
+    class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
 
     # Convert, make the top choice Label
     output = pd.DataFrame(output)
     output['Label'] = class_predictions
 
-    N = probabilities.shape[1]  # Number of classes
+    N = probabilities.shape[1]
     sorted_prob_indices = np.argsort(probabilities, axis=1)[:, ::-1]
     top_N_confidences = probabilities[np.arange(probabilities.shape[0])[:, np.newaxis], sorted_prob_indices[:, :N]]
-    top_N_suggestions = np.array([[class_map[idx] for idx in indices] for indices in sorted_prob_indices[:, :N]])
+    top_N_suggestions = np.array([[class_map[str(idx)] for idx in indices] for indices in sorted_prob_indices[:, :N]])
 
     # CoralNet format only goes to the first 5 choices
     for index, class_num in enumerate(range(5)):
@@ -157,7 +156,7 @@ def inference(args):
 
     # Save with previous prediction, if any exists
     if os.path.exists(output_path):
-        previous_predictions = pd.read_csv(output_path, index_col=0)
+        previous_predictions = pd.read_csv(output_path)
         output = pd.concat((previous_predictions, output))
 
     # Save

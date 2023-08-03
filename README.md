@@ -49,6 +49,14 @@ To use these tools, you should have access to the CoralNet platform. Once you ha
 you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
 various tasks.
 
+To install, use the `coralnet_toolbox.yml` file using anaconda:
+```python
+# cmd
+conda env create -f coralnet_toolbox.yml
+conda activate coralnet_toolbox
+python Toolbox\toolbox.py
+```
+
 ### **Conclusion**
 In summary, this repository provides a range of tools that can assist with interacting with 
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be 

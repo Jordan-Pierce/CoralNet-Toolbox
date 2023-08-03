@@ -331,6 +331,8 @@ def get_available_models():
 
         model_names = [m for m in dir(models) if callable(getattr(models, m))]
         model_names = [m for m in model_names if 'include_preprocessing' in getattr(models, m).__code__.co_varnames]
+        model_names = [m for m in model_names if "EfficientNetV2" in m]
+
         available_models = model_names
 
     except Exception as e:

@@ -23,15 +23,17 @@ def points(args):
     print("###############################################\n")
 
     # Set the variables
-    image_files = args.image_files
+    images = args.images
     output_dir = args.output_dir
     sample_method = args.sample_method
     num_points = args.num_points
 
-    if image_files is []:
+    if images is "":
         print(f"ERROR: No images provided; please check provided input.")
+        sys.exit(1)
     else:
-        image_files = [i for i in image_files if os.path.exists(i)]
+        image_files = [i for i in glob.glob(f'{images}\*.*') if os.path.exists(i)]
+        image_files = [i for i in image_files if os.path.basename(i).split(".")[-1].lower() in IMG_FORMATS]
         print(f"NOTE: Sampling {num_points} points for {len(image_files)} images")
 
     # Make sure output directory is there
@@ -123,8 +125,8 @@ def main():
 
     parser = argparse.ArgumentParser(description='Patch arguments')
 
-    parser.add_argument('--image_files', type=str, nargs="+",
-                        help='Images to create sampled points for')
+    parser.add_argument('--images', type=str,
+                        help='Directory of images to create sampled points for')
 
     parser.add_argument('--output_dir', type=str, required=True,
                         help='A root directory where all output will be saved to.')
