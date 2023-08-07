@@ -12,7 +12,7 @@ from Toolbox.Tools import *
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
-
+# TODO parallelize using multithreading
 def points(args):
     """
     Generates a set of sample coordinates within a given image size.
