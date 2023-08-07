@@ -6,6 +6,8 @@ from tqdm import tqdm
 import numpy as np
 from skimage.io import imread
 from skimage.io import imsave
+from scipy.stats import mode as mode2d
+
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -122,6 +124,27 @@ def get_bbox(image, y, x, patch_size=224):
     return bbox
 
 
+def find_most_common_label_in_area(points, binary_mask, bounding_box):
+    """
+
+    """
+    # Get the coordinates of the bounding box
+    min_x, min_y, max_x, max_y = bounding_box
+
+    # Filter points within the bounding box
+    points_in_area = points[(points['Column'] >= min_x) & (points['Column'] <= max_x) &
+                            (points['Row'] >= min_y) & (points['Row'] <= max_y)]
+
+    # Filter points that correspond to 1-valued regions in the binary mask
+    mask_indices = points_in_area.apply(lambda row: binary_mask[row['Row'], row['Column']], axis=1)
+    points_in_mask = points_in_area[mask_indices == 1]
+
+    # Find the most common label
+    most_common_label = mode2d(points_in_mask['Label'])[0][0]
+
+    return most_common_label
+
+
 def mode(a, background_class=255, axis=0):
     """
     Scipy's code to calculate the statistical mode of an array
@@ -131,7 +154,10 @@ def mode(a, background_class=255, axis=0):
     a -> the stack containing multiple 2-d arrays with the same dimensions
     """
 
-    a = np.array(a)
+    # If it's one channel
+    if a.shape[2] == 1:
+        return a
+
     scores = np.unique(np.ravel(a))
     testshape = list(a.shape)
     testshape[axis] = 1
@@ -235,8 +261,9 @@ def mss_sam(args):
     # Setting output variables
     output_dir = args.output_dir
     mask_dir = f"{args.output_dir}masks/"
-    mask_file = f"{output_dir}masks.csv"
     os.makedirs(mask_dir, exist_ok=True)
+    # Output for mask dataframe
+    mask_file = f"{output_dir}masks.csv"
 
     # ----------------------------------------------------------------
     # Inference
@@ -272,9 +299,8 @@ def mss_sam(args):
         sam_predictor.set_image(image)
 
         updated_masks = []
-        color_masks = []
 
-        for patch_size in [224]:
+        for patch_size in [320]:
 
             # To hold all the updated and colored masks (for viewing)
             updated_mask = np.full(shape=image.shape[:2], fill_value=255)
@@ -286,14 +312,16 @@ def mss_sam(args):
                 bboxes.append(get_bbox(image, r['Row'], r['Column'], patch_size))
 
             # Create into a tensor
-            bboxes = torch.tensor(bboxes, device=sam_predictor.device)
-            transformed_boxes = sam_predictor.transform.apply_boxes_torch(bboxes, image.shape[:2])
+            bboxes = np.array(bboxes)
+            transformed_boxes = torch.tensor(bboxes, device=sam_predictor.device)
+            transformed_boxes = sam_predictor.transform.apply_boxes_torch(transformed_boxes, image.shape[:2])
 
             # Loop through each point, get bboxes
             for p_idx, (i, r) in tqdm(enumerate(current_points.iterrows())):
 
-                # if not p_idx % 100 == 0:
-                #     continue
+                # Every N points
+                if p_idx % 10 != 0:
+                    continue
 
                 # After setting the current image, get masks for each point
                 mask, _, _ = sam_predictor.predict_torch(point_coords=None,
@@ -304,30 +332,42 @@ def mss_sam(args):
                 # Numpy array masks
                 mask = mask.cpu().detach().numpy().astype(np.uint8).squeeze()
 
-                # convert binary values to correspond to label values
-                updated_mask[mask == 1] = int(class_map[r['Label']])
+                try:
+                    # Find the most common label within the binary mask (1)
+                    label = find_most_common_label_in_area(current_points, mask, bboxes[p_idx])
+                    # convert binary values to correspond to label values
+                    updated_mask[mask == 1] = int(class_map[label])
+                except:
+                    pass
 
-            # Colorize the updated mask
-            color_mask = colorize_mask(updated_mask, class_map, label_colors)
+                if p_idx % 1000 == 0:
+                    # Colorize the updated mask
+                    color_mask = colorize_mask(updated_mask, class_map, label_colors)
+                    fname = f"{name}_{str(patch_size)}_{str(p_idx)}"
 
-            # Plot masks
-            plt.figure(figsize=(10, 10))
-            plt.title(str(patch_size))
-            plt.imshow(image)
-            plt.imshow(color_mask, alpha=.75)
-            plt.show()
+                    # Plot masks
+                    plt.figure(figsize=(10, 10))
+                    plt.title(fname)
+                    plt.imshow(image)
+                    plt.imshow(color_mask, alpha=.75)
+                    plt.savefig(f"{mask_dir}{fname}.jpg")
+                    plt.close()
 
             updated_masks.append(updated_mask)
-            color_masks.append(color_mask)
 
-        final_mask = mode(np.array(updated_masks))
+        updated_masks = np.array(updated_masks)
+        final_mask = mode(updated_masks)
         final_color = colorize_mask(final_mask, class_map, label_colors)
+        final_color[updated_mask == 255, :] = [0, 0, 0]
+        fname = f"{name}_{str(patch_size)}_end"
 
         # Plot masks
         plt.figure(figsize=(10, 10))
+        plt.title(fname)
         plt.imshow(image)
         plt.imshow(final_color, alpha=.75)
-        plt.show()
+        plt.savefig(f"{mask_dir}{fname}.jpg")
+        plt.close()
 
         # Gooey
         print_progress(i_idx, len(images))
