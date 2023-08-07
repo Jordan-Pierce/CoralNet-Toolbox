@@ -70,10 +70,10 @@ FUNC_GROUPS_DICT = {
     "Seagrass": "20"}
 
 # Make the cache directory
-CACHE_DIR = "./cache"
+CACHE_DIR = "../cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-CORALNET_LABELSET_FILE = os.path.abspath(("cache\\CoralNet_Labelset_List.csv"))
+CORALNET_LABELSET_FILE = os.path.abspath(("..cache/CoralNet_Labelset_List.csv"))
 
 
 # -------------------------------------------------------------------------------------------------
