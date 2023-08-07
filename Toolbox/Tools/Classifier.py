@@ -470,7 +470,7 @@ def train_classifier(args):
 
     # ------------------------------------------------------------------------------------------------------------------
     # Make predictions on test set
-    probabilities = model.predict_generator(test_generator)
+    probabilities = model.predict_generator(test_generator, verbose=0)
 
     # Collapse the probability distribution to the most likely category
     predictions = np.argmax(probabilities, axis=1)

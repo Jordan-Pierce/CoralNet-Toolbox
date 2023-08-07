@@ -122,13 +122,17 @@ def inference(args):
     # ----------------------------------------------------------------
     # Inference
     # ----------------------------------------------------------------
+
+    # Set the desired batch size (e.g., 32, 64, 128, etc.)
+    batch_size = 2048
+
     test_generator = ImageDataGenerator().flow_from_dataframe(dataframe=patches_df,
                                                               x_col='Path',
                                                               y_col='Label',
                                                               target_size=(224, 224),
                                                               color_mode="rgb",
                                                               class_mode='categorical',
-                                                              batch_size=1,
+                                                              batch_size=batch_size,
                                                               shuffle=False,
                                                               seed=42)
 
@@ -143,7 +147,26 @@ def inference(args):
         print("WARNING: No GPU found; defaulting to CPU")
 
     # Make predictions for all patches
-    probabilities = model.predict_generator(test_generator)
+    num_samples = len(patches_df)
+    num_classes = len(class_map)
+    probabilities = np.zeros((num_samples, num_classes))
+
+    # Iterate through the generator in batches
+    for i in range(num_samples // batch_size):
+        batch_start = i * batch_size
+        batch_end = (i + 1) * batch_size
+        batch_x, _ = test_generator.next()
+        batch_probabilities = model.predict(batch_x, verbose=0)
+        probabilities[batch_start:batch_end] = batch_probabilities
+
+    # Predict the remaining samples (if any)
+    remaining_samples = num_samples % batch_size
+    if remaining_samples > 0:
+        batch_x, _ = test_generator.next()
+        batch_probabilities = model.predict(batch_x, verbose=0)
+        probabilities[-remaining_samples:] = batch_probabilities[:remaining_samples]
+
+    # Rest of the code remains the same
     predictions = np.argmax(probabilities, axis=1)
     class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
 
