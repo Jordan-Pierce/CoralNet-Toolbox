@@ -96,13 +96,13 @@ def process_image(image_name, image_dir, annotation_df, output_dir):
         try:
             # Extract the patch
             patch = crop_patch(image, r['Row'], r['Column'])
-            name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}.png"
+            name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}.jpg"
             path = os.path.join(output_dir, 'patches', r['Label'], name)
 
-            # If it's not mostly empty, crop it
+            # Save
             if patch is not None:
                 # Save the patch
-                imsave(fname=path, arr=patch)
+                imsave(fname=path, arr=patch, quality=90)
                 # Add to list
                 patches.append([name, path, r['Label'], image_name, image_path])
 
@@ -170,8 +170,11 @@ def patches(args):
 
     if os.path.exists(output_path):
         print(f"NOTE: Patches dataframe saved to {output_path}")
+        return output_path
     else:
         print(f"ERROR: Patches dataframe could not be saved")
+        return None
+
 
 
 # -----------------------------------------------------------------------------

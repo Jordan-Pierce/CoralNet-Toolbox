@@ -1,6 +1,7 @@
 import os
 import gc
 import sys
+import shutil
 import warnings
 import argparse
 import subprocess
@@ -22,9 +23,10 @@ import tensorflow as tf
 keras = tf.keras
 from keras import backend as K
 from keras.models import load_model
+from keras.preprocessing.image import ImageDataGenerator
 
 from Toolbox.Tools import *
-from Toolbox.Tools.Patches import crop_patch
+from Toolbox.Tools.Patches import patches
 from Toolbox.Tools.Classifier import precision, recall, f1_score
 
 
@@ -50,25 +52,30 @@ def inference(args):
     print("Inference")
     print("###############################################\n")
 
-    # Set the variables
+    # Points Dataframe
+    if os.path.exists(args.points):
+        # Annotation file
+        annotation_file = args.points
+        points = pd.read_csv(annotation_file, index_col=0)
+        print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
+    else:
+        print("ERROR: Points provided doesn't exist.")
+        sys.exit(1)
 
     # Image files
     if os.path.exists(args.images):
-        image_files = [i for i in glob.glob(f"{args.images}/*.*") if i.split(".")[-1].lower() in IMG_FORMATS]
+        # Directory containing images
+        image_dir = args.images
+        # Get images from directory
+        image_files = [i for i in glob.glob(f"{image_dir}/*.*") if i.split(".")[-1].lower() in IMG_FORMATS]
+        # Subset the images list to only contain those with points
+        image_files = [i for i in image_files if os.path.basename(i) in points['Name'].unique()]
         if not image_files:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
             print(f"NOTE: Found {len(image_files)} images in directory provided")
     else:
         print("ERROR: Directory provided doesn't exist.")
-        sys.exit(1)
-
-    # Points Dataframe
-    if os.path.exists(args.points):
-        points = pd.read_csv(args.points, index_col=0)
-        print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
-    else:
-        print("ERROR: Points provided doesn't exist.")
         sys.exit(1)
 
     # Model Weights
@@ -95,52 +102,53 @@ def inference(args):
 
     # Output
     output_dir = args.output_dir
-    output_path = f"{output_dir}\predictions.csv"
+    output_path = f"{output_dir}\\predictions.csv"
     os.makedirs(output_dir, exist_ok=True)
+
+    # Temp directory for patches (deleted afterwards)
+    temp_dir = f"{output_dir}\\temp\\"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    # ----------------------------------------------------------------
+    # Creating Patches
+    # ----------------------------------------------------------------
+    args = {'image_dir': image_dir,
+            'annotation_file': annotation_file,
+            'output_dir': temp_dir}
+
+    patches_path = patches(argparse.Namespace(**args))
+    patches_df = pd.read_csv(patches_path, index_col=0)
 
     # ----------------------------------------------------------------
     # Inference
     # ----------------------------------------------------------------
-    print("NOTE: Making predictions...")
+    test_generator = ImageDataGenerator().flow_from_dataframe(dataframe=patches_df,
+                                                              x_col='Path',
+                                                              y_col='Label',
+                                                              target_size=(224, 224),
+                                                              color_mode="rgb",
+                                                              class_mode='categorical',
+                                                              batch_size=1,
+                                                              shuffle=False,
+                                                              seed=42)
 
-    output = []
-    patches = []
+    print("\n###############################################")
+    print("Making Predictions")
+    print("###############################################\n")
 
-    # Subset the images list to only contain those with points
-    image_files = [i for i in image_files if os.path.basename(i) in points['Name'].unique()]
+    # Check that the user has GPU available
+    if tf.config.list_physical_devices('GPU'):
+        print("NOTE: Found GPU")
+    else:
+        print("WARNING: No GPU found; defaulting to CPU")
 
-    # Loop through each image, extract the corresponding patches
-    for idx, image_path in enumerate(image_files):
-
-        # Get the points associated
-        name = os.path.basename(image_path)
-        current_points = points[points['Name'] == name]
-
-        if current_points.empty:
-            continue
-
-        # Read the image
-        image = imread(image_path)
-
-        # Crop patches from points
-        for i, r in current_points.iterrows():
-            patches.append(crop_patch(image, r['Row'], r['Column'], patch_size=224))
-            output.append(r)
-            gc.collect()
-
-        # Gooey
-        print_progress(idx, len(image_files))
-
-    # Convert to numpy array
-    patches = np.array(patches)
-
-    # Make predictions for this image
-    probabilities = model.predict(patches)
+    # Make predictions for all patches
+    probabilities = model.predict_generator(test_generator)
     predictions = np.argmax(probabilities, axis=1)
     class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
 
     # Convert, make the top choice Label
-    output = pd.DataFrame(output)
+    output = points.copy()
     output['Label'] = class_predictions
 
     N = probabilities.shape[1]
@@ -162,6 +170,10 @@ def inference(args):
     # Save
     output.to_csv(output_path)
     print(f"NOTE: Predictions saved to {output_path}")
+
+    # Delete temp
+    print(f"NOTE: Deleting temporary folder {temp_dir}")
+    shutil.rmtree(temp_dir)
 
 
 # -----------------------------------------------------------------------------
