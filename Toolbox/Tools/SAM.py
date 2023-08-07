@@ -21,6 +21,7 @@ from Toolbox.Tools.Inference import get_class_map
 
 cmap = cm.get_cmap('tab20')
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
@@ -85,18 +86,40 @@ def get_sam_predictor(model_type="vit_b", device='cpu'):
     return sam_predictor
 
 
-def show_mask(mask, ax, random_color=False):
+def get_bbox(image, y, x, patch_size=224):
+    """
+    Given an image, and a Y, X location, this function will return a bounding box.
     """
 
-    """
-    if random_color:
-        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
-    else:
-        color = np.array([30 / 255, 144 / 255, 255 / 255, 0.6])
+    height, width, _ = image.shape
 
-    h, w = mask.shape[-2:]
-    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    ax.imshow(mask_image)
+    # N x N
+    size = patch_size // 2
+
+    # Top of the patch, else edge of image
+    top = y - size
+    if top < 0:
+        top = 0
+
+    # Bottom of patch, else edge of image
+    bottom = y + size
+    if bottom > height:
+        bottom = height
+
+    # Left of patch, else edge of image
+    left = x - size
+    if left < 0:
+        left = 0
+
+    # Right of patch, else edge of image
+    right = x + size
+    if right > width:
+        right = width
+
+    # Bounding Box
+    bbox = [left, top, right, bottom]
+
+    return bbox
 
 
 def mode(a, background_class=255, axis=0):
@@ -140,6 +163,22 @@ def mode(a, background_class=255, axis=0):
     return mostfrequent
 
 
+def colorize_mask(mask, class_map, label_colors):
+
+    # Initialize the RGB mask with zeros
+    height, width = mask.shape
+    rgb_mask = np.full((height, width, 3), fill_value=255, dtype=np.uint8)
+
+    cmap = {v: label_colors[k][0:3] for k, v in class_map.items()}
+
+    for val in np.unique(mask):
+        if val in class_map.values():
+            color = np.array(cmap[val]) * 255
+            rgb_mask[mask == val, :] = color.astype(np.uint8)
+
+    return rgb_mask.astype(np.uint8)
+
+
 def mss_sam(args):
     """
 
@@ -169,10 +208,18 @@ def mss_sam(args):
 
     # Predictions Dataframe
     if os.path.exists(args.annotations):
-        points = pd.read_csv(args.annotations)
+        points = pd.read_csv(args.annotations, index_col=0)
         print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
     else:
         print("ERROR: Points file provided doesn't exist.")
+        sys.exit(1)
+
+    # Class map
+    if os.path.exists(args.class_map):
+        class_map = get_class_map(args.class_map)
+        class_map = {v: int(k) for k, v in class_map.items()}
+    else:
+        print(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit(1)
 
     # Model Weights
@@ -185,13 +232,6 @@ def mss_sam(args):
         print(f"ERROR: There was an issue loading the model\n{e}")
         sys.exit(1)
 
-    # Class map
-    if os.path.exists(args.class_map):
-        class_map = get_class_map(args.class_map)
-    else:
-        print(f"ERROR: Class Map file provided doesn't exist.")
-        sys.exit(1)
-
     # Setting output variables
     output_dir = args.output_dir
     mask_dir = f"{args.output_dir}masks/"
@@ -201,20 +241,16 @@ def mss_sam(args):
     # ----------------------------------------------------------------
     # Inference
     # ----------------------------------------------------------------
-    print("NOTE: Making predictions")
-
-    output = []
+    print("\n###############################################")
+    print("Making Masks")
+    print("###############################################\n")
 
     # Subset the images list to only contain those with points
     images = [i for i in images if os.path.basename(i) in points['Name'].unique()]
 
     # For plotting colored points and masks
-    # Create a dictionary to map colors to labels using 'tab20' colormap
-    unique_labels = points['Label'].unique()
+    unique_labels = list(class_map.keys())
     label_colors = {l: cmap(i) for i, l in enumerate(unique_labels)}
-
-    # To hold all the cleans masks
-    updated_masks = []
 
     # Loop through each image, extract the corresponding patches
     for i_idx, image_path in enumerate(images):
@@ -228,50 +264,69 @@ def mss_sam(args):
         if current_points.empty:
             continue
 
-        # Read the image, get the points, create SAM labels (background or foreground)
+        # Read the image, get the points, create bounding boxes
         image = imread(image_path)
 
-        input_points = current_points[['Row', 'Column']].values.reshape(-1, 2)
-        input_points = torch.Tensor(input_points).to(sam_predictor.device).unsqueeze(1)
-        input_points = sam_predictor.transform.apply_coords_torch(input_points, image.shape[:2])
-
-        input_labels = torch.Tensor([1 for _ in range(len(current_points))]).to(sam_predictor.device).unsqueeze(1)
-
-        print(f"NOTE: Setting {name}")
+        # Set the image in sam predictor
+        print(f"NOTE: Making predictions for {name}")
         sam_predictor.set_image(image)
 
-        for p_idx in tqdm(range(len(current_points))):
+        updated_masks = []
+        color_masks = []
 
-            masks, scores, logits = sam_predictor.predict_torch(point_coords=input_points[p_idx:p_idx+1],
-                                                                point_labels=input_labels[p_idx:p_idx+1],
-                                                                boxes=None,
-                                                                multimask_output=True)
-            # Numpy array masks
-            masks = masks.cpu().detach().numpy().squeeze()
-            scores = scores.cpu().detach().numpy().squeeze()
+        for patch_size in [224]:
 
-            try:
-                for m_idx, mask in enumerate(masks):
-                    if scores[m_idx] >= .75:
-                        mask = mask.astype(np.uint8).squeeze()
-                        mask[mask == 0] = 255
-                        mask[mask == 1] = int(class_map[current_points['Label'].values[p_idx]])
+            # To hold all the updated and colored masks (for viewing)
+            updated_mask = np.full(shape=image.shape[:2], fill_value=255)
 
-                        updated_masks.append(mask)
+            # Get all the bounding boxes
+            bboxes = []
 
-            except Exception as e:
-                print(f"WARNING: {e}")
-                continue
+            for i, r in current_points.iterrows():
+                bboxes.append(get_bbox(image, r['Row'], r['Column'], patch_size))
 
-        # Convert to numpy, find mode along channel axis
-        updated_masks = np.array(updated_masks)
-        mode_mask = mode(updated_masks)
+            # Create into a tensor
+            bboxes = torch.tensor(bboxes, device=sam_predictor.device)
+            transformed_boxes = sam_predictor.transform.apply_boxes_torch(bboxes, image.shape[:2])
+
+            # Loop through each point, get bboxes
+            for p_idx, (i, r) in tqdm(enumerate(current_points.iterrows())):
+
+                # if not p_idx % 100 == 0:
+                #     continue
+
+                # After setting the current image, get masks for each point
+                mask, _, _ = sam_predictor.predict_torch(point_coords=None,
+                                                         point_labels=None,
+                                                         boxes=transformed_boxes[p_idx].unsqueeze(0),
+                                                         multimask_output=False)
+
+                # Numpy array masks
+                mask = mask.cpu().detach().numpy().astype(np.uint8).squeeze()
+
+                # convert binary values to correspond to label values
+                updated_mask[mask == 1] = int(class_map[r['Label']])
+
+            # Colorize the updated mask
+            color_mask = colorize_mask(updated_mask, class_map, label_colors)
+
+            # Plot masks
+            plt.figure(figsize=(10, 10))
+            plt.title(str(patch_size))
+            plt.imshow(image)
+            plt.imshow(color_mask, alpha=.75)
+            plt.show()
+
+            updated_masks.append(updated_mask)
+            color_masks.append(color_mask)
+
+        final_mask = mode(np.array(updated_masks))
+        final_color = colorize_mask(final_mask, class_map, label_colors)
 
         # Plot masks
         plt.figure(figsize=(10, 10))
         plt.imshow(image)
-        plt.scatter(current_points['Column'].values, current_points['Row'].values, c=point_colors)
-        plt.imshow(mode_mask)
+        plt.imshow(final_color, alpha=.75)
         plt.show()
 
         # Gooey
@@ -295,7 +350,7 @@ def main():
     parser.add_argument("--annotations", type=str, required=True,
                         help="Path to the points file containing 'Name', 'Row', 'Column', and 'Label' information.")
 
-    parser.add_argument("--model_type", type=str, default='vit_b',
+    parser.add_argument("--model_type", type=str, default='vit_l',
                         help="Model to use; one of ['vit_b', 'vit_l', 'vit_h']")
 
     parser.add_argument("--class_map", type=str, required=True,
