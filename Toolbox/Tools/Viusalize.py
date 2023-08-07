@@ -18,7 +18,7 @@ from Toolbox.Tools import IMG_FORMATS
 # Hide the default interactive toolbar
 plt.rcParams['toolbar'] = 'None'
 
-
+# TODO create a savefigure button
 class ImageViewer:
     def __init__(self, image_files, annotations):
         self.image_files = image_files
