@@ -205,6 +205,21 @@ def colorize_mask(mask, class_map, label_colors):
     return rgb_mask.astype(np.uint8)
 
 
+def plot_mask(image, mask_color, points, point_colors, fname, mask_dir):
+    """
+
+    """
+
+    # Plot masks
+    plt.figure(figsize=(10, 10))
+    plt.title(fname)
+    plt.imshow(image)
+    plt.imshow(mask_color, alpha=.75)
+    plt.scatter(points['Column'].values, points['Row'].values, c=point_colors, s=1)
+    plt.savefig(f"{mask_dir}{fname}")
+    plt.close()
+
+
 def mss_sam(args):
     """
 
@@ -262,8 +277,12 @@ def mss_sam(args):
     output_dir = args.output_dir
     mask_dir = f"{args.output_dir}masks/"
     os.makedirs(mask_dir, exist_ok=True)
+
     # Output for mask dataframe
     mask_file = f"{output_dir}masks.csv"
+
+    # Patch size
+    patch_size = args.patch_size
 
     # ----------------------------------------------------------------
     # Inference
@@ -294,80 +313,62 @@ def mss_sam(args):
         # Read the image, get the points, create bounding boxes
         image = imread(image_path)
 
-        # Set the image in sam predictor
         print(f"NOTE: Making predictions for {name}")
+        # Set the image in sam predictor
         sam_predictor.set_image(image)
 
-        updated_masks = []
+        # To hold all the updated and colored masks (for viewing)
+        updated_mask = np.full(shape=image.shape[:2], fill_value=255)
 
-        for patch_size in [320]:
+        # Get all the bounding boxes
+        bboxes = []
 
-            # To hold all the updated and colored masks (for viewing)
-            updated_mask = np.full(shape=image.shape[:2], fill_value=255)
+        for i, r in current_points.iterrows():
+            bboxes.append(get_bbox(image, r['Row'], r['Column'], patch_size))
 
-            # Get all the bounding boxes
-            bboxes = []
+        # Create into a tensor
+        bboxes = np.array(bboxes)
+        transformed_boxes = torch.tensor(bboxes, device=sam_predictor.device)
+        transformed_boxes = sam_predictor.transform.apply_boxes_torch(transformed_boxes, image.shape[:2])
 
-            for i, r in current_points.iterrows():
-                bboxes.append(get_bbox(image, r['Row'], r['Column'], patch_size))
+        # Loop through each point, get bboxes
+        for p_idx, (i, r) in tqdm(enumerate(current_points.iterrows())):
 
-            # Create into a tensor
-            bboxes = np.array(bboxes)
-            transformed_boxes = torch.tensor(bboxes, device=sam_predictor.device)
-            transformed_boxes = sam_predictor.transform.apply_boxes_torch(transformed_boxes, image.shape[:2])
+            # Every N points
+            if p_idx % 10 != 0:
+                continue
 
-            # Loop through each point, get bboxes
-            for p_idx, (i, r) in tqdm(enumerate(current_points.iterrows())):
+            # After setting the current image, get masks for each point
+            mask, _, _ = sam_predictor.predict_torch(point_coords=None,
+                                                     point_labels=None,
+                                                     boxes=transformed_boxes[p_idx].unsqueeze(0),
+                                                     multimask_output=False)
 
-                # Every N points
-                if p_idx % 10 != 0:
-                    continue
+            # Numpy array masks
+            mask = mask.cpu().detach().numpy().astype(np.uint8).squeeze()
 
-                # After setting the current image, get masks for each point
-                mask, _, _ = sam_predictor.predict_torch(point_coords=None,
-                                                         point_labels=None,
-                                                         boxes=transformed_boxes[p_idx].unsqueeze(0),
-                                                         multimask_output=False)
+            try:
+                # Find the most common label within the binary mask (1)
+                label = find_most_common_label_in_area(current_points, mask, bboxes[p_idx])
+                # convert binary values to correspond to label values
+                updated_mask[mask == 1] = int(class_map[label])
+            except:
+                pass
 
-                # Numpy array masks
-                mask = mask.cpu().detach().numpy().astype(np.uint8).squeeze()
+            if p_idx % 1000 == 0:
+                # Colorize the updated mask
+                mask_color = colorize_mask(updated_mask, class_map, label_colors)
+                # Plot and save the mask
+                fname = f"{str(p_idx)}{str(patch_size)}_{name}"
+                plot_mask(image, mask_color, points, point_colors, fname, mask_dir)
 
-                try:
-                    # Find the most common label within the binary mask (1)
-                    label = find_most_common_label_in_area(current_points, mask, bboxes[p_idx])
-                    # convert binary values to correspond to label values
-                    updated_mask[mask == 1] = int(class_map[label])
-                except:
-                    pass
-
-                if p_idx % 1000 == 0:
-                    # Colorize the updated mask
-                    color_mask = colorize_mask(updated_mask, class_map, label_colors)
-                    fname = f"{name}_{str(patch_size)}_{str(p_idx)}"
-
-                    # Plot masks
-                    plt.figure(figsize=(10, 10))
-                    plt.title(fname)
-                    plt.imshow(image)
-                    plt.imshow(color_mask, alpha=.75)
-                    plt.savefig(f"{mask_dir}{fname}.jpg")
-                    plt.close()
-
-            updated_masks.append(updated_mask)
-
-        updated_masks = np.array(updated_masks)
-        final_mask = mode(updated_masks)
-        final_color = colorize_mask(final_mask, class_map, label_colors)
+        # Get the final colored mask, change no data to black
+        final_color = colorize_mask(updated_mask, class_map, label_colors)
         final_color[updated_mask == 255, :] = [0, 0, 0]
-        fname = f"{name}_{str(patch_size)}_end"
 
-        # Plot masks
-        plt.figure(figsize=(10, 10))
-        plt.title(fname)
-        plt.imshow(image)
-        plt.imshow(final_color, alpha=.75)
-        plt.savefig(f"{mask_dir}{fname}.jpg")
-        plt.close()
+        # Plot the final mask
+        fname = f"final_{str(patch_size)}_{name}"
+        plot_mask(image, final_color, points, point_colors, fname, mask_dir)
 
         # Gooey
         print_progress(i_idx, len(images))
@@ -389,6 +390,9 @@ def main():
 
     parser.add_argument("--annotations", type=str, required=True,
                         help="Path to the points file containing 'Name', 'Row', 'Column', and 'Label' information.")
+
+    parser.add_argument("--patch_size", type=int, default=360,
+                        help="The approximate size of each superpixel formed by SAM")
 
     parser.add_argument("--model_type", type=str, default='vit_l',
                         help="Model to use; one of ['vit_b', 'vit_l', 'vit_h']")
