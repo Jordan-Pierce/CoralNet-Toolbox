@@ -32,6 +32,8 @@ with those on CoralNet, including:
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 - `Inference`: Perform inference using a locally trained model
+- `SAM`: Create segmentation masks for each image using `MSS` w/ `SAM`
+
 
 
 <p align="center">
@@ -40,8 +42,8 @@ with those on CoralNet, including:
 
 #### **Future Features**
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
+- `Semantic Segmentation`: Create a FCN to perform semantic segmentation 
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
-- `Segment`: Create segmentation masks for each image using `MSS`, `SAM`
 - `GAN`: Synthesize samples using generative AI
 
 #### **How to use**

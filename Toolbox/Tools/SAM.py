@@ -275,14 +275,13 @@ def mss_sam(args):
 
     # Setting output variables
     output_dir = args.output_dir
-    mask_dir = f"{args.output_dir}masks/"
+    mask_dir = f"{output_dir}masks/"
     os.makedirs(mask_dir, exist_ok=True)
-
+    viz_dir = f"{mask_dir}viz/"
+    os.makedirs(viz_dir, exist_ok=True)
     # Output for mask dataframe
     mask_file = f"{output_dir}masks.csv"
-
-    # Patch size
-    patch_size = args.patch_size
+    mask_df = []
 
     # ----------------------------------------------------------------
     # Inference
@@ -324,7 +323,7 @@ def mss_sam(args):
         bboxes = []
 
         for i, r in current_points.iterrows():
-            bboxes.append(get_bbox(image, r['Row'], r['Column'], patch_size))
+            bboxes.append(get_bbox(image, r['Row'], r['Column'], args.patch_size))
 
         # Create into a tensor
         bboxes = np.array(bboxes)
@@ -333,10 +332,6 @@ def mss_sam(args):
 
         # Loop through each point, get bboxes
         for p_idx, (i, r) in tqdm(enumerate(current_points.iterrows())):
-
-            # Every N points
-            if p_idx % 10 != 0:
-                continue
 
             # After setting the current image, get masks for each point
             mask, _, _ = sam_predictor.predict_torch(point_coords=None,
@@ -355,23 +350,41 @@ def mss_sam(args):
             except:
                 pass
 
-            if p_idx % 1000 == 0:
+            if p_idx % int(len(current_points) * .1) == 0 and args.viz:
                 # Colorize the updated mask
                 mask_color = colorize_mask(updated_mask, class_map, label_colors)
                 # Plot and save the mask
-                fname = f"{str(p_idx)}{str(patch_size)}_{name}"
-                plot_mask(image, mask_color, points, point_colors, fname, mask_dir)
+                fname = f"{str(p_idx)}_{name}"
+                plot_mask(image, mask_color, points, point_colors, fname, viz_dir)
 
-        # Get the final colored mask, change no data to black
-        final_color = colorize_mask(updated_mask, class_map, label_colors)
-        final_color[updated_mask == 255, :] = [0, 0, 0]
+        if args.viz:
+            # Get the final colored mask, change no data to black
+            final_color = colorize_mask(updated_mask, class_map, label_colors)
+            final_color[updated_mask == 255, :] = [0, 0, 0]
 
-        # Plot the final mask
-        fname = f"final_{str(patch_size)}_{name}"
-        plot_mask(image, final_color, points, point_colors, fname, mask_dir)
+            # Plot the final mask
+            plot_mask(image, final_color, points, point_colors, name, viz_dir)
+
+        # Save the mask
+        mask_path = f"{mask_dir}{name}"
+        imsave(fname=mask_path, arr=updated_mask.astype(np.uint8))
+
+        print(f"NOTE: Saved mask to {mask_path}")
+
+        # Add to output
+        mask_df.append([name, name])
 
         # Gooey
         print_progress(i_idx, len(images))
+
+    # Save dataframe
+    mask_df = pd.DataFrame(mask_df, columns=['Name', 'Mask'])
+    mask_df.to_csv(mask_file)
+
+    if os.path.exists(mask_file):
+        print(f"NOTE: Mask dataframe saved to {mask_dir}")
+    else:
+        print(f"ERROR: Could not save mask dataframe")
 
 
 # -----------------------------------------------------------------------------
@@ -383,7 +396,7 @@ def main():
 
     """
 
-    parser = argparse.ArgumentParser(description="Model Inference")
+    parser = argparse.ArgumentParser(description="Multilevel Superpixel Segmentation w/ SAM")
 
     parser.add_argument("--images", type=str, required=True,
                         help="Directory containing images to perform inference on")
@@ -399,6 +412,9 @@ def main():
 
     parser.add_argument("--class_map", type=str, required=True,
                         help="Path to the model's Class Map JSON file")
+
+    parser.add_argument("--viz", type=bool, default=False,
+                        help="Saves visuals of progression")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

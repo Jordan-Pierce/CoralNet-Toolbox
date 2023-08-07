@@ -597,6 +597,53 @@ def main():
                                           widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
+    # MSS w/ SAM
+    # ------------------------------------------------------------------------------------------------------------------
+    sam_parser = subs.add_parser('SAM')
+
+    # Panel 1
+    sam_parser_panel_1 = sam_parser.add_argument_group('SAM',
+                                                       'Use the Segment Anything Model (SAM) to create '
+                                                       'segmentation masks given predicted points.')
+
+    sam_parser_panel_1.add_argument('--images', required=True,
+                                    metavar="Image Directory",
+                                    help='Directory containing images to make predictions on',
+                                    widget="DirChooser")
+
+    sam_parser_panel_1.add_argument('--annotations', required=True,
+                                    metavar="Annotations File",
+                                    help='A file containing points with labels',
+                                    widget="FileChooser")
+
+    sam_parser_panel_1.add_argument('--class_map', required=True,
+                                    metavar="Class Map File",
+                                    help='The class mapping JSON file',
+                                    widget="FileChooser")
+
+    sam_parser_panel_1.add_argument('--model_type', type=str, required=True,
+                                    metavar="Model Version",
+                                    default='vit_l',
+                                    help='Version of SAM model to use',
+                                    widget='FilterableDropdown', choices=['vit_b', 'vit_l', 'vit_h'])
+
+    sam_parser_panel_1.add_argument("--patch_size", type=int, default=360,
+                                    metavar="Patch Size",
+                                    help="The approximate size of each superpixel formed by SAM")
+
+    sam_parser_panel_1.add_argument('--viz', default=False,
+                                    metavar="Visualize Results",
+                                    help='Saves colorized figures of masks in subfolder',
+                                    action="store_true",
+                                    widget='BlockCheckbox')
+
+    sam_parser_panel_1.add_argument('--output_dir', required=True,
+                                    metavar='Output Directory',
+                                    default=os.path.abspath("..\\Data"),
+                                    help='Root directory where output will be saved',
+                                    widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
     # Parser
     # ------------------------------------------------------------------------------------------------------------------
     args = parser.parse_args()

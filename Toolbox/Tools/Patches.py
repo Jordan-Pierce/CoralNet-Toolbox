@@ -112,6 +112,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir):
 
     return patches
 
+
 # TODO parallelize using multithreading, pyvips
 def patches(args):
     """
