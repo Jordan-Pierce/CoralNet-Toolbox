@@ -8,12 +8,13 @@ from skimage.io import imread
 from skimage.io import imsave
 from scipy.stats import mode as mode2d
 
-
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
 import torch
 import torchvision
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 
 from segment_anything import SamPredictor
 from segment_anything import sam_model_registry
@@ -22,6 +23,21 @@ from Toolbox.Tools import *
 from Toolbox.Tools.Inference import get_class_map
 
 cmap = cm.get_cmap('tab20')
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
+class CustomDataset(Dataset):
+    def __init__(self, bboxes):
+        self.data = bboxes
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -190,7 +206,6 @@ def mode(a, background_class=255, axis=0):
 
 
 def colorize_mask(mask, class_map, label_colors):
-
     # Initialize the RGB mask with zeros
     height, width = mask.shape
     rgb_mask = np.full((height, width, 3), fill_value=255, dtype=np.uint8)
@@ -236,23 +251,27 @@ def mss_sam(args):
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    # Predictions Dataframe
+    if os.path.exists(args.annotations):
+        points = pd.read_csv(args.annotations, index_col=0)
+        image_names = np.unique(points['Image Name'].to_numpy())
+        print(f"NOTE: Found a total of {len(points)} sampled points for {len(image_names)} images")
+    else:
+        print("ERROR: Points file provided doesn't exist.")
+        sys.exit(1)
+
     # Image files
     if os.path.exists(args.images):
+        # Images that are the correct image format
         images = [i for i in glob.glob(f"{args.images}/*.*") if i.split(".")[-1].lower() in IMG_FORMATS]
+        # Subset the images list to only contain those with points
+        images = [i for i in images if os.path.basename(i) in image_names]
         if not images:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
             print(f"NOTE: Found {len(images)} images in directory provided")
     else:
-        print("ERROR: Directory provided doesn't exist.")
-        sys.exit(1)
-
-    # Predictions Dataframe
-    if os.path.exists(args.annotations):
-        points = pd.read_csv(args.annotations, index_col=0)
-        print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
-    else:
-        print("ERROR: Points file provided doesn't exist.")
+        print("ERROR: Image directory provided doesn't exist.")
         sys.exit(1)
 
     # Class map
@@ -262,6 +281,10 @@ def mss_sam(args):
     else:
         print(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit(1)
+
+    # For plotting colored points and masks
+    unique_labels = list(class_map.keys())
+    label_colors = {l: cmap(i) for i, l in enumerate(unique_labels)}
 
     # Model Weights
     try:
@@ -276,12 +299,16 @@ def mss_sam(args):
     # Setting output variables
     output_dir = args.output_dir
     mask_dir = f"{output_dir}masks/"
+    visualize_dir = f"{mask_dir}visualize/"
+    # Create the output directories
     os.makedirs(mask_dir, exist_ok=True)
-    viz_dir = f"{mask_dir}viz/"
-    os.makedirs(viz_dir, exist_ok=True)
+    os.makedirs(visualize_dir, exist_ok=True)
     # Output for mask dataframe
     mask_file = f"{output_dir}masks.csv"
     mask_df = []
+
+    # Batch size
+    batch_size = 64
 
     # ----------------------------------------------------------------
     # Inference
@@ -290,20 +317,12 @@ def mss_sam(args):
     print("Making Masks")
     print("###############################################\n")
 
-    # Subset the images list to only contain those with points
-    images = [i for i in images if os.path.basename(i) in points['Name'].unique()]
-
-    # For plotting colored points and masks
-    unique_labels = list(class_map.keys())
-    label_colors = {l: cmap(i) for i, l in enumerate(unique_labels)}
-
     # Loop through each image, extract the corresponding patches
-    for i_idx, image_path in enumerate(images):
+    for i_idx, image_path in enumerate(images[::216]):
 
-        # Get the points associated
+        # Get the points associated with current image
         name = os.path.basename(image_path)
-        current_points = points[points['Name'] == name]
-        point_colors = current_points['Label'].map(label_colors).values
+        current_points = points[points['Image Name'] == name]
 
         # Skip if there are no points for some reason
         if current_points.empty:
@@ -316,10 +335,10 @@ def mss_sam(args):
         # Set the image in sam predictor
         sam_predictor.set_image(image)
 
-        # To hold all the updated and colored masks (for viewing)
+        # To hold the updated mask, will be added onto each iteration
         updated_mask = np.full(shape=image.shape[:2], fill_value=255)
 
-        # Get all the bounding boxes
+        # Get all the bounding boxes for the current image
         bboxes = []
 
         for i, r in current_points.iterrows():
@@ -330,54 +349,72 @@ def mss_sam(args):
         transformed_boxes = torch.tensor(bboxes, device=sam_predictor.device)
         transformed_boxes = sam_predictor.transform.apply_boxes_torch(transformed_boxes, image.shape[:2])
 
-        # Loop through each point, get bboxes
-        for p_idx, (i, r) in tqdm(enumerate(current_points.iterrows())):
+        # Create a data loader containing the transformed boxes
+        custom_dataset = CustomDataset(transformed_boxes)
+        data_loader = DataLoader(custom_dataset, batch_size=64, shuffle=False)
 
-            # After setting the current image, get masks for each point
-            mask, _, _ = sam_predictor.predict_torch(point_coords=None,
-                                                     point_labels=None,
-                                                     boxes=transformed_boxes[p_idx].unsqueeze(0),
-                                                     multimask_output=False)
-
-            # Numpy array masks
-            mask = mask.cpu().detach().numpy().astype(np.uint8).squeeze()
+        # Loop through batches of boxes, faster
+        for batch_idx, batch in tqdm(enumerate(data_loader)):
 
             try:
-                # Find the most common label within the binary mask (1)
-                label = find_most_common_label_in_area(current_points, mask, bboxes[p_idx])
-                # convert binary values to correspond to label values
-                updated_mask[mask == 1] = int(class_map[label])
-            except:
-                pass
+                # After setting the current image, get masks for each point / bbox
+                masks, _, _ = sam_predictor.predict_torch(point_coords=None,
+                                                          point_labels=None,
+                                                          boxes=batch,
+                                                          multimask_output=False)
+            except Exception as e:
+                print(f"ERROR: Model could not make predictions\n{e}")
+                sys.exit(1)
 
-            if p_idx % int(len(current_points) * .1) == 0 and args.viz:
+            # Numpy array masks
+            masks = masks.cpu().detach().numpy().astype(np.uint8).squeeze()
+
+            # Loop through all the individual masks in the batch
+            for m_idx, mask in enumerate(masks):
+
+                try:
+                    # Get the current box
+                    box = bboxes[batch_idx * batch_size: (batch_idx + 1) * batch_size][m_idx]
+                    # Find the most common label within the binary mask (1)
+                    label = find_most_common_label_in_area(current_points, mask, box)
+                    # convert binary values to correspond to label values
+                    updated_mask[mask == 1] = int(class_map[label])
+                except:
+                    pass
+
+            # Create a screenshot every 10% of the number of points
+            if batch_idx % int(len(data_loader) * .2) == 0 and args.visualize:
                 # Colorize the updated mask
                 mask_color = colorize_mask(updated_mask, class_map, label_colors)
+                point_colors = current_points['Label'].map(label_colors).values
                 # Plot and save the mask
-                fname = f"{str(p_idx)}_{name}"
-                plot_mask(image, mask_color, points, point_colors, fname, viz_dir)
+                fname = f"{name.split('.')[0]}_{str(batch_idx)}.jpg"
+                plot_mask(image, mask_color, current_points, point_colors, fname, visualize_dir)
 
-        if args.viz:
+        # Final figure
+        if args.visualize:
             # Get the final colored mask, change no data to black
             final_color = colorize_mask(updated_mask, class_map, label_colors)
             final_color[updated_mask == 255, :] = [0, 0, 0]
+            point_colors = current_points['Label'].map(label_colors).values
+            fname = f"{name.split('.')[0]}.jpg"
 
             # Plot the final mask
-            plot_mask(image, final_color, points, point_colors, name, viz_dir)
+            plot_mask(image, final_color, current_points, point_colors, fname, visualize_dir)
 
-        # Save the mask
+        # Save the mask itself
         mask_path = f"{mask_dir}{name}"
         imsave(fname=mask_path, arr=updated_mask.astype(np.uint8))
 
         print(f"NOTE: Saved mask to {mask_path}")
 
-        # Add to output
+        # Add to output list
         mask_df.append([name, name])
 
         # Gooey
         print_progress(i_idx, len(images))
 
-    # Save dataframe
+    # Save dataframe to root directory
     mask_df = pd.DataFrame(mask_df, columns=['Name', 'Mask'])
     mask_df.to_csv(mask_file)
 
@@ -413,8 +450,8 @@ def main():
     parser.add_argument("--class_map", type=str, required=True,
                         help="Path to the model's Class Map JSON file")
 
-    parser.add_argument("--viz", type=bool, default=False,
-                        help="Saves visuals of progression")
+    parser.add_argument("--visualize", type=bool, default=False,
+                        help="Saves pretty visuals of masks")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

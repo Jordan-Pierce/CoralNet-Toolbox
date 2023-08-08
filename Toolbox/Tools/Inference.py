@@ -134,7 +134,8 @@ def inference(args):
         # Create patches for this image
         print(f"NOTE: Making temporary patches for {image_name}")
         patches = process_image(image_name, image_dir, image_points, temp_dir)
-        patches_df = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Image Name', 'Image Path'])
+        patches_df = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Row',
+                                                    'Column' 'Image Name', 'Image Path'])
 
         # ----------------------------------------------------------------
         # Inference

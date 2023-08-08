@@ -104,7 +104,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir):
                 # Save the patch
                 imsave(fname=path, arr=patch, quality=90)
                 # Add to list
-                patches.append([name, path, r['Label'], image_name, image_path])
+                patches.append([name, path, r['Label'], r['Row'], r['Column'], image_name, image_path])
 
         except Exception as e:
             print(f"ERROR: {e}")
@@ -160,7 +160,8 @@ def patches(args):
 
     # Save patches dataframe
     output_path = os.path.join(output_dir, 'patches.csv')
-    patches = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Image Name', 'Image Path'])
+    patches = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Row',
+                                             'Column' 'Image Name', 'Image Path'])
 
     if os.path.exists(output_path):
         previous_patches = pd.read_csv(output_path, index_col=0)
@@ -175,7 +176,6 @@ def patches(args):
     else:
         print(f"ERROR: Patches dataframe could not be saved")
         return None
-
 
 
 # -----------------------------------------------------------------------------

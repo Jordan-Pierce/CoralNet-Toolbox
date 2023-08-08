@@ -631,9 +631,9 @@ def main():
                                     metavar="Patch Size",
                                     help="The approximate size of each superpixel formed by SAM")
 
-    sam_parser_panel_1.add_argument('--viz', default=False,
-                                    metavar="Visualize Results",
-                                    help='Saves colorized figures of masks in subfolder',
+    sam_parser_panel_1.add_argument('--visualize', default=False,
+                                    metavar="Visualize Masks",
+                                    help='Saves colorized figures of masks in visualize subdirectory',
                                     action="store_true",
                                     widget='BlockCheckbox')
 
