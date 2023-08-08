@@ -3,7 +3,7 @@
 
 <p align="center">
   <img src="./Figures/CoralNet-Toolbox.png" alt="CoralNet-Toolbox">
-</p
+</p>
 
 ---
 
@@ -38,7 +38,7 @@ with those on CoralNet, including:
 
 <p align="center">
   <img src="./Figures/CoralNet-Toolbox-Features.PNG" alt="CoralNet-Toolbox-Features">
-</p
+</p>
 
 #### **Future Features**
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions

@@ -31,7 +31,7 @@ for these scripts (install using conda)
 
 Below is a description of each tool available for use.
 
-## Download ⬇️
+## Download ⬇️  
 
 This code can be used to download all data (model metadata, labelset, images, annotations) 
 from any public source, or a private source if your account has access to. The 
@@ -94,10 +94,10 @@ and useful resource to the coral research community.
 
 <p align="center">
   <img src="./Figures/Download.JPG" alt="Download">
-</p
+</p>
 
 
-## Upload ⬆️
+## Upload ⬆️  
 
 This code can be used to automate the process of uploading images, 
 annotations, and a labelset given a source ID. The script is set up to work via 
@@ -158,7 +158,7 @@ passing the respective variables via command line.
   - annotations
 
 
-## API ☁️
+## API ☁️  
 
 CoralNet's API can be very useful for getting model predictions from any public source, though 
 the ability to do so is not universally accessible. This code can be used to have an existing source's 
@@ -223,25 +223,24 @@ python API.py --username JohnDoe \
 - Essentially, the API script will run indefinitely until all images have been passed to the 
   model; once it completes, the program will close
 
-
 <p align="center">
   <img src="./Figures/API.JPG" alt="API">
-</p
+</p>
 
-## Inference 🦾
+## Inference 🦾  
 
 <p align="center">
   <img src="./Figures/Inference.PNG" alt="Inference">
-</p
+</p>
 
-## SAM 🤖
+## SAM 🤖  
 
 <p align="center">
   <img src="./Figures/SAM.gif" alt="SAM">
-</p
+</p>
 
 
-## Notebooks 📓
+## Notebooks 📓  
 
 Before jumping into the scripts, it might be useful to play around with 
 functions for each script via notebook. The notebooks contain examples and 
