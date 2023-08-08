@@ -1,4 +1,6 @@
-# CoralNet-Toolbox (in development)
+# CoralNet-Toolbox
+
+**This `README` page is still under development, sorry.**
 
 This codebase provides a Python library for accessing data on CoralNet 
 through code, which allows users to programmatically interact with CoralNet and 
@@ -88,6 +90,11 @@ and useful resource to the coral research community.
 
 **Things to note:**
 - Downloading annotations takes the most time
+
+
+<p align="center">
+  <img src="./Figures/Download.JPG" alt="Download">
+</p
 
 
 ## Upload ⬆️
@@ -216,16 +223,36 @@ python API.py --username JohnDoe \
 - Essentially, the API script will run indefinitely until all images have been passed to the 
   model; once it completes, the program will close
 
-## Notebooks
+
+<p align="center">
+  <img src="./Figures/API.JPG" alt="API">
+</p
+
+## Inference 🦾
+
+<p align="center">
+  <img src="./Figures/Inference.PNG" alt="Inference">
+</p
+
+## SAM 🤖
+
+<p align="center">
+  <img src="./Figures/SAM.gif" alt="SAM">
+</p
+
+
+## Notebooks 📓
 
 Before jumping into the scripts, it might be useful to play around with 
 functions for each script via notebook. The notebooks contain examples and 
 comments that may be useful for understanding and altering the code as 
 needed. The notebooks are as follows:
 - `API.ipynb` - Notebook for making predictions via CoralNet's API.
+- `Classifier.ipynb` - Notebook for training a model, locally.
 - `Download.ipynb` - Notebook for downloading data from CoralNet.
 - `Labelset.ipynb` - Notebook for creating labelsets on CoralNet.
-- `Uplod.ipynb` - Notebook for uploading data to CoralNet.
+- `Pathces.ipynb` - Notebook for creating patches, locally.
+- `Upload.ipynb` - Notebook for uploading data to CoralNet.
 
 
 ## TODO

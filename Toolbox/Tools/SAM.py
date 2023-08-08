@@ -73,7 +73,7 @@ def get_sam_predictor(model_type="vit_b", device='cpu'):
     sam_url = "https://dl.fbaipublicfiles.com/segment_anything/"
 
     # The path containing the weights
-    sam_root = os.path.abspath("./SAM_Weights/")
+    sam_root = f"{CACHE_DIR}\\SAM_Weights"
     os.makedirs(sam_root, exist_ok=True)
 
     # Mapping between the model type, and the checkpoint file name
@@ -141,9 +141,7 @@ def get_bbox(image, y, x, patch_size=224):
 
 
 def find_most_common_label_in_area(points, binary_mask, bounding_box):
-    """
 
-    """
     # Get the coordinates of the bounding box
     min_x, min_y, max_x, max_y = bounding_box
 
@@ -152,57 +150,13 @@ def find_most_common_label_in_area(points, binary_mask, bounding_box):
                             (points['Row'] >= min_y) & (points['Row'] <= max_y)]
 
     # Filter points that correspond to 1-valued regions in the binary mask
-    mask_indices = points_in_area.apply(lambda row: binary_mask[row['Row'], row['Column']], axis=1)
+    mask_indices = points_in_area.apply(lambda row: binary_mask[row['Row'], row['Column']].item(), axis=1)
     points_in_mask = points_in_area[mask_indices == 1]
 
     # Find the most common label
     most_common_label = mode2d(points_in_mask['Label'])[0][0]
 
     return most_common_label
-
-
-def mode(a, background_class=255, axis=0):
-    """
-    Scipy's code to calculate the statistical mode of an array
-    Here we include the ability to input a NULL value that should be ignored
-    So in no situation should an index in the resulting dense annotations contain
-    the background/NULL value.
-    a -> the stack containing multiple 2-d arrays with the same dimensions
-    """
-
-    # If it's one channel
-    if a.shape[2] == 1:
-        return a
-
-    scores = np.unique(np.ravel(a))
-    testshape = list(a.shape)
-    testshape[axis] = 1
-    oldmostfreq = np.zeros(testshape, dtype=int)
-    oldcounts = np.zeros(testshape, dtype=int)
-
-    try:
-
-        for score in scores:
-
-            # if the mode is background_class,
-            # use the second most common value instead
-            if score == background_class:
-                continue
-
-            template = (a == score)
-            counts = np.expand_dims(np.sum(template, axis), axis)
-
-            mostfrequent = np.where(counts > oldcounts, score, oldmostfreq)
-            oldcounts = np.maximum(counts, oldcounts)
-            oldmostfreq = mostfrequent
-
-        mostfrequent = mostfrequent[0]
-
-    except Exception as e:
-        print(f"ERROR: Could not calculate the mode accoss channels.\n{e}")
-        mostfrequent = None
-
-    return mostfrequent
 
 
 def colorize_mask(mask, class_map, label_colors):
@@ -298,8 +252,8 @@ def mss_sam(args):
 
     # Setting output variables
     output_dir = args.output_dir
-    mask_dir = f"{output_dir}masks/"
-    visualize_dir = f"{mask_dir}visualize/"
+    mask_dir = f"{output_dir}\\masks\\"
+    visualize_dir = f"{mask_dir}\\visualize\\"
     # Create the output directories
     os.makedirs(mask_dir, exist_ok=True)
     os.makedirs(visualize_dir, exist_ok=True)
@@ -308,7 +262,7 @@ def mss_sam(args):
     mask_df = []
 
     # Batch size
-    batch_size = 64
+    batch_size = args.batch_size
 
     # ----------------------------------------------------------------
     # Inference
@@ -318,7 +272,7 @@ def mss_sam(args):
     print("###############################################\n")
 
     # Loop through each image, extract the corresponding patches
-    for i_idx, image_path in enumerate(images[::216]):
+    for i_idx, image_path in enumerate(images):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)
@@ -336,7 +290,8 @@ def mss_sam(args):
         sam_predictor.set_image(image)
 
         # To hold the updated mask, will be added onto each iteration
-        updated_mask = np.full(shape=image.shape[:2], fill_value=255)
+        # updated_mask = np.full(shape=image.shape[:2], fill_value=255)
+        updated_mask = torch.full(image.shape[:2], fill_value=255, dtype=torch.uint8).to(device)
 
         # Get all the bounding boxes for the current image
         bboxes = []
@@ -354,7 +309,7 @@ def mss_sam(args):
         data_loader = DataLoader(custom_dataset, batch_size=64, shuffle=False)
 
         # Loop through batches of boxes, faster
-        for batch_idx, batch in tqdm(enumerate(data_loader)):
+        for batch_idx, batch in enumerate(data_loader):
 
             try:
                 # After setting the current image, get masks for each point / bbox
@@ -366,13 +321,12 @@ def mss_sam(args):
                 print(f"ERROR: Model could not make predictions\n{e}")
                 sys.exit(1)
 
-            # Numpy array masks
-            masks = masks.cpu().detach().numpy().astype(np.uint8).squeeze()
-
             # Loop through all the individual masks in the batch
             for m_idx, mask in enumerate(masks):
 
                 try:
+                    # CPU Mask
+                    mask = mask.squeeze()
                     # Get the current box
                     box = bboxes[batch_idx * batch_size: (batch_idx + 1) * batch_size][m_idx]
                     # Find the most common label within the binary mask (1)
@@ -383,16 +337,19 @@ def mss_sam(args):
                     pass
 
             # Create a screenshot every 10% of the number of points
-            if batch_idx % int(len(data_loader) * .2) == 0 and args.visualize:
+            if batch_idx % int(len(data_loader) * .2) == 0 and args.plot and False:
                 # Colorize the updated mask
-                mask_color = colorize_mask(updated_mask, class_map, label_colors)
+                mask_color = colorize_mask(updated_mask.cpu().detach().numpy(), class_map, label_colors)
                 point_colors = current_points['Label'].map(label_colors).values
                 # Plot and save the mask
                 fname = f"{name.split('.')[0]}_{str(batch_idx)}.jpg"
                 plot_mask(image, mask_color, current_points, point_colors, fname, visualize_dir)
 
+        # Convert to numpy for plotting, saving
+        updated_mask = updated_mask.cpu().detach().numpy()
+
         # Final figure
-        if args.visualize:
+        if args.plot:
             # Get the final colored mask, change no data to black
             final_color = colorize_mask(updated_mask, class_map, label_colors)
             final_color[updated_mask == 255, :] = [0, 0, 0]
@@ -412,7 +369,7 @@ def mss_sam(args):
         mask_df.append([name, name])
 
         # Gooey
-        print_progress(i_idx, len(images))
+        print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory
     mask_df = pd.DataFrame(mask_df, columns=['Name', 'Mask'])
@@ -444,14 +401,17 @@ def main():
     parser.add_argument("--patch_size", type=int, default=360,
                         help="The approximate size of each superpixel formed by SAM")
 
+    parser.add_argument("--batch_size", type=int, default=64,
+                        help="The number of samples passed to SAM in a batch (GPU dependent)")
+
     parser.add_argument("--model_type", type=str, default='vit_l',
                         help="Model to use; one of ['vit_b', 'vit_l', 'vit_h']")
 
     parser.add_argument("--class_map", type=str, required=True,
                         help="Path to the model's Class Map JSON file")
 
-    parser.add_argument("--visualize", type=bool, default=False,
-                        help="Saves pretty visuals of masks")
+    parser.add_argument("--plot", action='store_true',
+                        help="Saves pretty visuals of masks throughout the process of creation")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

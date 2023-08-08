@@ -7,8 +7,9 @@ from Tools.Classifier import *
 from Tools.Points import *
 from Tools.Patches import *
 from Tools.Annotate import *
-from Tools.Viusalize import *
+from Tools.Visualize import *
 from Tools.Inference import *
+from Tools.SAM import *
 
 from gooey import Gooey, GooeyParser
 
@@ -623,7 +624,6 @@ def main():
 
     sam_parser_panel_1.add_argument('--model_type', type=str, required=True,
                                     metavar="Model Version",
-                                    default='vit_l',
                                     help='Version of SAM model to use',
                                     widget='FilterableDropdown', choices=['vit_b', 'vit_l', 'vit_h'])
 
@@ -631,9 +631,13 @@ def main():
                                     metavar="Patch Size",
                                     help="The approximate size of each superpixel formed by SAM")
 
-    sam_parser_panel_1.add_argument('--visualize', default=False,
-                                    metavar="Visualize Masks",
-                                    help='Saves colorized figures of masks in visualize subdirectory',
+    sam_parser_panel_1.add_argument("--batch_size", type=int, default=64,
+                                    metavar="Batch Size",
+                                    help="The number of samples passed to SAM in a batch (GPU dependent)")
+
+    sam_parser_panel_1.add_argument('--plot', default=False,
+                                    metavar="Plot Masks",
+                                    help='Saves colorized figures of masks in subdirectory',
                                     action="store_true",
                                     widget='BlockCheckbox')
 
@@ -690,6 +694,9 @@ def main():
 
     if args.command == 'Inference':
         inference(args)
+
+    if args.command == 'SAM':
+        mss_sam(args)
 
     print('Done.')
 

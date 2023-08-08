@@ -59,6 +59,14 @@ conda activate coralnet_toolbox
 python Toolbox\toolbox.py
 ```
 
+Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
+- `Windows 11`
+- `Python 3.8`
+- `Torch 2.0.1 + CUDA 11.8`
+- `Tensorflow 2.10.1 + CUDA 11.8`
+- `Keras 2.10.0 + CUDA 11.8`
+- `Google Chrome 114`
+
 ### **Conclusion**
 In summary, this repository provides a range of tools that can assist with interacting with 
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be 
