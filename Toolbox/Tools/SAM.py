@@ -258,7 +258,7 @@ def mss_sam(args):
     os.makedirs(mask_dir, exist_ok=True)
     os.makedirs(visualize_dir, exist_ok=True)
     # Output for mask dataframe
-    mask_file = f"{output_dir}masks.csv"
+    mask_file = f"{output_dir}\\masks.csv"
     mask_df = []
 
     # Batch size
@@ -272,7 +272,7 @@ def mss_sam(args):
     print("###############################################\n")
 
     # Loop through each image, extract the corresponding patches
-    for i_idx, image_path in enumerate(images):
+    for i_idx, image_path in enumerate(images[::100]):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)
