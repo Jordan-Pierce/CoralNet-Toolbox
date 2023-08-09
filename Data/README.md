@@ -16,9 +16,12 @@ output_dir/
         model/
             logs/
             weights/
+        masks/
+            visualize/
         annotations.csv
         labelset.csv
         images.csv
+        masks.csv
         metadata.csv
         patches.csv
         predictions.csv
@@ -33,9 +36,12 @@ output_dir/
         model/
             logs/
             weights/
+        masks/
+            visualize/
         annotations.csv
         labelset.csv
         images.csv
+        masks.csv
         metadata.csv
         patches.csv
         predictions.csv
