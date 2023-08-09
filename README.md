@@ -37,7 +37,7 @@ with those on CoralNet, including:
 
 
 <p align="center">
-  <img src="./Figures/CoralNet-Toolbox-Features.PNG" alt="CoralNet-Toolbox-Features">
+  <img src="Figures/toolbox.PNG" alt="CoralNet-Toolbox-Features">
 </p>
 
 #### **Future Features**

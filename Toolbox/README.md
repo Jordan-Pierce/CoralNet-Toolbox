@@ -93,7 +93,7 @@ and useful resource to the coral research community.
 
 
 <p align="center">
-  <img src="./Figures/Download.JPG" alt="Download">
+  <img src="../Figures/Download.JPG" alt="Download">
 </p>
 
 
@@ -224,33 +224,33 @@ python API.py --username JohnDoe \
   model; once it completes, the program will close
 
 <p align="center">
-  <img src="./Figures/API.JPG" alt="API">
+  <img src="../Figures/API.JPG" alt="API">
 </p>
 
 ## Inference 🦾  
 
 <p align="center">
-  <img src="./Figures/Inference.PNG" alt="Inference">
+  <img src="../Figures/Inference.PNG" alt="Inference">
 </p>
 
 ## SAM 🤖  
 
 <p align="center">
-  <img src="./Figures/SAM.gif" alt="SAM">
+  <img src="../Figures/SAM.gif" alt="SAM">
 </p>
 
 
 ## Notebooks 📓  
 
 Before jumping into the scripts, it might be useful to play around with 
-functions for each script via notebook. The notebooks contain examples and 
+functions for some of the scripts via notebook. The notebooks contain examples and 
 comments that may be useful for understanding and altering the code as 
 needed. The notebooks are as follows:
 - `API.ipynb` - Notebook for making predictions via CoralNet's API.
 - `Classifier.ipynb` - Notebook for training a model, locally.
 - `Download.ipynb` - Notebook for downloading data from CoralNet.
 - `Labelset.ipynb` - Notebook for creating labelsets on CoralNet.
-- `Pathces.ipynb` - Notebook for creating patches, locally.
+- `Patches.ipynb` - Notebook for creating patches, locally.
 - `Upload.ipynb` - Notebook for uploading data to CoralNet.
 
 
