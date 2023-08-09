@@ -272,7 +272,7 @@ def mss_sam(args):
     print("###############################################\n")
 
     # Loop through each image, extract the corresponding patches
-    for i_idx, image_path in enumerate(images[::100]):
+    for i_idx, image_path in enumerate(images):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)
@@ -337,7 +337,7 @@ def mss_sam(args):
                     pass
 
             # Create a screenshot every 10% of the number of points
-            if batch_idx % int(len(data_loader) * .2) == 0 and args.plot and False:
+            if batch_idx % int(len(data_loader) * .2) == 0 and args.plot_progress:
                 # Colorize the updated mask
                 mask_color = colorize_mask(updated_mask.cpu().detach().numpy(), class_map, label_colors)
                 point_colors = current_points['Label'].map(label_colors).values
@@ -411,7 +411,10 @@ def main():
                         help="Path to the model's Class Map JSON file")
 
     parser.add_argument("--plot", action='store_true',
-                        help="Saves pretty visuals of masks throughout the process of creation")
+                        help="Saves figures of final masks")
+
+    parser.add_argument("--plot_progress", action='store_false',
+                        help="Saves figures of masks throughout the process of creation")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

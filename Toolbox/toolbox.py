@@ -641,6 +641,12 @@ def main():
                                     action="store_true",
                                     widget='BlockCheckbox')
 
+    sam_parser_panel_1.add_argument('--plot_progress', default=False,
+                                    metavar="Plot Mask Progress",
+                                    help='Saves colorized figures of masks during creation in subdirectory',
+                                    action="store_true",
+                                    widget='BlockCheckbox')
+
     sam_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
                                     default=os.path.abspath("..\\Data"),
