@@ -14,8 +14,9 @@ output_dir/
             class_2/
             class_3/
         model/
-            logs/
-            weights/
+            run_1/
+                logs/
+                weights/
         masks/
             visualize/
         annotations.csv
@@ -34,8 +35,9 @@ output_dir/
             class_2/
             class_3/
         model/
-            logs/
-            weights/
+            run_1/
+                logs/
+                weights/
         masks/
             visualize/
         annotations.csv
