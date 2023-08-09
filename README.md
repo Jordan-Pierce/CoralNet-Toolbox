@@ -20,7 +20,8 @@ for analyzing the annotated images, and create patch-based image classifiers.
 ### **Tools**
 
 The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated
-with those on CoralNet, including:
+with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
+a GUI; these scripts currently include:
 - `API`: Easily use the CoralNet API to get predictions from any source model
 - `Download`: Download all data associated with a source
 - `Upload`: Upload images, annotations, and labelsets to a source
