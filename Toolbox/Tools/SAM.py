@@ -141,6 +141,9 @@ def get_bbox(image, y, x, patch_size=224):
 
 
 def find_most_common_label_in_area(points, binary_mask, bounding_box):
+    """
+
+    """
 
     # Get the coordinates of the bounding box
     min_x, min_y, max_x, max_y = bounding_box
@@ -160,6 +163,9 @@ def find_most_common_label_in_area(points, binary_mask, bounding_box):
 
 
 def colorize_mask(mask, class_map, label_colors):
+    """
+
+    """
     # Initialize the RGB mask with zeros
     height, width = mask.shape
     rgb_mask = np.full((height, width, 3), fill_value=255, dtype=np.uint8)
@@ -174,10 +180,13 @@ def colorize_mask(mask, class_map, label_colors):
     return rgb_mask.astype(np.uint8)
 
 
-def plot_mask(image, mask_color, points, point_colors, fname, mask_dir):
+def plot_mask(image, mask_color, points, point_colors, plot_path):
     """
 
     """
+
+    # Plot title
+    fname = os.path.basename(plot_path)
 
     # Plot masks
     plt.figure(figsize=(10, 10))
@@ -185,7 +194,7 @@ def plot_mask(image, mask_color, points, point_colors, fname, mask_dir):
     plt.imshow(image)
     plt.imshow(mask_color, alpha=.75)
     plt.scatter(points['Column'].values, points['Row'].values, c=point_colors, s=1)
-    plt.savefig(f"{mask_dir}{fname}")
+    plt.savefig(f"{plot_path}")
     plt.close()
 
 
@@ -250,15 +259,20 @@ def mss_sam(args):
         print(f"ERROR: There was an issue loading the model\n{e}")
         sys.exit(1)
 
-    # Setting output variables
+    # Setting output directories
     output_dir = args.output_dir
     mask_dir = f"{output_dir}\\masks\\"
-    visualize_dir = f"{mask_dir}\\visualize\\"
+    plot_dir = f"{mask_dir}\\plots\\"
+    seg_dir = f"{mask_dir}\\segs\\"
+    color_dir = f"{mask_dir}\\color\\"
+
     # Create the output directories
     os.makedirs(mask_dir, exist_ok=True)
-    os.makedirs(visualize_dir, exist_ok=True)
+    os.makedirs(plot_dir, exist_ok=True)
+    os.makedirs(seg_dir, exist_ok=True)
+    os.makedirs(color_dir, exist_ok=True)
+
     # Output for mask dataframe
-    mask_file = f"{output_dir}\\masks.csv"
     mask_df = []
 
     # Batch size
@@ -272,7 +286,7 @@ def mss_sam(args):
     print("###############################################\n")
 
     # Loop through each image, extract the corresponding patches
-    for i_idx, image_path in enumerate(images):
+    for i_idx, image_path in enumerate(images[0:1]):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)
@@ -336,49 +350,80 @@ def mss_sam(args):
                 except:
                     pass
 
-            # Create a screenshot every 10% of the number of points
+            # Create a screenshot every N% of the number of points
             if batch_idx % int(len(data_loader) * .2) == 0 and args.plot_progress:
                 # Colorize the updated mask
                 mask_color = colorize_mask(updated_mask.cpu().detach().numpy(), class_map, label_colors)
                 point_colors = current_points['Label'].map(label_colors).values
                 # Plot and save the mask
-                fname = f"{name.split('.')[0]}_{str(batch_idx)}.jpg"
-                plot_mask(image, mask_color, current_points, point_colors, fname, visualize_dir)
+                plot_path = f"{plot_dir}{name.split('.')[0]}_{str(batch_idx)}.jpg"
+                plot_mask(image, mask_color, current_points, point_colors, plot_path)
+
+        # ------------------------------------------------
+        # Save the final masks
+        # ------------------------------------------------
 
         # Convert to numpy for plotting, saving
-        updated_mask = updated_mask.cpu().detach().numpy()
+        final_mask = updated_mask.cpu().detach().numpy()
+
+        # Get the final colored mask, change no data to black
+        final_color = colorize_mask(final_mask, class_map, label_colors)
+        final_color[final_mask == 255, :] = [0, 0, 0]
+        point_colors = current_points['Label'].map(label_colors).values
 
         # Final figure
         if args.plot:
-            # Get the final colored mask, change no data to black
-            final_color = colorize_mask(updated_mask, class_map, label_colors)
-            final_color[updated_mask == 255, :] = [0, 0, 0]
-            point_colors = current_points['Label'].map(label_colors).values
-            fname = f"{name.split('.')[0]}.jpg"
-
             # Plot the final mask
-            plot_mask(image, final_color, current_points, point_colors, fname, visualize_dir)
+            fname = f"{name.split('.')[0]}.jpg"
+            plot_path = f"{plot_dir}{fname}"
+            plot_mask(image, final_color, current_points, point_colors, plot_path)
+            print(f"NOTE: Saved plot to {plot_path}")
 
-        # Save the mask itself
-        mask_path = f"{mask_dir}{name}"
-        imsave(fname=mask_path, arr=updated_mask.astype(np.uint8))
+        else:
+            plot_path = ""
 
-        print(f"NOTE: Saved mask to {mask_path}")
+        # Save the seg mask
+        mask_path = f"{seg_dir}{name}"
+        imsave(fname=mask_path, arr=final_mask.astype(np.uint8))
+        print(f"NOTE: Saved seg mask to {mask_path}")
+
+        # Save the color mask
+        color_path = f"{color_dir}{name}"
+        imsave(fname=color_path, arr=final_color.astype(np.uint8))
+        print(f"NOTE: Saved color mask to {color_path}")
 
         # Add to output list
-        mask_df.append([name, name])
+        mask_df.append([image_path, mask_path, color_path, plot_path])
 
         # Gooey
         print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory
-    mask_df = pd.DataFrame(mask_df, columns=['Name', 'Mask'])
-    mask_df.to_csv(mask_file)
+    output_path = os.path.join(output_dir, 'masks.csv')
+    mask_df = pd.DataFrame(mask_df, columns=['Image Path', 'Seg Path', 'Color Path', 'Plot Path'])
+    mask_df.to_csv(output_path)
 
-    if os.path.exists(mask_file):
-        print(f"NOTE: Mask dataframe saved to {mask_dir}")
+    if os.path.exists(output_path):
+        print(f"NOTE: Mask dataframe saved to {output_dir}")
     else:
         print(f"ERROR: Could not save mask dataframe")
+
+    # Create a final class mapping for the seg masks
+    seg_map = {k: {} for k in class_map.keys()}
+
+    for l in class_map.keys():
+        seg_map[l]['id'] = class_map[l]
+        seg_map[l]['color'] = (np.array(label_colors[l][0:3]) * 255).astype(np.uint8).tolist()
+
+    # Save the color mapping json file
+    output_path = os.path.join(mask_dir, 'color_mapping.json')
+    with open(output_path, 'w') as output_file:
+        json.dump(seg_map, output_file, indent=4)
+
+    if os.path.exists(output_path):
+        print(f"NOTE: Color Mapping JSON file saved to {mask_dir}")
+    else:
+        print(f"ERROR: Could not save Color Mapping JSON file")
 
 
 # -----------------------------------------------------------------------------
@@ -413,7 +458,7 @@ def main():
     parser.add_argument("--plot", action='store_true',
                         help="Saves figures of final masks")
 
-    parser.add_argument("--plot_progress", action='store_false',
+    parser.add_argument("--plot_progress", action='store_true',
                         help="Saves figures of masks throughout the process of creation")
 
     parser.add_argument("--output_dir", type=str, required=True,

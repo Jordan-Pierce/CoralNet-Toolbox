@@ -46,6 +46,7 @@ a GUI; these scripts currently include:
 - `Semantic Segmentation`: Create a FCN to perform semantic segmentation 
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 - `GAN`: Synthesize samples using generative AI
+- `GPT`: LLMs for QA of annotation dataframes, plot visualizations
 
 #### **How to use**
 To use these tools, you should have access to the CoralNet platform. Once you have an account, 

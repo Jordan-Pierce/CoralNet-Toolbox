@@ -8,7 +8,6 @@ output_dir/
 
     source_id_1/
         images/
-        predictions/
         patches/
             class_1/
             class_2/
@@ -17,8 +16,13 @@ output_dir/
             run_1/
                 logs/
                 weights/
+                best_model.h5
+                class_mapping.json
         masks/
-            visualize/
+            plots/
+            segs/
+            colors/
+            color_mapping.json
         annotations.csv
         labelset.csv
         images.csv
@@ -29,7 +33,6 @@ output_dir/
         
     source_id_2/
         images/
-        predictions/
         patches/
             class_1/
             class_2/
@@ -38,8 +41,13 @@ output_dir/
             run_1/
                 logs/
                 weights/
+                best_model.h5
+                class_mapping.json
         masks/
-            visualize/
+            plots/
+            segs/
+            colors/
+            color_mapping.json
         annotations.csv
         labelset.csv
         images.csv
