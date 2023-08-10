@@ -286,7 +286,7 @@ def mss_sam(args):
     print("###############################################\n")
 
     # Loop through each image, extract the corresponding patches
-    for i_idx, image_path in enumerate(images[0:1]):
+    for i_idx, image_path in enumerate(images):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)
