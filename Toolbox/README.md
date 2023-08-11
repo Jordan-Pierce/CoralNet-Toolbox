@@ -275,9 +275,12 @@ python API.py --username JohnDoe \
 
 <p align="center">
   <a href="https://youtu.be/ujum1wMqk30">
-    <img src="https://markdown-videos-api.jorgenkh.no/youtube/ujum1wMqk30" alt="3DSeg Demo Video">
+    <img src="https://markdown-videos-api.jorgenkh.no/youtube/ujum1wMqk30" alt="3DSeg Demo Video" 
+      width="800" height="400">
   </a>
 </p>
+
+
 
 
 ## Notebooks 📓  
