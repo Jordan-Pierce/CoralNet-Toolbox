@@ -90,6 +90,15 @@ If used in project or publication, please attribute your use of this repository 
 }
 ```
 
+### References  
+
+The following papers inspired this repository:
+```pyhton
+Pierce, J., Butler, M. J., Rzhanov, Y., Lowell, K., &amp; Dijkstra, J. A. (2021). Classifying 3-D models of coral reefs using structure-from-motion and multi-view semantic segmentation. Frontiers in Marine Science, 8. https://doi.org/10.3389/fmars.2021.706674
+Pierce, J. P., Rzhanov, Y., Lowell, K., &amp; Dijkstra, J. A. (2020). Reducing annotation times: Semantic Segmentation of coral reef survey images. Global Oceans 2020: Singapore – U.S. Gulf Coast. https://doi.org/10.1109/ieeeconf38699.2020.9389163 
+Beijbom, O., Edmunds, P. J., Roelfsema, C., Smith, J., Kline, D. I., Neal, B. P., Dunlap, M. J., Moriarty, V., Fan, T.-Y., Tan, C.-J., Chan, S., Treibitz, T., Gamst, A., Mitchell, B. G., &amp; Kriegman, D. (2015). Towards automated annotation of benthic survey images: Variability of human experts and operational modes of automation. PLOS ONE, 10(7). https://doi.org/10.1371/journal.pone.0130312  
+```
+
 ---
 
 ### Disclaimer
