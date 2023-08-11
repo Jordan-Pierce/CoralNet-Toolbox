@@ -275,12 +275,10 @@ python API.py --username JohnDoe \
 
 <p align="center">
   <a href="https://youtu.be/ujum1wMqk30">
-    <img src="https://markdown-videos-api.jorgenkh.no/youtube/ujum1wMqk30" alt="3DSeg Demo Video" 
-      width="800" height="400">
+    <img src="../Figures/3DSeg.PNG" alt="3DSeg">
   </a>
+  <br>Classified Point Cloud <b>(click the video)</b>.
 </p>
-
-
 
 
 ## Notebooks 📓  
