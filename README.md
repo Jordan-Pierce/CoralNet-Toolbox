@@ -38,7 +38,7 @@ a GUI; these scripts currently include:
 
 
 <p align="center">
-  <img src="Figures/toolbox.PNG" alt="CoralNet-Toolbox-Features">
+  <img src="Figures/toolbox_api.PNG" alt="CoralNet-Toolbox-Features">
 </p>
 
 #### **Future Features**
