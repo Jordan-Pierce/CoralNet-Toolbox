@@ -23,6 +23,8 @@ output_dir/
             segs/
             colors/
             color_mapping.json
+        sfm/
+            project.psx
         annotations.csv
         labelset.csv
         images.csv
@@ -48,6 +50,8 @@ output_dir/
             segs/
             colors/
             color_mapping.json
+        sfm/
+            project.psx
         annotations.csv
         labelset.csv
         images.csv

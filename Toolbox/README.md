@@ -227,6 +227,38 @@ python API.py --username JohnDoe \
   <img src="../Figures/API.JPG" alt="API">
 </p>
 
+## Annotate
+
+<p align="center">
+  <img src="../Figures/Annotate.PNG" alt="Annotate">
+</p>
+
+
+## Classifier
+[will fill out eventually]
+
+
+## Labelset
+[will fill out eventually]
+
+
+## Patches
+<p align="center">
+
+  <img src="../Figures/Patches.PNG" alt="Patches">
+</p>
+
+## Points
+[will fill out eventually]
+
+
+## SfM
+[will fill out eventually]
+
+
+## Viscore
+[will fill out eventually]
+
 ## Inference 🦾  
 
 <p align="center">
@@ -237,6 +269,14 @@ python API.py --username JohnDoe \
 
 <p align="center">
   <img src="../Figures/SAM.gif" alt="SAM">
+</p>
+
+## 3DSeg
+
+<p align="center">
+  <a href="https://youtu.be/ujum1wMqk30">
+    <img src="https://markdown-videos-api.jorgenkh.no/youtube/ujum1wMqk30" alt="3DSeg Demo Video">
+  </a>
 </p>
 
 

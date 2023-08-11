@@ -43,7 +43,8 @@ a GUI; these scripts currently include:
 
 #### **Future Features**
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
-- `Semantic Segmentation`: Create a FCN to perform semantic segmentation 
+- `Seg`: Create a FCN to perform semantic segmentation 
+- `3DSeg`: 3D semantic segmentation using SfM
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 - `GAN`: Synthesize samples using generative AI
 - `GPT`: LLMs for QA of annotation dataframes, plot visualizations
