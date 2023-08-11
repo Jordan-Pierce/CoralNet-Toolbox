@@ -34,7 +34,7 @@ a GUI; these scripts currently include:
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 - `Inference`: Perform inference using a locally trained model
 - `SAM`: Create segmentation masks for each image using `MSS` w/ `SAM`
-
+- `SfM`: Use Metashape to create 3D models (why not)
 
 
 <p align="center">
@@ -67,6 +67,7 @@ Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
 - `Torch 2.0.1 + CUDA 11.8`
 - `Tensorflow 2.10.1 + CUDA 11.8`
 - `Keras 2.10.0 + CUDA 11.8`
+- `Metashape Professional 2.0.X`
 - `Google Chrome 114`
 
 ### **Conclusion**

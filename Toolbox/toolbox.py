@@ -1,3 +1,5 @@
+import os
+
 from Tools.API import *
 from Tools.Upload import *
 from Tools.Download import *
@@ -10,6 +12,7 @@ from Tools.Annotate import *
 from Tools.Visualize import *
 from Tools.Inference import *
 from Tools.SAM import *
+from Tools.SfM import *
 
 from gooey import Gooey, GooeyParser
 
@@ -654,6 +657,39 @@ def main():
                                     widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
+    # SfM
+    # ------------------------------------------------------------------------------------------------------------------
+    sfm_parser = subs.add_parser('SfM')
+
+    # Panel 1
+    sfm_parser_panel_1 = sfm_parser.add_argument_group('SfM',
+                                                       'Use Metashape (2.0.X) API to perform Structure from Motion on'
+                                                       'images of a scene. License is used, and automatically '
+                                                       'deactivated after script is finished.')
+
+    sfm_parser_panel_1.add_argument('--metashape_license', type=str,
+                                    metavar="Metashape License (Pro)",
+                                    default=os.getenv('METASHAPE_LICENSE'),
+                                    help='The license for Professional version of Metashape',
+                                    widget="PasswordField")
+
+    sfm_parser_panel_1.add_argument('--remember_license', action="store_false",
+                                    metavar="Remember License",
+                                    help='Store License as an Environmental Variable',
+                                    widget="BlockCheckbox")
+
+    sfm_parser_panel_1.add_argument('--input_dir', required=True,
+                                    metavar="Image Directory",
+                                    help='Directory containing images of scene',
+                                    widget="DirChooser")
+
+    sfm_parser_panel_1.add_argument('--output_dir', required=True,
+                                    metavar='Output Directory',
+                                    default=os.path.abspath("..\\Data"),
+                                    help='Root directory where output will be saved',
+                                    widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
     # Parser
     # ------------------------------------------------------------------------------------------------------------------
     args = parser.parse_args()
@@ -665,6 +701,10 @@ def main():
             os.environ['CORALNET_USERNAME'] = args.username
         if not args.remember_password:
             os.environ['CORALNET_PASSWORD'] = args.password
+
+    if 'metashape_license' in vars(args):
+        if not args.remember_license:
+            os.environ['METASHAPE_LICENSE'] = args.metashape_license
 
     # Execute command
     if args.command == 'API':
@@ -703,6 +743,9 @@ def main():
 
     if args.command == 'SAM':
         mss_sam(args)
+
+    if args.command == 'SfM':
+        sfm(args)
 
     print('Done.')
 
