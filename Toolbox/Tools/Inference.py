@@ -26,7 +26,7 @@ from keras.models import load_model
 from keras.preprocessing.image import ImageDataGenerator
 
 from Toolbox.Tools import *
-from Toolbox.Tools.Patches import process_image
+from Toolbox.Tools.Patches import *
 from Toolbox.Tools.Classifier import precision, recall, f1_score
 
 
@@ -113,76 +113,48 @@ def inference(args):
     output_path = f"{output_dir}\\predictions.csv"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Temp directory for patches (deleted afterwards)
-    temp_dir = f"{output_dir}\\temp\\"
-    os.makedirs(temp_dir, exist_ok=True)
-
-    # Make sub-folders for all the class categories (deleted afterwards)
-    for label in points['Label'].unique():
-        os.makedirs(os.path.join(temp_dir, 'patches', label), exist_ok=True)
-
     # ----------------------------------------------------------------
-    # Creating Patches
+    # Inference Loop
     # ----------------------------------------------------------------
 
     # Loop through each of the images
-    for n_idx, image_name in enumerate(image_names):
+    for n_idx, image_file in enumerate(image_files):
 
+        # Get the image name
+        image_name = os.path.basename(image_file)
+        # Open the image
+        image = imread(image_file)
+
+        # ----------------------------------------------------------------
+        # Creating patches
+        # ----------------------------------------------------------------
+
+        # To hold all the patches (memory)
+        patches = []
+
+        # Create patches for this image
+        print(f"NOTE: Cropping patches for {image_name}")
         # Get the current image points
         image_points = points[points['Name'] == image_name]
 
-        # Create patches for this image
-        print(f"NOTE: Making temporary patches for {image_name}")
-        patches = process_image(image_name, image_dir, image_points, temp_dir)
-        patches_df = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Row',
-                                                    'Column' 'Image Name', 'Image Path'])
+        for i, r in image_points.iterrows():
+            patches.append(crop_patch(image, r['Row'], r['Column'], 224))
+
+        # Convert to numpy array
+        patches = np.stack(patches)
 
         # ----------------------------------------------------------------
         # Inference
         # ----------------------------------------------------------------
 
-        # Set the desired batch size (e.g., 32, 64, 128, etc.)
-        batch_size = 2048
-
-        test_generator = ImageDataGenerator().flow_from_dataframe(dataframe=patches_df,
-                                                                  x_col='Path',
-                                                                  y_col='Label',
-                                                                  target_size=(224, 224),
-                                                                  color_mode="rgb",
-                                                                  class_mode='categorical',
-                                                                  batch_size=batch_size,
-                                                                  shuffle=False,
-                                                                  verbose=0,
-                                                                  seed=42)
-
-        print(f"NOTE: Making predictions for {image_name}")
-
-        # Make predictions for all patches
-        num_samples = len(patches_df)
-        num_classes = len(class_map)
-        probabilities = np.zeros((num_samples, num_classes))
-
-        # Iterate through the generator in batches
-        for i in range(num_samples // batch_size):
-            batch_start = i * batch_size
-            batch_end = (i + 1) * batch_size
-            batch_x, _ = test_generator.next()
-            batch_probabilities = model.predict(batch_x, verbose=0)
-            probabilities[batch_start:batch_end] = batch_probabilities
-
-        # Predict the remaining samples (if any)
-        remaining_samples = num_samples % batch_size
-        if remaining_samples > 0:
-            batch_x, _ = test_generator.next()
-            batch_probabilities = model.predict(batch_x, verbose=0)
-            probabilities[-remaining_samples:] = batch_probabilities[:remaining_samples]
-
-        # Rest of the code remains the same
+        # Model to make predictions
+        print(f"NOTE: Making predictions on patches for {image_name}")
+        probabilities = model.predict(patches, verbose=0)
         predictions = np.argmax(probabilities, axis=1)
         class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
 
         # Convert, make the top choice Label
-        output = patches_df.copy()
+        output = image_points.copy()
         output['Label'] = class_predictions
 
         N = probabilities.shape[1]
@@ -201,17 +173,11 @@ def inference(args):
             previous_predictions = pd.read_csv(output_path, index_col=0)
             output = pd.concat((previous_predictions, output))
 
-        # Save
+        # Save each image predictions
         output.to_csv(output_path)
         print(f"NOTE: Predictions saved to {output_path}")
 
-        # Delete temp patches
-        [os.remove(f) for f in glob.glob(f"{temp_dir}**\\*.jpg", recursive=True)];
-
         print_progress(n_idx, len(image_names))
-
-    print(f"NOTE: Deleting temporary directory {temp_dir}")
-    shutil.rmtree(temp_dir)
 
 # -----------------------------------------------------------------------------
 # Main Function

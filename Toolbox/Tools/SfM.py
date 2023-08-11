@@ -103,7 +103,7 @@ def sfm(args):
                           tiepoint_limit=10000,
                           generic_preselection=True,
                           reference_preselection=True,
-                          downscale=1,
+                          downscale=4,
                           progress=print_progress)
 
         # Align the cameras to estimate their relative positions in space.
