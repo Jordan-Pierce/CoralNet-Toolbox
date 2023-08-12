@@ -31,7 +31,7 @@ for these scripts (install using conda)
 
 Below is a description of each tool available for use.
 
-## Download ⬇️  
+## Download  
 
 This code can be used to download all data (model metadata, labelset, images, annotations) 
 from any public source, or a private source if your account has access to. The 
@@ -97,7 +97,7 @@ and useful resource to the coral research community.
 </p>
 
 
-## Upload ⬆️  
+## Upload   
 
 This code can be used to automate the process of uploading images, 
 annotations, and a labelset given a source ID. The script is set up to work via 
@@ -158,7 +158,7 @@ passing the respective variables via command line.
   - annotations
 
 
-## API ☁️  
+## API   
 
 CoralNet's API can be very useful for getting model predictions from any public source, though 
 the ability to do so is not universally accessible. This code can be used to have an existing source's 
@@ -227,51 +227,51 @@ python API.py --username JohnDoe \
   <img src="../Figures/API.JPG" alt="API">
 </p>
 
-## Annotate
+## Annotate  
 
 <p align="center">
   <img src="../Figures/Annotate.PNG" alt="Annotate">
 </p>
 
 
-## Classifier
+## Classifier  
 [will fill out eventually]
 
 
-## Labelset
+## Labelset  
 [will fill out eventually]
 
 
-## Patches
+## Patches  
 <p align="center">
 
   <img src="../Figures/Patches.PNG" alt="Patches">
 </p>
 
-## Points
+## Points  
 [will fill out eventually]
 
 
-## SfM
+## SfM  
 [will fill out eventually]
 
 
-## Viscore
+## Viscore  
 [will fill out eventually]
 
-## Inference 🦾  
+## Inference   
 
 <p align="center">
   <img src="../Figures/Inference.PNG" alt="Inference">
 </p>
 
-## SAM 🤖  
+## SAM    
 
 <p align="center">
   <img src="../Figures/SAM.gif" alt="SAM">
 </p>
 
-## 3DSeg
+## 3DSeg  
 
 <p align="center">
   <a href="https://youtu.be/ujum1wMqk30">
