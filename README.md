@@ -17,14 +17,14 @@ CoralNet allows users to upload photos of coral reefs and annotate them with det
 about the coral species and other features present in the images. The platform also provides tools 
 for analyzing the annotated images, and create patch-based image classifiers. 
 
-### [**Tools**](./Toolbox/)
+### [**Tools**](./Toolbox/README.md)
 
 The `CoralNet-Toolbox` is an **unofficial** codebase that can be used to augment processes associated
 with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
 a GUI; these scripts currently include:
 
-- [`API`](./Toolbox/#api-%EF%B8%8F): Use the CoralNet API to get predictions from any source model
-- [`Download`](./Toolbox/#download-%EF%B8%8F): Download all data associated with a source
+- [`API`](./Toolbox/README.md#api): Use the CoralNet API to get predictions from any source model
+- [`Download`](./Toolbox/README.md#download-%EF%B8%8F): Download all data associated with a source
 - [`Upload`](./Toolbox/#upload-%EF%B8%8F): Upload images, annotations, and labelsets to a source
 - [`Labelset`](./Toolbox/#labelset-%EF%B8%8F): Create a custom labelset on CoralNet
 - [`Viscore`](./Toolbox/#viscore-%EF%B8%8F): Upload annotations made in Viscore's VPI to CoralNet
