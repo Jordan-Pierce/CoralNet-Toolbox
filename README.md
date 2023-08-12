@@ -7,7 +7,7 @@
 
 ---
 
-### **About CoralNet**
+### [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing, 
 and other factors. CoralNet is a platform designed to aid researchers and scientists in studying 
@@ -17,24 +17,26 @@ CoralNet allows users to upload photos of coral reefs and annotate them with det
 about the coral species and other features present in the images. The platform also provides tools 
 for analyzing the annotated images, and create patch-based image classifiers. 
 
-### **Tools**
+### [**Tools**](./Toolbox/)
 
-The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated
+The `CoralNet-Toolbox` is an **unofficial** codebase that can be used to augment processes associated
 with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
 a GUI; these scripts currently include:
-- `API`: Easily use the CoralNet API to get predictions from any source model
-- `Download`: Download all data associated with a source
-- `Upload`: Upload images, annotations, and labelsets to a source
-- `Labelset`: Create a custom labelset
-- `Viscore`: Upload annotations made in Viscore's VPI to CoralNet
-- `Classifier`: Create your own patch-based image classifier, locally
-- `Annotate`: Create your own patches, locally
-- `Visualize`: Visualize points, patches superimposed on images
-- `Patches`: Extract patches from images given an annotation file
-- `Points`: Sample points from images (Uniform, Random, Stratified)
-- `Inference`: Perform inference using a locally trained model
-- `SAM`: Create segmentation masks for each image using `MSS` w/ `SAM`
-- `SfM`: Use Metashape to create 3D models (why not)
+
+- [`API`](./Toolbox/#api-%EF%B8%8F): Use the CoralNet API to get predictions from any source model
+- [`Download`](./Toolbox/#download-%EF%B8%8F): Download all data associated with a source
+- [`Upload`](./Toolbox/#upload-%EF%B8%8F): Upload images, annotations, and labelsets to a source
+- [`Labelset`](./Toolbox/#labelset-%EF%B8%8F): Create a custom labelset on CoralNet
+- [`Viscore`](./Toolbox/#viscore-%EF%B8%8F): Upload annotations made in Viscore's VPI to CoralNet
+- [`Classifier`](./Toolbox/#classifier-%EF%B8%8F): Create your own patch-based image classifier, locally
+- [`Annotate`](./Toolbox/#annotation-%EF%B8%8F): Create your own patches from annotations, locally
+- [`Visualize`](./Toolbox/#visualize-%EF%B8%8F): Visualize points/patches superimposed on images
+- [`Patches`](./Toolbox/#patches-%EF%B8%8F): Extract patches from images given an annotation file
+- [`Points`](./Toolbox/#points-%EF%B8%8F): Sample points from images (Uniform, Random, Stratified)
+- [`Inference`](./Toolbox/#inference-%EF%B8%8F): Perform inference using a locally trained model
+- [`SAM`](./Toolbox/#sam-%EF%B8%8F): Create segmentation masks for each image using `MSS` w/ `SAM`
+- [`SfM`](./Toolbox/#sfm-%EF%B8%8F): Use Metashape to create 3D models (sure, why not)
+- [`3DSeg`](./Toolbox/#3dseg-%EF%B8%8F): Use masks and SfM to create classified 3D models
 
 
 <p align="center">
@@ -44,7 +46,6 @@ a GUI; these scripts currently include:
 #### **Future Features**
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
 - `Seg`: Create a FCN to perform semantic segmentation 
-- `3DSeg`: 3D semantic segmentation using SfM
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 - `GAN`: Synthesize samples using generative AI
 - `GPT`: LLMs for QA of annotation dataframes, plot visualizations
@@ -94,16 +95,19 @@ If used in project or publication, please attribute your use of this repository 
 ### References  
 
 The following papers inspired this repository:
-```pyhton
-Pierce, J., Butler, M. J., Rzhanov, Y., Lowell, K., &amp; Dijkstra, J. A. (2021). Classifying 3-D models of coral reefs using structure-from-motion and multi-view semantic segmentation. Frontiers in Marine Science, 8. https://doi.org/10.3389/fmars.2021.706674
-```
 ```python
-Pierce, J. P., Rzhanov, Y., Lowell, K., &amp; Dijkstra, J. A. (2020). Reducing annotation times: Semantic Segmentation of coral reef survey images. Global Oceans 2020: Singapore – U.S. Gulf Coast. https://doi.org/10.1109/ieeeconf38699.2020.9389163
-```
-```python
-Beijbom, O., Edmunds, P. J., Roelfsema, C., Smith, J., Kline, D. I., Neal, B. P., Dunlap, M. J., Moriarty, V., Fan, T.-Y., Tan, C.-J., Chan, S., Treibitz, T., Gamst, A., Mitchell, B. G., &amp; Kriegman, D. (2015). Towards automated annotation of benthic survey images: Variability of human experts and operational modes of automation. PLOS ONE, 10(7). https://doi.org/10.1371/journal.pone.0130312
-```
+Pierce, J., Butler, M. J., Rzhanov, Y., Lowell, K., &amp; Dijkstra, J. A. (2021).
+Classifying 3-D models of coral reefs using structure-from-motion and multi-view semantic segmentation.
+Frontiers in Marine Science, 8. https://doi.org/10.3389/fmars.2021.706674
 
+Pierce, J. P., Rzhanov, Y., Lowell, K., &amp; Dijkstra, J. A. (2020).
+Reducing annotation times: Semantic Segmentation of coral reef survey images.
+Global Oceans 2020: Singapore – U.S. Gulf Coast. https://doi.org/10.1109/ieeeconf38699.2020.9389163
+
+Beijbom, O., Edmunds, P. J., Roelfsema, C., Smith, J., Kline, D. I., Neal, B. P., Dunlap, M. J., Moriarty, V., Fan, T.-Y., Tan, C.-J., Chan, S., Treibitz, T., Gamst, A., Mitchell, B. G., &amp; Kriegman, D. (2015).
+Towards automated annotation of benthic survey images: Variability of human experts and operational modes of automation.
+PLOS ONE, 10(7). https://doi.org/10.1371/journal.pone.0130312
+```
 ---
 
 ### Disclaimer
