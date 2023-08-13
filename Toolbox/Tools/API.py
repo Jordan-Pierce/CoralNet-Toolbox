@@ -1,12 +1,15 @@
+import pandas as pd
+
 from Toolbox.Tools import *
 from Toolbox.Tools.Download import *
 
+# TODO Test running api script from viscore scriptlet
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
 
 
-def get_source_meta(driver, source_id_1, source_id_2=None):
+def get_source_meta(driver, source_id_1, source_id_2=None, image_list=None):
     """Downloads just the information from source needed to do API calls;
     source id 1 refers to the source containing images, and source id 2
     refers to a source for a different model (if desired)"""
@@ -24,7 +27,7 @@ def get_source_meta(driver, source_id_1, source_id_2=None):
         raise Exception(f"ERROR: No model found for the source {source_id}.")
 
     # Get the images for the source
-    driver, source_images = get_images(driver, source_id_1)
+    driver, source_images = get_images(driver, source_id_1, image_list)
 
     # Check if there are any images
     if source_images is None:
@@ -137,7 +140,7 @@ def print_job_status(queue, active, completed, expired):
           "Expired Images: {: <8}".format(len(queue), len(active), len(completed), len(expired)))
 
 
-def convert_to_csv(status, image_names, output_dir):
+def convert_to_csv(status, image_names):
     """
     Converts response data into a Pandas DataFrame and concatenates each row
     into a single DataFrame.
@@ -146,7 +149,7 @@ def convert_to_csv(status, image_names, output_dir):
     print(f"NOTE: Saving annotations for {len(image_names)} images")
 
     # A list to store all the model predictions (dataframes)
-    model_predictions = []
+    model_predictions = pd.DataFrame()
     expired = []
 
     for (data, image_name) in list(zip(status['data'], image_names)):
@@ -156,8 +159,6 @@ def convert_to_csv(status, image_names, output_dir):
             expired.append(image_name)
             continue
 
-        # Create a DataFrame to store the model predictions
-        model_prediction = pd.DataFrame()
         # Loop through each point in the response
         for point in data['attributes']['points']:
             # Create a dictionary to store the data for each point
@@ -173,21 +174,34 @@ def convert_to_csv(status, image_names, output_dir):
 
             # Concatenate the data for each point into a single DataFrame
             p = pd.DataFrame.from_dict([p])
-            model_prediction = pd.concat([model_prediction, p])
-
-        # Save the model predictions to a CSV file
-        basename = os.path.basename(image_name).split(".")[0]
-        output_file = output_dir + basename + ".csv"
-        model_prediction.reset_index(drop=True, inplace=True)
-        model_prediction.to_csv(output_file, index=True)
-
-        if os.path.exists(output_file):
-            model_predictions.append(model_prediction)
-
-    print(f"NOTE: Saved {len(model_predictions)} predictions to CSV files\n"
-          f"NOTE: {len(expired)} images had expired and will be re-uploaded")
+            model_predictions = pd.concat([model_predictions, p])
 
     return model_predictions, expired
+
+
+def sort_predictions(original, predictions):
+    """
+
+    """
+
+    # Create copies
+    df1 = original.copy()
+    df2 = predictions.copy()
+
+    # Add a temporary sorting column to df2
+    df2['Sort'] = df2.apply(lambda row: df1[(df1['Row'] == row['Row']) &
+                                            (df1['Column'] == row['Column'])].index[0], axis=1)
+
+    # Sort df2 based on the temporary sorting column
+    sorted_df2 = df2.sort_values(by='Sort')
+    sorted_df2 = sorted_df2.drop(columns=['Sort'])
+
+    # Loop through each column, pass over to original
+    for index in range(5):
+        df1['Machine confidence ' + str(index + 1)] = sorted_df2['Machine confidence ' + str(index + 1)].values
+        df1['Machine suggestion ' + str(index + 1)] = sorted_df2['Machine suggestion ' + str(index + 1)].values
+
+    return df1
 
 
 def api(args):
@@ -212,6 +226,10 @@ def api(args):
     images, and update the URLs. It will then re-run the predictions for those
     images.
     """
+    print("\n###############################################")
+    print(f"API")
+    print("###############################################")
+
     # -------------------------------------------------------------------------
     # Check the data
     # -------------------------------------------------------------------------
@@ -240,7 +258,7 @@ def api(args):
         assert len(points) > 0
 
         points = points[['Name', 'Row', 'Column']]
-        print(points)
+        image_list = points['Name'].to_list()
 
     except Exception as e:
         raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
@@ -276,7 +294,8 @@ def api(args):
         source_id = args.source_id_1
         driver, meta, source_images = get_source_meta(driver,
                                                       args.source_id_1,
-                                                      args.source_id_2)
+                                                      args.source_id_2,
+                                                      image_list)
 
         if meta is None:
             raise Exception(f"ERROR: Cannot make predictions using Source {source_id}")
@@ -293,9 +312,6 @@ def api(args):
         image_pages = images['Image Page'].tolist()
         driver, images['Image URL'] = get_image_urls(driver, image_pages)
 
-        # Gooey
-        prg_total = len(images)
-
     except Exception as e:
         print(f"ERROR: Issue with getting Source Metadata.\n{e}")
         return
@@ -304,17 +320,12 @@ def api(args):
     model_id = meta['Global id'].max()
     model_url = CORALNET_URL + f"/api/classifier/{model_id}/deploy/"
 
-    # Set the data root directory
-    data_root = os.path.abspath(args.output_dir) + "\\"
-    os.makedirs(data_root, exist_ok=True)
+    # Set the data root directory (parent to source dir)
+    output_dir = f"{os.path.abspath(args.output_dir)}\\"
+    os.makedirs(output_dir, exist_ok=True)
 
-    # Where the output predictions will be stored
-    source_dir = data_root + source_id + "\\"
-    predictions_dir = source_dir + "predictions\\"
-
-    # Create a folder to contain predictions and points
-    os.makedirs(source_dir, exist_ok=True)
-    os.makedirs(predictions_dir, exist_ok=True)
+    # Final CSV containing predictions
+    predictions_path = f"{output_dir}coralnet_predictions.csv"
 
     print("\n###############################################")
     print(f"Getting Predictions from Model")
@@ -338,8 +349,12 @@ def api(args):
     finished = False
     # The amount of time to wait before checking the status of a job
     patience = 75
-    # The number of images to include in each job
+    # The number of images, points to include in each job
     data_per_payload = 100
+    point_batch_size = 200
+
+    # To hold all the coralnet api predictions (sorted later)
+    coralnet_predictions = pd.DataFrame()
 
     # This will continue looping until all images have been processed
     while not finished:
@@ -374,18 +389,22 @@ def api(args):
                 # Because CoralNet isn't consistent...
                 p = p.rename(columns={'Row': 'row', 'Column': 'column'})
                 p = p[['row', 'column']].to_dict(orient="records")
-
-                # Add the data to the list for payloads
-                payload_imgs.append(name)
-                payload_data.append(
-                    {
-                        "type": "image",
-                        "attributes": {
-                            "name": name,
-                            "url": url,
-                            "points": p
-                        }
-                    })
+                # Split points into batches of 200
+                for i in range(0, len(p), point_batch_size):
+                    # Add the data to the list for payloads
+                    payload_imgs.append(name)
+                    # Get the batch of points
+                    batch_points = p[i:i + point_batch_size]
+                    # Add data to payload
+                    payload_data.append(
+                        {
+                            "type": "image",
+                            "attributes": {
+                                "name": name,
+                                "url": url,
+                                "points": batch_points
+                            }
+                        })
 
             else:
                 # The image url expired, so we need to update it later.
@@ -499,9 +518,7 @@ def api(args):
                 if "Completed" in message:
 
                     # Convert to csv, and save locally, check for expired images
-                    predictions, expired = convert_to_csv(current_status,
-                                                          names,
-                                                          predictions_dir)
+                    predictions, expired = convert_to_csv(current_status, names)
 
                     # Deal with images after the job has been completed
                     for name in names:
@@ -520,6 +537,9 @@ def api(args):
                     print(f"NOTE: Removing {len(names)} images from active\n")
                     active_imgs.remove(names)
                     active_jobs.remove(job)
+
+                    # Store the coralnet predictions for sorting later
+                    coralnet_predictions = pd.concat((coralnet_predictions, predictions))
 
                     # Gooey
                     print_progress(len(completed_imgs), total_images)
@@ -556,7 +576,16 @@ def api(args):
     # Close the driver
     driver.close()
 
-    return
+    # Sort predictions to match original points file, keep original columns
+    final_predictions = sort_predictions(points, coralnet_predictions)
+
+    if os.path.exists(predictions_path):
+        previous_predictions = pd.read_csv(predictions_path, index_col=0)
+        final_predictions = pd.concat((previous_predictions, final_predictions))
+
+    # Output to disk
+    final_predictions.to_csv(predictions_path)
+    print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
 
 
 # -----------------------------------------------------------------------------

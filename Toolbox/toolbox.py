@@ -465,7 +465,7 @@ def main():
                                        help='Method used to sample points from each image',
                                        widget="Dropdown", choices=['Uniform', 'Random', 'Stratified'])
 
-    points_parser_panel_1.add_argument('--num_points', required=True, type=int, default=200,
+    points_parser_panel_1.add_argument('--num_points', required=True, type=int, default=2048,
                                        metavar="Number of Points",
                                        help='The number of points to sample from each image')
 

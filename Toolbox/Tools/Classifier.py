@@ -9,6 +9,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import json
 import glob
 import math
+import datetime
 import numpy as np
 import pandas as pd
 from skimage import io
@@ -32,7 +33,6 @@ from sklearn.metrics import ConfusionMatrixDisplay
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 
-from faker import Faker
 from imgaug import augmenters as iaa
 
 from Toolbox.Tools import *
@@ -41,6 +41,15 @@ from Toolbox.Tools import *
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
+def get_now():
+    """
+    :return:
+    """
+    # Get the current datetime
+    now = datetime.datetime.now()
+    now = now.strftime("%Y-%m-%d_%H-%M-%S")
+    return now
+
 
 def compute_class_weights(df, mu=0.15):
     """
@@ -128,10 +137,10 @@ def train_classifier(args):
     SOURCE_DIR = f"{args.output_dir}/"
 
     # Run Name
-    RUN = Faker().name().replace(" ", "_").replace(".", "")
+    RUN = f"{get_now()}_{args.model_name}"
 
     # We'll also create folders in this source to hold results of the model
-    MODEL_DIR = SOURCE_DIR + f"model/{RUN}/"
+    MODEL_DIR = SOURCE_DIR + f"classifier/{RUN}/"
     WEIGHTS_DIR = MODEL_DIR + "weights/"
     LOGS_DIR = MODEL_DIR + "logs/"
 

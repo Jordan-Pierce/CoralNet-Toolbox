@@ -558,7 +558,7 @@ def get_image_urls(driver, image_page_urls):
     return driver, image_urls
 
 
-def get_images(driver, source_id):
+def get_images(driver, source_id, image_list=None):
     """
     Given a source ID, retrieve the image names, and page URLs.
     """
@@ -613,6 +613,12 @@ def get_images(driver, source_id):
 
                 path = 'input[title="Next page"]'
                 next_button = driver.find_elements(By.CSS_SELECTOR, path)
+
+                # Exit early if user only wants specific images, and they are found
+                if image_list:
+                    if all(image in image_names for image in image_list):
+                        print("\nNOTE: All desired images found; exiting early")
+                        break
 
                 if next_button:
                     next_button[0].click()
