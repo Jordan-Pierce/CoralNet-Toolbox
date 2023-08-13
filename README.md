@@ -17,26 +17,26 @@ CoralNet allows users to upload photos of coral reefs and annotate them with det
 about the coral species and other features present in the images. The platform also provides tools 
 for analyzing the annotated images, and create patch-based image classifiers. 
 
-### [**Tools**](./Toolbox/)
+### [**Tools**](./Toolbox/README.md#coralnet-toolbox)
 
 The `CoralNet-Toolbox` is an **unofficial** codebase that can be used to augment processes associated
 with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
 a GUI; these scripts currently include:
 
-- [`API`](./Toolbox/#api-%EF%B8%8F): Use the CoralNet API to get predictions from any source model
-- [`Download`](./Toolbox/#download-%EF%B8%8F): Download all data associated with a source
-- [`Upload`](./Toolbox/#upload-%EF%B8%8F): Upload images, annotations, and labelsets to a source
-- [`Labelset`](./Toolbox/#labelset-%EF%B8%8F): Create a custom labelset on CoralNet
-- [`Viscore`](./Toolbox/#viscore-%EF%B8%8F): Upload annotations made in Viscore's VPI to CoralNet
-- [`Classifier`](./Toolbox/#classifier-%EF%B8%8F): Create your own patch-based image classifier, locally
-- [`Annotate`](./Toolbox/#annotation-%EF%B8%8F): Create your own patches from annotations, locally
-- [`Visualize`](./Toolbox/#visualize-%EF%B8%8F): Visualize points/patches superimposed on images
-- [`Patches`](./Toolbox/#patches-%EF%B8%8F): Extract patches from images given an annotation file
-- [`Points`](./Toolbox/#points-%EF%B8%8F): Sample points from images (Uniform, Random, Stratified)
-- [`Inference`](./Toolbox/#inference-%EF%B8%8F): Perform inference using a locally trained model
-- [`SAM`](./Toolbox/#sam-%EF%B8%8F): Create segmentation masks for each image using `MSS` w/ `SAM`
-- [`SfM`](./Toolbox/#sfm-%EF%B8%8F): Use Metashape to create 3D models (sure, why not)
-- [`3DSeg`](./Toolbox/#3dseg-%EF%B8%8F): Use masks and SfM to create classified 3D models
+- [`API`](./Toolbox/README.md#api): Use the CoralNet API to get predictions from any source model
+- [`Download`](./Toolbox/README.md#download): Download all data associated with a source
+- [`Upload`](./Toolbox/README.md#upload): Upload images, annotations, and labelsets to a source
+- [`Labelset`](./Toolbox/README.md#labelset): Create a custom labelset on CoralNet
+- [`Viscore`](./Toolbox/README.md#viscore): Upload annotations made in Viscore's VPI to CoralNet
+- [`Classifier`](./Toolbox/README.md#classifier): Create your own patch-based image classifier, locally
+- [`Annotate`](./Toolbox/README.md#annotation): Create your own patches from annotations, locally
+- [`Visualize`](./Toolbox/README.md#visualize): Visualize points/patches superimposed on images
+- [`Patches`](./Toolbox/README.md#patches): Extract patches from images given an annotation file
+- [`Points`](./Toolbox/README.md#points): Sample points from images (Uniform, Random, Stratified)
+- [`Inference`](./Toolbox/README.md#inference): Perform inference using a locally trained model
+- [`SAM`](./Toolbox/README.md#sam): Create segmentation masks for each image using `MSS` w/ `SAM`
+- [`SfM`](./Toolbox/README.md#sfm): Use Metashape to create 3D models (sure, why not)
+- [`3DSeg`](./Toolbox/README.md#3dseg): Use masks and SfM to create classified 3D models
 
 
 <p align="center">
