@@ -195,10 +195,12 @@ def annotate(args):
         # Save, and make sure it exists
         annotations.to_csv(output_path)
 
-        if not os.path.exists(output_path):
-            raise Exception(f"ERROR: Could not save annotations; leaving tmp files where they are.")
-        else:
+        if os.path.exists(output_path):
             print(f"\nNOTE: Annotations saved in {output_path}")
+
+        else:
+            print(f"ERROR: Could not save annotations; leaving tmp files where they are.")
+            sys.exit(1)
 
         # Clean up
         if os.path.exists(tmp_dir) and os.path.isdir(tmp_dir):

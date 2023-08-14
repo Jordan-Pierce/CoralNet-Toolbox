@@ -6,58 +6,68 @@ from CoralNet. It is recommended to follow this format, though it's not necessar
 ```python
 output_dir/
 
-    source_id_1/
+    ...    
+
+    source_id_N/
+        # Official downloads from CN
+        source_id_N_annotations.csv
+        source_id_N_labelset.csv
+        source_id_N_images.csv
+        source_id_N_metadata.csv
+    
         images/
-        patches/
-            class_1/
-            class_2/
-            class_3/
-        model/
-            run_1/
-                logs/
-                weights/
-                best_model.h5
-                class_mapping.json
-        masks/
-            plots/
-            segs/
-            colors/
-            color_mapping.json
-        sfm/
-            project.psx
-        annotations.csv
-        labelset.csv
-        images.csv
-        masks.csv
-        metadata.csv
-        patches.csv
-        predictions.csv
+            image_1.png
+            image_2.png
+            ...
+            
+        # Made locally
+        annotations/
+            timestamp_annotations.csv
+            ...
         
-    source_id_2/
-        images/
+        # Made locally
+        points/
+            timestamp_points.csv
+            ...
+            
+        # Made locally
         patches/
-            class_1/
-            class_2/
-            class_3/
-        model/
-            run_1/
+            timestamp/
+                patches.csv
+                patches/
+                    class_1/
+                    class_2/
+                    ...
+        
+        # Made locally            
+        classifier/
+            timestamp/
                 logs/
                 weights/
                 best_model.h5
                 class_mapping.json
+        
+        # Made locally, or from CN
+        predictions/
+            classifier_timestamp_prediction.csv
+            coralnet_timestamp_predictions.csv
+        
+        # Made locally
         masks/
-            plots/
-            segs/
-            colors/
-            color_mapping.json
+            timestamp/
+                masks.csv
+                plots/
+                segs/
+                colors/
+                color_mapping.json
+                
+        # Made locally
         sfm/
-            project.psx
-        annotations.csv
-        labelset.csv
-        images.csv
-        masks.csv
-        metadata.csv
-        patches.csv
-        predictions.csv
+            timestamp/
+                project.psx
+                [data products]
+                
+    ...
+
         
 ```
