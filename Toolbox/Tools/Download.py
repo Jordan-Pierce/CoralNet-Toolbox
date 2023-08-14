@@ -1,3 +1,6 @@
+import os.path
+import shutil
+
 from Toolbox.Tools import *
 
 
@@ -303,14 +306,14 @@ def download_metadata(driver, source_id, source_dir=None):
             nimages = point["nimages"]
             traintime = point["traintime"]
             date = point["date"]
-            source_id = point["pk"]
+            src_id = point["pk"]
 
             meta.append([classifier_nbr,
                          score,
                          nimages,
                          traintime,
                          date,
-                         source_id])
+                         src_id])
 
         # Convert list to dataframe
         meta = pd.DataFrame(meta, columns=['Classifier nbr',
@@ -322,10 +325,10 @@ def download_metadata(driver, source_id, source_dir=None):
 
         if source_dir:
             # Save the metadata
-            meta.to_csv(source_dir + "metadata.csv")
+            meta.to_csv(f"{source_dir}{source_id}_metadata.csv")
 
             # Check that it was saved
-            if os.path.exists(source_dir + "metadata.csv"):
+            if os.path.exists(f"{source_dir}{source_id}_metadata.csv"):
                 print("NOTE: Metadata saved successfully")
 
     except Exception as e:
@@ -373,11 +376,15 @@ def download_labelset(driver, source_id, source_dir):
             raise Exception("ERROR: Button is not enabled")
 
         # Wait for the file to download
-        while not os.path.exists(source_dir + "labelset.csv"):
+        while not os.path.exists(f"{source_dir}labelset.csv"):
             time.sleep(1)
 
-        print("NOTE: Labelset saved successfully")
-        labelset = pd.read_csv(source_dir + "labelset.csv")
+        if os.path.exists(f"{source_dir}labelset.csv"):
+            path = f"{source_dir}{source_id}_labelset.csv"
+            shutil.move(f"{source_dir}labelset.csv", path)
+            print("NOTE: Labelset saved successfully")
+
+        labelset = pd.read_csv(path)
 
     except Exception as e:
         print(f"ERROR: Issue with downloading labelset")
@@ -415,8 +422,10 @@ def download_images(dataframe, source_dir):
     directory.
     """
 
+    # Extract source id from path
+    source_id = os.path.dirname(source_dir).split("\\")[-1]
     # Save the dataframe of images locally
-    csv_file = source_dir + "images.csv"
+    csv_file = f"{source_dir}{source_id}_images.csv"
     dataframe.to_csv(csv_file)
     # Check if the CSV file was saved before trying to download
     if os.path.exists(csv_file):
@@ -424,8 +433,8 @@ def download_images(dataframe, source_dir):
     else:
         raise Exception("Error: Unable to save image CSV file")
 
-    # Create the image directory if it doesn't exist
-    image_dir = source_dir + "images/"
+    # Create the image directory if it doesn't exist (it should)
+    image_dir = f"{source_dir}\\images\\"
     os.makedirs(image_dir, exist_ok=True)
 
     print(f"\nNOTE: Downloading {len(dataframe)} images")
@@ -459,9 +468,9 @@ def download_images(dataframe, source_dir):
 
     if expired_images:
         print(f"NOTE: {len(expired_images)} images had expired before being downloaded")
-        print(f"NOTE: Saving list of expired images to {source_dir}expired_images.csv")
+        print(f"NOTE: Saving list of expired images to {source_dir} expired_images.csv")
         expired_images = pd.DataFrame(expired_images, columns=['image_path'])
-        expired_images.to_csv(source_dir + "expired_images.csv")
+        expired_images.to_csv(f"{source_dir}{source_id}_expired_images.csv")
 
 
 def get_image_url(session, image_page_url):
@@ -737,9 +746,9 @@ def download_annotations(driver, source_id, source_dir):
                 # Convert the text in response to a dataframe
                 annotations = pd.read_csv(io.StringIO(response.text), sep=",")
                 # Save the dataframe locally
-                annotations.to_csv(source_dir + "annotations.csv")
+                annotations.to_csv(f"{source_dir}{source_id}_annotations.csv")
 
-                if not os.path.exists(source_dir + "annotations.csv"):
+                if not os.path.exists(f"{source_dir}{source_id}_annotations.csv"):
                     raise Exception("ERROR: Issue with saving annotations")
                 else:
                     print("NOTE: Annotations saved successfully")
@@ -767,8 +776,8 @@ def download_data(driver, source_id, output_dir):
     print("###############################################\n")
 
     # The directory to store the output
-    source_dir = os.path.abspath(output_dir) + f"\\{str(source_id)}\\"
-    image_dir = source_dir + "images\\"
+    source_dir = f"{os.path.abspath(output_dir)}\\{str(source_id)}\\"
+    image_dir = f"{source_dir}images\\"
 
     # Creating the directories
     os.makedirs(source_dir, exist_ok=True)
@@ -949,7 +958,16 @@ def main():
     parser.add_argument('--source_ids', type=int, nargs='+',
                         help='A list of source IDs to download.')
 
-    parser.add_argument('--output_dir', type=str, default="../Data/",
+    parser.add_argument('--source_df', action='store_true',
+                        help='Downloads the dataframe of sources from CoralNet.')
+
+    parser.add_argument('--labelset_df', action='store_true',
+                        help='Downloads the dataframe of labelsets from CoralNet.')
+
+    parser.add_argument('--sources_with', type=str, nargs="+",
+                        help='Downloads a dataframe of source with [labelsets] from CoralNet.')
+
+    parser.add_argument('--output_dir', type=str, default=os.path.abspath("../../Data/"),
                         help='A root directory where all downloads will be '
                              'saved to.')
 

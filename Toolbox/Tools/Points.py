@@ -12,7 +12,7 @@ from Toolbox.Tools import *
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
-# TODO parallelize using multithreading
+
 def points(args):
     """
     Generates a set of sample coordinates within a given image size.
@@ -23,22 +23,27 @@ def points(args):
     print("###############################################\n")
 
     # Set the variables
-    images = args.images
-    output_dir = args.output_dir
     sample_method = args.sample_method
     num_points = args.num_points
 
-    if images is "":
-        print(f"ERROR: No images provided; please check provided input.")
-        sys.exit(1)
-    else:
+    if os.path.exists(args.images):
+        images = args.images
         image_files = [i for i in glob.glob(f'{images}\*.*') if os.path.exists(i)]
         image_files = [i for i in image_files if os.path.basename(i).split(".")[-1].lower() in IMG_FORMATS]
-        print(f"NOTE: Sampling {num_points} points for {len(image_files)} images")
 
-    # Make sure output directory is there
+        if not image_files:
+            print("ERROR: No image files found in directory provided; please check input")
+            sys.exit(1)
+
+        print(f"NOTE: Sampling {num_points} points for {len(image_files)} images")
+    else:
+        print(f"ERROR: Image directory provided doesn't exist; please check provided input")
+        sys.exit(1)
+
+    # Create output
+    output_dir = f"{args.output_dir}\\points\\"
+    output_file = f"{output_dir}{get_now()}_points.csv"
     os.makedirs(output_dir, exist_ok=True)
-    output_file = f"{output_dir}/points.csv"
 
     samples = []
 
@@ -93,19 +98,10 @@ def points(args):
                                     'Column': int(x),
                                     'Label': 'Unlabeled'})
     if samples:
-
         print(f"NOTE: Saving {len(samples)} sampled points")
-
         # Store as dataframe
         samples = pd.DataFrame.from_records(samples)
-
-        # Save to dataframe
-        if os.path.exists(output_file):
-            previous_samples = pd.read_csv(output_file, index_col=0)
-            samples = pd.concat((previous_samples, samples))
-            samples.drop_duplicates(inplace=True)
-
-        # Save
+        # Save as csv to points folder
         samples.to_csv(output_file)
 
         if os.path.exists(output_file):

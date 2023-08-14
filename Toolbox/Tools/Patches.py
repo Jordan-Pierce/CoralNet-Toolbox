@@ -123,15 +123,23 @@ def patches(args):
     print("Cropping Patches")
     print("###############################################\n")
 
-    # Set the variables
-    image_dir = args.image_dir
-    annotation_file = args.annotation_file
-    output_dir = args.output_dir
+    if os.path.exists(args.image_dir):
+        image_dir = args.image_dir
+    else:
+        print(f"ERROR: Image directory provided doesn't exist; please check input")
+        sys.exit(1)
 
-    if os.path.exists(annotation_file):
+    if os.path.exists(args.annotation_file):
+        annotation_file = args.annotation_file
         annotation_df = pd.read_csv(annotation_file)
     else:
-        raise Exception(f"ERROR: Patch_Extractor file {annotation_file} does not exist")
+        print(f"ERROR: Annotation file provided does not exist; please check input")
+        sys.exit(1)
+
+    # Create output
+    output_dir = f"{args.output_dir}\\patches\\{get_now()}\\"
+    output_path = f"{output_dir}patches.csv"
+    os.makedirs(output_dir, exist_ok=True)
 
     # Make sub-folders for all the class categories
     for label in annotation_df['Label'].unique():
@@ -159,15 +167,10 @@ def patches(args):
             print_progress(len(patches), prg_total)
 
     # Save patches dataframe
-    output_path = os.path.join(output_dir, 'patches.csv')
-    patches = pd.DataFrame(patches, columns=['Name', 'Path', 'Label', 'Row',
-                                             'Column' 'Image Name', 'Image Path'])
-
-    if os.path.exists(output_path):
-        previous_patches = pd.read_csv(output_path, index_col=0)
-        patches = pd.concat((previous_patches, patches))
-
-    # Save
+    patches = pd.DataFrame(patches, columns=['Name', 'Path',
+                                             'Label', 'Row', 'Column',
+                                             'Image Name', 'Image Path'])
+    # Save as CSV
     patches.to_csv(output_path)
 
     if os.path.exists(output_path):

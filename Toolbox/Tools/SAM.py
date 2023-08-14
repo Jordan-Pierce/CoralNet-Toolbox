@@ -260,14 +260,15 @@ def mss_sam(args):
         sys.exit(1)
 
     # Setting output directories
-    output_dir = args.output_dir
-    mask_dir = f"{output_dir}\\masks\\"
-    plot_dir = f"{mask_dir}\\plots\\"
-    seg_dir = f"{mask_dir}\\segs\\"
-    color_dir = f"{mask_dir}\\color\\"
+    output_dir = f"{args.output_dir}\\{get_now()}\\"
+    plot_dir = f"{output_dir}\\plots\\"
+    seg_dir = f"{output_dir}\\segs\\"
+    color_dir = f"{output_dir}\\color\\"
+
+    output_mask_csv = f"{output_dir}masks.csv"
+    output_color_json = f"{output_dir}color_mapping.json"
 
     # Create the output directories
-    os.makedirs(mask_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
     os.makedirs(seg_dir, exist_ok=True)
     os.makedirs(color_dir, exist_ok=True)
@@ -399,11 +400,10 @@ def mss_sam(args):
         print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory
-    output_path = os.path.join(output_dir, 'masks.csv')
     mask_df = pd.DataFrame(mask_df, columns=['Image Path', 'Seg Path', 'Color Path', 'Plot Path'])
-    mask_df.to_csv(output_path)
+    mask_df.to_csv(output_mask_csv)
 
-    if os.path.exists(output_path):
+    if os.path.exists(output_mask_csv):
         print(f"NOTE: Mask dataframe saved to {output_dir}")
     else:
         print(f"ERROR: Could not save mask dataframe")
@@ -416,12 +416,11 @@ def mss_sam(args):
         seg_map[l]['color'] = (np.array(label_colors[l][0:3]) * 255).astype(np.uint8).tolist()
 
     # Save the color mapping json file
-    output_path = os.path.join(mask_dir, 'color_mapping.json')
-    with open(output_path, 'w') as output_file:
+    with open(output_color_json, 'w') as output_file:
         json.dump(seg_map, output_file, indent=4)
 
-    if os.path.exists(output_path):
-        print(f"NOTE: Color Mapping JSON file saved to {mask_dir}")
+    if os.path.exists(output_color_json):
+        print(f"NOTE: Color Mapping JSON file saved to {output_dir}")
     else:
         print(f"ERROR: Could not save Color Mapping JSON file")
 

@@ -109,8 +109,8 @@ def inference(args):
         sys.exit()
 
     # Output
-    output_dir = args.output_dir
-    output_path = f"{output_dir}\\predictions.csv"
+    output_dir = f"{args.output_dir}\\predictions\\"
+    output_path = f"{output_dir}classifier_{get_now()}_predictions.csv"
     os.makedirs(output_dir, exist_ok=True)
 
     # ----------------------------------------------------------------

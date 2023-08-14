@@ -14,12 +14,14 @@ def get_source_meta(driver, source_id_1, source_id_2=None, image_list=None):
     source id 1 refers to the source containing images, and source id 2
     refers to a source for a different model (if desired)"""
 
-    print("\n###############################################")
-    print(f"Downloading Source Metadata")
-    print("###############################################\n")
-
     # Variables for the model
     source_id = source_id_1 if source_id_2 is None else source_id_2
+
+    print("\n###############################################")
+    print(f"Downloading Source Metadata {source_id}")
+    print("###############################################\n")
+
+    # Get the metadata
     driver, meta = download_metadata(driver, source_id)
 
     # Check if a model exists
@@ -117,6 +119,7 @@ def check_job_status(response, coralnet_token):
         else:
             # It's done with all images
             message = "Completed Job!"
+            message = "NOTE: Completed Job!"
     else:
         # CoralNet is getting too many requests, sleep for a second.
         message = f"Tools: {current_status['errors'][0]['detail']}"
@@ -146,7 +149,7 @@ def convert_to_csv(status, image_names):
     into a single DataFrame.
     """
 
-    print(f"NOTE: Saving annotations for {len(image_names)} images")
+    print(f"NOTE: Recording annotations for completed job")
 
     # A list to store all the model predictions (dataframes)
     model_predictions = pd.DataFrame()
@@ -187,6 +190,10 @@ def sort_predictions(original, predictions):
     # Create copies
     df1 = original.copy()
     df2 = predictions.copy()
+
+    if df2.empty:
+        print("NOTE: No predictions were made")
+        return df1
 
     # Add a temporary sorting column to df2
     df2['Sort'] = df2.apply(lambda row: df1[(df1['Row'] == row['Row']) &
@@ -321,14 +328,14 @@ def api(args):
     model_url = CORALNET_URL + f"/api/classifier/{model_id}/deploy/"
 
     # Set the data root directory (parent to source dir)
-    output_dir = f"{os.path.abspath(args.output_dir)}\\"
+    output_dir = f"{os.path.abspath(args.output_dir)}\\predictions\\"
     os.makedirs(output_dir, exist_ok=True)
 
     # Final CSV containing predictions
-    predictions_path = f"{output_dir}coralnet_predictions.csv"
+    predictions_path = f"{output_dir}coralnet_{get_now()}_predictions.csv"
 
     print("\n###############################################")
-    print(f"Getting Predictions from Model")
+    print(f"Getting Predictions from Model {model_id} Source {source_id}")
     print("###############################################")
 
     # Total number of images
@@ -356,233 +363,239 @@ def api(args):
     # To hold all the coralnet api predictions (sorted later)
     coralnet_predictions = pd.DataFrame()
 
-    # This will continue looping until all images have been processed
-    while not finished:
+    try:
+        # This will continue looping until all images have been processed
+        # If the user cuts the program early, any predictions stored will be saved
+        while not finished:
 
-        # A list for images and data that have been sampled this round
-        payload_data = []
-        payload_imgs = []
+            # A list for images and data that have been sampled this round
+            payload_data = []
+            payload_imgs = []
 
-        for index, row in images.iterrows():
-            # Loops through each image requested, gets points, adds to a queue
+            for index, row in images.iterrows():
+                # Loops through each image requested, gets points, adds to a queue
 
-            # Get the current image name and url
-            name = row['Name']
-            url = row['Image URL']
+                # Get the current image name and url
+                name = row['Name']
+                url = row['Image URL']
 
-            # If this image has already been completed, skip it.
-            if name in completed_imgs:
-                continue  # Skip to the next image within the current for loop
+                # If this image has already been completed, skip it.
+                if name in completed_imgs:
+                    continue  # Skip to the next image within the current for loop
 
-            # If this image is already in active, skip it.
-            elif any(name in n for n in active_imgs):
-                continue  # Skip to the next image within the current for loop
+                # If this image is already in active, skip it.
+                elif any(name in n for n in active_imgs):
+                    continue  # Skip to the next image within the current for loop
 
-            # if this image is already in queued, skip it.
-            elif any(name in n for n in queued_imgs):
-                continue  # Skip to the next image within the current for loop
+                # if this image is already in queued, skip it.
+                elif any(name in n for n in queued_imgs):
+                    continue  # Skip to the next image within the current for loop
 
-            # The image url has not expired, so we can queue the image
-            elif not is_expired(url):
-                # Get the points for just this image
-                p = points[points['Name'] == name]
-                # Because CoralNet isn't consistent...
-                p = p.rename(columns={'Row': 'row', 'Column': 'column'})
-                p = p[['row', 'column']].to_dict(orient="records")
-                # Split points into batches of 200
-                for i in range(0, len(p), point_batch_size):
-                    # Add the data to the list for payloads
-                    payload_imgs.append(name)
-                    # Get the batch of points
-                    batch_points = p[i:i + point_batch_size]
-                    # Add data to payload
-                    payload_data.append(
-                        {
-                            "type": "image",
-                            "attributes": {
-                                "name": name,
-                                "url": url,
-                                "points": batch_points
-                            }
-                        })
-
-            else:
-                # The image url expired, so we need to update it later.
-                print(f"WARNING: {name} expired; adding to expired list")
-                expired_imgs.append(name)
-                continue  # Skip to the next image within the current for loop
-
-        # Here we initialize the payload, which is a JSON object that
-        # contains the image URLs and their points; payloads will contain
-        # batches of data (N = data_per_payload).
-        for _ in np.arange(0, len(payload_imgs), data_per_payload):
-            # Get the image names and data for the payload
-            image_names = payload_imgs[_: _ + data_per_payload]
-            payload = {'data': payload_data[_: _ + data_per_payload]}
-            # Use the payload to construct the job
-            job = {
-                "headers": headers,
-                "model_url": model_url,
-                "image_names": image_names,
-                "data": json.dumps(payload, indent=4),
-
-            }
-            # Add the job to the queue
-            queued_jobs.append(job)
-            queued_imgs.append(image_names)
-
-        # Print the status of the jobs
-        print_job_status(queued_jobs, active_jobs, completed_jobs, expired_imgs)
-
-        # Start uploading the queued jobs to CoralNet if there are
-        # less than 5 active jobs, and there are more in the queue.
-        # If there are no queued jobs, this won't need to be entered.
-        while len(active_jobs) < 5 and len(queued_jobs) > 0:
-
-            # Loop through all the queued jobs
-            for job, names in list(zip(queued_jobs, queued_imgs)):
-
-                # Break when active gets to 5
-                if len(active_jobs) >= 5:
-                    print("\nNOTE: Five jobs already active; checking status")
-                    break  # Breaks from both loops
-
-                # Upload the image and the sampled points to Tools
-                print(f"\nNOTE: Attempting to upload {len(names)} images")
-
-                # Sends the requests to the `source` and in exchange, receives
-                # a message telling if it was received correctly.
-                response = requests.post(url=job["model_url"],
-                                         data=job["data"],
-                                         headers=job["headers"])
-                if response.ok:
-                    # If it was received
-                    print(f"NOTE: Successfully uploaded {len(names)} images")
-
-                    # Add to active jobs
-                    active_jobs.append(response)
-                    active_imgs.append(names)
-
-                    # Remove from queued jobs
-                    queued_jobs.remove(job)
-                    queued_imgs.remove(names)
+                # The image url has not expired, so we can queue the image
+                elif not is_expired(url):
+                    # Get the points for just this image
+                    p = points[points['Name'] == name]
+                    # Because CoralNet isn't consistent...
+                    p = p.rename(columns={'Row': 'row', 'Column': 'column'})
+                    p = p[['row', 'column']].to_dict(orient="records")
+                    # Split points into batches of 200
+                    for i in range(0, len(p), point_batch_size):
+                        # Add the data to the list for payloads
+                        payload_imgs.append(name)
+                        # Get the batch of points
+                        batch_points = p[i:i + point_batch_size]
+                        # Add data to payload
+                        payload_data.append(
+                            {
+                                "type": "image",
+                                "attributes": {
+                                    "name": name,
+                                    "url": url,
+                                    "points": batch_points
+                                }
+                            })
 
                 else:
-                    # There was an error uploading to Tools; get the message
-                    message = json.loads(response.text)['errors'][0]['detail']
+                    # The image url expired, so we need to update it later.
+                    print(f"WARNING: {name} expired; adding to expired list")
+                    expired_imgs.append(name)
+                    continue  # Skip to the next image within the current for loop
 
-                    # Print the message
-                    print(f"Tools: {message}")
+            # Here we initialize the payload, which is a JSON object that
+            # contains the image URLs and their points; payloads will contain
+            # batches of data (N = data_per_payload).
+            for _ in np.arange(0, len(payload_imgs), data_per_payload):
+                # Get the image names and data for the payload
+                image_names = payload_imgs[_: _ + data_per_payload]
+                payload = {'data': payload_data[_: _ + data_per_payload]}
+                # Use the payload to construct the job
+                job = {
+                    "headers": headers,
+                    "model_url": model_url,
+                    "image_names": image_names,
+                    "data": json.dumps(payload, indent=4),
 
-                    if "5 jobs active" in message:
-                        # Max number of jobs reached, so we need to wait
-                        print(f"NOTE: Will attempt again at {in_N_seconds(patience)}")
-                        time.sleep(patience)
+                }
+                # Add the job to the queue
+                queued_jobs.append(job)
+                queued_imgs.append(image_names)
 
-                    else:
-                        # Assumed that the images have expired
-                        print(f"ERROR: Failed to upload: {len(names)} images")
+            # Print the status of the jobs
+            print_job_status(queued_jobs, active_jobs, completed_jobs, expired_imgs)
 
-                        # Add to expired images
-                        expired_imgs.extend(names)
+            # Start uploading the queued jobs to CoralNet if there are
+            # less than 5 active jobs, and there are more in the queue.
+            # If there are no queued jobs, this won't need to be entered.
+            while len(active_jobs) < 5 and len(queued_jobs) > 0:
 
-                        # Remove from queue
+                # Loop through all the queued jobs
+                for job, names in list(zip(queued_jobs, queued_imgs)):
+
+                    # Break when active gets to 5
+                    if len(active_jobs) >= 5:
+                        print("\nNOTE: Five jobs already active; checking status")
+                        break  # Breaks from both loops
+
+                    # Upload the image and the sampled points to Tools
+                    print(f"\nNOTE: Attempting to upload {len(names)} images")
+
+                    # Sends the requests to the `source` and in exchange, receives
+                    # a message telling if it was received correctly.
+                    response = requests.post(url=job["model_url"],
+                                             data=job["data"],
+                                             headers=job["headers"])
+                    if response.ok:
+                        # If it was received
+                        print(f"NOTE: Successfully uploaded {len(names)} images")
+
+                        # Add to active jobs
+                        active_jobs.append(response)
+                        active_imgs.append(names)
+
+                        # Remove from queued jobs
                         queued_jobs.remove(job)
                         queued_imgs.remove(names)
 
-            # If all images have expired, break from the loop
-            if images['Name'].isin(expired_imgs).all():
-                print("NOTE: All images have expired")
-                break
+                    else:
+                        # There was an error uploading to Tools; get the message
+                        message = json.loads(response.text)['errors'][0]['detail']
 
-        # Check the status of the active jobs, break when another can be added
-        while len(active_jobs) <= 5 and len(active_jobs) != 0:
+                        # Print the message
+                        print(f"Tools: {message}")
 
-            # Check the status of the active jobs
-            print_job_status(queued_jobs, active_jobs, completed_jobs, expired_imgs)
+                        if "5 jobs active" in message:
+                            # Max number of jobs reached, so we need to wait
+                            print(f"NOTE: Will attempt again at {in_N_seconds(patience)}")
+                            time.sleep(patience)
 
-            # Sleep before checking status again
-            print(f"\nNOTE: Checking status again at {in_N_seconds(patience)}")
-            time.sleep(patience)
-
-            # Loop through the active jobs
-            for i, (job, names) in enumerate(list(zip(active_jobs, active_imgs))):
-
-                # Check the status of the current job
-                current_status, message, wait = check_job_status(job, coralnet_token)
-
-                # Print the message
-                print(f"{message}")
-
-                # Current job finished, output the results, remove from queue
-                if "Completed" in message:
-
-                    # Convert to csv, and save locally, check for expired images
-                    predictions, expired = convert_to_csv(current_status, names)
-
-                    # Deal with images after the job has been completed
-                    for name in names:
-                        # If the image had expired, add to expired
-                        if name in expired:
-                            expired_imgs.append(name)
-                        # Else, add to completed
                         else:
-                            completed_imgs.append(name)
+                            # Assumed that the images have expired
+                            print(f"ERROR: Failed to upload: {len(names)} images")
 
-                    # Add to completed jobs list
-                    print(f"NOTE: Adding {len(names)} images to completed")
-                    completed_jobs.append(current_status)
+                            # Add to expired images
+                            expired_imgs.extend(names)
 
-                    # Remove from active jobs, images list
-                    print(f"NOTE: Removing {len(names)} images from active\n")
-                    active_imgs.remove(names)
-                    active_jobs.remove(job)
+                            # Remove from queue
+                            queued_jobs.remove(job)
+                            queued_imgs.remove(names)
 
-                    # Store the coralnet predictions for sorting later
-                    coralnet_predictions = pd.concat((coralnet_predictions, predictions))
+                # If all images have expired, break from the loop
+                if images['Name'].isin(expired_imgs).all():
+                    print("NOTE: All images have expired")
+                    break
 
-                    # Gooey
-                    print_progress(len(completed_imgs), total_images)
+            # Check the status of the active jobs, break when another can be added
+            while len(active_jobs) <= 5 and len(active_jobs) != 0:
 
-                # Wait for the specified time before checking the status again
-                time.sleep(wait)
+                # Check the status of the active jobs
+                print_job_status(queued_jobs, active_jobs, completed_jobs, expired_imgs)
 
-            # After checking the current status, break if another job can be added
-            # Else wait and check the status of the active jobs again.
-            if len(active_jobs) < 5 and len(queued_jobs) > 0:
-                print(f"NOTE: Active jobs {len(active_jobs)}; adding another.\n")
-                break
+                # Sleep before checking status again
+                print(f"\nNOTE: Checking status again at {in_N_seconds(patience)}")
+                time.sleep(patience)
 
-        # Check to see everything has been completed, breaking the loop
-        if not queued_jobs and not active_jobs and not expired_imgs:
-            print("NOTE: All images have been processed; exiting loop.\n")
-            finished = True
+                # Loop through the active jobs
+                for i, (job, names) in enumerate(list(zip(active_jobs, active_imgs))):
 
-        # If there are no queued jobs, and no active jobs, but there are images in
-        # expired, get just the AWS URL for the expired images and update dataframe.
-        if not queued_jobs and not active_jobs and expired_imgs:
-            print(f"NOTE: Updating {len(expired_imgs)} expired images' URL\n")
+                    # Check the status of the current job
+                    current_status, message, wait = check_job_status(job, coralnet_token)
 
-            # Get the subset of images dataframe containing only the expired images
-            images = images[images['Name'].isin(expired_imgs)].copy()
+                    # Print the message
+                    print(f"{message}")
 
-            # Get the unexpired AWS image URLs
-            driver, new_urls = get_image_urls(driver, images['Image Page'].tolist())
-            images['Image URL'] = new_urls
+                    # Current job finished, output the results, remove from queue
+                    if "Completed" in message:
 
-            # Reset the expired images list
-            expired_imgs = []
+                        # Convert to csv, and save locally, check for expired images
+                        predictions, expired = convert_to_csv(current_status, names)
+
+                        # Deal with images after the job has been completed
+                        c = 0
+                        for name in names:
+                            # If the image had expired, add to expired
+                            if name in expired:
+                                expired_imgs.append(name)
+                            # Else, add to completed
+                            else:
+                                completed_imgs.append(name)
+                                c += 1
+
+                        # Add to completed jobs list
+                        print(f"NOTE: Adding {c} images to completed")
+                        completed_jobs.append(current_status)
+
+                        # Remove from active jobs, images list
+                        print(f"NOTE: Removing {c} images from active\n")
+                        active_imgs.remove(names)
+                        active_jobs.remove(job)
+
+                        # Store the coralnet predictions for sorting later
+                        coralnet_predictions = pd.concat((coralnet_predictions, predictions))
+
+                        # Gooey
+                        print_progress(len(completed_imgs), total_images)
+
+                    # Wait for the specified time before checking the status again
+                    time.sleep(wait)
+
+                # After checking the current status, break if another job can be added
+                # Else wait and check the status of the active jobs again.
+                if len(active_jobs) < 5 and len(queued_jobs) > 0:
+                    print(f"NOTE: Active jobs {len(active_jobs)}; adding another.\n")
+                    break
+
+            # Check to see everything has been completed, breaking the loop
+            if not queued_jobs and not active_jobs and not expired_imgs:
+                print("NOTE: All images have been processed; exiting loop.\n")
+                finished = True
+
+            # If there are no queued jobs, and no active jobs, but there are images in
+            # expired, get just the AWS URL for the expired images and update dataframe.
+            if not queued_jobs and not active_jobs and expired_imgs:
+
+                print(f"NOTE: Updating the following {len(expired_imgs)} expired image URLs\n")
+                for e in expired_imgs:
+                    print(f"NOTE: e")
+
+                # Get the subset of images dataframe containing only the expired images
+                images = images[images['Name'].isin(expired_imgs)].copy()
+
+                # Get the unexpired AWS image URLs
+                driver, new_urls = get_image_urls(driver, images['Image Page'].tolist())
+                images['Image URL'] = new_urls
+
+                # Reset the expired images list
+                expired_imgs = []
+
+    # TODO figure this one out with stop button
+    except KeyboardInterrupt:
+        print("NOTE: Exiting program early")
 
     # Close the driver
     driver.close()
 
     # Sort predictions to match original points file, keep original columns
     final_predictions = sort_predictions(points, coralnet_predictions)
-
-    if os.path.exists(predictions_path):
-        previous_predictions = pd.read_csv(predictions_path, index_col=0)
-        final_predictions = pd.concat((previous_predictions, final_predictions))
-
     # Output to disk
     final_predictions.to_csv(predictions_path)
     print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")

@@ -12,9 +12,31 @@ import argparse
 import pandas as pd
 from PIL import Image
 
+from Toolbox.Tools import *
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# Functions
+# ------------------------------------------------------------------------------------------------------------------
+
+def print_labelset(labelset):
+    """
+    Pretty prints to user in Gooey the total number of annotations made in session
+    """
+    print("\n" * 20)
+    print("\n###############################################")
+    print("Label Tracker")
+    print("###############################################\n")
+
+    for k, v in labelset.items():
+        if v:
+            print(f"{k}: {v}", flush=True)
+
 
 def extract_label(string):
-    """Pulls the label from the patch name in the log file"""
+    """
+    Pulls the label from the patch name in the log file
+    """
 
     # Anything before "_LETTER_.bmp"
     pattern = r'^([^_]+(?:_[^_]+)*?)_[a-zA-Z]_[^_]+\.bmp$'
@@ -28,7 +50,9 @@ def extract_label(string):
 
 
 def app_still_on(process):
-    """A way to determine if the application is still on"""
+    """
+    A way to determine if the application is still on
+    """
 
     app_on = True
 
@@ -62,14 +86,29 @@ def annotate(args):
         raise FileNotFoundError(f"ERROR: Executable not found. Please check the path provided.")
 
     # Set the image directory
-    image_dir = args.image_dir
-    exe_path = args.patch_extractor_path
+    if os.path.exists(args.image_dir):
+        image_dir = args.image_dir
+    else:
+        print(f"ERROR: Image directory provided doesn't exist; please check input")
+        sys.exit(1)
+
+    # Set exe
+    if os.path.exists(args.patch_extractor_path):
+        exe_path = args.patch_extractor_path
+    else:
+        print(f"ERROR: Path to Patch Extractor doesn't exist; please check input")
+        sys.exit(1)
 
     # Set the paths for output
-    root = os.path.dirname(image_dir)
-    tmp_dir = f"{image_dir}/tmp/"
+    output_dir = f"{os.path.dirname(image_dir)}\\annotations\\"
+    output_path = f"{output_dir}{get_now()}_annotations.csv"
+    os.makedirs(output_dir, exist_ok=True)
     # Create a directory for temp patches
+    tmp_dir = f"{image_dir}/tmp/"
     os.makedirs(tmp_dir, exist_ok=True)
+
+    # Keeping track of labels made
+    labelset = {}
 
     # Run the application in the background
     process = subprocess.Popen(['start', '', exe_path],
@@ -77,16 +116,16 @@ def annotate(args):
                                stderr=subprocess.STDOUT,
                                shell=True)
 
-    # Determining the current log file
+    # Determine the current log file
     log_files = list(set(glob.glob(f"{image_dir}/CNNDataExtractor-*.txt")))
     num_logs = len(log_files)
     log_file = None
 
     # The log file will be created after a single patch is extracted
     while app_still_on(process):
-
+        # Looks for log files
         log_files = list(set(glob.glob(f"{image_dir}/CNNDataExtractor-*.txt")))
-
+        # If there is a new one, set it as the log file for this session
         if num_logs != len(log_files):
             # The log file name will stay the same throughout the entire session
             log_file = max(log_files, key=os.path.getmtime)
@@ -110,6 +149,13 @@ def annotate(args):
                 print("WARNING: Annotation not recorded; convention should only contain a single '_'")
             else:
                 print(f"NOTE: Annotation created for class '{extracted_label}'")
+                if extracted_label not in labelset:
+                    labelset[extracted_label] = 0
+
+                # Add to the distribution
+                labelset[extracted_label] += 1
+                # Pretty print to user
+                print_labelset(labelset)
 
     # App has been closed, now process the annotations
     if log_file:
@@ -146,21 +192,13 @@ def annotate(args):
 
         # Save as dataframe to root directory
         annotations = pd.DataFrame(annotations, columns=['Name', 'Row', 'Column', 'Label'])
-        annotation_path = f"{root}/annotations.csv"
-
-        # If one already exists, add to it
-        if os.path.exists(annotation_path):
-            existing_annotations = pd.read_csv(annotation_path, index_col=0)
-            annotations = pd.concat((existing_annotations, annotations))
-
         # Save, and make sure it exists
-        annotations.to_csv(annotation_path)
+        annotations.to_csv(output_path)
 
-        if not os.path.exists(annotation_path):
+        if not os.path.exists(output_path):
             raise Exception(f"ERROR: Could not save annotations; leaving tmp files where they are.")
-
         else:
-            print(f"NOTE: Annotations saved in {annotation_path}")
+            print(f"\nNOTE: Annotations saved in {output_path}")
 
         # Clean up
         if os.path.exists(tmp_dir) and os.path.isdir(tmp_dir):
@@ -186,6 +224,7 @@ def main():
 
     parser.add_argument('--image_dir', required=True, type=str,
                         help='A directory where all images are located.')
+
 
     args = parser.parse_args()
 

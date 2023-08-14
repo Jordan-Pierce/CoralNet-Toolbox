@@ -7,6 +7,8 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+from Toolbox.Tools import *
+
 import Metashape
 
 # Check that the Metashape version is compatible with this script
@@ -28,14 +30,10 @@ def find_files(folder, types):
 
 
 def print_progress(p):
-    """Prints the progress of a proccess to console"""
-
-    elapsed = float(time.time() - t0)
-    if p:
-        sec = elapsed / p * 100
-        print('Current task progress: {:.2f}%, estimated time left: {:.0f} seconds'.format(p, sec))
-    else:
-        print('Current task progress: {:.2f}%, estimated time left: unknown'.format(p))
+    """
+    Prints the progress of a process to console (Gooey format)
+    """
+    print("progress: {}/{}".format(p, 1.0))
 
 
 def sfm(args):
@@ -58,7 +56,7 @@ def sfm(args):
         sys.exit(1)
 
     # Create the output folder if it doesn't already exist
-    output_dir = f"{args.output_dir}\\SfM\\"
+    output_dir = f"{args.output_dir}\\sfm\\{get_now()}\\"
     os.makedirs(output_dir, exist_ok=True)
     # Create filenames for data outputs
     output_dem = output_dir + "/DEM.tif"

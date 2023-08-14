@@ -41,15 +41,6 @@ from Toolbox.Tools import *
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
-def get_now():
-    """
-    :return:
-    """
-    # Get the current datetime
-    now = datetime.datetime.now()
-    now = now.strftime("%Y-%m-%d_%H-%M-%S")
-    return now
-
 
 def compute_class_weights(df, mu=0.15):
     """
@@ -134,24 +125,24 @@ def train_classifier(args):
 
     # ---------------------------------------------------------------------------------------
     # Source directory setup
-    SOURCE_DIR = f"{args.output_dir}/"
+    output_dir = f"{args.output_dir}\\"
 
     # Run Name
-    RUN = f"{get_now()}_{args.model_name}"
+    run = f"{get_now()}_{args.model_name}"
 
     # We'll also create folders in this source to hold results of the model
-    MODEL_DIR = SOURCE_DIR + f"classifier/{RUN}/"
-    WEIGHTS_DIR = MODEL_DIR + "weights/"
-    LOGS_DIR = MODEL_DIR + "logs/"
+    run_dir = f"{output_dir}classifier\\{run}\\"
+    weights_dir = run_dir + "weights\\"
+    logs_dir = run_dir + "logs\\"
 
     # Make the directories
-    os.makedirs(MODEL_DIR, exist_ok=True)
-    os.makedirs(WEIGHTS_DIR, exist_ok=True)
-    os.makedirs(LOGS_DIR, exist_ok=True)
+    os.makedirs(run_dir, exist_ok=True)
+    os.makedirs(weights_dir, exist_ok=True)
+    os.makedirs(logs_dir, exist_ok=True)
 
-    print(f"NOTE: Model Run - {RUN}")
-    print(f"NOTE: Model Directory - {MODEL_DIR}")
-    print(f"NOTE: Log Directory - {LOGS_DIR}")
+    print(f"NOTE: Model Run - {run}")
+    print(f"NOTE: Model Directory - {run_dir}")
+    print(f"NOTE: Log Directory - {logs_dir}")
 
     # ---------------------------------------------------------------------------------------
     # Data setup
@@ -237,11 +228,11 @@ def train_classifier(args):
     ax.set_ylim([ymin, ymax])
 
     # Saving and displaying the figure
-    plt.savefig(LOGS_DIR + "DatasetSplit.png")
+    plt.savefig(logs_dir + "DatasetSplit.png")
     plt.show()
 
-    if os.path.exists(LOGS_DIR + "DatasetSplit.png"):
-        print(f"NOTE: Datasplit Figure saved in {LOGS_DIR}")
+    if os.path.exists(logs_dir + "DatasetSplit.png"):
+        print(f"NOTE: Datasplit Figure saved in {logs_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Start of parameter setting
@@ -346,7 +337,7 @@ def train_classifier(args):
     # Save the class categories as a JSON file
     class_indices = test_generator.class_indices
     class_categories = {v: k for k, v in class_indices.items()}
-    with open(f'{MODEL_DIR}Class_Map.json', 'w') as json_file:
+    with open(f'{run_dir}Class_Map.json', 'w') as json_file:
         json.dump(class_categories, json_file, indent=3)
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -388,7 +379,7 @@ def train_classifier(args):
                           patience=3,
                           verbose=1),
 
-        ModelCheckpoint(filepath=WEIGHTS_DIR + "model-{epoch:03d}-{acc:03f}-{val_acc:03f}.h5",
+        ModelCheckpoint(filepath=weights_dir + "model-{epoch:03d}-{acc:03f}-{val_acc:03f}.h5",
                         monitor='val_loss',
                         save_weights_only=False,
                         save_best_only=True,
@@ -402,7 +393,7 @@ def train_classifier(args):
                       baseline=None,
                       restore_best_weights=True),
 
-        TensorBoard(log_dir=LOGS_DIR, histogram_freq=0),
+        TensorBoard(log_dir=logs_dir, histogram_freq=0),
     ]
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -421,7 +412,7 @@ def train_classifier(args):
 
             # Call Tensorboard using the environment's python exe
             tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
-            process = subprocess.Popen([tensorboard_exe, "--logdir", LOGS_DIR])
+            process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
 
             # Let it load
             time.sleep(15)
@@ -445,14 +436,14 @@ def train_classifier(args):
                             validation_data=validation_generator,
                             validation_steps=steps_per_epoch_valid,
                             callbacks=callbacks,
-                            verbose=1,
+                            verbose=0,
                             class_weight=class_weight)
     except Exception as e:
         print(f"ERROR: There was an issue with training!\n"
               f"Read the 'Error.txt file' in the Logs Directory")
 
         # Write the error to text file
-        with open(f"{LOGS_DIR}Error.txt", 'a') as file:
+        with open(f"{logs_dir}Error.txt", 'a') as file:
             file.write(f"Caught exception: {str(e)}\n")
 
         # Exit early
@@ -460,8 +451,8 @@ def train_classifier(args):
 
     # ------------------------------------------------------------------------------------------------------------------
     # Plot and save results
-    plot_history(history, single_graphs=True, path=f"{LOGS_DIR}");
-    print(f"NOTE: Training History Figure saved in {LOGS_DIR}")
+    plot_history(history, single_graphs=True, path=f"{logs_dir}");
+    print(f"NOTE: Training History Figure saved in {logs_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Test Dataset
@@ -470,7 +461,7 @@ def train_classifier(args):
           f"#########################################\n")
 
     # Get the best weights
-    weights = sorted(glob.glob(WEIGHTS_DIR + "*.h5"), key=os.path.getmtime)
+    weights = sorted(glob.glob(weights_dir + "*.h5"), key=os.path.getmtime)
     best_weights = weights[-1]
 
     # Load into the model
@@ -491,9 +482,9 @@ def train_classifier(args):
                                    target_names=test_generator.class_indices.keys())
 
     # Save the report to a file
-    with open(f"{LOGS_DIR}Classification_Report.txt", "w") as file:
+    with open(f"{logs_dir}Classification_Report.txt", "w") as file:
         file.write(report)
-    print(f"NOTE: Classification Report saved in {LOGS_DIR}")
+    print(f"NOTE: Classification Report saved in {logs_dir}")
 
     # --- Confusion Matrix
     # Calculate the overall accuracy
@@ -525,10 +516,10 @@ def train_classifier(args):
     # Plot the confusion matrix
     disp.plot(ax=ax, cmap=plt.cm.Blues, values_format='g')
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-    plt.savefig(f"{LOGS_DIR}Confusion_Matrix.png")
+    plt.savefig(f"{logs_dir}Confusion_Matrix.png")
     plt.show()
 
-    print(f"NOTE: Confusion Matrix saved in {LOGS_DIR}")
+    print(f"NOTE: Confusion Matrix saved in {logs_dir}")
 
     # --- ROC
     # Convert the true labels to binary format
@@ -562,10 +553,10 @@ def train_classifier(args):
     plt.ylabel('True Positive Rate (TPR)')
     plt.title('Receiver Operating Characteristic (ROC) Curves')
     plt.legend(loc='lower right', title='Classes')
-    plt.savefig(LOGS_DIR + "ROC_Curves.png")
+    plt.savefig(logs_dir + "ROC_Curves.png")
     plt.show()
 
-    print(f"NOTE: ROC Figure saved in {LOGS_DIR}")
+    print(f"NOTE: ROC Figure saved in {logs_dir}")
 
     # --- Threshold
     # Higher values represent more sure/confident predictions
@@ -604,15 +595,15 @@ def train_classifier(args):
     plt.ylabel('Classification Accuracy / Sure Percentage')
     plt.title('Identifying the ideal threshold value')
     plt.legend(['Classification Accuracy', 'Sure Percentage'])
-    plt.savefig(LOGS_DIR + "AccuracyThreshold.png")
+    plt.savefig(logs_dir + "AccuracyThreshold.png")
     plt.show()
 
-    print(f"NOTE: Threshold Figure saved in {LOGS_DIR}")
+    print(f"NOTE: Threshold Figure saved in {logs_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Save the best model
-    model.save(f"{MODEL_DIR}Best_Model_and_Weights.h5")
-    print(f"NOTE: Best Model and Weights saved in {MODEL_DIR}")
+    model.save(f"{run_dir}Best_Model_and_Weights.h5")
+    print(f"NOTE: Best Model and Weights saved in {run_dir}")
 
     if args.tensorboard:
         # Close Tensorboard

@@ -1,4 +1,5 @@
 import os
+import signal
 
 from Tools.API import *
 from Tools.Upload import *
@@ -21,6 +22,7 @@ from gooey import Gooey, GooeyParser
        program_name="CoralNet Toolbox",
        default_size=(900, 600),  # width, height
        console=True,
+       shutdown_signal=signal.CTRL_C_EVENT,
        progress_regex=r"^progress: (?P<current>\d+)/(?P<total>\d+)$",
        progress_expr="current / total * 100",
        hide_progress_msg=True,
@@ -80,16 +82,16 @@ def main():
                                     default=None,
                                     help='The ID of the Source containing the model to use, if different.')
 
+    api_parser_panel_1.add_argument('--csv_path', required=True, type=str,
+                                    metavar="Points File",
+                                    help='A path to a csv file containing the following: Name, Row, Column',
+                                    widget="FileChooser")
+
     api_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
                                     default=os.path.abspath("..\\Data"),
                                     help='A root directory where all predictions will be saved to.',
                                     widget="DirChooser")
-
-    api_parser_panel_1.add_argument('--csv_path', required=True, type=str,
-                                    metavar="Points File",
-                                    help='A path to a csv file containing the following: Name, Row, Column',
-                                    widget="FileChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Download
@@ -405,15 +407,15 @@ def main():
                                                                    'View annotations superimposed on each image; toggle'
                                                                    'annotations to be seen as points or squares.')
 
-    visualize_parser_panel_1.add_argument('--annotations', required=False, type=str,
-                                          metavar="Annotations",
-                                          help='The path to the annotations dataframe',
-                                          widget="FileChooser")
-
     visualize_parser_panel_1.add_argument('--image_dir', required=True,
                                           metavar='Image Directory',
                                           help='A directory where all images are located.',
                                           widget="DirChooser")
+
+    visualize_parser_panel_1.add_argument('--annotations', required=False, type=str,
+                                          metavar="Annotations",
+                                          help='The path to the annotations dataframe',
+                                          widget="FileChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Annotate
@@ -479,15 +481,15 @@ def main():
                                                                'Use the following to convert CoralNet formatted '
                                                                'annotation files into patches for training.')
 
-    patches_parser_panel_1.add_argument('--annotation_file', required=False, type=str,
-                                        metavar="Annotation File",
-                                        help='CoralNet annotation file, or one created using the Annotation tool',
-                                        widget="FileChooser")
-
     patches_parser_panel_1.add_argument('--image_dir', required=False,
                                         metavar='Image Directory',
                                         help='Directory containing images associated with annotation file',
                                         widget="DirChooser")
+
+    patches_parser_panel_1.add_argument('--annotation_file', required=False, type=str,
+                                        metavar="Annotation File",
+                                        help='CoralNet annotation file, or one created using the Annotation tool',
+                                        widget="FileChooser")
 
     patches_parser_panel_1.add_argument('--output_dir', required=True,
                                         metavar='Output Directory',

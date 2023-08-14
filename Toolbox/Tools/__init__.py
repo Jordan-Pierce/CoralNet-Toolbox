@@ -352,3 +352,14 @@ def get_available_losses():
 def print_progress(prg, prg_total):
     """Formatted for Gooey"""
     print("progress: {}/{}".format(prg, prg_total))
+
+
+def get_now():
+    """
+    :return:
+    """
+    # Get the current datetime
+    now = datetime.datetime.now()
+    now = now.strftime("%Y-%m-%d_%H-%M-%S")
+    return now
+
