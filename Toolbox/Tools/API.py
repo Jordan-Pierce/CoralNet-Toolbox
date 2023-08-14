@@ -552,7 +552,7 @@ def api(args):
                         # Store the coralnet predictions for sorting later
                         coralnet_predictions = pd.concat((coralnet_predictions, predictions))
 
-                        # Gooey
+                        # icons
                         print_progress(len(completed_imgs), total_images)
 
                     # Wait for the specified time before checking the status again

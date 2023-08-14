@@ -21,7 +21,7 @@ from Toolbox.Tools import *
 
 def print_labelset(labelset):
     """
-    Pretty prints to user in Gooey the total number of annotations made in session
+    Pretty prints to user in icons the total number of annotations made in session
     """
     print("\n" * 20)
     print("\n###############################################")

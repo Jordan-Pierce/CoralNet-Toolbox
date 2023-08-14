@@ -279,7 +279,7 @@ def get_token(username, password):
 # ----------------------------------------------------------------------------------------------------------------------
 
 def get_updated_labelset_list():
-    """For Gooey, gets all the labelsets currently in CoralNet for the dropdown menu"""
+    """For icons, gets all the labelsets currently in CoralNet for the dropdown menu"""
 
     if os.path.exists(CORALNET_LABELSET_FILE):
         return pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
@@ -351,7 +351,7 @@ def get_available_losses():
 
 def print_progress(prg, prg_total):
     """
-    Formatted for Gooey
+    Formatted for icons
     """
     print("progress: {}/{}".format(prg, prg_total))
 

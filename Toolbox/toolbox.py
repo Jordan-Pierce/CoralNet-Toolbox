@@ -23,7 +23,6 @@ from gooey import Gooey, GooeyParser
        default_size=(900, 600),  # width, height
        console=True,
        shutdown_signal=signal.CTRL_C_EVENT,
-       image_dir='./Gooey',
        progress_regex=r"^progress: (?P<current>\d+)/(?P<total>\d+)$",
        progress_expr="current / total * 100",
        hide_progress_msg=True,
@@ -698,7 +697,7 @@ def main():
     args = parser.parse_args()
 
     # If user asks, save credentials as env variables for future
-    # Gooey is weird, using double negative, not being nefarious
+    # icons is weird, using double negative, not being nefarious
     if 'username' in vars(args) and 'password' in vars(args):
         if not args.remember_username:
             os.environ['CORALNET_USERNAME'] = args.username
