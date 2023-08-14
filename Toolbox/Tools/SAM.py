@@ -396,7 +396,7 @@ def mss_sam(args):
         # Add to output list
         mask_df.append([image_path, mask_path, color_path, plot_path])
 
-        # icons
+        # Gooey
         print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory

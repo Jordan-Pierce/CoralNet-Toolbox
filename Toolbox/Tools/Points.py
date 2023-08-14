@@ -49,7 +49,7 @@ def points(args):
 
     for idx, image_file in enumerate(image_files):
 
-        # icons
+        # Gooey
         print_progress(idx, len(image_files))
 
         # Read it to get the size

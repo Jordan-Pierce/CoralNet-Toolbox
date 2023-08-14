@@ -211,7 +211,7 @@ def labelset(args):
     if isinstance(args.headless, str):
         headless = True if args.headless.lower() == 'true' else False
     else:
-        # icons is weird
+        # Gooey is weird
         headless = not args.headless
 
     # Pass the options object while creating the driver

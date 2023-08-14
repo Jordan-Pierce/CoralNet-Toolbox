@@ -697,7 +697,7 @@ def main():
     args = parser.parse_args()
 
     # If user asks, save credentials as env variables for future
-    # icons is weird, using double negative, not being nefarious
+    # Gooey is weird, using double negative, not being nefarious
     if 'username' in vars(args) and 'password' in vars(args):
         if not args.remember_username:
             os.environ['CORALNET_USERNAME'] = args.username

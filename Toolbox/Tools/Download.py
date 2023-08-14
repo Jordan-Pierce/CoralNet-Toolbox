@@ -875,7 +875,7 @@ def download(args):
     if isinstance(args.headless, str):
         headless = True if args.headless.lower() == 'true' else False
     else:
-        # icons is weird
+        # Gooey is weird
         headless = not args.headless
 
     # Pass the options object while creating the driver
@@ -913,7 +913,7 @@ def download(args):
             # Download all data from source
             driver, m, l, i, a = download_data(driver, source_id, output_dir)
 
-            # icons
+            # Gooey
             print_progress(idx+1, len(args.source_ids))
 
     except Exception as e:
