@@ -350,7 +350,9 @@ def get_available_losses():
 
 
 def print_progress(prg, prg_total):
-    """Formatted for Gooey"""
+    """
+    Formatted for Gooey
+    """
     print("progress: {}/{}".format(prg, prg_total))
 
 
