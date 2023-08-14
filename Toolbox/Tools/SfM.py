@@ -139,8 +139,7 @@ def run_workflow(args):
         print("Building dense point cloud")
         print("###############################################\n")
 
-        chunk.buildPointCloud(source_data=Metashape.DepthMapsData,
-                              progress=print_sfm_progress)
+        chunk.buildPointCloud(source_data=Metashape.DepthMapsData)
         doc.save()
 
     # Build a 3D model from the depth maps.
@@ -245,25 +244,14 @@ def sfm(args):
     if metashape_license in ["", None]:
         raise Exception("ERROR: You must pass in a Metashape License.")
 
-    # Get the Metashape License stored in the environmental variable
-    Metashape.License().activate(metashape_license)
-
     try:
+        # Get the Metashape License stored in the environmental variable
+        Metashape.License().activate(metashape_license)
         # Run the workflow
         run_workflow(args)
 
     except Exception as e:
         print(f"{e}\nERROR: Could not finish workflow!")
-
-    finally:
-        # Always deactivate after script
-        print("NOTE: Deactivating License...")
-        Metashape.License().deactivate()
-
-        if not Metashape.License().valid:
-            print("NOTE: License Deactivated or was not Active to begin with.")
-        else:
-            print("ERROR: License was not Deactivated!")
 
 
 # -----------------------------------------------------------------------------
