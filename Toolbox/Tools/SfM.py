@@ -18,6 +18,8 @@ if found_major_version != compatible_major_version:
     raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version, compatible_major_version))
 
 
+# TODO include quality value to user
+
 # -----------------------------------------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------------------------------------
@@ -27,6 +29,14 @@ def find_files(folder, types):
     that end with any of the specified extensions."""
     return [entry.path for entry in os.scandir(folder) if
             (entry.is_file() and os.path.splitext(entry.name)[1].lower() in types)]
+
+
+def print_sfm_progress(p):
+    """
+
+    """
+
+    print("progress: {}/{}".format(int(p), 100))
 
 
 def run_workflow(args):
@@ -52,10 +62,10 @@ def run_workflow(args):
     output_dir = f"{args.output_dir}\\sfm\\{get_now()}\\"
     os.makedirs(output_dir, exist_ok=True)
     # Create filenames for data outputs
-    output_dem = output_dir + "/DEM.tif"
-    output_mesh = output_dir + "/Mesh.ply"
-    output_dense = output_dir + "/Dense_Cloud.ply"
-    output_orthomosaic = output_dir + "/Orthomosaic.tif"
+    output_dem = output_dir + "DEM.tif"
+    output_mesh = output_dir + "Mesh.ply"
+    output_dense = output_dir + "Dense_Cloud.ply"
+    output_orthomosaic = output_dir + "Orthomosaic.tif"
 
     # Call the "find_files" function to get a list of photo file paths
     # with specified extensions from the image folder.
@@ -64,12 +74,12 @@ def run_workflow(args):
     # Create a metashape doc object
     doc = Metashape.Document()
 
-    if not os.path.exists(output_dir + "/project.psx"):
+    if not os.path.exists(output_dir + "project.psx"):
         # Create a new Metashape document and save it as a project file in the output folder.
-        doc.save(output_dir + '/project.psx')
+        doc.save(output_dir + 'project.psx')
     else:
         # Else open the existing one
-        doc.open(output_dir + '/project.psx',
+        doc.open(output_dir + 'project.psx',
                  read_only=False,
                  ignore_lock=True,
                  archive=True)
@@ -82,14 +92,14 @@ def run_workflow(args):
     # Assign the chunk
     chunk = doc.chunk
 
-    # Add the photos to the chunk.
+    # Add the photos to the chunk
     if not chunk.cameras:
 
         print("\n###############################################")
         print("Adding photos")
         print("###############################################\n")
 
-        chunk.addPhotos(photos)
+        chunk.addPhotos(photos, progress=print_sfm_progress)  # No MT
         print(str(len(chunk.cameras)) + " images loaded")
         doc.save()
 
@@ -104,7 +114,7 @@ def run_workflow(args):
                           tiepoint_limit=10000,
                           generic_preselection=True,
                           reference_preselection=True,
-                          downscale=4)
+                          downscale=2)
 
         # Align the cameras to estimate their relative positions in space.
         chunk.alignCameras()
@@ -118,7 +128,8 @@ def run_workflow(args):
         print("###############################################\n")
 
         chunk.buildDepthMaps(filter_mode=Metashape.MildFiltering,
-                             downscale=1)
+                             downscale=2,
+                             progress=print_sfm_progress)
         doc.save()
 
     # Build a dense point cloud using the depth maps.
@@ -128,7 +139,8 @@ def run_workflow(args):
         print("Building dense point cloud")
         print("###############################################\n")
 
-        chunk.buildPointCloud(source_data=Metashape.DepthMapsData)
+        chunk.buildPointCloud(source_data=Metashape.DepthMapsData,
+                              progress=print_sfm_progress)
         doc.save()
 
     # Build a 3D model from the depth maps.
@@ -139,7 +151,8 @@ def run_workflow(args):
         print("###############################################\n")
 
         chunk.buildModel(source_data=Metashape.DepthMapsData,
-                         face_count=Metashape.FaceCount.HighFaceCount)
+                         face_count=Metashape.FaceCount.MediumFaceCount,
+                         progress=print_sfm_progress)
         doc.save()
 
     # Build a DEM from the 3D model.
@@ -149,7 +162,9 @@ def run_workflow(args):
         print("Building DEM")
         print("###############################################\n")
 
-        chunk.buildDem(source_data=Metashape.ModelData)
+        chunk.buildDem(source_data=Metashape.ModelData,
+                       interpolation=Metashape.Interpolation.DisabledInterpolation,
+                       progress=print_sfm_progress)
         doc.save()
 
     # Build an orthomosaic from the 3D model.
@@ -161,7 +176,9 @@ def run_workflow(args):
 
         # Create the orthomosaic
         chunk.buildOrthomosaic(surface_data=Metashape.ModelData,
-                               blending_mode=Metashape.BlendingMode.MosaicBlending)
+                               blending_mode=Metashape.BlendingMode.MosaicBlending,
+                               fill_holes=False,
+                               progress=print_sfm_progress)
         # Save the document
         doc.save()
 
@@ -177,7 +194,8 @@ def run_workflow(args):
                                save_point_classification=True,
                                save_point_normal=True,
                                save_point_confidence=True,
-                               crs=chunk.crs)
+                               crs=chunk.crs,
+                               progress=print_sfm_progress)
 
     # Export the mesh if it exists in the chunk.
     if chunk.model and not os.path.exists(output_mesh):
@@ -186,7 +204,7 @@ def run_workflow(args):
         print("Exporting mesh")
         print("###############################################\n")
 
-        chunk.exportModel(path=output_mesh,)
+        chunk.exportModel(path=output_mesh, progress=print_sfm_progress)
 
     # Export the DEM if it exists in the chunk.
     if chunk.elevation and not os.path.exists(output_dem):
@@ -196,17 +214,18 @@ def run_workflow(args):
         print("###############################################\n")
 
         chunk.exportRaster(path=output_dem,
-                           source_data=Metashape.ElevationData)
+                           source_data=Metashape.ElevationData,
+                           progress=print_sfm_progress)
 
     # Export the orthomosaic as a GeoTIFF file if it exists in the chunk.
     if chunk.orthomosaic and not os.path.exists(output_orthomosaic):
-
         print("\n###############################################")
         print("Exporting orthomosaic")
         print("###############################################\n")
 
         chunk.exportRaster(path=output_orthomosaic,
-                           source_data=Metashape.OrthomosaicData)
+                           source_data=Metashape.OrthomosaicData,
+                           progress=print_sfm_progress)
 
     # Print a message indicating that the processing has finished and the results have been saved.
     print(f"NOTE: Processing finished, results saved to {output_dir}")
@@ -232,7 +251,6 @@ def sfm(args):
     try:
         # Run the workflow
         run_workflow(args)
-        print("Done.")
 
     except Exception as e:
         print(f"{e}\nERROR: Could not finish workflow!")
@@ -281,5 +299,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
