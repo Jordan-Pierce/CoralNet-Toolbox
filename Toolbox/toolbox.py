@@ -666,8 +666,7 @@ def main():
     # Panel 1
     sfm_parser_panel_1 = sfm_parser.add_argument_group('SfM',
                                                        'Use Metashape (2.0.X) API to perform Structure from Motion on'
-                                                       'images of a scene. License is used, and automatically '
-                                                       'deactivated after script is finished.')
+                                                       'images of a scene.')
 
     sfm_parser_panel_1.add_argument('--metashape_license', type=str,
                                     metavar="Metashape License (Pro)",
@@ -680,16 +679,66 @@ def main():
                                     help='Store License as an Environmental Variable',
                                     widget="BlockCheckbox")
 
-    sfm_parser_panel_1.add_argument('--input_dir', required=True,
+    sfm_parser_panel_1.add_argument('--input_dir',
                                     metavar="Image Directory",
                                     help='Directory containing images of scene',
                                     widget="DirChooser")
 
-    sfm_parser_panel_1.add_argument('--output_dir', required=True,
+    sfm_parser_panel_1.add_argument('--output_dir',
                                     metavar='Output Directory',
                                     default=os.path.abspath("..\\Data"),
                                     help='Root directory where output will be saved',
                                     widget="DirChooser")
+
+    # Panel 2
+    sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',
+                                                       'Provide an existing project directory to pick up where the '
+                                                       'program left off instead of re-running from scratch.')
+
+    sfm_parser_panel_2.add_argument('--project_dir', type=str, required=False,
+                                    metavar="Project Directory",
+                                    help='Existing project directory',
+                                    widget='DirChooser')
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Seg3D
+    # ------------------------------------------------------------------------------------------------------------------
+    seg3d_parser = subs.add_parser('Seg3D')
+
+    # Panel 1
+    seg3d_parser_panel_1 = seg3d_parser.add_argument_group('Seg3D',
+                                                           'Use masks made by SAM with Metashape (2.0.X) API to create '
+                                                           'classified versions of dense point clouds and meshes')
+
+    seg3d_parser_panel_1.add_argument('--metashape_license', type=str,
+                                      metavar="Metashape License (Pro)",
+                                      default=os.getenv('METASHAPE_LICENSE'),
+                                      help='The license for Professional version of Metashape',
+                                      widget="PasswordField")
+
+    seg3d_parser_panel_1.add_argument('--remember_license', action="store_false",
+                                      metavar="Remember License",
+                                      help='Store License as an Environmental Variable',
+                                      widget="BlockCheckbox")
+
+    seg3d_parser_panel_1.add_argument('--project_file', required=True,
+                                      metavar="Metashape Project File",
+                                      help='Path to existing Metashape project file (.psx)',
+                                      widget="FileChooser")
+
+    seg3d_parser_panel_1.add_argument('--masks_dir', type=str, required=True,
+                                      metavar="Masks Directory",
+                                      help='Directory containing colored masks for images',
+                                      widget='DirChooser')
+
+    seg3d_parser_panel_1.add_argument('--color_map', type=str, required=True,
+                                      metavar="Color Map File",
+                                      help='Path to Color Map JSON file',
+                                      widget="FileChooser")
+
+    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, required=True,
+                                      metavar="Chunk Index",
+                                      help='Chunk index to classify; 0-based indexing (default is 0)')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Parser

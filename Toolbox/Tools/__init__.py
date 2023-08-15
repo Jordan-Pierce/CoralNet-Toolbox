@@ -70,11 +70,11 @@ FUNC_GROUPS_DICT = {
     "Seagrass": "20"}
 
 # Make the cache directory
-CACHE_DIR = os.path.abspath("./cache/")
+CACHE_DIR = os.path.abspath("..\\..\\Data\\Cache\\")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Coralnet labelset file for dropdown menu in gooey
-CORALNET_LABELSET_FILE = f"{CACHE_DIR}\\CoralNet_Labelset_List.csv"
+CORALNET_LABELSET_FILE = f"{CACHE_DIR}CoralNet_Labelset_List.csv"
 
 # -------------------------------------------------------------------------------------------------
 # Functions to authenticate with CoralNet

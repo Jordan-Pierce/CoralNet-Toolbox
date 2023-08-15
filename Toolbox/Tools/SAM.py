@@ -44,7 +44,7 @@ class CustomDataset(Dataset):
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
 
-def download_file(url, path):
+def download_checkpoint(url, path):
     """
 
     """
@@ -65,7 +65,7 @@ def download_file(url, path):
         print(f"ERROR: An error occurred: {e}")
 
 
-def get_sam_predictor(model_type="vit_b", device='cpu'):
+def get_sam_predictor(model_type="vit_l", device='cpu'):
     """
 
     """
@@ -92,9 +92,8 @@ def get_sam_predictor(model_type="vit_b", device='cpu'):
     if not os.path.exists(path):
         print("NOTE: Model checkpoint does not exist; downloading")
         url = f"{sam_url}{sam_dict[model_type]}"
-
         # Download the file
-        download_file(url, path)
+        download_checkpoint(url, path)
 
     # Loading the mode, returning the predictor
     sam_model = sam_model_registry[model_type](checkpoint=path)
