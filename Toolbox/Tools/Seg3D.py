@@ -5,6 +5,7 @@ import json
 import argparse
 
 from plyfile import PlyData, PlyElement
+from scipy.spatial.distance import cdist
 
 from Toolbox.Tools import *
 from Toolbox.Tools.SfM import print_sfm_progress
@@ -21,63 +22,59 @@ if found_major_version != compatible_major_version:
 # -----------------------------------------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------------------------------------
-def find_closest_color(color, color_map):
+
+def find_closest_color(color_array, color_map):
     """
 
     """
-    # Get the distance from color to all possible colors
-    distances = np.linalg.norm(color_map - color, axis=1)
+    # Distances for each color in array, to each color in color_map
+    distances = cdist(color_array, color_map)
+    # Index for closest color in color_map for each color in array
+    closest_color_indices = np.argmin(distances, axis=1)
+    # Closest colors
+    closest_colors = color_map[closest_color_indices]
 
-    # Find the index of the color with the minimum distance
-    closest_color_index = np.argmin(distances)
-
-    # Get the closest color by index
-    closest_color = color_map[closest_color_index]
-
-    return closest_color
+    return closest_colors
 
 
-def post_process_pcd(temp_path, dense_path, color_map):
+def post_process_pcd(temp_path, dense_path, color_map, chunk_size=10000000):
     """
 
     """
-    # Open the temp pcd file, and write to the post-processed file
-    with open(temp_path, 'rb') as f_in, open(dense_path, 'wb') as f_out:
+    # Get the header of file
+    plydata = PlyData.read(temp_path)
+    # Get the vertices
+    vertex_data = plydata['vertex']
+    # total number of points
+    num_points = vertex_data['x'].shape[0]
+    # For memory, in batches, get updated color values
+    for i in range(0, num_points, chunk_size):
+        # last index in batch
+        chunk_end = min(i + chunk_size, num_points)
+        # colors of batch
+        red_chunk = vertex_data['red'][i:chunk_end]
+        green_chunk = vertex_data['green'][i:chunk_end]
+        blue_chunk = vertex_data['blue'][i:chunk_end]
+        # Stacking and getting the closest values
+        color_array = np.column_stack((red_chunk, green_chunk, blue_chunk))
+        modified_colors = find_closest_color(color_array, color_map)
+        # Updating vertex colors
+        vertex_data['red'][i:chunk_end] = modified_colors[:, 0]
+        vertex_data['green'][i:chunk_end] = modified_colors[:, 1]
+        vertex_data['blue'][i:chunk_end] = modified_colors[:, 2]
+        # Gooey
+        print_progress(i, num_points)
 
-        # Open the header
-        plydata = PlyData.read(f_in)
-        # Get the vertices, num points
-        vertex_data = plydata['vertex']
-        num_points = vertex_data['x'].shape[0]
-        # Array to hold the updated colors
-        updated_colors = np.empty((num_points, 3), dtype=np.uint8)
-
-        for i in range(num_points):
-
-            # Get the color values
-            red = vertex_data['red'][i]
-            green = vertex_data['green'][i]
-            blue = vertex_data['blue'][i]
-            color = np.array([red, green, blue])
-            # Modify based on distance to actual color
-            updated_colors[i] = find_closest_color(color, color_map)
-
-            # Gooey
-            print_progress(i, len(num_points))
-
-        # Add new colors to vertex arrays
-        vertex_data['red'] = updated_colors[:, 0]
-        vertex_data['green'] = updated_colors[:, 1]
-        vertex_data['blue'] = updated_colors[:, 2]
-
-        # Save to dense path
-        plydata_out = PlyData([PlyElement.describe(vertex_data, 'vertex')], text=False)
-        plydata_out.write(f_out)
+    print("NOTE: Writing post-processed point cloud to disk")
+    plydata.write(dense_path)
 
     if os.path.exists(dense_path):
         print("NOTE: Post-processed point cloud saved successfully")
     else:
         raise Exception("ERROR: Issue with saving post-processed point cloud")
+
+    # Close the temp file
+    plydata = None
 
 
 def seg3d_workflow(args):
@@ -154,19 +151,23 @@ def seg3d_workflow(args):
                 classified_chunk = c
                 break
 
-        # TODO Change to delete in the future
-        if classified_chunk is None:
+        # If the classified chunk already exists, that would be an issue
+        # Make the user decide if they want to delete it, or change name
+        if classified_chunk:
+            print("WARNING: Classified chunk for index provided already exists.")
+            print("WARNING: Delete or change the name of this chunk before running Seg3D.")
+            sys.exit(1)
 
-            print("\n###############################################")
-            print("Duplicating chunk")
-            print("###############################################\n")
-            # Create a copy to serve as the classified chunk
-            classified_chunk = chunk.copy(progress=print_sfm_progress)
-            # Rename classified chunk
-            classified_chunk.label = chunk.label + " Classified"
+        print("\n###############################################")
+        print("Duplicating chunk")
+        print("###############################################\n")
+        # Create a copy to serve as the classified chunk
+        classified_chunk = chunk.copy(progress=print_sfm_progress)
+        # Rename classified chunk
+        classified_chunk.label = chunk.label + " Classified"
 
-            # Save doc
-            doc.save()
+        # Save doc
+        doc.save()
 
     except Exception as e:
         print(f"ERROR: Could not create a duplicate of chunk {args.chunk_index}\n{e}")
@@ -233,18 +234,21 @@ def seg3d_workflow(args):
         print("###############################################\n")
         # Edit dense point cloud colors
         post_process_pcd(output_temp, output_dense, color_map)
-        # Remove the temp file
-        if os.path.exists(output_dense):
-            os.remove(output_temp)
-        else:
-            raise Exception("ERROR: Classified dense point cloud not found")
+
+        try:
+            # Remove the temp file
+            if os.path.exists(output_dense):
+                os.remove(output_temp)
+        except:
+            print("WARNING: Could not delete temp point cloud file; delete it")
 
         print("\n###############################################")
         print("Importing post-processed classified point cloud")
         print("###############################################\n")
         # Import the updated version
         classified_chunk.importPointCloud(output_dense,
-                                          replace_asset=True)
+                                          replace_asset=True,
+                                          progress=print_sfm_progress)
 
     except Exception as e:
         print(f"ERROR: Could not complete post-processing of classified point cloud\n{e}")
@@ -256,7 +260,8 @@ def seg3d_workflow(args):
         print("###############################################\n")
         # Classify (colorize) the mesh using the classified dense point cloud.
         # Update the mesh to apply the new colorization settings
-        classified_chunk.colorizeModel(Metashape.PointCloudData)
+        classified_chunk.colorizeModel(Metashape.PointCloudData,
+                                       progress=print_sfm_progress)
         doc.save()
 
     except Exception as e:
@@ -269,7 +274,8 @@ def seg3d_workflow(args):
         print("Exporting classified mesh")
         print("###############################################\n")
 
-        classified_chunk.exportModel(path=output_mesh, progress=print_sfm_progress)
+        classified_chunk.exportModel(path=output_mesh,
+                                     progress=print_sfm_progress)
 
     # Print a message indicating that the processing has finished and the results have been saved.
     print(f"NOTE: Processing finished, results saved to {project_dir}")
@@ -310,6 +316,10 @@ def main():
 
     parser = argparse.ArgumentParser(description='Seg3D Workflow')
 
+    parser.add_argument('--metashape_license', type=str,
+                        default=os.getenv('METASHAPE_LICENSE'),
+                        help='The Metashape License.')
+
     parser.add_argument('--project_file', type=str,
                         help='Path to the existing Metashape project file (.psx)')
 
@@ -321,10 +331,6 @@ def main():
 
     parser.add_argument('--chunk_index', type=int, default=0,
                         help='Index of chunk to classify (0-based indexing)')
-
-    parser.add_argument('--metashape_license', type=str,
-                        default=os.getenv('METASHAPE_LICENSE'),
-                        help='The Metashape License.')
 
     args = parser.parse_args()
 
