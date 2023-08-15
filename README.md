@@ -36,7 +36,7 @@ a GUI; these scripts currently include:
 - [`Inference`](./Toolbox/README.md#inference): Perform inference using a locally trained model
 - [`SAM`](./Toolbox/README.md#sam): Create segmentation masks for each image using `MSS` w/ `SAM`
 - [`SfM`](./Toolbox/README.md#sfm): Use Metashape to create 3D models (sure, why not)
-- [`3DSeg`](./Toolbox/README.md#3dseg): Use masks and SfM to create classified 3D models
+- [`Seg3D`](./Toolbox/README.md#Seg3D): Use masks and SfM to create classified 3D models
 
 
 <p align="center">

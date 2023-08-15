@@ -271,11 +271,11 @@ python API.py --username JohnDoe \
   <img src="../Figures/SAM.gif" alt="SAM">
 </p>
 
-## 3DSeg  
+## Seg3D  
 
 <p align="center">
   <a href="https://youtu.be/ujum1wMqk30">
-    <img src="../Figures/3DSeg.PNG" alt="3DSeg">
+    <img src="../Figures/Seg3D.PNG" alt="Seg3D">
   </a>
   <br>Classified Point Cloud <b>(click the video)</b>.
 </p>
