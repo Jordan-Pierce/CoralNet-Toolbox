@@ -740,6 +740,16 @@ def main():
                                       metavar="Chunk Index",
                                       help='Chunk index to classify; 0-based indexing (default is 0)')
 
+    seg3d_parser_panel_1.add_argument('--classify_mesh', action="store_true",
+                                      metavar="Classify Mesh",
+                                      help='Classify mesh using dense point cloud',
+                                      widget="BlockCheckbox")
+
+    seg3d_parser_panel_1.add_argument('--classify_ortho', action="store_true",
+                                      metavar="Classify Orthomosaic",
+                                      help='Classify orthomosaic using mesh',
+                                      widget="BlockCheckbox")
+
     # ------------------------------------------------------------------------------------------------------------------
     # Parser
     # ------------------------------------------------------------------------------------------------------------------

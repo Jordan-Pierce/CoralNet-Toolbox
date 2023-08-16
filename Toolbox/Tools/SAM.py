@@ -9,7 +9,7 @@ from skimage.io import imsave
 from scipy.stats import mode as mode2d
 
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
+import matplotlib.patches as mpatches
 
 import torch
 import torchvision
@@ -21,9 +21,6 @@ from segment_anything import sam_model_registry
 
 from Toolbox.Tools import *
 from Toolbox.Tools.Inference import get_class_map
-
-cmap = cm.get_cmap('tab20')
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -161,6 +158,27 @@ def find_most_common_label_in_area(points, binary_mask, bounding_box):
     return most_common_label
 
 
+def get_color_map(N):
+    """
+
+    """
+    # Calculate angle intervals given number of classes
+    angle_step = 360.0 / N
+    angles = [angle_step * i for i in range(N)]
+
+    # For each angle interval, calculate a color in RGB space
+    # that maximizes distance from one class to another
+    color_coordinates = []
+
+    for angle in angles:
+        r = int(255 * (1 + np.cos(np.radians(angle))) / 2)
+        g = int(255 * (1 + np.cos(np.radians(angle + 120))) / 2)
+        b = int(255 * (1 + np.cos(np.radians(angle + 240))) / 2)
+        color_coordinates.append([r, g, b])
+
+    return np.array(color_coordinates)
+
+
 def colorize_mask(mask, class_map, label_colors):
     """
 
@@ -169,8 +187,11 @@ def colorize_mask(mask, class_map, label_colors):
     height, width = mask.shape
     rgb_mask = np.full((height, width, 3), fill_value=255, dtype=np.uint8)
 
+    # dict with index as key, rgb as value
     cmap = {v: label_colors[k][0:3] for k, v in class_map.items()}
 
+    # Loop through all index values
+    # Set rgb color in colored mask
     for val in np.unique(mask):
         if val in class_map.values():
             color = np.array(cmap[val]) * 255
@@ -193,7 +214,9 @@ def plot_mask(image, mask_color, points, point_colors, plot_path):
     plt.imshow(image)
     plt.imshow(mask_color, alpha=.75)
     plt.scatter(points['Column'].values, points['Row'].values, c=point_colors, s=1)
-    plt.savefig(f"{plot_path}")
+
+    # Save the plot
+    plt.savefig(plot_path)
     plt.close()
 
 
@@ -236,17 +259,19 @@ def mss_sam(args):
         print("ERROR: Image directory provided doesn't exist.")
         sys.exit(1)
 
-    # Class map
+    # Class map, Color map
     if os.path.exists(args.class_map):
+        # Get the class map, adjust for this tool
         class_map = get_class_map(args.class_map)
         class_map = {v: int(k) for k, v in class_map.items()}
+        # Create a color map give the amount of classes
+        unique_labels = list(class_map.keys())
+        color_map = get_color_map(len(unique_labels))
+        # Get the colors per class
+        label_colors = {l: color_map[i]/255.0 for i, l in enumerate(unique_labels)}
     else:
         print(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit(1)
-
-    # For plotting colored points and masks
-    unique_labels = list(class_map.keys())
-    label_colors = {l: cmap(i) for i, l in enumerate(unique_labels)}
 
     # Model Weights
     try:
@@ -259,13 +284,13 @@ def mss_sam(args):
         sys.exit(1)
 
     # Setting output directories
-    output_dir = f"{args.output_dir}\\{get_now()}\\"
+    output_dir = f"{args.output_dir}\\masks\\{get_now()}\\"
     plot_dir = f"{output_dir}\\plots\\"
     seg_dir = f"{output_dir}\\segs\\"
     color_dir = f"{output_dir}\\color\\"
 
     output_mask_csv = f"{output_dir}masks.csv"
-    output_color_json = f"{output_dir}color_mapping.json"
+    output_color_json = f"{output_dir}Color_Map.json"
 
     # Create the output directories
     os.makedirs(plot_dir, exist_ok=True)

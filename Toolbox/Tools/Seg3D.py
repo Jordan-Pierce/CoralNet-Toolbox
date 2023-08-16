@@ -119,6 +119,7 @@ def seg3d_workflow(args):
     output_temp = project_dir + "Temp_Cloud_Classified.ply"
     output_dense = project_dir + "Dense_Cloud_Classified.ply"
     output_mesh = project_dir + "Mesh_Classified.ply"
+    output_ortho = project_dir + "Orthomosaic_Classified.tif"
 
     # ------------------------------------------------------------------------------------
     # Workflow
@@ -240,7 +241,7 @@ def seg3d_workflow(args):
             if os.path.exists(output_dense):
                 os.remove(output_temp)
         except:
-            print("WARNING: Could not delete temp point cloud file; delete it")
+            print("WARNING: Could not delete temp point cloud file; please delete it")
 
         print("\n###############################################")
         print("Importing post-processed classified point cloud")
@@ -250,32 +251,68 @@ def seg3d_workflow(args):
                                           replace_asset=True,
                                           progress=print_sfm_progress)
 
+        doc.save()
+
     except Exception as e:
         print(f"ERROR: Could not complete post-processing of classified point cloud\n{e}")
         sys.exit(1)
 
-    try:
-        print("\n###############################################")
-        print("Classifying mesh")
-        print("###############################################\n")
-        # Classify (colorize) the mesh using the classified dense point cloud.
-        # Update the mesh to apply the new colorization settings
-        classified_chunk.colorizeModel(Metashape.PointCloudData,
-                                       progress=print_sfm_progress)
-        doc.save()
+    if args.classify_mesh and classified_chunk.model:
+        try:
+            print("\n###############################################")
+            print("Classifying mesh")
+            print("###############################################\n")
+            # Classify (colorize) the mesh using the classified dense point cloud.
+            # Update the mesh to apply the new colorization settings
+            classified_chunk.colorizeModel(Metashape.PointCloudData,
+                                           progress=print_sfm_progress)
+            # Save the document
+            doc.save()
 
-    except Exception as e:
-        print(f"ERROR: Could not classify mesh\n{e}")
-        sys.exit(1)
+        except Exception as e:
+            print(f"ERROR: Could not classify mesh\n{e}")
+            sys.exit(1)
+
+    if args.classify_ortho and classified_chunk.elevation:
+        try:
+            print("\n###############################################")
+            print("Classifying orthomosaic")
+            print("###############################################\n")
+
+            # Create the orthomosaic
+            chunk.buildOrthomosaic(surface_data=Metashape.ElevationData,
+                                   blending_mode=None,
+                                   fill_holes=False,
+                                   progress=print_sfm_progress)
+            # Save the document
+            doc.save()
+
+        except Exception as e:
+            print(f"ERROR: Could not classify orthomosiac\n{e}")
+            sys.exit(1)
 
     # Export the mesh if it exists in the chunk.
-    if classified_chunk.model and not os.path.exists(output_mesh):
+    if args.classify_mesh and classified_chunk.model and not os.path.exists(output_mesh):
         print("\n###############################################")
         print("Exporting classified mesh")
         print("###############################################\n")
 
         classified_chunk.exportModel(path=output_mesh,
                                      progress=print_sfm_progress)
+
+    if args.clasify_ortho and classified_chunk.orthomosaic and not os.path.exists(output_ortho):
+        print("\n###############################################")
+        print("Exporting classified orthomosaic")
+        print("###############################################\n")
+
+        # Set compression parameters (otherwise bigtiff error)
+        compression = Metashape.ImageCompression()
+        compression.tiff_big = True
+
+        chunk.exportRaster(path=output_ortho,
+                           source_data=Metashape.OrthomosaicData,
+                           image_compression=compression,
+                           progress=print_sfm_progress)
 
     # Print a message indicating that the processing has finished and the results have been saved.
     print(f"NOTE: Processing finished, results saved to {project_dir}")
@@ -331,6 +368,12 @@ def main():
 
     parser.add_argument('--chunk_index', type=int, default=0,
                         help='Index of chunk to classify (0-based indexing)')
+
+    parser.add_argument('--classify_mesh', action='store_true',
+                        help='Classify mesh using dense point cloud')
+
+    parser.add_argument('--classify_ortho', action='store_true',
+                        help='Classify orthomosaic using mesh')
 
     args = parser.parse_args()
 

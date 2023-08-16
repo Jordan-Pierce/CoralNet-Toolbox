@@ -68,7 +68,7 @@ def sfm_workflow(args):
     output_dem = project_dir + "DEM.tif"
     output_mesh = project_dir + "Mesh.ply"
     output_dense = project_dir + "Dense_Cloud.ply"
-    output_orthomosaic = project_dir + "Orthomosaic.tif"
+    output_ortho = project_dir + "Orthomosaic.tif"
 
     # ------------------------------------------------------------------------------------
     # Workflow
@@ -228,7 +228,7 @@ def sfm_workflow(args):
                            progress=print_sfm_progress)
 
     # Export the orthomosaic as a TIFF file if it exists in the chunk.
-    if chunk.orthomosaic and not os.path.exists(output_orthomosaic):
+    if chunk.orthomosaic and not os.path.exists(output_ortho):
         print("\n###############################################")
         print("Exporting orthomosaic")
         print("###############################################\n")
@@ -237,7 +237,7 @@ def sfm_workflow(args):
         compression = Metashape.ImageCompression()
         compression.tiff_big = True
 
-        chunk.exportRaster(path=output_orthomosaic,
+        chunk.exportRaster(path=output_ortho,
                            source_data=Metashape.OrthomosaicData,
                            image_compression=compression,
                            progress=print_sfm_progress)
