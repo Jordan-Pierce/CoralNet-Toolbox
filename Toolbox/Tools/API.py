@@ -363,7 +363,7 @@ def api(args):
         # Split points into batches of 200
         if len(p) > point_batch_size:
             print(f"NOTE: {name} has {len(p)} points, "
-                  f"separating into {math.ceil(len(p) // point_batch_size)} 'images'")
+                  f"separating into {math.ceil(len(p)/point_batch_size)} 'images'")
 
         for i in range(0, len(p), point_batch_size):
             # Add the data to the list for payloads
@@ -383,7 +383,7 @@ def api(args):
 
     # Total number of images
     total_images = len(payload_imgs)
-    print(f"NOTE: Queuing {total_images} images, {math.ceil(total_images//data_batch_size)} jobs")
+    print(f"\nNOTE: Queuing {total_images} images, {math.ceil(total_images/data_batch_size)} jobs\n")
 
     # All payloads are preprocessed, now all they need are their
     # image urls, which will happen right before they are submitted
