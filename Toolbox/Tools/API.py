@@ -70,8 +70,7 @@ def is_expired(url):
             # Calculate time remaining before expiration
             time_remaining = expiration - int(time.time())
         else:
-            raise ValueError(f"ERROR: Could not find expiration timestamp "
-                             f"in \n{url}")
+            raise ValueError(f"ERROR: Could not find expiration timestamp in \n{url}")
 
     except Exception as e:
         print(f"{e}")
@@ -81,6 +80,28 @@ def is_expired(url):
         expired = False
 
     return expired
+
+
+def get_expiration(url):
+    """
+
+    """
+    try:
+        # Extract expiration timestamp from URL
+        match = re.search(r"Expires=(\d+)", url)
+
+        # If the timestamp was found, extract it
+        if match:
+            # Convert the timestamp to an integer
+            expiration = int(match.group(1))
+
+        else:
+            raise ValueError(f"ERROR: Could not find expiration timestamp in \n{url}")
+
+    except Exception as e:
+        print(f"{e}")
+
+    return expiration
 
 
 def check_job_status(response, coralnet_token):
@@ -267,6 +288,9 @@ def api(args):
         points = points[['Name', 'Row', 'Column']]
         image_list = points['Name'].to_list()
 
+        # TODO remove, debugging
+        points = points[points['Name'].isin(list(set(image_list))[0:5])]
+
     except Exception as e:
         raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
 
@@ -310,14 +334,17 @@ def api(args):
         # Get the images desired for predictions; make sure it's not file path.
         images = points['Name'].unique().tolist()
         images = [os.path.basename(image) for image in images]
-
-        # We will get the information needed from the source images dataframe
+        # Get the information needed from the source images dataframe
         images = source_images[source_images['Name'].isin(images)].copy()
         print(f"NOTE: Found the {len(images)} images in source {source_id}")
 
-        # Get the image AWS URLs for the images of interest
+        # Get all the image AWS URLs for the images of interest initially
         image_pages = images['Image Page'].tolist()
         driver, images['Image URL'] = get_image_urls(driver, image_pages)
+
+        # Get the expiration
+        images['Expiration'] = [get_expiration(url) for url in images['Image URL'].values]
+        images = images.sort_values(by='Expiration', ascending=False)
 
     except Exception as e:
         print(f"ERROR: Issue with getting Source Metadata.\n{e}")
