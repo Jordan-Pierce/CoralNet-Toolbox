@@ -146,7 +146,7 @@ def check_job_status(response, coralnet_token):
         else:
             # It's done with all images
             message = "Completed Job!"
-            message = "NOTE: Completed Job!"
+            message = "\nNOTE: Completed Job!"
     else:
         # CoralNet is getting too many requests, sleep for a second.
         message = f"Tools: {current_status['errors'][0]['detail']}"
