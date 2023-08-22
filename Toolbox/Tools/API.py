@@ -204,29 +204,25 @@ def sort_predictions(original, predictions):
     """
 
     """
-
-    # Create copies
-    df1 = original.copy()
-    df2 = predictions.copy()
-
-    if df2.empty:
+    if predictions.empty:
         print("NOTE: No predictions were made")
-        return df1
+        return original.copy()
 
-    # Add a temporary sorting column to df2
-    df2['Sort'] = df2.apply(lambda row: df1[(df1['Row'] == row['Row']) &
-                                            (df1['Column'] == row['Column'])].index[0], axis=1)
+    # Create a dictionary to map (row, column) pairs to sorting indices
+    sorting_indices = {(row, col): idx for idx, (row, col) in enumerate(zip(predictions['Row'], predictions['Column']))}
 
-    # Sort df2 based on the temporary sorting column
-    sorted_df2 = df2.sort_values(by='Sort')
-    sorted_df2 = sorted_df2.drop(columns=['Sort'])
+    # Create a new DataFrame with sorting indices from the original DataFrame
+    sorted_df1 = original.copy()
+    sorted_df1['Sort'] = sorted_df1.apply(lambda row: sorting_indices.get((row['Row'], row['Column']), -1), axis=1)
 
-    # Loop through each column, pass over to original
-    for index in range(5):
-        df1['Machine confidence ' + str(index + 1)] = sorted_df2['Machine confidence ' + str(index + 1)].values
-        df1['Machine suggestion ' + str(index + 1)] = sorted_df2['Machine suggestion ' + str(index + 1)].values
+    # Merge the two DataFrames to incorporate the predictions
+    merged_df = sorted_df1.merge(predictions, how='left', left_on='Sort', right_index=True)
 
-    return df1
+    # Drop the temporary sorting column and any duplicate columns from the merge
+    merged_df = merged_df.drop(columns=['Sort'])
+    merged_df = merged_df.loc[:, ~merged_df.columns.duplicated()]
+
+    return merged_df
 
 
 def api(args):
@@ -266,9 +262,6 @@ def api(args):
 
         points = points[['Name', 'Row', 'Column']]
         image_list = points['Name'].to_list()
-
-        # TODO remove, debugging
-        points = points[points['Name'].isin(list(set(image_list))[0:200])]
 
     except Exception as e:
         raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
@@ -526,18 +519,19 @@ def api(args):
 
         # Check to see everything has been completed, breaking the loop
         if not active_jobs and not payload_imgs:
-            print("NOTE: All images have been processed; exiting loop.\n")
+            print("\nNOTE: All images have been processed; exiting loop.\n")
             finished = True
 
     # Close the driver
     driver.close()
 
     # Sort predictions to match original points file, keep original columns
+    print("NOTE: Sorting predictions to align with original file provided")
     final_predictions = sort_predictions(points, coralnet_predictions)
 
     # Output to disk
-    final_predictions.to_csv(predictions_path)
     print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
+    final_predictions.to_csv(predictions_path)
 
 
 # -----------------------------------------------------------------------------
