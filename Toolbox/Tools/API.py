@@ -145,7 +145,6 @@ def check_job_status(response, coralnet_token):
                        "Time: {: <8}".format(t, s, f, now)
         else:
             # It's done with all images
-            message = "Completed Job!"
             message = "\nNOTE: Completed Job!"
     else:
         # CoralNet is getting too many requests, sleep for a second.
@@ -202,7 +201,7 @@ def convert_to_csv(status, image_names):
 
 def sort_predictions(original, predictions):
     """
-
+    Sorts the predictions based on the original DataFrame
     """
     if predictions.empty:
         print("NOTE: No predictions were made")
@@ -222,7 +221,14 @@ def sort_predictions(original, predictions):
     merged_df = merged_df.drop(columns=['Sort'])
     merged_df = merged_df.loc[:, ~merged_df.columns.duplicated()]
 
-    return merged_df
+    # Loop through each column, pass over to original
+    for index in range(5):
+        conf_col = 'Machine confidence ' + str(index + 1)
+        suggestion_col = 'Machine suggestion ' + str(index + 1)
+        original[conf_col] = merged_df[conf_col].values
+        original[suggestion_col] = merged_df[suggestion_col].values
+
+    return original
 
 
 def api(args):
@@ -392,76 +398,68 @@ def api(args):
 
         # There must be room for more active jobs and there must still be
         # preprocessed payloads to be able to submit a new job, otherwise
-        # this section is skipped.
+        # this section is skipped; and of course, images to add.
         while len(active_jobs) < active_job_limit and len(payload_imgs):
 
             # Here we initialize the payload, which is a JSON object that
             # contains the image URLs and their points; payloads will contain
             # batches of data (N = data_batch_size).
-            num_payloads = len(payload_imgs)
 
-            for batch in np.arange(0, num_payloads, data_batch_size):
+            # Get the image names and their pages
+            image_names = payload_imgs[:data_batch_size]
+            images_payload = images[images['Name'].isin(image_names)].copy()
+            # Get the URLs of the current set of image (1 hour starts now)
+            driver, image_urls = get_image_urls(driver, images_payload['Image Page'].tolist())
+            images_payload['Image URL'] = image_urls
 
-                # Can't submit more than 5 at a time
-                if len(active_jobs) >= active_job_limit:
-                    print(f"NOTE: Active job limit of {active_job_limit} reached")
-                    break
+            # Get the data for the current payload
+            payload = {'data': payload_data[:data_batch_size]}
 
-                # Get the image names and their pages
-                image_names = payload_imgs[batch: batch + data_batch_size]
-                images_payload = images[images['Name'].isin(image_names)].copy()
-                # Get the URLs of the current set of image (1 hour starts now)
-                driver, image_urls = get_image_urls(driver, images_payload['Image Page'].tolist())
-                images_payload['Image URL'] = image_urls
+            # Before submitting it to CoralNet, pass in the url
+            # that was just retrieved.
+            for p in payload['data']:
+                url = images_payload[images_payload['Name'] == p['attributes']['name']]['Image URL'].values[0]
+                p['attributes']['url'] = url
 
-                # Get the data for the current payload
-                payload = {'data': payload_data[batch: batch + data_batch_size]}
+            # Use the payload to construct the job
+            job = {
+                "headers": headers,
+                "model_url": model_url,
+                "image_names": image_names,
+                "data": json.dumps(payload, indent=4),
+            }
 
-                # Before submitting it to CoralNet, pass in the url
-                # that was just retrieved.
-                for p in payload['data']:
-                    url = images_payload[images_payload['Name'] == p['attributes']['name']]['Image URL'].values[0]
-                    p['attributes']['url'] = url
+            # Upload the image and the sampled points to Tools
+            print(f"NOTE: Attempting to upload {len(image_names)} images as a job")
 
-                # Use the payload to construct the job
-                job = {
-                    "headers": headers,
-                    "model_url": model_url,
-                    "image_names": image_names,
-                    "data": json.dumps(payload, indent=4),
-                }
+            # Sends the requests to the `source` and in exchange, receives
+            # a message telling if it was received correctly.
+            response = requests.post(url=job["model_url"],
+                                     data=job["data"],
+                                     headers=job["headers"])
+            if response.ok:
+                # If it was received
+                print(f"NOTE: Successfully uploaded {len(image_names)} images as a job\n")
 
-                # Upload the image and the sampled points to Tools
-                print(f"NOTE: Attempting to upload {len(image_names)} images as a job")
+                # Add to active jobs
+                active_jobs.append(response)
+                active_imgs.append(image_names)
 
-                # Sends the requests to the `source` and in exchange, receives
-                # a message telling if it was received correctly.
-                response = requests.post(url=job["model_url"],
-                                         data=job["data"],
-                                         headers=job["headers"])
-                if response.ok:
-                    # If it was received
-                    print(f"NOTE: Successfully uploaded {len(image_names)} images as a job\n")
+                # Remove the used indices from payload_imgs and payload_data
+                payload_imgs = payload_imgs[data_batch_size:]
+                payload_data = payload_data[data_batch_size:]
 
-                    # Add to active jobs
-                    active_jobs.append(response)
-                    active_imgs.append(image_names)
+            else:
+                # There was an error uploading to Tools; get the message
+                message = json.loads(response.text)['errors'][0]['detail']
 
-                    # Remove the used indices from payload_imgs and payload_data
-                    payload_imgs = payload_imgs[batch + data_batch_size:]
-                    payload_data = payload_data[batch + data_batch_size:]
+                # Print the message
+                print(f"CoralNet: {message}")
 
-                else:
-                    # There was an error uploading to Tools; get the message
-                    message = json.loads(response.text)['errors'][0]['detail']
-
-                    # Print the message
-                    print(f"CoralNet: {message}")
-
-                    if "5 jobs active" in message:
-                        # Max number of jobs reached, so we need to wait
-                        print(f"NOTE: Will attempt again at {in_N_seconds(patience)}")
-                        time.sleep(patience)
+                if "5 jobs active" in message:
+                    # Max number of jobs reached, so we need to wait
+                    print(f"NOTE: Will attempt again at {in_N_seconds(patience)}")
+                    time.sleep(patience)
 
         # At this point, either active_job_limit is reached
         # or there are no more data in payload_imgs, we just wait
