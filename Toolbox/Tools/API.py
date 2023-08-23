@@ -201,34 +201,24 @@ def convert_to_csv(status, image_names):
 
 def sort_predictions(original, predictions):
     """
-    Sorts the predictions based on the original DataFrame
+
     """
-    if predictions.empty:
-        print("NOTE: No predictions were made")
-        return original.copy()
+    # Columns
+    original_col = list(original.columns)
+    predictions_col = list(predictions.columns)
+    columns = [col for col in predictions_col if col not in original_col]
 
-    # Create a dictionary to map (row, column) pairs to sorting indices
-    sorting_indices = {(row, col): idx for idx, (row, col) in enumerate(zip(predictions['Row'], predictions['Column']))}
+    # Sort the predictions dataframe based on the columns 'Name', 'Row', and 'Column'
+    sorted_predictions = predictions.sort_values(by=['Name', 'Row', 'Column'])
 
-    # Create a new DataFrame with sorting indices from the original DataFrame
-    sorted_df1 = original.copy()
-    sorted_df1['Sort'] = sorted_df1.apply(lambda row: sorting_indices.get((row['Row'], row['Column']), -1), axis=1)
+    # Drop the indices now that they are sorted
+    original.reset_index(drop=True, inplace=True)
+    sorted_predictions.reset_index(drop=True, inplace=True)
 
-    # Merge the two DataFrames to incorporate the predictions
-    merged_df = sorted_df1.merge(predictions, how='left', left_on='Sort', right_index=True)
+    # Merge the sorted predictions dataframe with the original dataframe
+    merged_df = pd.concat([original, sorted_predictions[columns]], axis=1)
 
-    # Drop the temporary sorting column and any duplicate columns from the merge
-    merged_df = merged_df.drop(columns=['Sort'])
-    merged_df = merged_df.loc[:, ~merged_df.columns.duplicated()]
-
-    # Loop through each column, pass over to original
-    for index in range(5):
-        conf_col = 'Machine confidence ' + str(index + 1)
-        suggestion_col = 'Machine suggestion ' + str(index + 1)
-        original[conf_col] = merged_df[conf_col].values
-        original[suggestion_col] = merged_df[suggestion_col].values
-
-    return original
+    return merged_df
 
 
 def api(args):
@@ -369,7 +359,7 @@ def api(args):
         # Split points into batches of 200
         if len(p) > point_batch_size:
             print(f"NOTE: {name} has {len(p)} points, "
-                  f"separating into {math.ceil(len(p)/point_batch_size)} 'images'")
+                  f"separating into {math.ceil(len(p) / point_batch_size)} 'images'")
 
         for i in range(0, len(p), point_batch_size):
             # Add the data to the list for payloads
@@ -389,7 +379,7 @@ def api(args):
 
     # Total number of images
     total_images = len(payload_imgs)
-    print(f"\nNOTE: Queuing {total_images} images, {math.ceil(total_images/data_batch_size)} jobs\n")
+    print(f"\nNOTE: Queuing {total_images} images, {math.ceil(total_images / data_batch_size)} jobs\n")
 
     # All payloads are preprocessed, now all they need are their
     # image urls, which will happen right before they are submitted
@@ -458,7 +448,7 @@ def api(args):
 
                 if "5 jobs active" in message:
                     # Max number of jobs reached, so we need to wait
-                    print(f"NOTE: Will attempt again at {in_N_seconds(patience)}")
+                    print(f"\nNOTE: Will attempt again at {in_N_seconds(patience)}")
                     time.sleep(patience)
 
         # At this point, either active_job_limit is reached

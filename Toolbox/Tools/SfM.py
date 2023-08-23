@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import argparse
+import traceback
 
 from Toolbox.Tools import *
 
@@ -52,11 +53,14 @@ def sfm_workflow(args):
 
     # If user passes a previous project dir use it
     # Else create a new project dir given the output dir
-    if os.path.isdir(args.project_dir):
-        project_dir = f"{args.project_dir}\\"
+    if args.project_dir:
+        if os.path.exists(args.project_dir):
+            project_dir = f"{args.project_dir}\\"
+        else:
+            raise Exception
 
     elif os.path.exists(args.output_dir):
-        output_dir = f"{args.output_dir}\\"
+        output_dir = f"{args.output_dir}\\sfm\\"
         project_dir = f"{output_dir}{get_now()}\\"
         os.makedirs(project_dir, exist_ok=True)
 
@@ -268,6 +272,7 @@ def sfm(args):
 
     except Exception as e:
         print(f"{e}\nERROR: Could not finish workflow!")
+        print(traceback.print_exc())
 
 
 # -----------------------------------------------------------------------------
@@ -302,6 +307,7 @@ def main():
 
     except Exception as e:
         print(f"{e}\nERROR: Could not finish workflow!")
+        print(traceback.print_exc())
 
 
 if __name__ == '__main__':
