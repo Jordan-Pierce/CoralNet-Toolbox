@@ -23,7 +23,6 @@ from gooey import Gooey, GooeyParser
        default_size=(900, 600),  # width, height
        console=True,
        shutdown_signal=signal.CTRL_C_EVENT,
-       image_dir='Icons',
        progress_regex=r"^progress: (?P<current>\d+)/(?P<total>\d+)$",
        progress_expr="current / total * 100",
        hide_progress_msg=True,
