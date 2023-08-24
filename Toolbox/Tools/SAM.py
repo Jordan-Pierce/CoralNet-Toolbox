@@ -22,6 +22,7 @@ from segment_anything import sam_model_registry
 from Toolbox.Tools import *
 from Toolbox.Tools.Inference import get_class_map
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -136,7 +137,7 @@ def get_bbox(image, y, x, patch_size=224):
     return bbox
 
 
-def find_most_common_label_in_area(points, binary_mask, bounding_box):
+def find_most_common_label_in_area(points, binary_mask, bounding_box, label_col):
     """
 
     """
@@ -153,7 +154,7 @@ def find_most_common_label_in_area(points, binary_mask, bounding_box):
     points_in_mask = points_in_area[mask_indices == 1]
 
     # Find the most common label
-    most_common_label = mode2d(points_in_mask['Label'])[0][0]
+    most_common_label = mode2d(points_in_mask[label_col])[0][0]
 
     return most_common_label
 
@@ -239,8 +240,22 @@ def mss_sam(args):
     # Predictions Dataframe
     if os.path.exists(args.annotations):
         points = pd.read_csv(args.annotations, index_col=0)
-        image_names = np.unique(points['Image Name'].to_numpy())
+        image_names = np.unique(points['Name'].to_numpy())
         print(f"NOTE: Found a total of {len(points)} sampled points for {len(image_names)} images")
+
+        # Create class map and color map based on annotation file
+        if not 'Label' in points.columns:
+            label_col = 'Machine suggestion 1'
+        else:
+            label_col = 'Label'
+
+        class_map = {l: i for i, l in enumerate(sorted(points[label_col].unique()))}
+        # Create a color map give the amount of classes
+        unique_labels = list(class_map.keys())
+        color_map = get_color_map(len(unique_labels))
+        # Get the colors per class
+        label_colors = {l: color_map[i] / 255.0 for i, l in enumerate(unique_labels)}
+
     else:
         print("ERROR: Points file provided doesn't exist.")
         sys.exit(1)
@@ -257,20 +272,6 @@ def mss_sam(args):
             print(f"NOTE: Found {len(images)} images in directory provided")
     else:
         print("ERROR: Image directory provided doesn't exist.")
-        sys.exit(1)
-
-    # Class map, Color map
-    if os.path.exists(args.class_map):
-        # Get the class map, adjust for this tool
-        class_map = get_class_map(args.class_map)
-        class_map = {v: int(k) for k, v in class_map.items()}
-        # Create a color map give the amount of classes
-        unique_labels = list(class_map.keys())
-        color_map = get_color_map(len(unique_labels))
-        # Get the colors per class
-        label_colors = {l: color_map[i]/255.0 for i, l in enumerate(unique_labels)}
-    else:
-        print(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit(1)
 
     # Model Weights
@@ -300,9 +301,6 @@ def mss_sam(args):
     # Output for mask dataframe
     mask_df = []
 
-    # Batch size
-    batch_size = args.batch_size
-
     # ----------------------------------------------------------------
     # Inference
     # ----------------------------------------------------------------
@@ -315,7 +313,7 @@ def mss_sam(args):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)
-        current_points = points[points['Image Name'] == name]
+        current_points = points[points['Name'] == name]
 
         # Skip if there are no points for some reason
         if current_points.empty:
@@ -345,7 +343,7 @@ def mss_sam(args):
 
         # Create a data loader containing the transformed boxes
         custom_dataset = CustomDataset(transformed_boxes)
-        data_loader = DataLoader(custom_dataset, batch_size=64, shuffle=False)
+        data_loader = DataLoader(custom_dataset, batch_size=args.batch_size, shuffle=False)
 
         # Loop through batches of boxes, faster
         for batch_idx, batch in enumerate(data_loader):
@@ -367,9 +365,9 @@ def mss_sam(args):
                     # CPU Mask
                     mask = mask.squeeze()
                     # Get the current box
-                    box = bboxes[batch_idx * batch_size: (batch_idx + 1) * batch_size][m_idx]
+                    box = bboxes[batch_idx * args.batch_size: (batch_idx + 1) * args.batch_size][m_idx]
                     # Find the most common label within the binary mask (1)
-                    label = find_most_common_label_in_area(current_points, mask, box)
+                    label = find_most_common_label_in_area(current_points, mask, box, label_col)
                     # convert binary values to correspond to label values
                     updated_mask[mask == 1] = int(class_map[label])
                 except:
@@ -379,7 +377,7 @@ def mss_sam(args):
             if batch_idx % int(len(data_loader) * .2) == 0 and args.plot_progress:
                 # Colorize the updated mask
                 mask_color = colorize_mask(updated_mask.cpu().detach().numpy(), class_map, label_colors)
-                point_colors = current_points['Label'].map(label_colors).values
+                point_colors = current_points[label_col].map(label_colors).values
                 # Plot and save the mask
                 plot_path = f"{plot_dir}{name.split('.')[0]}_{str(batch_idx)}.jpg"
                 plot_mask(image, mask_color, current_points, point_colors, plot_path)
@@ -394,7 +392,7 @@ def mss_sam(args):
         # Get the final colored mask, change no data to black
         final_color = colorize_mask(final_mask, class_map, label_colors)
         final_color[final_mask == 255, :] = [0, 0, 0]
-        point_colors = current_points['Label'].map(label_colors).values
+        point_colors = current_points[label_col].map(label_colors).values
 
         # Final figure
         if args.plot:
@@ -469,14 +467,11 @@ def main():
     parser.add_argument("--patch_size", type=int, default=360,
                         help="The approximate size of each superpixel formed by SAM")
 
-    parser.add_argument("--batch_size", type=int, default=64,
+    parser.add_argument("--batch_size", type=int, default=1,
                         help="The number of samples passed to SAM in a batch (GPU dependent)")
 
-    parser.add_argument("--model_type", type=str, default='vit_l',
+    parser.add_argument("--model_type", type=str, default='vit_b',
                         help="Model to use; one of ['vit_b', 'vit_l', 'vit_h']")
-
-    parser.add_argument("--class_map", type=str, required=True,
-                        help="Path to the model's Class Map JSON file")
 
     parser.add_argument("--plot", action='store_true',
                         help="Saves figures of final masks")

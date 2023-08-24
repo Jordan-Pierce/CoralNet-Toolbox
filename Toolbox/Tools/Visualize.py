@@ -2,6 +2,7 @@ import os
 import glob
 import argparse
 
+import cv2
 import numpy as np
 import pandas as pd
 
@@ -18,11 +19,34 @@ from Toolbox.Tools import IMG_FORMATS
 # Hide the default interactive toolbar
 plt.rcParams['toolbar'] = 'None'
 
-# TODO create a savefigure button
+
+def get_color_map(N):
+    """
+
+    """
+    # Calculate angle intervals given number of classes
+    angle_step = 360.0 / N
+    angles = [angle_step * i for i in range(N)]
+
+    # For each angle interval, calculate a color in RGB space
+    # that maximizes distance from one class to another
+    color_coordinates = []
+
+    for angle in angles:
+        r = int(255 * (1 + np.cos(np.radians(angle))) / 2)
+        g = int(255 * (1 + np.cos(np.radians(angle + 120))) / 2)
+        b = int(255 * (1 + np.cos(np.radians(angle + 240))) / 2)
+        color_coordinates.append([r, g, b])
+
+    return np.array(color_coordinates) / 255.0
+
+
 class ImageViewer:
-    def __init__(self, image_files, annotations):
+    def __init__(self, image_files, annotations, output_dir):
         self.image_files = image_files
         self.annotations = annotations
+        self.output_dir = output_dir
+
         self.current_index = 0
         self.show_annotations = 'points'  # Initial state: annotations are visible as points
         self.fig, self.ax = plt.subplots()
@@ -32,10 +56,10 @@ class ImageViewer:
         self.annotations['Label'] = self.annotations['Label'].str.lstrip('_')
 
         # Get all unique class categories from the entire DataFrame
-        self.all_class_categories = self.annotations['Label'].unique()
+        self.all_class_categories = np.unique(self.annotations['Label'])
 
         # Generate a colormap with a fixed number of colors for each class category
-        self.color_map = plt.cm.tab20(np.linspace(0, 1, len(self.all_class_categories)))
+        self.color_map = get_color_map(len(self.all_class_categories))
 
         self.show_image()
         self.create_buttons()
@@ -46,7 +70,8 @@ class ImageViewer:
     def show_image(self):
         self.ax.clear()
         image_path = self.image_files[self.current_index]
-        image = plt.imread(image_path)
+        image = cv2.imread(image_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         self.ax.imshow(image)
         self.ax.axis('off')
         filename = os.path.basename(image_path)
@@ -97,7 +122,7 @@ class ImageViewer:
         else:
             pass  # No annotations (do nothing)
 
-        plt.draw()
+        self.fig.canvas.draw_idle()
 
     def on_backward(self, event):
         self.current_index = (self.current_index - 1) % len(self.image_files)
@@ -121,6 +146,11 @@ class ImageViewer:
             self.show_annotations = 'points'
 
         self.show_image()
+
+    def on_save_figure(self, event):
+        filename = f"{self.output_dir}figure_{self.current_index + 1}.png"
+        self.fig.savefig(filename)
+        print(f"Figure saved as {filename}")
 
     def on_go_to_image(self, event):
         try:
@@ -150,7 +180,11 @@ class ImageViewer:
         self.btn_toggle_annotations = Button(ax_toggle_annotations, 'Toggle Annotations')
         self.btn_toggle_annotations.on_clicked(self.on_toggle_annotations)
 
-        ax_go_to_image = plt.axes([0.70, 0.05, 0.1, 0.075])
+        ax_save_figure = plt.axes([0.70, 0.05, 0.1, 0.075])
+        self.btn_save_figure = Button(ax_save_figure, 'Save Figure')
+        self.btn_save_figure.on_clicked(self.on_save_figure)
+
+        ax_go_to_image = plt.axes([0.85, 0.05, 0.1, 0.075])
         self.txt_go_to_image = TextBox(ax_go_to_image, 'Go to:', initial='1')
         self.txt_go_to_image.on_submit(self.on_go_to_image)
 
@@ -169,6 +203,9 @@ def visualize(args):
     image_dir = args.image_dir
     annotations = args.annotations
 
+    output_dir = f"{args.output_dir}\\visualize\\"
+    os.makedirs(output_dir, exist_ok=True)
+
     if not os.path.exists(image_dir):
         raise Exception("ERROR: Image directory does not exists; please check input.")
     else:
@@ -185,7 +222,7 @@ def visualize(args):
         annotations = pd.read_csv(annotations, index_col=0)
 
     # Create the ImageViewer object with the list of images
-    image_viewer = ImageViewer(image_files, annotations)
+    image_viewer = ImageViewer(image_files, annotations, output_dir)
 
     plt.show()
 
@@ -199,6 +236,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--annotations", required=False, type=str,
                         help='Path to Annotations dataframe.')
+
+    parser.add_argument("--output_dir", required=False, type=str,
+                        help="A root directory where all output will be saved to.")
 
     args = parser.parse_args()
 

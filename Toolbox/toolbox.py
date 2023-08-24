@@ -417,6 +417,12 @@ def main():
                                           help='The path to the annotations dataframe',
                                           widget="FileChooser")
 
+    visualize_parser_panel_1.add_argument('--output_dir',
+                                          metavar='Output Directory',
+                                          default=os.path.abspath("..\\Data"),
+                                          help='Root directory where output will be saved',
+                                          widget="DirChooser")
+
     # ------------------------------------------------------------------------------------------------------------------
     # Annotate
     # ------------------------------------------------------------------------------------------------------------------

@@ -171,6 +171,7 @@ def sfm_workflow(args):
 
         chunk.buildModel(source_data=Metashape.DepthMapsData,
                          face_count=Metashape.FaceCount.MediumFaceCount,
+                         interpolation=Metashape.Interpolation.DisabledInterpolation,
                          progress=print_sfm_progress)
         doc.save()
 
