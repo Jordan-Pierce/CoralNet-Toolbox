@@ -74,6 +74,11 @@ def sfm_workflow(args):
     output_dense = project_dir + "Dense_Cloud.ply"
     output_ortho = project_dir + "Orthomosaic.tif"
 
+    # Quality checking
+    if args.quality.lower() not in ["low", "medium", "high"]:
+        print(f"ERROR: Quality must be low, medium, or high")
+        sys.exit(1)
+
     # ------------------------------------------------------------------------------------
     # Workflow
     # ------------------------------------------------------------------------------------
@@ -133,11 +138,16 @@ def sfm_workflow(args):
         print("Matching photos")
         print("###############################################\n")
 
+        # Quality
+        downscale = {"low": 4,
+                     "medium": 2,
+                     "high": 1}[args.quality.lower()]
+
         chunk.matchPhotos(keypoint_limit=40000,
                           tiepoint_limit=10000,
                           generic_preselection=True,
                           reference_preselection=True,
-                          downscale=2)
+                          downscale=downscale)
 
         # Align the cameras to estimate their relative positions in space.
         chunk.alignCameras()
@@ -149,8 +159,13 @@ def sfm_workflow(args):
         print("Building depth maps")
         print("###############################################\n")
 
+        # Quality
+        downscale = {"low": 4,
+                     "medium": 2,
+                     "high": 1}[args.quality.lower()]
+
         chunk.buildDepthMaps(filter_mode=Metashape.MildFiltering,
-                             downscale=2,
+                             downscale=downscale,
                              progress=print_sfm_progress)
         doc.save()
 
@@ -169,9 +184,14 @@ def sfm_workflow(args):
         print("Building mesh")
         print("###############################################\n")
 
+        # Quality
+        facecount = {"low": Metashape.FaceCount.LowFaceCount,
+                     "medium": Metashape.FaceCount.MediumFaceCount,
+                     "high": Metashape.FaceCount.HighFaceCount}[args.quality.lower()]
+
         chunk.buildModel(source_data=Metashape.DepthMapsData,
-                         face_count=Metashape.FaceCount.MediumFaceCount,
                          interpolation=Metashape.Interpolation.DisabledInterpolation,
+                         face_count=facecount,
                          progress=print_sfm_progress)
         doc.save()
 
@@ -286,6 +306,10 @@ def main():
 
     parser = argparse.ArgumentParser(description='SfM Workflow')
 
+    parser.add_argument('--metashape_license', type=str,
+                        default=os.getenv('METASHAPE_LICENSE'),
+                        help='The Metashape License.')
+
     parser.add_argument('--input_dir', type=str,
                         help='Path to the input folder containing images.')
 
@@ -295,9 +319,8 @@ def main():
     parser.add_argument('--project_dir', type=str,
                         help='Path to the previous project folder.')
 
-    parser.add_argument('--metashape_license', type=str,
-                        default=os.getenv('METASHAPE_LICENSE'),
-                        help='The Metashape License.')
+    parser.add_argument('--quality', type=str, default="medium",
+                        help='Quality of data products [low, medium, high]')
 
     args = parser.parse_args()
 

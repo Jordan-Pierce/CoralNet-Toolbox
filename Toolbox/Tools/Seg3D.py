@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import argparse
+import traceback
 
 from plyfile import PlyData, PlyElement
 from scipy.spatial.distance import cdist
@@ -152,27 +153,26 @@ def seg3d_workflow(args):
                 classified_chunk = c
                 break
 
-        # If the classified chunk already exists, that would be an issue
-        # Make the user decide if they want to delete it, or change name
+        # If the classified chunk already exists, skip this section
         if classified_chunk:
             print("WARNING: Classified chunk for index provided already exists.")
-            print("WARNING: Delete or change the name of this chunk before running Seg3D.")
-            sys.exit(1)
+            print("WARNING: If you want to start from scratch, delete the existing chunk.")
 
-        print("\n###############################################")
-        print("Duplicating chunk")
-        print("###############################################\n")
-        # Create a copy to serve as the classified chunk
-        classified_chunk = chunk.copy(progress=print_sfm_progress)
-        # Rename classified chunk
-        classified_chunk.label = chunk.label + " Classified"
+        else:
+            print("\n###############################################")
+            print("Duplicating chunk")
+            print("###############################################\n")
+            # Create a copy to serve as the classified chunk
+            classified_chunk = chunk.copy(progress=print_sfm_progress)
+            # Rename classified chunk
+            classified_chunk.label = chunk.label + " Classified"
 
-        # Save doc
-        doc.save()
+            # Save doc
+            doc.save()
 
     except Exception as e:
         print(f"ERROR: Could not create a duplicate of chunk {args.chunk_index}\n{e}")
-        sys.exit()
+        sys.exit(1)
 
     try:
         # Make sure there are cameras
@@ -202,39 +202,50 @@ def seg3d_workflow(args):
         print(f"ERROR: Could not update camera paths\n{e}")
         sys.exit()
 
-    try:
-        print("\n###############################################")
-        print("Classifying dense point cloud")
-        print("###############################################\n")
-        # Classify (colorize) the dense point cloud using the labels.
-        # Update the point cloud to apply the new colorization settings
-        classified_chunk.colorizePointCloud(Metashape.ImagesData,
-                                            progress=print_sfm_progress)
+    if classified_chunk.point_cloud and "Classified" not in classified_chunk.point_cloud.label:
+        # If the point cloud is not already classified, classify it,
+        # otherwise, all of these section can be skipped.
 
-        doc.save()
+        try:
+            print("\n###############################################")
+            print("Classifying dense point cloud")
+            print("###############################################\n")
+            # Classify (colorize) the dense point cloud using the labels.
+            # Update the point cloud to apply the new colorization settings
+            classified_chunk.colorizePointCloud(Metashape.ImagesData,
+                                                progress=print_sfm_progress)
+            doc.save()
 
-    except Exception as e:
-        print(f"ERROR: Could not classify dense point cloud\n{e}")
-        sys.exit(1)
+        except Exception as e:
+            print(f"ERROR: Could not classify dense point cloud\n{e}")
+            sys.exit(1)
 
-    try:
-        print("\n###############################################")
-        print("Exporting classified dense point cloud")
-        print("###############################################\n")
-        # First export the point cloud
-        classified_chunk.exportPointCloud(path=output_temp,
-                                          save_point_color=True,
-                                          save_point_classification=True,
-                                          save_point_normal=True,
-                                          save_point_confidence=True,
-                                          crs=classified_chunk.crs,
-                                          progress=print_sfm_progress)
+        try:
+            print("\n###############################################")
+            print("Exporting classified dense point cloud")
+            print("###############################################\n")
+            # First export the point cloud
+            classified_chunk.exportPointCloud(path=output_temp,
+                                              save_point_color=True,
+                                              save_point_classification=True,
+                                              save_point_normal=True,
+                                              save_point_confidence=True,
+                                              crs=classified_chunk.crs,
+                                              progress=print_sfm_progress)
+        except Exception as e:
+            print(f"ERROR: Could not export classified dense point cloud\n{e}")
+            sys.exit(1)
 
-        print("\n###############################################")
-        print("Post-processing classified point cloud")
-        print("###############################################\n")
-        # Edit dense point cloud colors
-        post_process_pcd(output_temp, output_dense, color_map)
+        try:
+            print("\n###############################################")
+            print("Post-processing classified point cloud")
+            print("###############################################\n")
+            # Edit dense point cloud colors
+            post_process_pcd(output_temp, output_dense, color_map)
+
+        except Exception as e:
+            print(f"ERROR: Could not post-process classified point cloud\n{e}")
+            sys.exit(1)
 
         try:
             # Remove the temp file
@@ -243,47 +254,79 @@ def seg3d_workflow(args):
         except:
             print("WARNING: Could not delete temp point cloud file; please delete it")
 
-        print("\n###############################################")
-        print("Importing post-processed classified point cloud")
-        print("###############################################\n")
-        # Import the updated version
-        classified_chunk.importPointCloud(output_dense,
-                                          replace_asset=True,
-                                          progress=print_sfm_progress)
-
-        doc.save()
-
-    except Exception as e:
-        print(f"ERROR: Could not complete post-processing of classified point cloud\n{e}")
-        sys.exit(1)
-
-    if args.classify_mesh and classified_chunk.model:
         try:
             print("\n###############################################")
-            print("Classifying mesh")
+            print("Importing post-processed classified point cloud")
             print("###############################################\n")
-            # Classify (colorize) the mesh using the classified dense point cloud.
-            # Update the mesh to apply the new colorization settings
-            classified_chunk.colorizeModel(Metashape.PointCloudData,
-                                           progress=print_sfm_progress)
-            # Save the document
+            # Import the updated version
+            classified_chunk.importPointCloud(output_dense,
+                                              replace_asset=True,
+                                              progress=print_sfm_progress)
+
+            # Change the name of the point cloud
+            classified_chunk.point_cloud.label = "Classified Point Cloud"
+
             doc.save()
+
+        except Exception as e:
+            print(f"ERROR: Could not complete post-processing of classified point cloud\n{e}")
+            sys.exit(1)
+
+    # If the user wants to classify the mesh
+    if args.classify_mesh and classified_chunk.model:
+
+        try:
+
+            # Check that the mesh hasn't already been classified
+            if "Classified" not in classified_chunk.model.label:
+                print("\n###############################################")
+                print("Classifying mesh")
+                print("###############################################\n")
+                # Classify (colorize) the mesh using the classified dense point cloud.
+                # Update the mesh to apply the new colorization settings
+                classified_chunk.colorizeModel(Metashape.PointCloudData,
+                                               progress=print_sfm_progress)
+
+                classified_chunk.model.label = "Classified 3D Model"
+
+                # Save the document
+                doc.save()
 
         except Exception as e:
             print(f"ERROR: Could not classify mesh\n{e}")
             sys.exit(1)
 
+        try:
+
+            # If the classified mesh exists, and it wasn't already output
+            if 'Classified' in classified_chunk.model.label and not os.path.exists(output_mesh):
+                print("\n###############################################")
+                print("Exporting classified mesh")
+                print("###############################################\n")
+
+                classified_chunk.exportModel(path=output_mesh,
+                                             progress=print_sfm_progress)
+
+        except Exception as e:
+            print(f"ERROR: Could not classify mesh\n{e}")
+            sys.exit(1)
+
+    # If the user wants to classify the orthomosaic, all that is needed is DEM
     if args.classify_ortho and classified_chunk.elevation:
+
         try:
             print("\n###############################################")
             print("Classifying orthomosaic")
             print("###############################################\n")
 
             # Create the orthomosaic
-            chunk.buildOrthomosaic(surface_data=Metashape.ElevationData,
-                                   blending_mode=None,
-                                   fill_holes=False,
-                                   progress=print_sfm_progress)
+            classified_chunk.buildOrthomosaic(surface_data=Metashape.ElevationData,
+                                              blending_mode=Metashape.BlendingMode.DisabledBlending,
+                                              fill_holes=False,
+                                              progress=print_sfm_progress)
+
+            classified_chunk.orthomosaic.label = "Classified Orthomosaic"
+
             # Save the document
             doc.save()
 
@@ -291,28 +334,25 @@ def seg3d_workflow(args):
             print(f"ERROR: Could not classify orthomosiac\n{e}")
             sys.exit(1)
 
-    # Export the mesh if it exists in the chunk.
-    if args.classify_mesh and classified_chunk.model and not os.path.exists(output_mesh):
-        print("\n###############################################")
-        print("Exporting classified mesh")
-        print("###############################################\n")
+        try:
+            # If the classified orthomosaic exists, and it wasn't already output
+            if 'Classified' in classified_chunk.orthomosaic.label and not os.path.exists(output_ortho):
+                print("\n###############################################")
+                print("Exporting classified orthomosaic")
+                print("###############################################\n")
 
-        classified_chunk.exportModel(path=output_mesh,
-                                     progress=print_sfm_progress)
+                # Set compression parameters (otherwise bigtiff error)
+                compression = Metashape.ImageCompression()
+                compression.tiff_big = True
 
-    if args.clasify_ortho and classified_chunk.orthomosaic and not os.path.exists(output_ortho):
-        print("\n###############################################")
-        print("Exporting classified orthomosaic")
-        print("###############################################\n")
+                classified_chunk.exportRaster(path=output_ortho,
+                                              source_data=Metashape.OrthomosaicData,
+                                              image_compression=compression,
+                                              progress=print_sfm_progress)
 
-        # Set compression parameters (otherwise bigtiff error)
-        compression = Metashape.ImageCompression()
-        compression.tiff_big = True
-
-        chunk.exportRaster(path=output_ortho,
-                           source_data=Metashape.OrthomosaicData,
-                           image_compression=compression,
-                           progress=print_sfm_progress)
+        except Exception as e:
+            print(f"ERROR: Could not classify orthomosaic\n{e}")
+            sys.exit(1)
 
     # Print a message indicating that the processing has finished and the results have been saved.
     print(f"NOTE: Processing finished, results saved to {project_dir}")
@@ -340,6 +380,7 @@ def seg3d(args):
 
     except Exception as e:
         print(f"{e}\nERROR: Could not finish workflow!")
+        print(traceback.format_exc())
 
 
 # -----------------------------------------------------------------------------

@@ -697,6 +697,11 @@ def main():
                                     help='Root directory where output will be saved',
                                     widget="DirChooser")
 
+    sfm_parser_panel_1.add_argument('--quality', type=str, default="medium",
+                                    metavar="Quality",
+                                    help='Quality of data products',
+                                    widget="Dropdown", choices=['low', 'medium', 'high'])
+
     # Panel 2
     sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',
                                                        'Provide an existing project directory to pick up where the '
