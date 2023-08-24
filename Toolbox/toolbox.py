@@ -14,6 +14,7 @@ from Tools.Visualize import *
 from Tools.Inference import *
 from Tools.SAM import *
 from Tools.SfM import *
+from Tools.Seg3D import *
 
 from gooey import Gooey, GooeyParser
 
@@ -742,9 +743,9 @@ def main():
                                       help='Path to Color Map JSON file',
                                       widget="FileChooser")
 
-    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, required=True,
+    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
                                       metavar="Chunk Index",
-                                      help='Chunk index to classify; 0-based indexing (default is 0)')
+                                      help='Chunk index to classify; 0-based indexing')
 
     seg3d_parser_panel_1.add_argument('--classify_mesh', action="store_true",
                                       metavar="Classify Mesh",
@@ -813,6 +814,9 @@ def main():
 
     if args.command == 'SfM':
         sfm(args)
+
+    if args.command == 'Seg3D':
+        seg3d(args)
 
     print('Done.')
 
