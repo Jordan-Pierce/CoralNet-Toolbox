@@ -562,7 +562,7 @@ def get_image_urls(driver, image_page_urls):
                     pbar.update(1)
                     pbar.refresh()
 
-    print(f"NOTE: Retrieved {len(image_urls)} image URLs")
+    print(f"NOTE: Retrieved {len(image_urls)} image URLs for {len(image_page_urls)} images")
 
     return driver, image_urls
 

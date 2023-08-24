@@ -26,6 +26,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service as ChromeService
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Used to ensure log is output rapidly
 os.environ['PYTHONUNBUFFERED'] = 'True'
@@ -152,9 +154,9 @@ def check_for_browsers(headless):
         # Needed to avoid timeouts when running in headless mode
         options.add_experimental_option('extensionLoadTimeout', 3600000)
 
-    # Check for Chrome, Firefox, and Edge browsers
+    # Check for Chrome
     try:
-        browser = webdriver.Chrome(options=options)
+        browser = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
         print("NOTE: Using Google Chrome")
         return browser
 

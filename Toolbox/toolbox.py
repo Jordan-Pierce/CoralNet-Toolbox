@@ -14,6 +14,7 @@ from Tools.Visualize import *
 from Tools.Inference import *
 from Tools.SAM import *
 from Tools.SfM import *
+from Tools.Seg3D import *
 
 from gooey import Gooey, GooeyParser
 
@@ -23,7 +24,6 @@ from gooey import Gooey, GooeyParser
        default_size=(900, 600),  # width, height
        console=True,
        shutdown_signal=signal.CTRL_C_EVENT,
-       image_dir='Icons',
        progress_regex=r"^progress: (?P<current>\d+)/(?P<total>\d+)$",
        progress_expr="current / total * 100",
        hide_progress_msg=True,
@@ -418,6 +418,12 @@ def main():
                                           help='The path to the annotations dataframe',
                                           widget="FileChooser")
 
+    visualize_parser_panel_1.add_argument('--output_dir',
+                                          metavar='Output Directory',
+                                          default=os.path.abspath("..\\Data"),
+                                          help='Root directory where output will be saved',
+                                          widget="DirChooser")
+
     # ------------------------------------------------------------------------------------------------------------------
     # Annotate
     # ------------------------------------------------------------------------------------------------------------------
@@ -691,6 +697,11 @@ def main():
                                     help='Root directory where output will be saved',
                                     widget="DirChooser")
 
+    sfm_parser_panel_1.add_argument('--quality', type=str, default="medium",
+                                    metavar="Quality",
+                                    help='Quality of data products',
+                                    widget="Dropdown", choices=['low', 'medium', 'high'])
+
     # Panel 2
     sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',
                                                        'Provide an existing project directory to pick up where the '
@@ -737,9 +748,9 @@ def main():
                                       help='Path to Color Map JSON file',
                                       widget="FileChooser")
 
-    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, required=True,
+    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
                                       metavar="Chunk Index",
-                                      help='Chunk index to classify; 0-based indexing (default is 0)')
+                                      help='Chunk index to classify; 0-based indexing')
 
     seg3d_parser_panel_1.add_argument('--classify_mesh', action="store_true",
                                       metavar="Classify Mesh",
@@ -808,6 +819,9 @@ def main():
 
     if args.command == 'SfM':
         sfm(args)
+
+    if args.command == 'Seg3D':
+        seg3d(args)
 
     print('Done.')
 

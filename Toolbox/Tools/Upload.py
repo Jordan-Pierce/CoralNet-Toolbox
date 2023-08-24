@@ -455,6 +455,8 @@ def upload(args):
     if args.prefix != "":
         prefix = args.prefix
         prefix = f"{prefix}-" if prefix[-1] != "-" else prefix
+    else:
+        prefix = ""
 
     # Check if there are annotations to upload
     if args.annotations != "":

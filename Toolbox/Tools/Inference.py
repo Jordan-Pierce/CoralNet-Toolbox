@@ -153,14 +153,14 @@ def inference(args):
         predictions = np.argmax(probabilities, axis=1)
         class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
 
-        # Convert, make the top choice Label
+        # Make a copy
         output = image_points.copy()
-        output['Label'] = class_predictions
 
         N = probabilities.shape[1]
         sorted_prob_indices = np.argsort(probabilities, axis=1)[:, ::-1]
         top_N_confidences = probabilities[np.arange(probabilities.shape[0])[:, np.newaxis], sorted_prob_indices[:, :N]]
-        top_N_suggestions = np.array([[class_map[str(idx)] for idx in indices] for indices in sorted_prob_indices[:, :N]])
+        top_N_suggestions = np.array(
+            [[class_map[str(idx)] for idx in indices] for indices in sorted_prob_indices[:, :N]])
 
         # CoralNet format only goes to the first 5 choices
         for index, class_num in enumerate(range(5)):
@@ -178,6 +178,7 @@ def inference(args):
         print(f"NOTE: Predictions saved to {output_path}")
 
         print_progress(n_idx, len(image_names))
+
 
 # -----------------------------------------------------------------------------
 # Main Function
