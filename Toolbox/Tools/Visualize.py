@@ -42,9 +42,10 @@ def get_color_map(N):
 
 
 class ImageViewer:
-    def __init__(self, image_files, annotations, output_dir):
+    def __init__(self, image_files, annotations, label_column, output_dir):
         self.image_files = image_files
         self.annotations = annotations
+        self.label_column = label_column
         self.output_dir = output_dir
 
         self.current_index = 0
@@ -53,10 +54,10 @@ class ImageViewer:
         self.fig.subplots_adjust(bottom=0.2, right=0.75)  # Adjust right side for buttons and legend
 
         # Adjust the 'Label' column in annotations to remove leading underscores
-        self.annotations['Label'] = self.annotations['Label'].str.lstrip('_')
+        self.annotations[label_column] = self.annotations[label_column].str.lstrip('_')
 
         # Get all unique class categories from the entire DataFrame
-        self.all_class_categories = np.unique(self.annotations['Label'])
+        self.all_class_categories = np.unique(self.annotations[label_column])
 
         # Generate a colormap with a fixed number of colors for each class category
         self.color_map = get_color_map(len(self.all_class_categories))
@@ -98,7 +99,7 @@ class ImageViewer:
             for i, r in current_annotations.iterrows():
                 row = int(r['Row'])
                 col = int(r['Column'])
-                class_category = r['Label']
+                class_category = r[self.label_column]
                 color_index = np.where(self.all_class_categories == class_category)[0][0]
                 color = self.color_map[color_index]
                 self.ax.plot(col, row, marker='o', markersize=8, color=color, linestyle='', markeredgecolor='black')
@@ -108,7 +109,7 @@ class ImageViewer:
             for _, row in current_annotations.iterrows():
                 row_val = int(row['Row'])
                 col_val = int(row['Column'])
-                class_category = row['Label']
+                class_category = row[self.label_column]
                 color_index = np.where(self.all_class_categories == class_category)[0][0]
                 color = self.color_map[color_index]
 
@@ -202,6 +203,7 @@ def visualize(args):
     # Pass the variables
     image_dir = args.image_dir
     annotations = args.annotations
+    label_column = args.label_column
 
     output_dir = f"{args.output_dir}\\visualize\\"
     os.makedirs(output_dir, exist_ok=True)
@@ -220,9 +222,10 @@ def visualize(args):
         print("WARNING: Annotations provided, but they doe not exists; please check input.")
     else:
         annotations = pd.read_csv(annotations, index_col=0)
+        assert label_column in annotations.columns, print(f"ERROR: '{label_column}' not found in annotations")
 
     # Create the ImageViewer object with the list of images
-    image_viewer = ImageViewer(image_files, annotations, output_dir)
+    image_viewer = ImageViewer(image_files, annotations, label_column, output_dir)
 
     plt.show()
 
@@ -236,6 +239,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--annotations", required=False, type=str,
                         help='Path to Annotations dataframe.')
+
+    parser.add_argument("--label_column", required=False, type=str, default='Label',
+                        help='Label column in Annotations dataframe.')
 
     parser.add_argument("--output_dir", required=False, type=str,
                         help="A root directory where all output will be saved to.")

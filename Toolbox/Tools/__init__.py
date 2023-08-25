@@ -366,4 +366,3 @@ def get_now():
     now = datetime.datetime.now()
     now = now.strftime("%Y-%m-%d_%H-%M-%S")
     return now
-

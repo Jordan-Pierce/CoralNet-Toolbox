@@ -418,6 +418,12 @@ def main():
                                           help='The path to the annotations dataframe',
                                           widget="FileChooser")
 
+    visualize_parser_panel_1.add_argument("--label_column", required=False, type=str, default='Label',
+                                          metavar="Label Column",
+                                          help='Label column in Annotations dataframe',
+                                          widget='Dropdown',
+                                          choices=['Label'] + [f'Machine suggestion {n+1}' for n in range(5)])
+
     visualize_parser_panel_1.add_argument('--output_dir',
                                           metavar='Output Directory',
                                           default=os.path.abspath("..\\Data"),
@@ -580,7 +586,7 @@ def main():
 
     # Panel 1
     inference_parser_panel_1 = inference_parser.add_argument_group('Inference',
-                                                                   'Use a locally trained model to make predictions on'
+                                                                   'Use a locally trained model to make predictions on '
                                                                    'sampled points.')
 
     inference_parser_panel_1.add_argument('--images', required=True,

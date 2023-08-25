@@ -491,6 +491,7 @@ def upload(args):
     if labelset_upload:
         driver, _ = upload_labelset(driver, source_id, labelset)
 
+    # TODO multi upload? :)
     # Upload images
     if image_upload:
         driver, _ = upload_images(driver, source_id, images, prefix)
