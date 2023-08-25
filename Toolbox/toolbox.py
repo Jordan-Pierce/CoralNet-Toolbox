@@ -422,7 +422,7 @@ def main():
                                           metavar="Label Column",
                                           help='Label column in Annotations dataframe',
                                           widget='Dropdown',
-                                          choices=['Label'] + [f'Machine suggestion {n+1}' for n in range(5)])
+                                          choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
     visualize_parser_panel_1.add_argument('--output_dir',
                                           metavar='Output Directory',
@@ -635,10 +635,12 @@ def main():
                                     help='A file containing points with labels',
                                     widget="FileChooser")
 
-    sam_parser_panel_1.add_argument('--class_map', required=True,
-                                    metavar="Class Map File",
-                                    help='The class mapping JSON file',
-                                    widget="FileChooser")
+    sam_parser_panel_1.add_argument("--label_col", type=str, default='Label',
+                                    metavar='Label Column',
+                                    help="The column in annotations with labels to use "
+                                         "('Label', 'Machine suggestion N, etc).",
+                                    widget='Dropdown',
+                                    choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
     sam_parser_panel_1.add_argument('--model_type', type=str, required=True,
                                     metavar="Model Version",

@@ -244,10 +244,12 @@ def mss_sam(args):
         print(f"NOTE: Found a total of {len(points)} sampled points for {len(image_names)} images")
 
         # Create class map and color map based on annotation file
-        if not 'Label' in points.columns:
-            label_col = 'Machine suggestion 1'
+        if args.label_col in points.columns:
+            label_col = args.label_col
+            print(f"NOTE: Using labels from the column '{label_col}'")
         else:
-            label_col = 'Label'
+            print(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}")
+            sys.exit(1)
 
         class_map = {l: i for i, l in enumerate(sorted(points[label_col].unique()))}
         # Create a color map give the amount of classes
@@ -463,6 +465,9 @@ def main():
 
     parser.add_argument("--annotations", type=str, required=True,
                         help="Path to the points file containing 'Name', 'Row', 'Column', and 'Label' information.")
+
+    parser.add_argument("--label_col", type=str, required=True,
+                        help="The column in annotations with labels to use ('Label', 'Machine suggestion N, etc).")
 
     parser.add_argument("--patch_size", type=int, default=360,
                         help="The approximate size of each superpixel formed by SAM")

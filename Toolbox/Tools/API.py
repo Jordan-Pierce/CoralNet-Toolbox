@@ -196,6 +196,9 @@ def convert_to_csv(status, image_names):
     # Create a single DataFrame from the list of dictionaries
     model_predictions = pd.DataFrame(model_predictions_list)
 
+    if model_predictions.empty:
+        print("WARNING: Predictions returned from CoralNet were empty!")
+
     return model_predictions
 
 
@@ -217,6 +220,11 @@ def sort_predictions(original, predictions):
 
     # Merge the sorted predictions dataframe with the original dataframe
     merged_df = pd.concat([original, sorted_predictions[columns]], axis=1)
+
+    # Drop rows with NaN values in 'columns';
+    # this occurs if not all images with points
+    # are in the CoralNet source.
+    merged_df.dropna(subset=columns, inplace=True)
 
     return merged_df
 
@@ -257,7 +265,7 @@ def api(args):
         assert len(points) > 0
 
         points = points[['Name', 'Row', 'Column']]
-        image_list = points['Name'].to_list()
+        images_w_points = points['Name'].to_list()
 
     except Exception as e:
         raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
@@ -294,7 +302,7 @@ def api(args):
         driver, meta, source_images = get_source_meta(driver,
                                                       args.source_id_1,
                                                       args.source_id_2,
-                                                      image_list)
+                                                      images_w_points)
 
         if meta is None:
             raise Exception(f"ERROR: Cannot make predictions using Source {source_id}")
@@ -304,7 +312,16 @@ def api(args):
         images = [os.path.basename(image) for image in images]
         # Get the information needed from the source images dataframe
         images = source_images[source_images['Name'].isin(images)].copy()
-        print(f"NOTE: Found the {len(images)} images in source {source_id}")
+        print(f"NOTE: Found {len(images)} images in source {source_id}")
+
+        if len(images) != len(points['Name'].unique()):
+            # Let the user know that not all images in points file
+            # are actually on CoralNet.
+            print(f"WARNING: Points file has points for {len(points['Name'].unique())} images, "
+                  f"but only {len(images)} of those images were found on CoralNet.")
+
+            # Let them exit if they want
+            time.sleep(5)
 
     except Exception as e:
         print(f"ERROR: Issue with getting Source Metadata.\n{e}")
@@ -337,7 +354,7 @@ def api(args):
     patience = 75
 
     # To hold all the coralnet api predictions (sorted later)
-    coralnet_predictions = pd.DataFrame()
+    coralnet_predictions = []
 
     # The number of images, points to include in each job
     data_batch_size = 100
@@ -487,7 +504,7 @@ def api(args):
                     active_jobs.remove(job)
 
                     # Store the coralnet predictions for sorting later
-                    coralnet_predictions = pd.concat((coralnet_predictions, predictions))
+                    coralnet_predictions.append(predictions)
 
                     # Gooey
                     print_progress(len(completed_imgs), total_images)
@@ -515,6 +532,7 @@ def api(args):
 
     # Sort predictions to match original points file, keep original columns
     print("NOTE: Sorting predictions to align with original file provided")
+    coralnet_predictions = pd.DataFrame(coralnet_predictions)
     final_predictions = sort_predictions(points, coralnet_predictions)
 
     # Output to disk

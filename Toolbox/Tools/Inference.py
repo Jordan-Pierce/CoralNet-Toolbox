@@ -164,8 +164,7 @@ def inference(args):
 
         # CoralNet format only goes to the first 5 choices
         for index, class_num in enumerate(range(5)):
-            rounded_confidences = np.around(top_N_confidences[:, index], decimals=4)
-            output['Machine confidence ' + str(index + 1)] = rounded_confidences
+            output['Machine confidence ' + str(index + 1)] = top_N_confidences[:, index]
             output['Machine suggestion ' + str(index + 1)] = top_N_suggestions[:, class_num]
 
         # Save with previous prediction, if any exists

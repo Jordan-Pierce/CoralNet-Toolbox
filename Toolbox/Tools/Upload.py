@@ -5,7 +5,6 @@ from Toolbox.Tools import *
 # Functions
 # -----------------------------------------------------------------------------
 
-
 def upload_images(driver, source_id, images, prefix):
     """
     Upload images to Tools.
@@ -383,8 +382,10 @@ def upload_annotations(driver, source_id, annotations):
 
 
 def upload(args):
-    """Upload function that takes in input from argparse (cmd, or gui),
-        and initiates the uploading"""
+    """
+    Upload function that takes in input from argparse (cmd, or gui),
+    and initiates the uploading
+    """
 
     print("\n###############################################")
     print("Upload")
@@ -491,7 +492,6 @@ def upload(args):
     if labelset_upload:
         driver, _ = upload_labelset(driver, source_id, labelset)
 
-    # TODO multi upload? :)
     # Upload images
     if image_upload:
         driver, _ = upload_images(driver, source_id, images, prefix)
