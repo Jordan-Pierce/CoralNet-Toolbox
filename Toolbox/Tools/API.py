@@ -265,9 +265,6 @@ def api(args):
         assert len(points) > 0
 
         points = points[['Name', 'Row', 'Column']]
-        points = points.sample(n=401)
-        points.reset_index(drop=True, inplace=True)
-
         images_w_points = points['Name'].to_list()
 
     except Exception as e:
@@ -551,7 +548,7 @@ def main():
     """
     This is the main part of the script. We loop through each image, get the
     points for that image, and then make predictions for those points. We then
-    save the predictions to a CSV file in the predictions directory.
+    save the predictions to a CSV file in the predictions' directory.
     """
 
     parser = argparse.ArgumentParser(description='API arguments')
