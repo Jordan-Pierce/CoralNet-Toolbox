@@ -265,6 +265,9 @@ def api(args):
         assert len(points) > 0
 
         points = points[['Name', 'Row', 'Column']]
+        points = points.sample(n=401)
+        points.reset_index(drop=True, inplace=True)
+
         images_w_points = points['Name'].to_list()
 
     except Exception as e:
@@ -532,7 +535,7 @@ def api(args):
 
     # Sort predictions to match original points file, keep original columns
     print("NOTE: Sorting predictions to align with original file provided")
-    coralnet_predictions = pd.DataFrame(coralnet_predictions)
+    coralnet_predictions = pd.concat(coralnet_predictions)
     final_predictions = sort_predictions(points, coralnet_predictions)
 
     # Output to disk
