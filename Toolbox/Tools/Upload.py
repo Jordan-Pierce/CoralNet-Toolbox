@@ -7,7 +7,7 @@ from Toolbox.Tools import *
 
 def upload_images(driver, source_id, images, prefix):
     """
-    Upload images to Tools.
+    Upload images to CoralNet.
     """
 
     print("\nNavigating to image upload page...")
@@ -157,7 +157,7 @@ def upload_images(driver, source_id, images, prefix):
 
 def upload_labelset(driver, source_id, labelset):
     """
-    Upload labelsets to Tools.
+    Upload labelsets to CoralNet.
     """
 
     print("\nNOTE: Navigating to labelset upload page")
@@ -247,7 +247,7 @@ def upload_labelset(driver, source_id, labelset):
 
 def upload_annotations(driver, source_id, annotations):
     """
-    Upload annotations to Tools.
+    Upload annotations to CoralNet.
     """
 
     print("\nNOTE: Navigating to annotation upload page")

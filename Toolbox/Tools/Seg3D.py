@@ -7,6 +7,7 @@ import traceback
 
 from plyfile import PlyData, PlyElement
 from scipy.spatial.distance import cdist
+from sklearn.cluster import MiniBatchKMeans
 
 from Toolbox.Tools import *
 from Toolbox.Tools.SfM import print_sfm_progress
@@ -59,6 +60,7 @@ def post_process_pcd(temp_path, dense_path, color_map, chunk_size=10000000):
         # Stacking and getting the closest values
         color_array = np.column_stack((red_chunk, green_chunk, blue_chunk))
         modified_colors = find_closest_color(color_array, color_map)
+
         # Updating vertex colors
         vertex_data['red'][i:chunk_end] = modified_colors[:, 0]
         vertex_data['green'][i:chunk_end] = modified_colors[:, 1]
