@@ -680,7 +680,7 @@ def main():
 
     # Panel 1
     sfm_parser_panel_1 = sfm_parser.add_argument_group('SfM',
-                                                       'Use Metashape (2.0.X) API to perform Structure from Motion on'
+                                                       'Use Metashape (2.0.X) API to perform Structure from Motion on '
                                                        'images of a scene.')
 
     sfm_parser_panel_1.add_argument('--metashape_license', type=str,
