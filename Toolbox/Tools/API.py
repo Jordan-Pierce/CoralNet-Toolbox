@@ -243,20 +243,20 @@ def api(args):
     try:
 
         # Check to see if the csv file exists
-        assert os.path.exists(args.csv_path)
+        assert os.path.exists(args.points)
 
         # Determine if it's a single file or a folder
-        if os.path.isfile(args.csv_path):
+        if os.path.isfile(args.points):
             # If a file, just read it in
-            points = pd.read_csv(args.csv_path)
-        elif os.path.isdir(args.csv_path):
+            points = pd.read_csv(args.points)
+        elif os.path.isdir(args.points):
             # If a folder, read in all csv files, concatenate them together
-            csv_files = glob.glob(args.csv_path + "/*.csv")
+            csv_files = glob.glob(args.points + "/*.csv")
             points = pd.DataFrame()
             for csv_file in csv_files:
                 points = pd.concat([points, pd.read_csv(csv_file)])
         else:
-            raise Exception(f"ERROR: {args.csv_path} is invalid.")
+            raise Exception(f"ERROR: {args.points} is invalid.")
 
         # Check to see if the csv file has the expected columns
         assert 'Name' in points.columns
@@ -561,7 +561,7 @@ def main():
                         default=os.getenv('CORALNET_PASSWORD'),
                         help='Password for CoralNet account')
 
-    parser.add_argument('--csv_path', type=str,
+    parser.add_argument('--points', type=str,
                         help='A path to a csv file, or folder containing '
                              'multiple csv files. Each csv file should '
                              'contain following: name, row, column')

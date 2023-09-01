@@ -81,12 +81,16 @@ def main():
     api_parser_panel_1.add_argument('--source_id_2', type=str, required=False,
                                     metavar="Source ID (for model)",
                                     default=None,
-                                    help='The ID of the Source containing the model to use, if different.')
+                                    help='The ID of the Source containing model.')
 
-    api_parser_panel_1.add_argument('--csv_path', required=True, type=str,
+    api_parser_panel_1.add_argument('--points', required=True, type=str,
                                     metavar="Points File",
                                     help='A path to a csv file containing the following: Name, Row, Column',
                                     widget="FileChooser")
+
+    api_parser_panel_1.add_argument('--prefix', required=False, default="",
+                                    metavar='Image Name Prefix',
+                                    help='A prefix to add to each image basename')
 
     api_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
@@ -297,105 +301,84 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     viscore_parser = subs.add_parser('Viscore')
 
-    # Panel 1 - Upload CoralNet Data given a source
-    viscore_parser_panel_1 = viscore_parser.add_argument_group('Upload data from Viscore to CoralNet',
-                                                               'Provide the output from the Viscore which can filtered '
-                                                               'and converted into a CoralNet format. Also provide the '
-                                                               'mapping, labelset files, and image directory of data '
-                                                               'to upload to CoralNet.')
+    # Panel 1 - Convert Viscore label file to CoralNet
+    viscore_parser_panel_1 = viscore_parser.add_argument_group('Viscore to CoralNet',
+                                                               'Provide the Annotation file exported from Viscore, '
+                                                               'the Mapping file, and the Source ID. '
+                                                               'Choose the Action.')
 
     viscore_parser_panel_1.add_argument('--username', type=str,
                                         metavar="Username",
                                         default=os.getenv('CORALNET_USERNAME'),
-                                        help='Username for CoralNet account')
+                                        help='Username for CoralNet account.')
 
     viscore_parser_panel_1.add_argument('--password', type=str,
                                         metavar="Password",
                                         default=os.getenv('CORALNET_PASSWORD'),
-                                        help='Password for CoralNet account',
+                                        help='Password for CoralNet account.',
                                         widget="PasswordField")
 
     viscore_parser_panel_1.add_argument('--remember_username', action="store_false",
                                         metavar="Remember Username",
-                                        help='Store Username as an Environmental Variable',
+                                        help='Store Username as an Environmental Variable.',
                                         widget="BlockCheckbox")
 
     viscore_parser_panel_1.add_argument('--remember_password', action="store_false",
                                         metavar="Remember Password",
-                                        help='Store Password as an Environmental Variable',
+                                        help='Store Password as an Environmental Variable.',
                                         widget="BlockCheckbox")
+
+    viscore_parser_panel_1.add_argument('--action', type=str, required=True, default='Upload',
+                                        metavar="Action",
+                                        help='Upload data, or use the API for inference.',
+                                        widget='Dropdown', choices=['Upload', 'API'],)
 
     viscore_parser_panel_1.add_argument('--source_id', type=str, required=True,
                                         metavar="Source ID",
-                                        help='The ID of the source to upload data to.')
+                                        help='The ID of the CoralNet source.')
+
+    viscore_parser_panel_1.add_argument('--prefix', required=False, default="",
+                                        metavar='Layer Name',
+                                        help='The name of the Viscore layer.')
 
     viscore_parser_panel_1.add_argument('--images', required=False, default="",
                                         metavar='Image Directory',
                                         help='Directory containing images to upload.',
                                         widget="DirChooser")
 
-    viscore_parser_panel_1.add_argument('--prefix', required=False, default="",
-                                        metavar='Image Name Prefix',
-                                        help='A prefix to add to each image basename')
-
-    viscore_parser_panel_1.add_argument('--labelset', required=False, type=str,
-                                        metavar="Labelset File",
-                                        help='A path to the source labelset csv file. '
-                                             'The file should contain the following: Label ID, Short Code',
-                                        default=os.path.abspath("../Data/Mission_Iconic_Reefs"
-                                                                "/MIR_CoralNet_Labelset.csv"),
-                                        widget="FileChooser")
-
-    viscore_parser_panel_1.add_argument('--headless', action="store_false",
-                                        default=True,
-                                        metavar="Run in Background",
-                                        help='Run browser in headless mode',
-                                        widget='BlockCheckbox')
-
-    # Panel 2 - Viscore specific files
-    viscore_parser_panel_2 = viscore_parser.add_argument_group('Viscore',
-                                                               'Provide the labels csv file exported from Viscore, '
-                                                               'and the mapping csv file that maps the Viscore '
-                                                               'project labels to the CoralNet source labels. Modify '
-                                                               'which projects dots are retained through filtering.')
-
-    viscore_parser_panel_2.add_argument('--viscore_labels', required=False, type=str,
+    viscore_parser_panel_1.add_argument('--viscore_labels', required=False, type=str,
                                         metavar="Viscore Annotation File",
-                                        help='A path to the annotation csv file output from Viscore',
+                                        help='A path to the original Annotation file exported from Viscore.',
                                         widget="FileChooser")
 
-    viscore_parser_panel_2.add_argument('--mapping_path', required=False, type=str,
+    viscore_parser_panel_1.add_argument('--mapping_path', required=False, type=str,
                                         metavar="Mapping File",
-                                        help='A path to the mapping csv file. The file should contain the mapping '
-                                             'between the labels in your Viscore project, and labels used in CoralNet',
+                                        help='A path to the mapping csv file.',
                                         default=os.path.abspath(
                                             '../Data/Mission_Iconic_Reefs/MIR_VPI_CoralNet_Mapping.csv'),
                                         widget="FileChooser")
 
-    viscore_parser_panel_2.add_argument('--rand_sub_ceil', type=float, required=False, default=1.0,
+    viscore_parser_panel_1.add_argument('--rand_sub_ceil', type=float, required=False, default=1.0,
                                         metavar="Random Sample",
-                                        help='Value used to randomly sample the number of reprojected dots [0 - 1]')
+                                        help='Value used to randomly sample the number of reprojected dots [0 - 1].')
 
-    viscore_parser_panel_2.add_argument('--reprojection_error', type=float, required=False, default=0.01,
+    viscore_parser_panel_1.add_argument('--reprojection_error', type=float, required=False, default=0.01,
                                         metavar="Reprojection Error Threshold",
-                                        help='Value used to filter dots based on their reprojection error; '
-                                             'dots with error values larger than the provided threshold are filtered')
+                                        help='Value used to filter dots based on their reprojection error.')
 
-    viscore_parser_panel_2.add_argument('--view_index', type=int, required=False, default=9001,
+    viscore_parser_panel_1.add_argument('--view_index', type=int, required=False, default=9001,
                                         metavar="VPI View Index",
-                                        help='Value used to filter views based on their VPI View Index; '
-                                             'indices of VPI image views after provided threshold are filtered')
+                                        help='Value used to filter views based on their VPI View Index.')
 
-    viscore_parser_panel_2.add_argument('--view_count', type=int, required=False, default=9001,
+    viscore_parser_panel_1.add_argument('--view_count', type=int, required=False, default=9001,
                                         metavar="VPI View Count",
-                                        help='Value used to filter views based on the total number of VPI image views; '
-                                             'indices of VPI views of dot after provided threshold are filtered')
+                                        help='Value used to filter views based on the total number of VPI image views.')
 
-    viscore_parser_panel_2.add_argument('--output_dir', required=False,
+    viscore_parser_panel_1.add_argument('--output_dir', required=False,
                                         metavar='Output Directory',
                                         default=None,
-                                        help='A root directory where the updated Viscore labels will be saved to; '
-                                             'defaults to the same directory as Viscore Annotation File',
+                                        help='Root directory where converted Annotation file will be saved; '
+                                             'defaults to the same directory as Viscore Annotation file.',
                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -801,8 +784,7 @@ def main():
         upload(args)
 
     if args.command == 'Viscore':
-        args.annotations = viscore(args)
-        upload(args)
+        viscore(args)
 
     if args.command == 'Visualize':
         visualize(args)
