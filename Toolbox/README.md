@@ -274,7 +274,7 @@ python API.py --username JohnDoe \
 ## Seg3D  
 
 <p align="center">
-  <a href="https://youtu.be/ujum1wMqk30">
+  <a href="https://www.youtube.com/watch?v=3yhidAywFIw">
     <img src="../Figures/Seg3D.PNG" alt="Seg3D">
   </a>
   <br>Classified Point Cloud <b>(click the video)</b>.
