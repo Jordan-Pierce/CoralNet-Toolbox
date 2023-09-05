@@ -45,6 +45,7 @@ a GUI; these scripts currently include:
 
 #### **Future Features**
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
+- `SDM` Species distribution modeling [visualizations](https://onlinelibrary.wiley.com/doi/pdf/10.1111/ele.14281) 
 - `Seg`: Create a FCN to perform semantic segmentation 
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 - `GAN`: Synthesize samples using generative AI
