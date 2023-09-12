@@ -7,6 +7,8 @@ from tqdm import tqdm
 import re
 import pandas as pd
 
+from Common import MIR_MAPPING
+
 from API import api
 from Upload import upload
 
@@ -31,13 +33,16 @@ def make_labelset(args):
         sys.exit(1)
 
     # Make the labelset file using the columns 'Short Code' and 'ID'
-    labelset = mapping[['Short Code', 'ID']]
+    labelset = mapping[['Short Code', 'Label ID']]
     # Drop duplicates
     labelset = labelset.drop_duplicates()
+
+    # Labelset path
+    labelset_path = f"{args.output_dir}\\labelset.csv"
     # Save the labelset file in the provided output directory
-    labelset.to_csv(f"{args.output_dir}\\labelset.csv")
+    labelset.to_csv(labelset_path)
     # Set the labelset file in args
-    args.labelset = args.output_dir
+    args.labelset = labelset_path
 
     return args
 
@@ -57,12 +62,12 @@ def convert_labels(args):
     mapping_path = args.mapping_path
 
     if args.output_dir is None:
-        output_dir = os.path.dirname(viscore_labels) + "\\"
+        args.output_dir = os.path.dirname(viscore_labels) + "\\"
     else:
-        output_dir = args.output_dir + "\\"
+        args.output_dir = args.output_dir + "\\"
 
     # Make the output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
 
     # Check that the paths exist
     assert os.path.exists(viscore_labels), 'ERROR: labels path does not exist'
@@ -149,7 +154,7 @@ def convert_labels(args):
     basename += f"error_{str(args.reprojection_error).replace('.', '_')}_"
     basename += f"vindex_{str(args.view_index)}_"
     basename += f"vcount_{str(args.view_count)}"
-    output_file = f"{output_dir}{basename}.csv"
+    output_file = f"{args.output_dir}{basename}.csv"
     annotations = pd.DataFrame(annotations, columns=['Prefix', 'Image Name', 'Name', 'Row', 'Column', 'Label'])
     annotations.to_csv(output_file)
 
@@ -218,7 +223,7 @@ def main():
 
     parser.add_argument('--mapping_path', required=False, type=str,
                         help='A path to the mapping csv file.',
-                        default=os.path.abspath('../Data/Mission_Iconic_Reefs/MIR_VPI_CoralNet_Mapping.csv'))
+                        default=MIR_MAPPING)
 
     parser.add_argument('--rand_sub_ceil', type=float, required=False, default=1.0,
                         help='Value used to randomly sample the number of reprojected dots [0 - 1].')
