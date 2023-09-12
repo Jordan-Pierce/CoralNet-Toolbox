@@ -1,23 +1,117 @@
 import os
 import signal
-
-from Tools.API import *
-from Tools.Upload import *
-from Tools.Download import *
-from Tools.Labelset import *
-from Tools.Viscore import *
-from Tools.Classifier import *
-from Tools.Points import *
-from Tools.Patches import *
-from Tools.Annotate import *
-from Tools.Visualize import *
-from Tools.Inference import *
-from Tools.SAM import *
-from Tools.SfM import *
-from Tools.Seg3D import *
+import requests
+from tqdm import tqdm
+from bs4 import BeautifulSoup
 
 from gooey import Gooey, GooeyParser
 
+import pandas as pd
+
+from Tools.Common import DATA_DIR
+from Tools.Common import MIR_MAPPING
+from Tools.Common import PATCH_EXTRACTOR
+from Tools.Common import CORALNET_URL
+from Tools.Common import FUNC_GROUPS_LIST
+from Tools.Common import CORALNET_LABELSET_URL
+from Tools.Common import CORALNET_LABELSET_FILE
+
+from Tools.API import api
+from Tools.Download import download
+from Tools.Labelset import labelset
+from Tools.Upload import upload
+from Tools.Viscore import viscore
+from Tools.Visualize import visualize
+from Tools.Annotate import annotate
+from Tools.Points import points
+from Tools.Patches import patches
+from Tools.Classifier import classifier
+from Tools.Inference import inference
+from Tools.SAM import mss_sam
+from Tools.SfM import sfm
+from Tools.Seg3D import seg3d
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+def get_updated_labelset_list():
+    """
+    Lists all the labelsets available for gooey
+    """
+
+    if os.path.exists(CORALNET_LABELSET_FILE):
+        return pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
+
+    names = []
+
+    try:
+
+        # Make a GET request to the image page URL using the authenticated session
+        response = requests.get(CORALNET_LABELSET_URL)
+        cookies = response.cookies
+
+        # Convert the webpage to soup
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Get the table with all labelset information
+        table = soup.find_all('tr', attrs={"data-label-id": True})
+
+        # Loop through each row, grab the information, store in lists
+        names = []
+        urls = []
+
+        for row in tqdm(table):
+            # Grab attributes from row
+            attributes = row.find_all("td")
+            # Extract each attribute, store in variable
+            name = attributes[0].text
+            url = CORALNET_URL + attributes[0].find("a").get("href")
+            names.append(name)
+            urls.append(url)
+
+        # Cache so it's faster the next time
+        pd.DataFrame(list(zip(names, urls)), columns=['Name', 'URL']).to_csv(CORALNET_LABELSET_FILE)
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return names
+
+
+def get_available_models():
+    """
+    Lists all the models available for gooey
+    """
+    available_models = []
+    try:
+        import tensorflow.keras.applications as models
+
+        model_names = [m for m in dir(models) if callable(getattr(models, m))]
+        model_names = [m for m in model_names if 'include_preprocessing' in getattr(models, m).__code__.co_varnames]
+        model_names = [m for m in model_names if "EfficientNetV2" in m]
+
+        available_models = model_names
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return available_models
+
+
+def get_available_losses():
+    """
+    Lists all the losses available for gooey
+    """
+    return ['binary_crossentropy', 'categorical_crossentropy', 'KLDivergence']
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Gooey GUI
+# ----------------------------------------------------------------------------------------------------------------------
 
 @Gooey(dump_build_config=True,
        program_name="CoralNet Toolbox",
@@ -94,7 +188,7 @@ def main():
 
     api_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
-                                    default=os.path.abspath("..\\Data"),
+                                    default=DATA_DIR,
                                     help='A root directory where all predictions will be saved to.',
                                     widget="DirChooser")
 
@@ -136,12 +230,12 @@ def main():
 
     download_parser_panel_1.add_argument('--output_dir', required=True,
                                          metavar='Output Directory',
-                                         default=os.path.abspath("..\\Data"),
+                                         default=DATA_DIR,
                                          help='A root directory where all downloads will be saved to.',
                                          widget="DirChooser")
 
-    download_parser_panel_1.add_argument('--headless', action="store_false",
-                                         default=True,
+    download_parser_panel_1.add_argument('--headless', action="store_true",
+                                         default=False,
                                          metavar="Run in Background",
                                          help='Run browser in headless mode',
                                          widget='BlockCheckbox')
@@ -227,8 +321,8 @@ def main():
                                          help='The path to the image of the labelset to create',
                                          widget="FileChooser")
 
-    labelset_parser_panel_1.add_argument('--headless', action="store_false",
-                                         default=True,
+    labelset_parser_panel_1.add_argument('--headless', action="store_true",
+                                         default=False,
                                          metavar="Run in Background",
                                          help='Run browser in headless mode',
                                          widget='BlockCheckbox')
@@ -290,8 +384,8 @@ def main():
                                             'The file should contain the following: Name, Row, Column, Label',
                                        widget="FileChooser")
 
-    upload_parser_panel_1.add_argument('--headless', action="store_false",
-                                       default=True,
+    upload_parser_panel_1.add_argument('--headless', action="store_true",
+                                       default=False,
                                        metavar="Run in Background",
                                        help='Run browser in headless mode',
                                        widget='BlockCheckbox')
@@ -331,7 +425,7 @@ def main():
     viscore_parser_panel_1.add_argument('--action', type=str, required=True, default='Upload',
                                         metavar="Action",
                                         help='Upload data, or use the API for inference.',
-                                        widget='Dropdown', choices=['Upload', 'API'],)
+                                        widget='Dropdown', choices=['Upload', 'API'], )
 
     viscore_parser_panel_1.add_argument('--source_id', type=str, required=True,
                                         metavar="Source ID",
@@ -354,8 +448,7 @@ def main():
     viscore_parser_panel_1.add_argument('--mapping_path', required=False, type=str,
                                         metavar="Mapping File",
                                         help='A path to the mapping csv file.',
-                                        default=os.path.abspath(
-                                            '../Data/Mission_Iconic_Reefs/MIR_VPI_CoralNet_Mapping.csv'),
+                                        default=MIR_MAPPING,
                                         widget="FileChooser")
 
     viscore_parser_panel_1.add_argument('--rand_sub_ceil', type=float, required=False, default=1.0,
@@ -409,7 +502,7 @@ def main():
 
     visualize_parser_panel_1.add_argument('--output_dir',
                                           metavar='Output Directory',
-                                          default=os.path.abspath("..\\Data"),
+                                          required=True,
                                           help='Root directory where output will be saved',
                                           widget="DirChooser")
 
@@ -427,7 +520,7 @@ def main():
     annotate_parser_panel_1.add_argument('--patch_extractor_path', required=True, type=str,
                                          metavar="Patch Extractor Path",
                                          help='The path to the CNNDataExtractor.exe',
-                                         default=os.path.abspath('./Tools/Patch_Extractor/CNNDataExtractor.exe'),
+                                         default=PATCH_EXTRACTOR,
                                          widget="FileChooser")
 
     annotate_parser_panel_1.add_argument('--image_dir', required=True,
@@ -452,9 +545,9 @@ def main():
                                        help='Directory of images to create sampled points for',
                                        widget="DirChooser")
 
-    points_parser_panel_1.add_argument('--output_dir', required=True,
+    points_parser_panel_1.add_argument('--output_dir',
                                        metavar='Output Directory',
-                                       default=None,
+                                       default=DATA_DIR,
                                        help='Root directory where output will be saved',
                                        widget="DirChooser")
 
@@ -489,7 +582,7 @@ def main():
 
     patches_parser_panel_1.add_argument('--output_dir', required=True,
                                         metavar='Output Directory',
-                                        default=os.path.abspath("..\\Data"),
+                                        default=DATA_DIR,
                                         help='Root directory where output will be saved',
                                         widget="DirChooser")
 
@@ -510,7 +603,7 @@ def main():
 
     classifier_parser_panel_1.add_argument('--output_dir', required=True,
                                            metavar='Output Directory',
-                                           default=os.path.abspath("..\\Data"),
+                                           default=DATA_DIR,
                                            help='Root directory where output will be saved',
                                            widget="DirChooser")
 
@@ -594,7 +687,7 @@ def main():
 
     inference_parser_panel_1.add_argument('--output_dir', required=True,
                                           metavar='Output Directory',
-                                          default=os.path.abspath("..\\Data"),
+                                          default=DATA_DIR,
                                           help='Root directory where output will be saved',
                                           widget="DirChooser")
 
@@ -652,7 +745,7 @@ def main():
 
     sam_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
-                                    default=os.path.abspath("..\\Data"),
+                                    default=DATA_DIR,
                                     help='Root directory where output will be saved',
                                     widget="DirChooser")
 
@@ -684,7 +777,7 @@ def main():
 
     sfm_parser_panel_1.add_argument('--output_dir',
                                     metavar='Output Directory',
-                                    default=os.path.abspath("..\\Data"),
+                                    default=DATA_DIR,
                                     help='Root directory where output will be saved',
                                     widget="DirChooser")
 
@@ -799,7 +892,7 @@ def main():
         patches(args)
 
     if args.command == 'Classifier':
-        train_classifier(args)
+        classifier(args)
 
     if args.command == 'Inference':
         inference(args)

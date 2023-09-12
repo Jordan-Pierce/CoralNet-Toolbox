@@ -1,12 +1,17 @@
 import os
+import sys
 import glob
+import argparse
+import traceback
 
 import random
 import numpy as np
 import pandas as pd
 from PIL import Image
 
-from Toolbox.Tools import *
+from Common import IMG_FORMATS
+from Common import get_now
+from Common import print_progress
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -142,6 +147,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

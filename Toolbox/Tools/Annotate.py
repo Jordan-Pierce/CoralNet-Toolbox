@@ -1,18 +1,17 @@
 import os
 import sys
+import glob
 import shutil
+import argparse
+import traceback
 import subprocess
 
 import re
-import time
-import glob
-import datetime
-import argparse
-
 import pandas as pd
 from PIL import Image
 
-from Toolbox.Tools import *
+from Common import get_now
+from Common import PATCH_EXTRACTOR
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -222,11 +221,10 @@ def main():
     parser = argparse.ArgumentParser(description='API arguments')
 
     parser.add_argument('--patch_extractor_path', type=str,
-                        default=os.path.abspath('./Patch_Extractor/CNNDataExtractor.exe'))
+                        default=PATCH_EXTRACTOR)
 
     parser.add_argument('--image_dir', required=True, type=str,
                         help='A directory where all images are located.')
-
 
     args = parser.parse_args()
 
@@ -237,6 +235,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

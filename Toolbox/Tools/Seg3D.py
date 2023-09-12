@@ -5,14 +5,15 @@ import json
 import argparse
 import traceback
 
-from plyfile import PlyData, PlyElement
-from scipy.spatial.distance import cdist
-from sklearn.cluster import MiniBatchKMeans
-
-from Toolbox.Tools import *
-from Toolbox.Tools.SfM import print_sfm_progress
+import numpy as np
 
 import Metashape
+
+from plyfile import PlyData
+from scipy.spatial.distance import cdist
+
+from Common import print_progress
+from SfM import print_sfm_progress
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"
@@ -426,7 +427,8 @@ def main():
         print("Done.")
 
     except Exception as e:
-        print(f"{e}\nERROR: Could not finish workflow!")
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == '__main__':

@@ -1,18 +1,16 @@
 import os
+import sys
+import json
+import time
+import glob
 import argparse
 import warnings
+import traceback
 import subprocess
 
-warnings.filterwarnings("ignore")
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-import json
-import glob
 import math
-import datetime
 import numpy as np
 import pandas as pd
-from skimage import io
 import matplotlib.pyplot as plt
 
 import tensorflow as tf
@@ -23,7 +21,11 @@ from keras.models import Sequential
 from keras import optimizers
 from keras.layers import Dense, Activation, Dropout
 from keras.preprocessing.image import ImageDataGenerator
-from keras.callbacks import *
+
+from keras.callbacks import TensorBoard
+from keras.callbacks import EarlyStopping
+from keras.callbacks import ModelCheckpoint
+from keras.callbacks import ReduceLROnPlateau
 
 from plot_keras_history import plot_history
 from sklearn.metrics import roc_curve, auc
@@ -35,8 +37,10 @@ from sklearn.model_selection import train_test_split
 
 from imgaug import augmenters as iaa
 
-from Toolbox.Tools import *
+from Common import get_now
 
+warnings.filterwarnings("ignore")
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
@@ -108,7 +112,7 @@ def f1_score(y_true, y_pred):
 # Training
 # ------------------------------------------------------------------------------------------------------------------
 
-def train_classifier(args):
+def classifier(args):
     """
 
     """
@@ -649,11 +653,12 @@ def main():
     args = parser.parse_args()
 
     try:
-        train_classifier(args)
+        classifier(args)
         print('Done.')
 
     except Exception as e:
-        print(f'ERROR: Could not finish successfully.{e}')
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == '__main__':

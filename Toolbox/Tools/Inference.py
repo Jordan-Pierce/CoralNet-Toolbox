@@ -1,33 +1,31 @@
 import os
-import gc
 import sys
-import shutil
-import warnings
-import argparse
-import subprocess
-from tqdm import tqdm
-
-warnings.filterwarnings("ignore")
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import json
 import glob
-import math
+import argparse
+import warnings
+import traceback
+
 import numpy as np
 import pandas as pd
 from skimage.io import imread
-import matplotlib.pyplot as plt
 
 import tensorflow as tf
 
 keras = tf.keras
-from keras import backend as K
 from keras.models import load_model
-from keras.preprocessing.image import ImageDataGenerator
 
-from Toolbox.Tools import *
-from Toolbox.Tools.Patches import *
-from Toolbox.Tools.Classifier import precision, recall, f1_score
+from Common import IMG_FORMATS
+from Common import get_now
+from Common import print_progress
+
+from Patches import crop_patch
+from Classifier import precision
+from Classifier import recall
+from Classifier import f1_score
+
+warnings.filterwarnings("ignore")
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -213,6 +211,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

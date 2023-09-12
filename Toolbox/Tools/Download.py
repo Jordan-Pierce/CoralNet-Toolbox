@@ -1,7 +1,33 @@
-import os.path
+import os
+import io
+import sys
+import time
 import shutil
+import requests
+import argparse
+import traceback
+from tqdm import tqdm
+from bs4 import BeautifulSoup
 
-from Toolbox.Tools import *
+from selenium.webdriver.common.by import By
+
+import concurrent
+from concurrent.futures import ThreadPoolExecutor
+
+import pandas as pd
+
+from Common import CACHE_DIR
+from Common import LOGIN_URL
+from Common import CORALNET_URL
+from Common import CORALNET_SOURCE_URL
+from Common import CORALNET_LABELSET_URL
+from Common import CORALNET_LABELSET_FILE
+from Common import print_progress
+
+from Browser import login
+from Browser import authenticate
+from Browser import check_permissions
+from Browser import check_for_browsers
 
 
 # -------------------------------------------------------------------------------------------------
@@ -796,7 +822,7 @@ def download_data(driver, source_id, output_dir):
         driver, meta = download_metadata(driver, source_id, source_dir)
         # Print if there is no trained model.
         if meta is None:
-            raise Exception(f"ERROR: Source {source_id} may not have a trained model")
+            raise Exception(f"WARNING: Source {source_id} may not have a trained model")
 
     except Exception as e:
         print(f"ERROR: Unable to get model metadata from source {source_id}\n{e}")
@@ -807,7 +833,7 @@ def download_data(driver, source_id, output_dir):
         driver, labelset = download_labelset(driver, source_id, source_dir)
         # Print if there is no labelset.
         if labelset is None:
-            raise Exception(f"ERROR: Source {source_id} may not have a labelset")
+            raise Exception(f"WARNING: Source {source_id} may not have a labelset")
 
     except Exception as e:
         print(f"ERROR: Unable to get labelset from source {source_id}\n{e}")
@@ -827,7 +853,7 @@ def download_data(driver, source_id, output_dir):
             download_images(images, source_dir)
 
         else:
-            raise Exception(f"ERROR: Source {source_id} may not have any images")
+            raise Exception(f"WARNING: Source {source_id} may not have any images")
 
     except Exception as e:
         print(f"ERROR: Unable to get images from source {source_id}\n{e}")
@@ -838,7 +864,7 @@ def download_data(driver, source_id, output_dir):
         annotations = download_annotations(driver, source_id, source_dir)
         # Print if there are no annotations.
         if annotations is None:
-            raise Exception(f"ERROR: Source {source_id} may not have any annotations")
+            raise Exception(f"WARNING: Source {source_id} may not have any annotations")
 
     except Exception as e:
         print(f"ERROR: Unable to get annotations from source {source_id}\n{e}")
@@ -872,19 +898,14 @@ def download(args):
     # -------------------------------------------------------------------------
     # Get the browser
     # -------------------------------------------------------------------------
-    if isinstance(args.headless, str):
-        headless = True if args.headless.lower() == 'true' else False
-    else:
-        # Gooey is weird
-        headless = not args.headless
-
     # Pass the options object while creating the driver
-    driver = check_for_browsers(headless)
+    driver = check_for_browsers(args.headless)
     # Store the credentials in the driver
     driver.capabilities['credentials'] = {
         'username': username,
         'password': password
     }
+
     # Login to CoralNet
     driver, _ = login(driver)
 
@@ -967,12 +988,11 @@ def main():
     parser.add_argument('--sources_with', type=str, nargs="+",
                         help='Downloads a dataframe of source with [labelsets] from CoralNet.')
 
-    parser.add_argument('--output_dir', type=str, default=os.path.abspath("../../Data/"),
+    parser.add_argument('--output_dir', type=str, required=True,
                         help='A root directory where all downloads will be '
                              'saved to.')
 
-    parser.add_argument('--headless', type=str, default='True',
-                        choices=['True', 'False'],
+    parser.add_argument('--headless', action='store_false', default=True,
                         help='Run browser in headless mode')
 
     args = parser.parse_args()
@@ -984,6 +1004,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

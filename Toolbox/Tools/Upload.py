@@ -1,4 +1,20 @@
-from Toolbox.Tools import *
+import os
+import glob
+import time
+import argparse
+import traceback
+
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+from Common import IMG_FORMATS
+from Common import CORALNET_URL
+
+from Browser import login
+from Browser import authenticate
+from Browser import check_permissions
+from Browser import check_for_browsers
 
 
 # -----------------------------------------------------------------------------
@@ -407,14 +423,8 @@ def upload(args):
     # -------------------------------------------------------------------------
     # Get the browser
     # -------------------------------------------------------------------------
-    if isinstance(args.headless, str):
-        headless = True if args.headless.lower() == 'true' else False
-    else:
-        # Gooey is weird
-        headless = not args.headless
-
     # Pass the options object while creating the driver
-    driver = check_for_browsers(headless)
+    driver = check_for_browsers(args.headless)
     # Store the credentials in the driver
     driver.capabilities['credentials'] = {
         'username': username,
@@ -552,8 +562,7 @@ def main():
     parser.add_argument('--labelset', type=str, default="",
                         help='The path to the labelset file')
 
-    parser.add_argument('--headless', type=str, default='True',
-                        choices=['True', 'False'],
+    parser.add_argument('--headless', action='store_false', default=True,
                         help='Run browser in headless mode')
 
     args = parser.parse_args()
@@ -565,6 +574,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

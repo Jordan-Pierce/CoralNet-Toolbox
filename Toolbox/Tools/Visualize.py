@@ -1,21 +1,21 @@
 import os
 import glob
 import argparse
+import traceback
 
 import cv2
 import numpy as np
 import pandas as pd
-
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 from matplotlib.widgets import TextBox
 from matplotlib.patches import Rectangle
 
+from Common import IMG_FORMATS
+
+# Set plot backend
 matplotlib.use('TkAgg')
-
-from Toolbox.Tools import IMG_FORMATS
-
 # Hide the default interactive toolbar
 plt.rcParams['toolbar'] = 'None'
 
@@ -243,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--label_column", required=False, type=str, default='Label',
                         help='Label column in Annotations dataframe.')
 
-    parser.add_argument("--output_dir", required=False, type=str,
+    parser.add_argument("--output_dir", required=True, type=str,
                         help="A root directory where all output will be saved to.")
 
     args = parser.parse_args()
@@ -254,3 +254,4 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())

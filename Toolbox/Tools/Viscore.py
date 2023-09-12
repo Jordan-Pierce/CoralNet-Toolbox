@@ -1,7 +1,15 @@
+import os
+import sys
+import argparse
 import traceback
+from tqdm import tqdm
 
-from Toolbox.Tools.API import *
-from Toolbox.Tools.Upload import *
+import re
+import pandas as pd
+
+from API import api
+from Upload import upload
+
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -224,6 +232,9 @@ def main():
     parser.add_argument('--view_count', type=int, required=False, default=9001,
                         help='Value used to filter views based on the total number of VPI image views.')
 
+    parser.add_argument('--headless', action='store_false', default=True,
+                        help='Run browser in headless mode')
+
     parser.add_argument('--output_dir', required=False,
                         default=None,
                         help='A root directory where the converted Annotation file will be saved; '
@@ -236,7 +247,7 @@ def main():
         print('Done.')
 
     except Exception as e:
-        print(f'ERROR: Could not complete process\n{e}')
+        print(f'ERROR: {e}')
         print(traceback.format_exc())
 
 

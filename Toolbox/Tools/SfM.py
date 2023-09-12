@@ -4,9 +4,11 @@ import time
 import argparse
 import traceback
 
-from Toolbox.Tools import *
+import numpy as np
 
 import Metashape
+
+from Common import get_now
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"
@@ -14,8 +16,6 @@ found_major_version = ".".join(Metashape.app.version.split('.')[:2])
 if found_major_version != compatible_major_version:
     raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version, compatible_major_version))
 
-
-# TODO include quality value to user
 
 # -----------------------------------------------------------------------------------------------------------
 # Functions
@@ -313,7 +313,7 @@ def main():
     parser.add_argument('--input_dir', type=str,
                         help='Path to the input folder containing images.')
 
-    parser.add_argument('--output_dir', type=str,
+    parser.add_argument('--output_dir', type=str, required=True,
                         help='Path to the output folder.')
 
     parser.add_argument('--project_dir', type=str,
@@ -330,7 +330,7 @@ def main():
         print("Done.")
 
     except Exception as e:
-        print(f"{e}\nERROR: Could not finish workflow!")
+        print(f"ERROR: {e}")
         print(traceback.print_exc())
 
 

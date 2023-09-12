@@ -1,12 +1,29 @@
-import math
+import os
+import time
+import json
+import glob
+import requests
+import datetime
+import argparse
+import traceback
 
+import re
+import math
 import pandas as pd
 
-from Toolbox.Tools import *
-from Toolbox.Tools.Download import *
+from Common import get_now
+from Common import print_progress
 
+from Browser import login
+from Browser import get_token
+from Browser import authenticate
+from Browser import CORALNET_URL
 
-# TODO Test running api script from viscore scriptlet
+from Download import get_images
+from Download import get_image_urls
+from Download import download_metadata
+from Download import check_for_browsers
+
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
@@ -572,7 +589,7 @@ def main():
     parser.add_argument('--source_id_2', type=str, default=None,
                         help='The ID of the Source containing the model to use, if different.')
 
-    parser.add_argument('--output_dir', type=str, default="../Data/",
+    parser.add_argument('--output_dir', type=str, required=True,
                         help='A root directory where all predictions will be '
                              'saved to.')
 
@@ -585,6 +602,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

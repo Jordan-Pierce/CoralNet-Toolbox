@@ -1,19 +1,20 @@
-import warnings
-warnings.filterwarnings("ignore")
-
 import os
-import glob
+import sys
 import argparse
-from tqdm import tqdm
+import warnings
+import traceback
+
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
-from PIL import Image
 from skimage.io import imread, imsave
 
-from Toolbox.Tools import *
+from Common import get_now
+from Common import print_progress
+
+warnings.filterwarnings("ignore")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -198,7 +199,7 @@ def main():
     parser.add_argument('--image_dir', type=str, required=True,
                         help='Directory with images associated with annotation file')
 
-    parser.add_argument('--output_dir', type=str, default=os.path.abspath("../../Data"),
+    parser.add_argument('--output_dir', type=str, required=True,
                         help='A root directory where all output will be saved to.')
 
     args = parser.parse_args()
@@ -210,6 +211,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":
