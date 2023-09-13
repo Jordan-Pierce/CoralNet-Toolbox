@@ -22,10 +22,10 @@ def print_labelset(labelset):
     """
     Pretty prints to user in gooey the total number of annotations made in session
     """
-    print("\n" * 20)
-    print("\n###############################################")
-    print("Label Tracker")
-    print("###############################################\n")
+    print("\n" * 20, flush=True)
+    print("\n###############################################", flush=True)
+    print("Label Tracker", flush=True)
+    print("###############################################\n", flush=True)
 
     for k, v in labelset.items():
         if v:
@@ -74,9 +74,9 @@ def annotate(args):
     Once it's closed, the results are stored as annotation dataframe in root directory, and temp files are deleted.
     """
 
-    print("\n###############################################")
-    print("Patch Extractor Tool")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Patch Extractor Tool", flush=True)
+    print("###############################################\n", flush=True)
 
     if not os.path.exists(args.image_dir):
         raise NotADirectoryError(f"ERROR: Image Directory not found. Please check the path provided.")
@@ -88,14 +88,14 @@ def annotate(args):
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
     else:
-        print(f"ERROR: Image directory provided doesn't exist; please check input")
+        print(f"ERROR: Image directory provided doesn't exist; please check input", flush=True)
         sys.exit(1)
 
     # Set exe
     if os.path.exists(args.patch_extractor_path):
         exe_path = args.patch_extractor_path
     else:
-        print(f"ERROR: Path to Patch Extractor doesn't exist; please check input")
+        print(f"ERROR: Path to Patch Extractor doesn't exist; please check input", flush=True)
         sys.exit(1)
 
     # Set the paths for output
@@ -128,7 +128,7 @@ def annotate(args):
         if num_logs != len(log_files):
             # The log file name will stay the same throughout the entire session
             log_file = max(log_files, key=os.path.getmtime)
-            print(f"NOTE: Logging to {os.path.basename(log_file)}")
+            print(f"NOTE: Logging to {os.path.basename(log_file)}", flush=True)
             break
 
     # Continuously loop while app is on
@@ -145,9 +145,9 @@ def annotate(args):
             # Print to user
             extracted_label = extract_label(patch_name)
             if extracted_label is None:
-                print("WARNING: Annotation not recorded; convention should only contain a single '_'")
+                print("WARNING: Annotation not recorded; convention should only contain a single '_'", flush=True)
             else:
-                print(f"NOTE: Annotation created for class '{extracted_label}'")
+                print(f"NOTE: Annotation created for class '{extracted_label}'", flush=True)
                 if extracted_label not in labelset:
                     labelset[extracted_label] = 0
 
@@ -173,7 +173,7 @@ def annotate(args):
             patch_path = f"{tmp_dir}/{r['Name']}"
 
             if not os.path.exists(patch_path):
-                print("WARNING: Do not move patches while still annotating!")
+                print("WARNING: Do not move patches while still annotating!", flush=True)
                 continue
 
             # Width and height of patch
@@ -195,10 +195,10 @@ def annotate(args):
         annotations.to_csv(output_path)
 
         if os.path.exists(output_path):
-            print(f"\nNOTE: Annotations saved in {output_path}")
+            print(f"\nNOTE: Annotations saved in {output_path}", flush=True)
 
         else:
-            print(f"ERROR: Could not save annotations; leaving tmp files where they are.")
+            print(f"ERROR: Could not save annotations; leaving tmp files where they are.", flush=True)
             sys.exit(1)
 
         # Clean up
@@ -231,11 +231,11 @@ def main():
     try:
         # Call the annotate function
         annotate(args)
-        print("Done.\n")
+        print("Done.\n", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":

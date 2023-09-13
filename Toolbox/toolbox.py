@@ -427,7 +427,7 @@ def main():
                                         help='Upload data, or use the API for inference.',
                                         widget='Dropdown', choices=['Upload', 'API'], )
 
-    viscore_parser_panel_1.add_argument('--source_id', type=str, required=True,
+    viscore_parser_panel_1.add_argument('--source_id', type=str, default='4345',
                                         metavar="Source ID",
                                         help='The ID of the CoralNet source.')
 
@@ -466,6 +466,12 @@ def main():
     viscore_parser_panel_1.add_argument('--view_count', type=int, required=False, default=9001,
                                         metavar="VPI View Count",
                                         help='Value used to filter views based on the total number of VPI image views.')
+
+    viscore_parser_panel_1.add_argument('--headless', action="store_true",
+                                        default=False,
+                                        metavar="Run in Background",
+                                        help='Run browser in headless mode',
+                                        widget='BlockCheckbox')
 
     viscore_parser_panel_1.add_argument('--output_dir', required=False,
                                         metavar='Output Directory',

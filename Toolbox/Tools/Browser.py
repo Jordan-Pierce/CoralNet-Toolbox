@@ -29,10 +29,10 @@ def authenticate(username, password):
     Authenticate with CoralNet; used to make sure user has the correct credentials.
     """
 
-    print("\n###############################################")
-    print("Authentication")
-    print("###############################################\n")
-    print(f"NOTE: Authenticating user {username}")
+    print("\n###############################################", flush=True)
+    print("Authentication", flush=True)
+    print("###############################################\n", flush=True)
+    print(f"NOTE: Authenticating user {username}", flush=True)
 
     # Send a GET request to the login page to retrieve the login form
     response = requests.get(LOGIN_URL)
@@ -75,7 +75,7 @@ def authenticate(username, password):
             raise Exception(f"ERROR: Authentication unsuccessful for '{username}'\n "
                             f"Please check that your usename and password are correct")
         else:
-            print(f"NOTE: Authentication successful for {username}")
+            print(f"NOTE: Authentication successful for {username}", flush=True)
 
 
 def check_for_browsers(headless):
@@ -83,9 +83,9 @@ def check_for_browsers(headless):
     Check if Chrome browser is installed.
     """
 
-    print("\n###############################################")
-    print("Browser")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Browser", flush=True)
+    print("###############################################\n", flush=True)
 
     options = Options()
     # Silence, please.
@@ -102,13 +102,13 @@ def check_for_browsers(headless):
         browser = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()),
                                    options=options)
 
-        print("NOTE: Using Google Chrome")
+        print("NOTE: Using Google Chrome", flush=True)
         return browser
 
     except Exception as e:
-        print(f"WARNING: Google Chrome could not be used\n{e}")
+        print(f"WARNING: Google Chrome could not be used\n{e}", flush=True)
 
-    print("ERROR: Issue with getting browser. Exiting")
+    print("ERROR: Issue with getting browser. Exiting", flush=True)
     sys.exit(1)
 
 
@@ -117,9 +117,9 @@ def login(driver):
     Log in to CoralNet using Selenium.
     """
 
-    print("\n###############################################")
-    print("Login")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Login", flush=True)
+    print("###############################################\n", flush=True)
 
     # Create a variable for success
     success = False
@@ -159,7 +159,7 @@ def login(driver):
         # Login was successful
         success = True
 
-        print(f"NOTE: Successfully logged in for {driver.capabilities['credentials']['username']}")
+        print(f"NOTE: Successfully logged in for {driver.capabilities['credentials']['username']}", flush=True)
 
     except Exception as e:
         raise ValueError(f"ERROR: Could not login with "
@@ -184,7 +184,7 @@ def check_permissions(driver):
             raise Exception(f"ERROR: Unable to access page information")
 
     except Exception as e:
-        print(f"ERROR: {e} Exiting.")
+        print(f"ERROR: {e} Exiting.", flush=True)
         sys.exit(1)
 
     return driver, status
@@ -206,7 +206,7 @@ def get_token(username, password):
 
     if response.ok:
 
-        print("NOTE: API token retrieved successfully")
+        print("NOTE: API token retrieved successfully", flush=True)
 
         # Get the coralnet token returned to the user
         CORALNET_TOKEN = json.loads(response.content.decode())['token']

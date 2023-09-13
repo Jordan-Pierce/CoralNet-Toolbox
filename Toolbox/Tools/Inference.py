@@ -46,15 +46,15 @@ def inference(args):
     """
 
     """
-    print("\n###############################################")
-    print("Inference")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Inference", flush=True)
+    print("###############################################\n", flush=True)
 
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
-        print("NOTE: Found GPU")
+        print("NOTE: Found GPU", flush=True)
     else:
-        print("WARNING: No GPU found; defaulting to CPU")
+        print("WARNING: No GPU found; defaulting to CPU", flush=True)
 
     # Points Dataframe
     if os.path.exists(args.points):
@@ -62,9 +62,9 @@ def inference(args):
         annotation_file = args.points
         points = pd.read_csv(annotation_file, index_col=0)
         image_names = np.unique(points['Name'].to_numpy())
-        print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
+        print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images", flush=True)
     else:
-        print("ERROR: Points provided doesn't exist.")
+        print("ERROR: Points provided doesn't exist.", flush=True)
         sys.exit(1)
 
     # Image files
@@ -79,9 +79,9 @@ def inference(args):
         if not image_files:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            print(f"NOTE: Found {len(image_files)} images in directory provided")
+            print(f"NOTE: Found {len(image_files)} images in directory provided", flush=True)
     else:
-        print("ERROR: Directory provided doesn't exist.")
+        print("ERROR: Directory provided doesn't exist.", flush=True)
         sys.exit(1)
 
     # Model Weights
@@ -90,20 +90,20 @@ def inference(args):
             # Load the model with custom metrics
             custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
             model = load_model(args.model, custom_objects=custom_objects)
-            print(f"NOTE: Loaded model {args.model}")
+            print(f"NOTE: Loaded model {args.model}", flush=True)
 
         except Exception as e:
-            print(f"ERROR: There was an issue loading the model\n{e}")
+            print(f"ERROR: There was an issue loading the model\n{e}", flush=True)
             sys.exit(1)
     else:
-        print("ERROR: Model provided doesn't exist.")
+        print("ERROR: Model provided doesn't exist.", flush=True)
         sys.exit(1)
 
     # Class map
     if os.path.exists(args.class_map):
         class_map = get_class_map(args.class_map)
     else:
-        print(f"ERROR: Class Map file provided doesn't exist.")
+        print(f"ERROR: Class Map file provided doesn't exist.", flush=True)
         sys.exit()
 
     # Output
@@ -131,7 +131,7 @@ def inference(args):
         patches = []
 
         # Create patches for this image
-        print(f"NOTE: Cropping patches for {image_name}")
+        print(f"NOTE: Cropping patches for {image_name}", flush=True)
         # Get the current image points
         image_points = points[points['Name'] == image_name]
 
@@ -146,7 +146,7 @@ def inference(args):
         # ----------------------------------------------------------------
 
         # Model to make predictions
-        print(f"NOTE: Making predictions on patches for {image_name}")
+        print(f"NOTE: Making predictions on patches for {image_name}", flush=True)
         probabilities = model.predict(patches, verbose=0)
         predictions = np.argmax(probabilities, axis=1)
         class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
@@ -172,7 +172,7 @@ def inference(args):
 
         # Save each image predictions
         output.to_csv(output_path)
-        print(f"NOTE: Predictions saved to {output_path}")
+        print(f"NOTE: Predictions saved to {output_path}", flush=True)
 
         print_progress(n_idx, len(image_names))
 
@@ -207,11 +207,11 @@ def main():
 
     try:
         inference(args)
-        print("Done.")
+        print("Done.", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":

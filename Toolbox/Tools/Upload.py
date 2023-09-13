@@ -26,7 +26,7 @@ def upload_images(driver, source_id, images, prefix):
     Upload images to CoralNet.
     """
 
-    print("\nNavigating to image upload page...")
+    print("\nNavigating to image upload page...", flush=True)
 
     # Variable for success
     success = False
@@ -44,7 +44,7 @@ def upload_images(driver, source_id, images, prefix):
             raise Exception(f"ERROR: {status.text.split('.')[0]}")
 
     except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
+        print(f"ERROR: {e} or you do not have permission to access it", flush=True)
         return driver, success
 
     # Send the files to CoralNet for upload
@@ -56,8 +56,8 @@ def upload_images(driver, source_id, images, prefix):
 
         # Check if the prefix input field is enabled
         if prefix_input.is_enabled():
-            print("NOTE: Prefix input field is enabled")
-            print(f"NOTE: Attempting to send prefix")
+            print("NOTE: Prefix input field is enabled", flush=True)
+            print(f"NOTE: Attempting to send prefix", flush=True)
             prefix_input.send_keys(prefix)
 
             # Moves cursor away from prefix box, needed.
@@ -78,8 +78,8 @@ def upload_images(driver, source_id, images, prefix):
 
         # Check if the file input field is enabled
         if file_input.is_enabled():
-            print(f"NOTE: File input field is enabled")
-            print(f"NOTE: Attempting to upload {len(images)} images")
+            print(f"NOTE: File input field is enabled", flush=True)
+            print(f"NOTE: Attempting to upload {len(images)} images", flush=True)
             file_input.send_keys("\n".join(images))
 
         else:
@@ -88,7 +88,7 @@ def upload_images(driver, source_id, images, prefix):
                 "ERROR: File input field is not enabled; exiting.")
 
     except Exception as e:
-        print(f"ERROR: Could not submit files for upload\n{e}")
+        print(f"ERROR: Could not submit files for upload\n{e}", flush=True)
         return success
 
     # Attempt to upload the files to Tools
@@ -111,7 +111,7 @@ def upload_images(driver, source_id, images, prefix):
             EC.presence_of_element_located((By.ID, path)))
 
         # Print the pre-upload status
-        print(f"\n{pre_status.text}\n")
+        print(f"\n{pre_status.text}\n", flush=True)
 
         # Images can be uploaded
         if "Ready for upload" in status.text:
@@ -127,7 +127,7 @@ def upload_images(driver, source_id, images, prefix):
                 upload_button.click()
 
                 # Print the status
-                print(f"NOTE: {status.text}")
+                print(f"NOTE: {status.text}", flush=True)
 
                 # Give the upload status time to update
                 time.sleep(3)
@@ -141,7 +141,7 @@ def upload_images(driver, source_id, images, prefix):
                     new_upload_status_text = mid_status.text
                     if new_upload_status_text != mid_status.text:
                         new_upload_status_text = mid_status.text
-                        print(f"NOTE: {new_upload_status_text}")
+                        print(f"NOTE: {new_upload_status_text}", flush=True)
                         time.sleep(1)
                     continue
 
@@ -149,22 +149,22 @@ def upload_images(driver, source_id, images, prefix):
                 time.sleep(3)
 
                 if "Upload complete" in status.text:
-                    print(f"NOTE: {status.text}")
+                    print(f"NOTE: {status.text}", flush=True)
                     success = True
                 else:
-                    print(f"ERROR: {status.text}")
+                    print(f"ERROR: {status.text}", flush=True)
 
         # Images cannot be uploaded because they already exists
         elif "Cannot upload any of these image files" in status.text:
-            print(f"NOTE: {status.text}, they already exist in source.")
+            print(f"NOTE: {status.text}, they already exist in source.", flush=True)
             success = True
 
         # Unexpected status
         else:
-            print(f"Warning: {status.text}")
+            print(f"Warning: {status.text}", flush=True)
 
     except Exception as e:
-        print(f"ERROR: Issue with uploading images. \n{e}")
+        print(f"ERROR: Issue with uploading images. \n{e}", flush=True)
 
     time.sleep(3)
 
@@ -176,7 +176,7 @@ def upload_labelset(driver, source_id, labelset):
     Upload labelsets to CoralNet.
     """
 
-    print("\nNOTE: Navigating to labelset upload page")
+    print("\nNOTE: Navigating to labelset upload page", flush=True)
 
     # Create a variable to track the success of the upload
     success = False
@@ -194,7 +194,7 @@ def upload_labelset(driver, source_id, labelset):
             raise Exception(f"ERROR: {status.text.split('.')[0]}")
 
     except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
+        print(f"ERROR: {e} or you do not have permission to access it", flush=True)
         return driver, success
 
     # Check if files can be uploaded, get the status for the page
@@ -216,8 +216,8 @@ def upload_labelset(driver, source_id, labelset):
         # Check if the file input field is enabled
         if file_input.is_enabled():
             # Submit the file
-            print(f"NOTE: File input field is enabled")
-            print(f"NOTE: Uploading {os.path.basename(labelset)}")
+            print(f"NOTE: File input field is enabled", flush=True)
+            print(f"NOTE: Uploading {os.path.basename(labelset)}", flush=True)
             file_input.send_keys(labelset)
 
             # Give the upload status time to update
@@ -239,7 +239,7 @@ def upload_labelset(driver, source_id, labelset):
 
                 # Check the status,
                 if "Labelset saved" in status.text:
-                    print(f"NOTE: {status.text}")
+                    print(f"NOTE: {status.text}", flush=True)
                     success = True
 
             elif "Error" in status.text:
@@ -254,7 +254,7 @@ def upload_labelset(driver, source_id, labelset):
             raise Exception("ERROR: File input field is not enabled; exiting.")
 
     except Exception as e:
-        print(f"ERROR: Could not submit file for upload\n{e}")
+        print(f"ERROR: Could not submit file for upload\n{e}", flush=True)
 
     time.sleep(3)
 
@@ -266,7 +266,7 @@ def upload_annotations(driver, source_id, annotations):
     Upload annotations to CoralNet.
     """
 
-    print("\nNOTE: Navigating to annotation upload page")
+    print("\nNOTE: Navigating to annotation upload page", flush=True)
 
     # Create a variable to track the success of the upload
     success = False
@@ -292,7 +292,7 @@ def upload_annotations(driver, source_id, annotations):
             raise Exception(f"ERROR: {status.text.split('.')[0]}")
 
     except Exception as e:
-        print(f"{e}")
+        print(f"{e}", flush=True)
         return driver, success
 
     # Check if files can be uploaded, get the status for the page
@@ -315,11 +315,11 @@ def upload_annotations(driver, source_id, annotations):
         if file_input.is_enabled():
 
             # Submit the file
-            print(f"NOTE: File input field is enabled")
-            print(f"NOTE: Uploading {os.path.basename(annotations)}")
+            print(f"NOTE: File input field is enabled", flush=True)
+            print(f"NOTE: Uploading {os.path.basename(annotations)}", flush=True)
             file_input.send_keys(annotations)
 
-            print(f"NOTE: {status.text}")
+            print(f"NOTE: {status.text}", flush=True)
 
             # Give the upload status time to update
             time.sleep(3)
@@ -338,7 +338,7 @@ def upload_annotations(driver, source_id, annotations):
             elif "Data OK" in status.text:
 
                 # Print the status details
-                print(f"\n{status_details.text}\n")
+                print(f"\n{status_details.text}\n", flush=True)
 
                 if "deleted" in status_details.text:
                     alert = True
@@ -370,7 +370,7 @@ def upload_annotations(driver, source_id, annotations):
                 time.sleep(3)
 
                 # Get the status for the page
-                print(f"NOTE: {status.text}")
+                print(f"NOTE: {status.text}", flush=True)
 
                 # Wait while the annotations are saving
                 while "Saving" in status.text:
@@ -378,7 +378,7 @@ def upload_annotations(driver, source_id, annotations):
 
                 # Check if the annotations were saved successfully
                 if "saved" in status.text:
-                    print(f"NOTE: {status.text}")
+                    print(f"NOTE: {status.text}", flush=True)
                     success = True
                 else:
                     # The annotations were not saved successfully
@@ -390,7 +390,7 @@ def upload_annotations(driver, source_id, annotations):
             raise Exception("ERROR: File input field is not enabled; exiting.")
 
     except Exception as e:
-        print(f"ERROR: Could not upload annotations.\n{e}")
+        print(f"ERROR: Could not upload annotations.\n{e}", flush=True)
 
     time.sleep(3)
 
@@ -403,33 +403,9 @@ def upload(args):
     and initiates the uploading
     """
 
-    print("\n###############################################")
-    print("Upload")
-    print("###############################################\n")
-
-    # -------------------------------------------------------------------------
-    # Authenticate the user
-    # -------------------------------------------------------------------------
-    try:
-        username = args.username
-        password = args.password
-
-        # Ensure the user provided a username and password.
-        authenticate(username, password)
-    except Exception as e:
-        print(f"ERROR: Could not download data.\n{e}")
-        return
-
-    # -------------------------------------------------------------------------
-    # Get the browser
-    # -------------------------------------------------------------------------
-    # Pass the options object while creating the driver
-    driver = check_for_browsers(args.headless)
-    # Store the credentials in the driver
-    driver.capabilities['credentials'] = {
-        'username': username,
-        'password': password
-    }
+    print("\n###############################################", flush=True)
+    print("Upload", flush=True)
+    print("###############################################\n", flush=True)
 
     # -------------------------------------------------------------------------
     # Prepare the data
@@ -444,10 +420,10 @@ def upload(args):
         labelset = os.path.abspath(args.labelset)
 
         if os.path.exists(labelset) and "csv" in labelset.split(".")[-1]:
-            print(f"NOTE: Found labelset to upload")
+            print(f"NOTE: Found labelset to upload", flush=True)
             labelset_upload = True
         else:
-            print(f"NOTE: No valid labelset found in {labelset}")
+            print(f"NOTE: No valid labelset found in {labelset}", flush=True)
 
     # Data to be uploaded
     if args.images != "":
@@ -457,10 +433,10 @@ def upload(args):
 
         # Check if there are images to upload
         if len(images) > 0:
-            print(f"NOTE: Found {len(images)} images to upload")
+            print(f"NOTE: Found {len(images)} images to upload", flush=True)
             image_upload = True
         else:
-            print(f"NOTE: No valid images found in {args.images}")
+            print(f"NOTE: No valid images found in {args.images}", flush=True)
 
     # Add a dash to prefix if it's being used, and isn't already there
     if args.prefix != "":
@@ -475,14 +451,14 @@ def upload(args):
         annotations = os.path.abspath(args.annotations)
 
         if os.path.exists(annotations) and "csv" in annotations.split(".")[-1]:
-            print(f"NOTE: Found annotations to upload")
+            print(f"NOTE: Found annotations to upload", flush=True)
             annotation_upload = True
         else:
-            print(f"NOTE: No valid annotations found in {annotations}")
+            print(f"NOTE: No valid annotations found in {annotations}", flush=True)
 
     # If there are no images, labelset, or annotations to upload, exit
     if not image_upload and not labelset_upload and not annotation_upload:
-        print(f"ERROR: No data to upload. Please check the following files:\n"
+        print(f"ERROR: No data to upload. Please check the following files:\n, flush=True"
               f"Images: {args.images}\n"
               f"Labelset: {args.labelset}\n"
               f"Annotations: {args.annotations}")
@@ -490,6 +466,30 @@ def upload(args):
 
     # ID of the source to upload data to
     source_id = args.source_id
+
+    # -------------------------------------------------------------------------
+    # Authenticate the user
+    # -------------------------------------------------------------------------
+    try:
+        username = args.username
+        password = args.password
+
+        # Ensure the user provided a username and password.
+        authenticate(username, password)
+    except Exception as e:
+        print(f"ERROR: Could not download data.\n{e}", flush=True)
+        return
+
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    # Pass the options object while creating the driver
+    driver = check_for_browsers(args.headless)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': username,
+        'password': password
+    }
 
     # -------------------------------------------------------------------------
     # Upload the data
@@ -570,11 +570,11 @@ def main():
     try:
         # Call the upload function
         upload(args)
-        print("Done.")
+        print("Done.", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":

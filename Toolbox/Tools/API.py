@@ -37,9 +37,9 @@ def get_source_meta(driver, source_id_1, source_id_2=None, image_list=None):
     # Variables for the model
     source_id = source_id_1 if source_id_2 is None else source_id_2
 
-    print("\n###############################################")
-    print(f"Downloading Source Metadata {source_id}")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print(f"Downloading Source Metadata {source_id}", flush=True)
+    print("###############################################\n", flush=True)
 
     # Get the metadata
     driver, meta = download_metadata(driver, source_id)
@@ -93,7 +93,7 @@ def is_expired(url):
             raise ValueError(f"ERROR: Could not find expiration timestamp in \n{url}")
 
     except Exception as e:
-        print(f"{e}")
+        print(f"{e}", flush=True)
 
     # Check the amount of time remaining
     if time_remaining >= 200:
@@ -122,7 +122,7 @@ def get_expiration(url):
             raise ValueError(f"ERROR: Could not find expiration timestamp in \n{url}")
 
     except Exception as e:
-        print(f"{e}")
+        print(f"{e}", flush=True)
 
     return time_remaining
 
@@ -180,7 +180,7 @@ def print_job_status(payload_imgs, active, completed):
     """
     Print the current status of jobs and images being processed.
     """
-    print("\nSTATUS: "
+    print("\nSTATUS: , flush=True"
           "Images in Queue: {: <8} "
           "Active Jobs: {: <8} "
           "Completed Jobs: {: <8}".format(len(payload_imgs), len(active), len(completed)))
@@ -192,7 +192,7 @@ def convert_to_csv(status, image_names):
     into a single DataFrame.
     """
 
-    print(f"NOTE: Recording annotations for completed job")
+    print(f"NOTE: Recording annotations for completed job", flush=True)
 
     # A list to store all the model predictions (dictionaries)
     model_predictions_list = []
@@ -214,7 +214,7 @@ def convert_to_csv(status, image_names):
     model_predictions = pd.DataFrame(model_predictions_list)
 
     if model_predictions.empty:
-        print("WARNING: Predictions returned from CoralNet were empty!")
+        print("WARNING: Predictions returned from CoralNet were empty!", flush=True)
 
     return model_predictions
 
@@ -250,9 +250,9 @@ def api(args):
     """
 
     """
-    print("\n###############################################")
-    print(f"API")
-    print("###############################################")
+    print("\n###############################################", flush=True)
+    print(f"API", flush=True)
+    print("###############################################", flush=True)
 
     # -------------------------------------------------------------------------
     # Check the data
@@ -329,19 +329,19 @@ def api(args):
         images = [os.path.basename(image) for image in images]
         # Get the information needed from the source images dataframe
         images = source_images[source_images['Name'].isin(images)].copy()
-        print(f"NOTE: Found {len(images)} images in source {source_id}")
+        print(f"NOTE: Found {len(images)} images in source {source_id}", flush=True)
 
         if len(images) != len(points['Name'].unique()):
             # Let the user know that not all images in points file
             # are actually on CoralNet.
-            print(f"WARNING: Points file has points for {len(points['Name'].unique())} images, "
+            print(f"WARNING: Points file has points for {len(points['Name'].unique())} images, , flush=True"
                   f"but only {len(images)} of those images were found on CoralNet.")
 
             # Let them exit if they want
             time.sleep(5)
 
     except Exception as e:
-        print(f"ERROR: Issue with getting Source Metadata.\n{e}")
+        print(f"ERROR: Issue with getting Source Metadata.\n{e}", flush=True)
         return
 
     # Set the model ID and URL
@@ -355,9 +355,9 @@ def api(args):
     # Final CSV containing predictions
     predictions_path = f"{output_dir}coralnet_{get_now()}_predictions.csv"
 
-    print("\n###############################################")
-    print(f"Getting Predictions from Model {model_id} Source {source_id}")
-    print("###############################################")
+    print("\n###############################################", flush=True)
+    print(f"Getting Predictions from Model {model_id} Source {source_id}", flush=True)
+    print("###############################################", flush=True)
 
     # Jobs that are currently active
     active_jobs = []
@@ -392,7 +392,7 @@ def api(args):
 
         # Split points into batches of 200
         if len(p) > point_batch_size:
-            print(f"NOTE: {name} has {len(p)} points, "
+            print(f"NOTE: {name} has {len(p)} points, , flush=True"
                   f"separating into {math.ceil(len(p) / point_batch_size)} 'images'")
 
         for i in range(0, len(p), point_batch_size):
@@ -413,7 +413,7 @@ def api(args):
 
     # Total number of images
     total_images = len(payload_imgs)
-    print(f"\nNOTE: Queuing {total_images} images, {math.ceil(total_images / data_batch_size)} jobs\n")
+    print(f"\nNOTE: Queuing {total_images} images, {math.ceil(total_images / data_batch_size)} jobs\n", flush=True)
 
     # All payloads are preprocessed, now all they need are their
     # image urls, which will happen right before they are submitted
@@ -454,7 +454,7 @@ def api(args):
             }
 
             # Upload the image and the sampled points to Tools
-            print(f"NOTE: Attempting to upload {len(image_names)} images as a job")
+            print(f"NOTE: Attempting to upload {len(image_names)} images as a job", flush=True)
 
             # Sends the requests to the `source` and in exchange, receives
             # a message telling if it was received correctly.
@@ -463,7 +463,7 @@ def api(args):
                                      headers=job["headers"])
             if response.ok:
                 # If it was received
-                print(f"NOTE: Successfully uploaded {len(image_names)} images as a job\n")
+                print(f"NOTE: Successfully uploaded {len(image_names)} images as a job\n", flush=True)
 
                 # Add to active jobs
                 active_jobs.append(response)
@@ -478,11 +478,11 @@ def api(args):
                 message = json.loads(response.text)['errors'][0]['detail']
 
                 # Print the message
-                print(f"CoralNet: {message}")
+                print(f"CoralNet: {message}", flush=True)
 
                 if "5 jobs active" in message:
                     # Max number of jobs reached, so we need to wait
-                    print(f"\nNOTE: Will attempt again at {in_N_seconds(patience)}")
+                    print(f"\nNOTE: Will attempt again at {in_N_seconds(patience)}", flush=True)
                     time.sleep(patience)
 
         # At this point, either active_job_limit is reached
@@ -493,7 +493,7 @@ def api(args):
         while len(active_jobs) <= active_job_limit and len(active_jobs) != 0:
 
             # Sleep before checking status again
-            print(f"\nNOTE: Checking status again at {in_N_seconds(patience)}")
+            print(f"\nNOTE: Checking status again at {in_N_seconds(patience)}", flush=True)
             time.sleep(patience)
 
             # Loop through the active jobs
@@ -503,7 +503,7 @@ def api(args):
                 current_status, message, wait = check_job_status(job, coralnet_token)
 
                 # Print the message
-                print(f"{message}")
+                print(f"{message}", flush=True)
 
                 # Current job finished, output the results, remove from queue
                 if "Completed" in message:
@@ -511,12 +511,12 @@ def api(args):
                     predictions = convert_to_csv(current_status, names)
 
                     # Add to completed jobs list
-                    print(f"NOTE: Adding {len(names)} images to completed")
+                    print(f"NOTE: Adding {len(names)} images to completed", flush=True)
                     completed_imgs.extend(names)
                     completed_jobs.append(current_status)
 
                     # Remove from active jobs, images list
-                    print(f"NOTE: Removing {len(names)} images from active\n")
+                    print(f"NOTE: Removing {len(names)} images from active\n", flush=True)
                     active_imgs.remove(names)
                     active_jobs.remove(job)
 
@@ -535,25 +535,25 @@ def api(args):
             # After checking the current status, break if another job can be added
             # Else wait and check the status of the active jobs again.
             if len(active_jobs) < active_job_limit and payload_imgs:
-                print(f"\nNOTE: Active jobs is {len(active_jobs)}, "
+                print(f"\nNOTE: Active jobs is {len(active_jobs)}, , flush=True"
                       f"images in queue is {len(payload_imgs)}; adding more.\n")
                 break
 
         # Check to see everything has been completed, breaking the loop
         if not active_jobs and not payload_imgs:
-            print("\nNOTE: All images have been processed; exiting loop.\n")
+            print("\nNOTE: All images have been processed; exiting loop.\n", flush=True)
             finished = True
 
     # Close the driver
     driver.close()
 
     # Sort predictions to match original points file, keep original columns
-    print("NOTE: Sorting predictions to align with original file provided")
+    print("NOTE: Sorting predictions to align with original file provided", flush=True)
     coralnet_predictions = pd.concat(coralnet_predictions)
     final_predictions = sort_predictions(points, coralnet_predictions)
 
     # Output to disk
-    print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
+    print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}", flush=True)
     final_predictions.to_csv(predictions_path)
 
 
@@ -598,11 +598,11 @@ def main():
     try:
         # Call the api function
         api(args)
-        print("Done.\n")
+        print("Done.\n", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":

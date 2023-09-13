@@ -60,12 +60,12 @@ def download_checkpoint(url, path):
             with open(path, 'wb') as file:
                 # Write the content to the file
                 file.write(response.content)
-            print(f"NOTE: Downloaded file successfully")
-            print(f"NOTE: Saved file to {path}")
+            print(f"NOTE: Downloaded file successfully", flush=True)
+            print(f"NOTE: Saved file to {path}", flush=True)
         else:
-            print(f"ERROR: Failed to download file. Status code: {response.status_code}")
+            print(f"ERROR: Failed to download file. Status code: {response.status_code}", flush=True)
     except requests.exceptions.RequestException as e:
-        print(f"ERROR: An error occurred: {e}")
+        print(f"ERROR: An error occurred: {e}", flush=True)
 
 
 def get_sam_predictor(model_type="vit_l", device='cpu'):
@@ -85,7 +85,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu'):
                 "vit_h": "sam_vit_h_4b8939.pth"}
 
     if model_type not in list(sam_dict.keys()):
-        print(f"ERROR: Invalid model type provided; choices are:\n{list(sam_dict.keys())}")
+        print(f"ERROR: Invalid model type provided; choices are:\n{list(sam_dict.keys())}", flush=True)
         sys.exit(1)
 
     # Checkpoint path to model
@@ -93,7 +93,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu'):
 
     # Check to see if the weights of the model type were already downloaded
     if not os.path.exists(path):
-        print("NOTE: Model checkpoint does not exist; downloading")
+        print("NOTE: Model checkpoint does not exist; downloading", flush=True)
         url = f"{sam_url}{sam_dict[model_type]}"
         # Download the file
         download_checkpoint(url, path)
@@ -230,14 +230,14 @@ def mss_sam(args):
     """
 
     """
-    print("\n###############################################")
-    print("Multilevel Superpixel Segmentation w/ SAM")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Multilevel Superpixel Segmentation w/ SAM", flush=True)
+    print("###############################################\n", flush=True)
 
     # Check for CUDA
-    print(f"NOTE: PyTorch version - {torch.__version__}")
-    print(f"NOTE: Torchvision version - {torchvision.__version__}")
-    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+    print(f"NOTE: PyTorch version - {torch.__version__}", flush=True)
+    print(f"NOTE: Torchvision version - {torchvision.__version__}", flush=True)
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}", flush=True)
 
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -246,14 +246,14 @@ def mss_sam(args):
     if os.path.exists(args.annotations):
         points = pd.read_csv(args.annotations, index_col=0)
         image_names = np.unique(points['Name'].to_numpy())
-        print(f"NOTE: Found a total of {len(points)} sampled points for {len(image_names)} images")
+        print(f"NOTE: Found a total of {len(points)} sampled points for {len(image_names)} images", flush=True)
 
         # Create class map and color map based on annotation file
         if args.label_col in points.columns:
             label_col = args.label_col
-            print(f"NOTE: Using labels from the column '{label_col}'")
+            print(f"NOTE: Using labels from the column '{label_col}'", flush=True)
         else:
-            print(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}")
+            print(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}", flush=True)
             sys.exit(1)
 
         class_map = {l: i for i, l in enumerate(sorted(points[label_col].unique()))}
@@ -264,7 +264,7 @@ def mss_sam(args):
         label_colors = {l: color_map[i] / 255.0 for i, l in enumerate(unique_labels)}
 
     else:
-        print("ERROR: Points file provided doesn't exist.")
+        print("ERROR: Points file provided doesn't exist.", flush=True)
         sys.exit(1)
 
     # Image files
@@ -276,19 +276,19 @@ def mss_sam(args):
         if not images:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            print(f"NOTE: Found {len(images)} images in directory provided")
+            print(f"NOTE: Found {len(images)} images in directory provided", flush=True)
     else:
-        print("ERROR: Image directory provided doesn't exist.")
+        print("ERROR: Image directory provided doesn't exist.", flush=True)
         sys.exit(1)
 
     # Model Weights
     try:
         # Load the model with custom metrics
         sam_predictor = get_sam_predictor(args.model_type, device)
-        print(f"NOTE: Loaded model {args.model_type}")
+        print(f"NOTE: Loaded model {args.model_type}", flush=True)
 
     except Exception as e:
-        print(f"ERROR: There was an issue loading the model\n{e}")
+        print(f"ERROR: There was an issue loading the model\n{e}", flush=True)
         sys.exit(1)
 
     # Setting output directories
@@ -311,9 +311,9 @@ def mss_sam(args):
     # ----------------------------------------------------------------
     # Inference
     # ----------------------------------------------------------------
-    print("\n###############################################")
-    print("Making Masks")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Making Masks", flush=True)
+    print("###############################################\n", flush=True)
 
     # Loop through each image, extract the corresponding patches
     for i_idx, image_path in enumerate(images):
@@ -329,7 +329,7 @@ def mss_sam(args):
         # Read the image, get the points, create bounding boxes
         image = imread(image_path)
 
-        print(f"NOTE: Making predictions for {name}")
+        print(f"NOTE: Making predictions for {name}", flush=True)
         # Set the image in sam predictor
         sam_predictor.set_image(image)
 
@@ -362,7 +362,7 @@ def mss_sam(args):
                                                           boxes=batch,
                                                           multimask_output=False)
             except Exception as e:
-                print(f"ERROR: Model could not make predictions\n{e}")
+                print(f"ERROR: Model could not make predictions\n{e}", flush=True)
                 sys.exit(1)
 
             # Loop through all the individual masks in the batch
@@ -407,7 +407,7 @@ def mss_sam(args):
             fname = f"{name.split('.')[0]}.jpg"
             plot_path = f"{plot_dir}{fname}"
             plot_mask(image, final_color, current_points, point_colors, plot_path)
-            print(f"NOTE: Saved plot to {plot_path}")
+            print(f"NOTE: Saved plot to {plot_path}", flush=True)
 
         else:
             plot_path = ""
@@ -415,12 +415,12 @@ def mss_sam(args):
         # Save the seg mask
         mask_path = f"{seg_dir}{name}"
         imsave(fname=mask_path, arr=final_mask.astype(np.uint8))
-        print(f"NOTE: Saved seg mask to {mask_path}")
+        print(f"NOTE: Saved seg mask to {mask_path}", flush=True)
 
         # Save the color mask
         color_path = f"{color_dir}{name}"
         imsave(fname=color_path, arr=final_color.astype(np.uint8))
-        print(f"NOTE: Saved color mask to {color_path}")
+        print(f"NOTE: Saved color mask to {color_path}", flush=True)
 
         # Add to output list
         mask_df.append([image_path, mask_path, color_path, plot_path])
@@ -433,9 +433,9 @@ def mss_sam(args):
     mask_df.to_csv(output_mask_csv)
 
     if os.path.exists(output_mask_csv):
-        print(f"NOTE: Mask dataframe saved to {output_dir}")
+        print(f"NOTE: Mask dataframe saved to {output_dir}", flush=True)
     else:
-        print(f"ERROR: Could not save mask dataframe")
+        print(f"ERROR: Could not save mask dataframe", flush=True)
 
     # Create a final class mapping for the seg masks
     seg_map = {k: {} for k in class_map.keys()}
@@ -449,9 +449,9 @@ def mss_sam(args):
         json.dump(seg_map, output_file, indent=4)
 
     if os.path.exists(output_color_json):
-        print(f"NOTE: Color Mapping JSON file saved to {output_dir}")
+        print(f"NOTE: Color Mapping JSON file saved to {output_dir}", flush=True)
     else:
-        print(f"ERROR: Could not save Color Mapping JSON file")
+        print(f"ERROR: Could not save Color Mapping JSON file", flush=True)
 
 
 # -----------------------------------------------------------------------------
@@ -496,11 +496,11 @@ def main():
 
     try:
         mss_sam(args)
-        print("Done.")
+        print("Done.", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":

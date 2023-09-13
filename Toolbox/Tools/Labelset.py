@@ -107,13 +107,13 @@ def create_labelset(driver, source_id, labelset_dict):
         labelset_dict['Image Path'] = os.path.abspath(labelset_dict['Image Path'])
         assert os.path.exists(labelset_dict['Image Path'])
         assert labelset_dict['Image Path'].split(".")[-1] in IMG_FORMATS
-        print("NOTE: Labelset criteria met")
+        print("NOTE: Labelset criteria met", flush=True)
 
     except Exception as e:
-        print(f"ERROR: Labelset provided does not match criteria; exiting")
+        print(f"ERROR: Labelset provided does not match criteria; exiting", flush=True)
         return driver, success
 
-    print("\nNOTE: Navigating to labelset creation page")
+    print("\nNOTE: Navigating to labelset creation page", flush=True)
 
     # Go to the upload page
     driver.get(CORALNET_URL + f"/source/{source_id}/labelset/add/")
@@ -123,7 +123,7 @@ def create_labelset(driver, source_id, labelset_dict):
 
     # If the user does not have access to the source, exit immediately
     if not success:
-        print("ERROR: Cannot continue with process; exiting function.")
+        print("ERROR: Cannot continue with process; exiting function.", flush=True)
         return driver, success
 
     try:
@@ -193,14 +193,14 @@ def create_labelset(driver, source_id, labelset_dict):
         # Click the submit button if it's present
         if submit_button.is_displayed():
             # submit_button.click()
-            print(f"NOTE: Button clicked...")
-            print(f"NOTE: Submitted labelset {labelset_dict['Name']}, {labelset_dict['Short Code']}")
+            print(f"NOTE: Button clicked...", flush=True)
+            print(f"NOTE: Submitted labelset {labelset_dict['Name']}, {labelset_dict['Short Code']}", flush=True)
             success = True
         else:
             raise Exception("ERROR: Submit Labelset button not enabled")
 
     except Exception as e:
-        print(f"ERROR: Could not create labelset {labelset_dict['Name']}\n{e}")
+        print(f"ERROR: Could not create labelset {labelset_dict['Name']}\n{e}", flush=True)
 
     return driver, success
 
@@ -219,7 +219,7 @@ def labelset(args):
         # Ensure the user provided a username and password.
         authenticate(username, password)
     except Exception as e:
-        print(f"ERROR: Could not download data.\n{e}")
+        print(f"ERROR: Could not download data.\n{e}", flush=True)
         return
 
     # -------------------------------------------------------------------------
@@ -296,11 +296,11 @@ def main():
     try:
         # Call the upload function
         labelset(args)
-        print("Done.")
+        print("Done.", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":

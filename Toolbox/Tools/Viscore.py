@@ -21,15 +21,15 @@ def make_labelset(args):
     Creates a temporary labelset for CoralNet from the mapping file,
     just so we can reduce the amount of input parameters needed.
     """
-    print("\n###############################################")
-    print("Making Labelset")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Making Labelset", flush=True)
+    print("###############################################\n", flush=True)
 
     # Get the mapping file
     if os.path.exists(args.mapping_path):
         mapping = pd.read_csv(args.mapping_path, index_col=None, sep=",")
     else:
-        print(f"ERROR: Mapping file provided doesn't exist; check input provided")
+        print(f"ERROR: Mapping file provided doesn't exist; check input provided", flush=True)
         sys.exit(1)
 
     # Make the labelset file using the columns 'Short Code' and 'ID'
@@ -44,6 +44,12 @@ def make_labelset(args):
     # Set the labelset file in args
     args.labelset = labelset_path
 
+    if os.path.exists(labelset_path):
+        print(f"NOTE: Labelset created successfully", flush=True)
+    else:
+        print("ERROR: Labelset could not be created", flush=True)
+        sys.exit(1)
+
     return args
 
 
@@ -53,13 +59,17 @@ def convert_labels(args):
     files are saved in the output directory.
     """
 
-    print("\n###############################################")
-    print("Viscore to CoralNet")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Viscore to CoralNet", flush=True)
+    print("###############################################\n", flush=True)
 
     # Get the arguments
     viscore_labels = args.viscore_labels
     mapping_path = args.mapping_path
+
+    # Check that the paths exist
+    assert os.path.exists(viscore_labels), 'ERROR: labels path does not exist'
+    assert os.path.exists(mapping_path), 'ERROR: Labelsets path does not exist'
 
     if args.output_dir is None:
         args.output_dir = os.path.dirname(viscore_labels) + "\\"
@@ -69,20 +79,30 @@ def convert_labels(args):
     # Make the output directory if it doesn't exist
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Check that the paths exist
-    assert os.path.exists(viscore_labels), 'ERROR: labels path does not exist'
-    assert os.path.exists(mapping_path), 'ERROR: Labelsets path does not exist'
+    # Make the output path
+    basename = f"{os.path.basename(viscore_labels).split('.')[0]}_"
+    basename += f"rand_{str(args.rand_sub_ceil).replace('.', '_')}_"
+    basename += f"error_{str(args.reprojection_error).replace('.', '_')}_"
+    basename += f"vindex_{str(args.view_index)}_"
+    basename += f"vcount_{str(args.view_count)}"
+    output_file = f"{args.output_dir}{basename}.csv"
+
+    # If the updated file already exists, return early
+    if os.path.exists(output_file):
+        print(f"NOTE: {basename} already exists", flush=True)
+        args.converted_labels = output_file
+        return args
 
     # Pattern to check against
     pattern = r'^[A-Za-z]+_[A-Za-z\d-]+_\d{4}-\d{2}-\d{2}\.csv$'
 
     # Check if labels file matches expected format
     if not re.match(pattern, os.path.basename(viscore_labels)):
-        print(f"ERROR: Label path does not match expected format; check input provided.")
+        print(f"ERROR: Label path does not match expected format; check input provided.", flush=True)
         sys.exit(1)
 
     try:
-        print(f'NOTE: Converting {viscore_labels} to CoralNet format')
+        print(f'NOTE: Converting {os.path.basename(viscore_labels)} to CoralNet format', flush=True)
         # Open the viscore labels file
         labels = pd.read_csv(viscore_labels, index_col=None)
         # Open the labelset file
@@ -132,8 +152,7 @@ def convert_labels(args):
         # the plot name to the image basename.
         path = r['Name']
         basename = os.path.basename(path)
-        prefix = os.path.basename(os.path.dirname(path))
-        name = f"{prefix}-{basename}"
+        name = f"{args.prefix}-{basename}"
 
         # For some reason, CoralNet uses the Short Code as
         # the label from within a source; make note of that.
@@ -143,27 +162,20 @@ def convert_labels(args):
 
         # Add to the list; other fields are ignored by CoralNet.
         images.append(basename)
-        annotations.append([prefix, basename, name, row, column, label])
+        annotations.append([args.prefix, basename, name, row, column, label])
 
-    print(f"NOTE: Updated {len(annotations)} annotations belonging to {len(set(images))} images")
-    print(f"NOTE: Skipped {len(skipped)} annotations belonging to {set(skipped)}")
+    print(f"NOTE: Updated {len(annotations)} annotations belonging to {len(set(images))} images", flush=True)
+    print(f"NOTE: Skipped {len(skipped)} annotations belonging to {set(skipped)}", flush=True)
 
-    # Save the labels as a csv file
-    basename = f"{os.path.basename(viscore_labels).split('.')[0]}_"
-    basename += f"rand_{str(args.rand_sub_ceil).replace('.', '_')}_"
-    basename += f"error_{str(args.reprojection_error).replace('.', '_')}_"
-    basename += f"vindex_{str(args.view_index)}_"
-    basename += f"vcount_{str(args.view_count)}"
-    output_file = f"{args.output_dir}{basename}.csv"
     annotations = pd.DataFrame(annotations, columns=['Prefix', 'Image Name', 'Name', 'Row', 'Column', 'Label'])
     annotations.to_csv(output_file)
 
     # Check that file was saved
     if os.path.exists(output_file):
-        print(f'NOTE: Successfully saved {output_file}')
+        print(f'NOTE: Successfully saved {basename}', flush=True)
         args.converted_labels = output_file
     else:
-        print(f'ERROR: Failed to save {output_file}')
+        print(f'ERROR: Failed to save {basename}', flush=True)
         sys.exit(1)
 
     return args
@@ -189,7 +201,7 @@ def viscore(args):
         args.points = args.converted_labels
         api(args)
     else:
-        print("ERROR: Invalid action; must be Upload or API")
+        print("ERROR: Invalid action; must be Upload or API", flush=True)
         sys.exit()
 
 
@@ -209,7 +221,7 @@ def main():
                         help='Upload data, or use the API for inference.',
                         choices=['Upload', 'API'])
 
-    parser.add_argument('--source_id', type=str, required=True,
+    parser.add_argument('--source_id', type=str, default='4345',
                         help='The ID of the CoralNet source.')
 
     parser.add_argument('--prefix', required=False, default="",
@@ -249,11 +261,11 @@ def main():
 
     try:
         viscore(args)
-        print('Done.')
+        print('Done.', flush=True)
 
     except Exception as e:
-        print(f'ERROR: {e}')
-        print(traceback.format_exc())
+        print(f'ERROR: {e}', flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == '__main__':

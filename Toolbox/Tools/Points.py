@@ -23,9 +23,9 @@ def points(args):
     Generates a set of sample coordinates within a given image size.
     """
 
-    print("\n###############################################")
-    print("Sample Points")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Sample Points", flush=True)
+    print("###############################################\n", flush=True)
 
     # Set the variables
     sample_method = args.sample_method
@@ -37,12 +37,12 @@ def points(args):
         image_files = [i for i in image_files if os.path.basename(i).split(".")[-1].lower() in IMG_FORMATS]
 
         if not image_files:
-            print("ERROR: No image files found in directory provided; please check input")
+            print("ERROR: No image files found in directory provided; please check input", flush=True)
             sys.exit(1)
 
-        print(f"NOTE: Sampling {num_points} points for {len(image_files)} images")
+        print(f"NOTE: Sampling {num_points} points for {len(image_files)} images", flush=True)
     else:
-        print(f"ERROR: Image directory provided doesn't exist; please check provided input")
+        print(f"ERROR: Image directory provided doesn't exist; please check provided input", flush=True)
         sys.exit(1)
 
     # Create output
@@ -103,16 +103,16 @@ def points(args):
                                     'Column': int(x),
                                     'Label': 'Unlabeled'})
     if samples:
-        print(f"NOTE: Saving {len(samples)} sampled points")
+        print(f"NOTE: Saving {len(samples)} sampled points", flush=True)
         # Store as dataframe
         samples = pd.DataFrame.from_records(samples)
         # Save as csv to points folder
         samples.to_csv(output_file)
 
         if os.path.exists(output_file):
-            print(f"NOTE: Sampled points saved to {output_file}")
+            print(f"NOTE: Sampled points saved to {output_file}", flush=True)
         else:
-            print(f"ERROR: Sampled points could not be saved; check provided input.")
+            print(f"ERROR: Sampled points could not be saved; check provided input.", flush=True)
 
 
 # -----------------------------------------------------------------------------
@@ -143,11 +143,11 @@ def main():
     try:
 
         points(args)
-        print("Done.")
+        print("Done.", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":

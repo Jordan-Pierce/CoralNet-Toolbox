@@ -81,7 +81,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir):
     image_path = os.path.join(image_dir, image_name)
 
     if not os.path.exists(image_path):
-        print(f"ERROR: Image {image_path} does not exist; skipping")
+        print(f"ERROR: Image {image_path} does not exist; skipping", flush=True)
         return
 
     # Open the image as np array just once
@@ -108,7 +108,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir):
                 patches.append([name, path, r['Label'], r['Row'], r['Column'], image_name, image_path])
 
         except Exception as e:
-            print(f"ERROR: {e}")
+            print(f"ERROR: {e}", flush=True)
             continue
 
     return patches
@@ -120,21 +120,21 @@ def patches(args):
     Given an image dataframe, this function will crop a patch for each annotation
     """
 
-    print("\n###############################################")
-    print("Cropping Patches")
-    print("###############################################\n")
+    print("\n###############################################", flush=True)
+    print("Cropping Patches", flush=True)
+    print("###############################################\n", flush=True)
 
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
     else:
-        print(f"ERROR: Image directory provided doesn't exist; please check input")
+        print(f"ERROR: Image directory provided doesn't exist; please check input", flush=True)
         sys.exit(1)
 
     if os.path.exists(args.annotation_file):
         annotation_file = args.annotation_file
         annotation_df = pd.read_csv(annotation_file)
     else:
-        print(f"ERROR: Annotation file provided does not exist; please check input")
+        print(f"ERROR: Annotation file provided does not exist; please check input", flush=True)
         sys.exit(1)
 
     # Create output
@@ -175,10 +175,10 @@ def patches(args):
     patches.to_csv(output_path)
 
     if os.path.exists(output_path):
-        print(f"NOTE: Patches dataframe saved to {output_path}")
+        print(f"NOTE: Patches dataframe saved to {output_path}", flush=True)
         return output_path
     else:
-        print(f"ERROR: Patches dataframe could not be saved")
+        print(f"ERROR: Patches dataframe could not be saved", flush=True)
         return None
 
 
@@ -207,11 +207,11 @@ def main():
     try:
 
         patches(args)
-        print("Done.")
+        print("Done.", flush=True)
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        print(f"ERROR: {e}", flush=True)
+        print(traceback.format_exc(), flush=True)
 
 
 if __name__ == "__main__":
