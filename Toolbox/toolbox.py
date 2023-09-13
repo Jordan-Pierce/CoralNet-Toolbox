@@ -427,7 +427,7 @@ def main():
                                         help='Upload data, or use the API for inference.',
                                         widget='Dropdown', choices=['Upload', 'API'], )
 
-    viscore_parser_panel_1.add_argument('--source_id', type=str, default='4345',
+    viscore_parser_panel_1.add_argument('--source_id', type=str, default='4346',
                                         metavar="Source ID",
                                         help='The ID of the CoralNet source.')
 

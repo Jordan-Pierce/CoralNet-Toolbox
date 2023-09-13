@@ -97,10 +97,25 @@ def check_for_browsers(headless):
         # Needed to avoid timeouts when running in headless mode
         options.add_experimental_option('extensionLoadTimeout', 3600000)
 
-    # Check for Chrome
     try:
-        browser = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()),
-                                   options=options)
+        # Check if ChromeDriver path is already in PATH
+        chrome_driver_path = "chromedriver.exe"  # Adjust the name if needed
+        if not any(
+            os.path.exists(os.path.join(directory, chrome_driver_path))
+            for directory in os.environ["PATH"].split(os.pathsep)
+        ):
+            # If it's not in PATH, attempt to install it
+            chrome_driver_path = ChromeDriverManager().install()
+
+            if not chrome_driver_path:
+                raise Exception("ERROR: ChromeDriver installation failed.")
+            else:
+                # Add the ChromeDriver directory to the PATH environment variable
+                os.environ["PATH"] += os.pathsep + os.path.dirname(chrome_driver_path)
+                print("NOTE: ChromeDriver added to PATH")
+
+        # Attempt to open a browser
+        browser = webdriver.Chrome(options=options)
 
         print("NOTE: Using Google Chrome", flush=True)
         return browser

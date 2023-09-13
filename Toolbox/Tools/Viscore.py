@@ -221,7 +221,7 @@ def main():
                         help='Upload data, or use the API for inference.',
                         choices=['Upload', 'API'])
 
-    parser.add_argument('--source_id', type=str, default='4345',
+    parser.add_argument('--source_id', type=str, default='4346',
                         help='The ID of the CoralNet source.')
 
     parser.add_argument('--prefix', required=False, default="",
@@ -249,7 +249,7 @@ def main():
     parser.add_argument('--view_count', type=int, required=False, default=9001,
                         help='Value used to filter views based on the total number of VPI image views.')
 
-    parser.add_argument('--headless', action='store_false', default=True,
+    parser.add_argument('--headless', action='store_true', default=True,
                         help='Run browser in headless mode')
 
     parser.add_argument('--output_dir', required=False,

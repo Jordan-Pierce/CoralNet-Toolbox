@@ -1,8 +1,11 @@
 import os
 import glob
 import time
+import random
 import argparse
 import traceback
+
+import concurrent.futures
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -20,6 +23,74 @@ from Browser import check_for_browsers
 # -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
+def upload_multi_images(driver, source_id, images, prefix):
+    """
+    Upload multiple sets of images concurrently.
+    """
+
+    def setup_browsers(username, password):
+        """
+        Set up a new WebDriver instance.
+        """
+        # Create a new browser
+        new_driver = check_for_browsers(True)
+
+        # Pass in credentials
+        new_driver.capabilities['credentials'] = {
+            'username': username,
+            'password': password
+        }
+        # Login
+        new_driver, _ = login(new_driver)
+
+        return new_driver
+
+    # Create multiple drivers
+    print("\n###############################################", flush=True)
+    print("Multi Image Upload", flush=True)
+    print("###############################################\n", flush=True)
+
+    # Number of additional browsers
+    N = 25
+
+    print(f"NOTE: Opening {N} additional browsers, please wait")
+
+    # Extract the credentials from the original driver
+    username = driver.capabilities['credentials']['username']
+    password = driver.capabilities['credentials']['password']
+
+    drivers = []
+
+    # Use concurrent.futures to set up N drivers concurrently
+    with concurrent.futures.ThreadPoolExecutor(max_workers=N) as executor:
+        for _ in range(N):
+            drivers.append(executor.submit(setup_browsers, username, password).result())
+
+    # Shuffle the image list
+    random.shuffle(images)
+
+    # Divide images among browsers using round-robin distribution
+    image_chunks = [[] for _ in range(N)]
+
+    for i, image in enumerate(images):
+        driver_index = i % len(drivers)
+        image_chunks[driver_index].append(image)
+
+    print(f"NOTE: Created {N} browsers, each tasked with {len(image_chunks)} images")
+
+    # Use concurrent.futures to upload each chunk of images with a separate driver
+    with concurrent.futures.ThreadPoolExecutor(max_workers=N) as executor:
+        for i in range(N):
+            executor.submit(upload_images, drivers[i], source_id, image_chunks[i], prefix)
+
+    # Close the additional drivers
+    for d_idx, d in enumerate(drivers):
+        print(f"NOTE: Closing browser {d_idx + 1}")
+        d.quit()
+
+    # Return the original driver
+    return driver
+
 
 def upload_images(driver, source_id, images, prefix):
     """
@@ -470,6 +541,7 @@ def upload(args):
     # -------------------------------------------------------------------------
     # Authenticate the user
     # -------------------------------------------------------------------------
+
     try:
         username = args.username
         password = args.password
@@ -483,6 +555,7 @@ def upload(args):
     # -------------------------------------------------------------------------
     # Get the browser
     # -------------------------------------------------------------------------
+
     # Pass the options object while creating the driver
     driver = check_for_browsers(args.headless)
     # Store the credentials in the driver
@@ -504,7 +577,11 @@ def upload(args):
 
     # Upload images
     if image_upload:
-        driver, _ = upload_images(driver, source_id, images, prefix)
+        # If there's many images, use multi upload
+        if len(images) >= 1000:
+            driver = upload_multi_images(driver, source_id, images, prefix)
+        else:
+            driver, _ = upload_images(driver, source_id, images, prefix)
 
     # Upload annotations
     if annotation_upload:
@@ -562,7 +639,7 @@ def main():
     parser.add_argument('--labelset', type=str, default="",
                         help='The path to the labelset file')
 
-    parser.add_argument('--headless', action='store_false', default=True,
+    parser.add_argument('--headless', action='store_true', default=True,
                         help='Run browser in headless mode')
 
     args = parser.parse_args()
