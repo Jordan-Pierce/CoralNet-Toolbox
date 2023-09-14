@@ -426,7 +426,7 @@ def main():
     try:
         # Run the workflow
         seg3d(args)
-        log("Done.")
+        log("Done.\n")
 
     except Exception as e:
         log(f"ERROR: {e}")

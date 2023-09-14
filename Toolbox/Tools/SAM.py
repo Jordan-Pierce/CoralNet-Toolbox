@@ -497,7 +497,7 @@ def main():
 
     try:
         mss_sam(args)
-        log("Done.")
+        log("Done.\n")
 
     except Exception as e:
         log(f"ERROR: {e}")

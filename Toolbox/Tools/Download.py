@@ -1001,7 +1001,7 @@ def main():
     try:
         # Call the download function
         download(args)
-        log("Done.")
+        log("Done.\n")
 
     except Exception as e:
         log(f"ERROR: {e}")

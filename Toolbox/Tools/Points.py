@@ -144,7 +144,7 @@ def main():
     try:
 
         points(args)
-        log("Done.")
+        log("Done.\n")
 
     except Exception as e:
         log(f"ERROR: {e}")

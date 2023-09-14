@@ -328,7 +328,7 @@ def main():
     try:
         # Run the workflow
         sfm(args)
-        log("Done.")
+        log("Done.\n")
 
     except Exception as e:
         log(f"ERROR: {e}")

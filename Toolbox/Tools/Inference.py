@@ -209,7 +209,7 @@ def main():
 
     try:
         inference(args)
-        log("Done.")
+        log("Done.\n")
 
     except Exception as e:
         log(f"ERROR: {e}")

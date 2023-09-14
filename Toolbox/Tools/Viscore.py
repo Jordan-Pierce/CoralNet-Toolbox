@@ -263,7 +263,7 @@ def main():
 
     try:
         viscore(args)
-        log('Done.')
+        log("Done.\n")
 
     except Exception as e:
         log(f'ERROR: {e}')

@@ -208,7 +208,7 @@ def main():
     try:
 
         patches(args)
-        log("Done.")
+        log("Done.\n")
 
     except Exception as e:
         log(f"ERROR: {e}")
