@@ -67,7 +67,7 @@ FUNC_GROUPS_DICT = {
     "Seagrass": "20"}
 
 # Image Formats
-IMG_FORMATS = ["jpg", "jpeg", "png", "tif", "tiff", "bmp"]
+IMG_FORMATS = ["jpg", "jpeg", "png", "bmp"]
 
 
 # ------------------------------------------------------------------------------------------------------------------

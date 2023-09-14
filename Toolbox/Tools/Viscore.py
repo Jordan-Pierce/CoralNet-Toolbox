@@ -96,11 +96,11 @@ def convert_labels(args):
         return args
 
     # Pattern to check against
-    pattern = r'^[A-Za-z]+_[A-Za-z\d-]+_\d{4}-\d{2}-\d{2}\.csv$'
+    pattern = r'^[A-Za-z]+_[A-Za-z\d-]+_[\d]{4}[-_]\d{2}[-_]\d{2}\.csv$'
 
     # Check if labels file matches expected format
     if not re.match(pattern, os.path.basename(viscore_labels)):
-        log(f"ERROR: Label path does not match expected format; check input provided.")
+        log(f"ERROR: {os.path.basename(viscore_labels)} does not match expected pattern")
         sys.exit(1)
 
     try:

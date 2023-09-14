@@ -52,7 +52,7 @@ def upload_multi_images(driver, source_id, images, prefix):
     log("###############################################\n")
 
     # Number of additional browsers
-    N = 25
+    N = 10
 
     log(f"NOTE: Opening {N} additional browsers, please wait")
 
