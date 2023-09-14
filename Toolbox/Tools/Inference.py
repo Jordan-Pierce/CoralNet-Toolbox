@@ -15,14 +15,16 @@ import tensorflow as tf
 keras = tf.keras
 from keras.models import load_model
 
-from Common import IMG_FORMATS
+from Common import log
 from Common import get_now
+from Common import IMG_FORMATS
 from Common import print_progress
 
 from Patches import crop_patch
 from Classifier import precision
 from Classifier import recall
 from Classifier import f1_score
+
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -46,15 +48,15 @@ def inference(args):
     """
 
     """
-    print("\n###############################################", flush=True)
-    print("Inference", flush=True)
-    print("###############################################\n", flush=True)
+    log("\n###############################################")
+    log("Inference")
+    log("###############################################\n")
 
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
-        print("NOTE: Found GPU", flush=True)
+        log("NOTE: Found GPU")
     else:
-        print("WARNING: No GPU found; defaulting to CPU", flush=True)
+        log("WARNING: No GPU found; defaulting to CPU")
 
     # Points Dataframe
     if os.path.exists(args.points):
@@ -62,9 +64,9 @@ def inference(args):
         annotation_file = args.points
         points = pd.read_csv(annotation_file, index_col=0)
         image_names = np.unique(points['Name'].to_numpy())
-        print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images", flush=True)
+        log(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
     else:
-        print("ERROR: Points provided doesn't exist.", flush=True)
+        log("ERROR: Points provided doesn't exist.")
         sys.exit(1)
 
     # Image files
@@ -79,9 +81,9 @@ def inference(args):
         if not image_files:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            print(f"NOTE: Found {len(image_files)} images in directory provided", flush=True)
+            log(f"NOTE: Found {len(image_files)} images in directory provided")
     else:
-        print("ERROR: Directory provided doesn't exist.", flush=True)
+        log("ERROR: Directory provided doesn't exist.")
         sys.exit(1)
 
     # Model Weights
@@ -90,20 +92,20 @@ def inference(args):
             # Load the model with custom metrics
             custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
             model = load_model(args.model, custom_objects=custom_objects)
-            print(f"NOTE: Loaded model {args.model}", flush=True)
+            log(f"NOTE: Loaded model {args.model}")
 
         except Exception as e:
-            print(f"ERROR: There was an issue loading the model\n{e}", flush=True)
+            log(f"ERROR: There was an issue loading the model\n{e}")
             sys.exit(1)
     else:
-        print("ERROR: Model provided doesn't exist.", flush=True)
+        log("ERROR: Model provided doesn't exist.")
         sys.exit(1)
 
     # Class map
     if os.path.exists(args.class_map):
         class_map = get_class_map(args.class_map)
     else:
-        print(f"ERROR: Class Map file provided doesn't exist.", flush=True)
+        log(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit()
 
     # Output
@@ -131,7 +133,7 @@ def inference(args):
         patches = []
 
         # Create patches for this image
-        print(f"NOTE: Cropping patches for {image_name}", flush=True)
+        log(f"NOTE: Cropping patches for {image_name}")
         # Get the current image points
         image_points = points[points['Name'] == image_name]
 
@@ -146,7 +148,7 @@ def inference(args):
         # ----------------------------------------------------------------
 
         # Model to make predictions
-        print(f"NOTE: Making predictions on patches for {image_name}", flush=True)
+        log(f"NOTE: Making predictions on patches for {image_name}")
         probabilities = model.predict(patches, verbose=0)
         predictions = np.argmax(probabilities, axis=1)
         class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
@@ -172,7 +174,7 @@ def inference(args):
 
         # Save each image predictions
         output.to_csv(output_path)
-        print(f"NOTE: Predictions saved to {output_path}", flush=True)
+        log(f"NOTE: Predictions saved to {output_path}")
 
         print_progress(n_idx, len(image_names))
 
@@ -207,11 +209,11 @@ def main():
 
     try:
         inference(args)
-        print("Done.", flush=True)
+        log("Done.")
 
     except Exception as e:
-        print(f"ERROR: {e}", flush=True)
-        print(traceback.format_exc(), flush=True)
+        log(f"ERROR: {e}")
+        log(traceback.format_exc())
 
 
 if __name__ == "__main__":

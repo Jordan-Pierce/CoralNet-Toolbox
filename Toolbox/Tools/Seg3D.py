@@ -12,8 +12,10 @@ import Metashape
 from plyfile import PlyData
 from scipy.spatial.distance import cdist
 
-from Common import print_progress
 from SfM import print_sfm_progress
+
+from Common import log
+from Common import print_progress
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"
@@ -69,11 +71,11 @@ def post_process_pcd(temp_path, dense_path, color_map, chunk_size=10000000):
         # Gooey
         print_progress(i, num_points)
 
-    print("NOTE: Writing post-processed point cloud to disk", flush=True)
+    log("NOTE: Writing post-processed point cloud to disk")
     plydata.write(dense_path)
 
     if os.path.exists(dense_path):
-        print("NOTE: Post-processed point cloud saved successfully", flush=True)
+        log("NOTE: Post-processed point cloud saved successfully")
     else:
         raise Exception("ERROR: Issue with saving post-processed point cloud")
 
@@ -85,9 +87,9 @@ def seg3d_workflow(args):
     """
 
     """
-    print("\n###############################################", flush=True)
-    print("3D Semantic Segmentation", flush=True)
-    print("###############################################\n", flush=True)
+    log("\n###############################################")
+    log("3D Semantic Segmentation")
+    log("###############################################\n")
 
     # Start the timer
     t0 = time.time()
@@ -97,14 +99,14 @@ def seg3d_workflow(args):
         project_file = args.project_file
         project_dir = f"{os.path.dirname(project_file)}\\"
     else:
-        print(f"ERROR: Project file provided doesn't exist; check input provided", flush=True)
+        log(f"ERROR: Project file provided doesn't exist; check input provided")
         sys.exit(1)
 
     # Segmentation masks for images in project
     if os.path.exists(args.masks_dir):
         masks_dir = f"{args.masks_dir}\\"
     else:
-        print(f"ERROR: Masks directory provided doesn't exist; check input provided", flush=True)
+        log(f"ERROR: Masks directory provided doesn't exist; check input provided")
         sys.exit(1)
 
     # Color mapping file
@@ -116,7 +118,7 @@ def seg3d_workflow(args):
         color_map = np.array([v['color'] for k, v in color_map.items()])
 
     else:
-        print(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided", flush=True)
+        log(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
         sys.exit(1)
 
     # Create filenames for data outputs
@@ -132,7 +134,7 @@ def seg3d_workflow(args):
     # Create a metashape doc object
     doc = Metashape.Document()
 
-    print(f"NOTE: Opening existing project file", flush=True)
+    log(f"NOTE: Opening existing project file")
     # Open existing project file
     doc.open(project_file,
              read_only=False,
@@ -144,7 +146,7 @@ def seg3d_workflow(args):
         chunk = doc.chunks[args.chunk_index]
 
         if not chunk.point_cloud:
-            print(f"ERROR: Chunk does not contain a dense point cloud; exiting", flush=True)
+            log(f"ERROR: Chunk does not contain a dense point cloud; exiting")
             sys.exit(1)
 
         # Loop through the chunks to see if there is already
@@ -158,13 +160,13 @@ def seg3d_workflow(args):
 
         # If the classified chunk already exists, skip this section
         if classified_chunk:
-            print("WARNING: Classified chunk for index provided already exists.", flush=True)
-            print("WARNING: If you want to start from scratch, delete the existing chunk.", flush=True)
+            log("WARNING: Classified chunk for index provided already exists.")
+            log("WARNING: If you want to start from scratch, delete the existing chunk.")
 
         else:
-            print("\n###############################################", flush=True)
-            print("Duplicating chunk", flush=True)
-            print("###############################################\n", flush=True)
+            log("\n###############################################")
+            log("Duplicating chunk")
+            log("###############################################\n")
             # Create a copy to serve as the classified chunk
             classified_chunk = chunk.copy(progress=print_sfm_progress)
             # Rename classified chunk
@@ -174,18 +176,18 @@ def seg3d_workflow(args):
             doc.save()
 
     except Exception as e:
-        print(f"ERROR: Could not create a duplicate of chunk {args.chunk_index}\n{e}", flush=True)
+        log(f"ERROR: Could not create a duplicate of chunk {args.chunk_index}\n{e}")
         sys.exit(1)
 
     try:
         # Make sure there are cameras
         if not classified_chunk.cameras:
-            print(f"ERROR: Duplicate of chunk does not contain any camera paths; exiting", flush=True)
+            log(f"ERROR: Duplicate of chunk does not contain any camera paths; exiting")
             sys.exit(1)
 
-        print("\n###############################################", flush=True)
-        print("Updating camera paths", flush=True)
-        print("###############################################\n", flush=True)
+        log("\n###############################################")
+        log("Updating camera paths")
+        log("###############################################\n")
         # Update all the photo paths in the classified chunk to be the labels
 
         for camera in classified_chunk.cameras:
@@ -195,14 +197,14 @@ def seg3d_workflow(args):
             if os.path.exists(classified_photo):
                 camera.photo.path = classified_photo
             else:
-                print(f"ERROR: Could not find the following file {classified_photo}; exiting", flush=True)
+                log(f"ERROR: Could not find the following file {classified_photo}; exiting")
                 sys.exit(1)
 
         # Save the document
         doc.save()
 
     except Exception as e:
-        print(f"ERROR: Could not update camera paths\n{e}", flush=True)
+        log(f"ERROR: Could not update camera paths\n{e}")
         sys.exit()
 
     if classified_chunk.point_cloud and "Classified" not in classified_chunk.point_cloud.label:
@@ -210,9 +212,9 @@ def seg3d_workflow(args):
         # otherwise, all of these section can be skipped.
 
         try:
-            print("\n###############################################", flush=True)
-            print("Classifying dense point cloud", flush=True)
-            print("###############################################\n", flush=True)
+            log("\n###############################################")
+            log("Classifying dense point cloud")
+            log("###############################################\n")
             # Classify (colorize) the dense point cloud using the labels.
             # Update the point cloud to apply the new colorization settings
             classified_chunk.colorizePointCloud(Metashape.ImagesData,
@@ -220,13 +222,13 @@ def seg3d_workflow(args):
             doc.save()
 
         except Exception as e:
-            print(f"ERROR: Could not classify dense point cloud\n{e}", flush=True)
+            log(f"ERROR: Could not classify dense point cloud\n{e}")
             sys.exit(1)
 
         try:
-            print("\n###############################################", flush=True)
-            print("Exporting classified dense point cloud", flush=True)
-            print("###############################################\n", flush=True)
+            log("\n###############################################")
+            log("Exporting classified dense point cloud")
+            log("###############################################\n")
             # First export the point cloud
             classified_chunk.exportPointCloud(path=output_temp,
                                               save_point_color=True,
@@ -236,18 +238,18 @@ def seg3d_workflow(args):
                                               crs=classified_chunk.crs,
                                               progress=print_sfm_progress)
         except Exception as e:
-            print(f"ERROR: Could not export classified dense point cloud\n{e}", flush=True)
+            log(f"ERROR: Could not export classified dense point cloud\n{e}")
             sys.exit(1)
 
         try:
-            print("\n###############################################", flush=True)
-            print("Post-processing classified point cloud", flush=True)
-            print("###############################################\n", flush=True)
+            log("\n###############################################")
+            log("Post-processing classified point cloud")
+            log("###############################################\n")
             # Edit dense point cloud colors
             post_process_pcd(output_temp, output_dense, color_map)
 
         except Exception as e:
-            print(f"ERROR: Could not post-process classified point cloud\n{e}", flush=True)
+            log(f"ERROR: Could not post-process classified point cloud\n{e}")
             sys.exit(1)
 
         try:
@@ -255,12 +257,12 @@ def seg3d_workflow(args):
             if os.path.exists(output_dense):
                 os.remove(output_temp)
         except:
-            print("WARNING: Could not delete temp point cloud file; please delete it", flush=True)
+            log("WARNING: Could not delete temp point cloud file; please delete it")
 
         try:
-            print("\n###############################################", flush=True)
-            print("Importing post-processed classified point cloud", flush=True)
-            print("###############################################\n", flush=True)
+            log("\n###############################################")
+            log("Importing post-processed classified point cloud")
+            log("###############################################\n")
             # Import the updated version
             classified_chunk.importPointCloud(output_dense,
                                               replace_asset=True,
@@ -272,7 +274,7 @@ def seg3d_workflow(args):
             doc.save()
 
         except Exception as e:
-            print(f"ERROR: Could not complete post-processing of classified point cloud\n{e}", flush=True)
+            log(f"ERROR: Could not complete post-processing of classified point cloud\n{e}")
             sys.exit(1)
 
     # If the user wants to classify the mesh
@@ -282,9 +284,9 @@ def seg3d_workflow(args):
 
             # Check that the mesh hasn't already been classified
             if "Classified" not in classified_chunk.model.label:
-                print("\n###############################################", flush=True)
-                print("Classifying mesh", flush=True)
-                print("###############################################\n", flush=True)
+                log("\n###############################################")
+                log("Classifying mesh")
+                log("###############################################\n")
                 # Classify (colorize) the mesh using the classified dense point cloud.
                 # Update the mesh to apply the new colorization settings
                 classified_chunk.colorizeModel(Metashape.PointCloudData,
@@ -296,31 +298,31 @@ def seg3d_workflow(args):
                 doc.save()
 
         except Exception as e:
-            print(f"ERROR: Could not classify mesh\n{e}", flush=True)
+            log(f"ERROR: Could not classify mesh\n{e}")
             sys.exit(1)
 
         try:
 
             # If the classified mesh exists, and it wasn't already output
             if 'Classified' in classified_chunk.model.label and not os.path.exists(output_mesh):
-                print("\n###############################################", flush=True)
-                print("Exporting classified mesh", flush=True)
-                print("###############################################\n", flush=True)
+                log("\n###############################################")
+                log("Exporting classified mesh")
+                log("###############################################\n")
 
                 classified_chunk.exportModel(path=output_mesh,
                                              progress=print_sfm_progress)
 
         except Exception as e:
-            print(f"ERROR: Could not classify mesh\n{e}", flush=True)
+            log(f"ERROR: Could not classify mesh\n{e}")
             sys.exit(1)
 
     # If the user wants to classify the orthomosaic, all that is needed is DEM
     if args.classify_ortho and classified_chunk.elevation:
 
         try:
-            print("\n###############################################", flush=True)
-            print("Classifying orthomosaic", flush=True)
-            print("###############################################\n", flush=True)
+            log("\n###############################################")
+            log("Classifying orthomosaic")
+            log("###############################################\n")
 
             # Create the orthomosaic
             classified_chunk.buildOrthomosaic(surface_data=Metashape.ElevationData,
@@ -334,15 +336,15 @@ def seg3d_workflow(args):
             doc.save()
 
         except Exception as e:
-            print(f"ERROR: Could not classify orthomosiac\n{e}", flush=True)
+            log(f"ERROR: Could not classify orthomosiac\n{e}")
             sys.exit(1)
 
         try:
             # If the classified orthomosaic exists, and it wasn't already output
             if 'Classified' in classified_chunk.orthomosaic.label and not os.path.exists(output_ortho):
-                print("\n###############################################", flush=True)
-                print("Exporting classified orthomosaic", flush=True)
-                print("###############################################\n", flush=True)
+                log("\n###############################################")
+                log("Exporting classified orthomosaic")
+                log("###############################################\n")
 
                 # Set compression parameters (otherwise bigtiff error)
                 compression = Metashape.ImageCompression()
@@ -354,12 +356,12 @@ def seg3d_workflow(args):
                                               progress=print_sfm_progress)
 
         except Exception as e:
-            print(f"ERROR: Could not classify orthomosaic\n{e}", flush=True)
+            log(f"ERROR: Could not classify orthomosaic\n{e}")
             sys.exit(1)
 
     # Print a message indicating that the processing has finished and the results have been saved.
-    print(f"NOTE: Processing finished, results saved to {project_dir}", flush=True)
-    print(f"NOTE: Completed in {np.around(((time.time() - t0) / 60), 2)} minutes", flush=True)
+    log(f"NOTE: Processing finished, results saved to {project_dir}")
+    log(f"NOTE: Completed in {np.around(((time.time() - t0) / 60), 2)} minutes")
 
 
 def seg3d(args):
@@ -382,8 +384,8 @@ def seg3d(args):
         seg3d_workflow(args)
 
     except Exception as e:
-        print(f"{e}\nERROR: Could not finish workflow!", flush=True)
-        print(traceback.format_exc(), flush=True)
+        log(f"{e}\nERROR: Could not finish workflow!")
+        log(traceback.format_exc())
 
 
 # -----------------------------------------------------------------------------
@@ -424,11 +426,11 @@ def main():
     try:
         # Run the workflow
         seg3d(args)
-        print("Done.", flush=True)
+        log("Done.")
 
     except Exception as e:
-        print(f"ERROR: {e}", flush=True)
-        print(traceback.format_exc(), flush=True)
+        log(f"ERROR: {e}")
+        log(traceback.format_exc())
 
 
 if __name__ == '__main__':

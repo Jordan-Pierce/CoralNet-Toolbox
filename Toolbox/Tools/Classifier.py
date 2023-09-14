@@ -37,10 +37,12 @@ from sklearn.model_selection import train_test_split
 
 from imgaug import augmenters as iaa
 
+from Common import log
 from Common import get_now
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
@@ -117,15 +119,15 @@ def classifier(args):
 
     """
 
-    print(f"\n#########################################\n, flush=True"
-          f"Classifier\n"
-          f"#########################################\n")
+    log("\n###############################################")
+    log(f"Classifier")
+    log("###############################################\n")
 
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
-        print("NOTE: Found GPU", flush=True)
+        log("NOTE: Found GPU")
     else:
-        print("WARNING: No GPU found; defaulting to CPU", flush=True)
+        log("WARNING: No GPU found; defaulting to CPU")
 
     # ---------------------------------------------------------------------------------------
     # Source directory setup
@@ -144,15 +146,15 @@ def classifier(args):
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
 
-    print(f"NOTE: Model Run - {run}", flush=True)
-    print(f"NOTE: Model Directory - {run_dir}", flush=True)
-    print(f"NOTE: Log Directory - {logs_dir}", flush=True)
+    log(f"NOTE: Model Run - {run}")
+    log(f"NOTE: Model Directory - {run_dir}")
+    log(f"NOTE: Log Directory - {logs_dir}")
 
     # ---------------------------------------------------------------------------------------
     # Data setup
-    print(f"\n#########################################\n, flush=True"
-          f"Creating Datasets\n"
-          f"#########################################\n")
+    log(f"\n#########################################\n"
+        f"Creating Datasets\n"
+        f"#########################################\n")
 
     # If the user provides multiple patch dataframes
     patches_df = pd.DataFrame()
@@ -182,7 +184,7 @@ def classifier(args):
     # If there isn't one class sample in each train and valid sets
     # Keras will throw an error; hacky way of fixing this.
     if len(set(train_df['Label'].unique())) - len(set(valid_df['Label'].unique())):
-        print("NOTE: Sampling one of each class category", flush=True)
+        log("NOTE: Sampling one of each class category")
         # Holds one sample of each class category
         sample = pd.DataFrame()
         # Gets one sample from patches_df
@@ -201,9 +203,9 @@ def classifier(args):
     # The number of class categories
     class_names = train_df['Label'].unique().tolist()
     num_classes = len(class_names)
-    print(f"NOTE: Number of classes in training set is {len(train_df['Label'].unique())}", flush=True)
-    print(f"NOTE: Number of classes in validation set is {len(valid_df['Label'].unique())}", flush=True)
-    print(f"NOTE: Number of classes in testing set is {len(test_df['Label'].unique())}", flush=True)
+    log(f"NOTE: Number of classes in training set is {len(train_df['Label'].unique())}")
+    log(f"NOTE: Number of classes in validation set is {len(valid_df['Label'].unique())}")
+    log(f"NOTE: Number of classes in testing set is {len(test_df['Label'].unique())}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Data Exploration
@@ -236,17 +238,17 @@ def classifier(args):
     plt.show()
 
     if os.path.exists(logs_dir + "DatasetSplit.png"):
-        print(f"NOTE: Datasplit Figure saved in {logs_dir}", flush=True)
+        log(f"NOTE: Datasplit Figure saved in {logs_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Start of parameter setting
-    print(f"\n#########################################\n, flush=True"
-          f"Setting Parameters\n"
-          f"#########################################\n")
+    log(f"\n#########################################\n"
+        f"Setting Parameters\n"
+        f"#########################################\n")
 
     # Calculate weights
     if args.weighted_loss:
-        print(f"NOTE: Calculating weights for weighted loss function", flush=True)
+        log(f"NOTE: Calculating weights for weighted loss function")
         class_weight = compute_class_weights(train_df)
     else:
         class_weight = {c: 1.0 for c in range(num_classes)}
@@ -263,7 +265,7 @@ def classifier(args):
 
     # For the training set, if selected
     if args.augment_data:
-        print(f"NOTE: Augmenting Training Dataset", flush=True)
+        log(f"NOTE: Augmenting Training Dataset")
         augs_for_train = iaa.Sequential([
             iaa.Resize(224, interpolation='linear'),
             iaa.Fliplr(0.5),
@@ -346,9 +348,9 @@ def classifier(args):
 
     # ------------------------------------------------------------------------------------------------------------------
     # Building Model
-    print(f"\n#########################################\n, flush=True"
-          f"Building Model\n"
-          f"#########################################\n")
+    log(f"\n#########################################\n"
+        f"Building Model\n"
+        f"#########################################\n")
 
     convnet = getattr(keras.applications, args.model_name)(
         include_top=False,
@@ -373,7 +375,7 @@ def classifier(args):
 
     # Display model to user
     graph = model.summary()
-    print(f"\n{graph}\n", flush=True)
+    log(f"\n{graph}\n")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Callbacks
@@ -410,9 +412,9 @@ def classifier(args):
     # Display Tensorboard
     if args.tensorboard:
         try:
-            print(f"\n#########################################\n, flush=True"
-                  f"Tensorboard\n"
-                  f"#########################################\n")
+            log(f"\n#########################################\n"
+                f"Tensorboard\n"
+                f"#########################################\n")
 
             # Call Tensorboard using the environment's python exe
             tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
@@ -422,18 +424,18 @@ def classifier(args):
             time.sleep(15)
 
         except Exception as e:
-            print(f"WARNING: Could not open TensorBoard; check that it is installed\n{e}", flush=True)
+            log(f"WARNING: Could not open TensorBoard; check that it is installed\n{e}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Train Model
 
     try:
 
-        print(f"\n#########################################\n, flush=True"
-              f"Training\n"
-              f"#########################################\n")
+        log(f"\n#########################################\n"
+            f"Training\n"
+            f"#########################################\n")
 
-        print("NOTE: Starting Training", flush=True)
+        log("NOTE: Starting Training")
         history = model.fit(train_generator,
                             steps_per_epoch=steps_per_epoch_train,
                             epochs=num_epochs,
@@ -443,8 +445,8 @@ def classifier(args):
                             verbose=0,
                             class_weight=class_weight)
     except Exception as e:
-        print(f"ERROR: There was an issue with training!\n, flush=True"
-              f"Read the 'Error.txt file' in the Logs Directory")
+        log(f"ERROR: There was an issue with training!\n"
+            f"Read the 'Error.txt file' in the Logs Directory")
 
         # Write the error to text file
         with open(f"{logs_dir}Error.txt", 'a') as file:
@@ -456,13 +458,13 @@ def classifier(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Plot and save results
     plot_history(history, single_graphs=True, path=f"{logs_dir}");
-    print(f"NOTE: Training History Figure saved in {logs_dir}", flush=True)
+    log(f"NOTE: Training History Figure saved in {logs_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Test Dataset
-    print(f"\n#########################################\n, flush=True"
-          f"Validating with Test Dataset\n"
-          f"#########################################\n")
+    log(f"\n#########################################\n"
+        f"Validating with Test Dataset\n"
+        f"#########################################\n")
 
     # Get the best weights
     weights = sorted(glob.glob(weights_dir + "*.h5"), key=os.path.getmtime)
@@ -470,7 +472,7 @@ def classifier(args):
 
     # Load into the model
     model.load_weights(best_weights)
-    print(f"NOTE: Loaded best weights {best_weights}", flush=True)
+    log(f"NOTE: Loaded best weights {best_weights}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Make predictions on test set
@@ -488,7 +490,7 @@ def classifier(args):
     # Save the report to a file
     with open(f"{logs_dir}Classification_Report.txt", "w") as file:
         file.write(report)
-    print(f"NOTE: Classification Report saved in {logs_dir}", flush=True)
+    log(f"NOTE: Classification Report saved in {logs_dir}")
 
     # --- Confusion Matrix
     # Calculate the overall accuracy
@@ -523,7 +525,7 @@ def classifier(args):
     plt.savefig(f"{logs_dir}Confusion_Matrix.png")
     plt.show()
 
-    print(f"NOTE: Confusion Matrix saved in {logs_dir}", flush=True)
+    log(f"NOTE: Confusion Matrix saved in {logs_dir}")
 
     # --- ROC
     # Convert the true labels to binary format
@@ -560,7 +562,7 @@ def classifier(args):
     plt.savefig(logs_dir + "ROC_Curves.png")
     plt.show()
 
-    print(f"NOTE: ROC Figure saved in {logs_dir}", flush=True)
+    log(f"NOTE: ROC Figure saved in {logs_dir}")
 
     # --- Threshold
     # Higher values represent more sure/confident predictions
@@ -602,12 +604,12 @@ def classifier(args):
     plt.savefig(logs_dir + "AccuracyThreshold.png")
     plt.show()
 
-    print(f"NOTE: Threshold Figure saved in {logs_dir}", flush=True)
+    log(f"NOTE: Threshold Figure saved in {logs_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Save the best model
     model.save(f"{run_dir}Best_Model_and_Weights.h5")
-    print(f"NOTE: Best Model and Weights saved in {run_dir}", flush=True)
+    log(f"NOTE: Best Model and Weights saved in {run_dir}")
 
     if args.tensorboard:
         # Close Tensorboard
@@ -654,11 +656,11 @@ def main():
 
     try:
         classifier(args)
-        print('Done.', flush=True)
+        log('Done.')
 
     except Exception as e:
-        print(f"ERROR: {e}", flush=True)
-        print(traceback.format_exc(), flush=True)
+        log(f"ERROR: {e}")
+        log(traceback.format_exc())
 
 
 if __name__ == '__main__':

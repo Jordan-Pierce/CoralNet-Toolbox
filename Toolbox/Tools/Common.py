@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 import datetime
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -20,6 +21,15 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Make the Cache directory
 CACHE_DIR = f"{DATA_DIR}\\Cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+# Patch extractor path
+PATCH_EXTRACTOR = f'{PROJECT_DIR}\\Tools\\Patch_Extractor\\CNNDataExtractor.exe'
+
+# For all the logging
+LOG_PATH = f"{DATA_DIR}\\Cache\\logs.log"
+
+# MIR specific, mapping path
+MIR_MAPPING = f'{DATA_DIR}\\Mission_Iconic_Reefs\\MIR_VPI_CoralNet_Mapping.csv'
 
 # Coralnet labelset file for dropdown menu in gooey
 CORALNET_LABELSET_FILE = f"{CACHE_DIR}\\CoralNet_Labelset_List.csv"
@@ -59,11 +69,6 @@ FUNC_GROUPS_DICT = {
 # Image Formats
 IMG_FORMATS = ["jpg", "jpeg", "png", "tif", "tiff", "bmp"]
 
-# MIR specific, mapping path
-MIR_MAPPING = f'{DATA_DIR}\\Mission_Iconic_Reefs\\MIR_VPI_CoralNet_Mapping.csv'
-
-# Patch extractor path
-PATCH_EXTRACTOR = f'{PROJECT_DIR}\\Tools\\Patch_Extractor\\CNNDataExtractor.exe'
 
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
@@ -74,7 +79,7 @@ def print_progress(prg, prg_total):
     """
     Formatted print for Gooey to show progress in progress bar
     """
-    print("progress: {}/{}".format(prg, prg_total), flush=True)
+    log("progress: {}/{}".format(prg, prg_total))
 
 
 def get_now():
@@ -85,3 +90,43 @@ def get_now():
     now = datetime.datetime.now()
     now = now.strftime("%Y-%m-%d_%H-%M-%S")
     return now
+
+
+def setup_logger(log_file_path):
+    """
+
+    """
+    # Create a logger instance
+    logger = logging.getLogger(__name__)
+
+    # Configure the root logger (optional, if you want to set a default level)
+    logger.setLevel(logging.DEBUG)
+
+    # Create a file handler to log to the specified file (INFO level)
+    file_handler_info = logging.FileHandler(log_file_path)
+    file_handler_info.setLevel(logging.INFO)
+
+    # Create a console handler to log to the console (INFO level)
+    console_handler_info = logging.StreamHandler()
+    console_handler_info.setLevel(logging.INFO)
+
+    # Set the formatter for all handlers
+    formatter = logging.Formatter('%(message)s')
+    file_handler_info.setFormatter(formatter)
+    console_handler_info.setFormatter(formatter)
+
+    # Add the handlers to the logger
+    logger.addHandler(file_handler_info)
+    logger.addHandler(console_handler_info)
+
+    return logger
+
+
+# Setup logger
+LOGGER = setup_logger(LOG_PATH)
+
+
+# Define a custom logging function that mimics 'print'
+def log(*args):
+    message = ' '.join(map(str, args))
+    LOGGER.info(message)  # Log the message at INFO level

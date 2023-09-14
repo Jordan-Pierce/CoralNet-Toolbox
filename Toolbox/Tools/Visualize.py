@@ -12,6 +12,7 @@ from matplotlib.widgets import Button
 from matplotlib.widgets import TextBox
 from matplotlib.patches import Rectangle
 
+from Common import log
 from Common import IMG_FORMATS
 
 # Set plot backend
@@ -151,7 +152,7 @@ class ImageViewer:
     def on_save_figure(self, event):
         filename = f"{self.output_dir}figure_{self.current_index + 1}.png"
         self.fig.savefig(filename)
-        print(f"Figure saved as {filename}", flush=True)
+        log(f"Figure saved as {filename}")
 
     def on_go_to_image(self, event):
         try:
@@ -160,9 +161,9 @@ class ImageViewer:
                 self.current_index = index - 1
                 self.show_image()
             else:
-                print("Invalid image index. Please enter a valid image index.", flush=True)
+                log("Invalid image index. Please enter a valid image index.")
         except ValueError:
-            print("Invalid input. Please enter a valid image index (numeric value).", flush=True)
+            log("Invalid input. Please enter a valid image index (numeric value).")
 
     def create_buttons(self):
         ax_home = plt.axes([0.1, 0.05, 0.1, 0.075])
@@ -196,9 +197,9 @@ def visualize(args):
     """
     # Set the backend to 'TkAgg' for an external viewer
 
-    print("\n###############################################", flush=True)
-    print("Visualize", flush=True)
-    print("###############################################\n", flush=True)
+    log("\n###############################################")
+    log("Visualize")
+    log("###############################################\n")
 
     # Pass the variables
     image_dir = args.image_dir
@@ -215,14 +216,14 @@ def visualize(args):
         image_files = [f for f in glob.glob(f"{image_dir}\*.*") if f.split(".")[-1].lower() in IMG_FORMATS]
 
         if image_files is []:
-            print("NOTE: No images found; exiting", flush=True)
+            log("NOTE: No images found; exiting")
             return
 
     if not os.path.exists(annotations):
-        print("WARNING: Annotations provided, but they doe not exists; please check input.", flush=True)
+        log("WARNING: Annotations provided, but they doe not exists; please check input.")
     else:
         annotations = pd.read_csv(annotations, index_col=0)
-        assert label_column in annotations.columns, print(f"ERROR: '{label_column}' not found in annotations", flush=True)
+        assert label_column in annotations.columns, log(f"ERROR: '{label_column}' not found in annotations")
 
     # Create the ImageViewer object with the list of images
     image_viewer = ImageViewer(image_files, annotations, label_column, output_dir)
@@ -250,8 +251,8 @@ if __name__ == "__main__":
 
     try:
         visualize(args)
-        print("Done.\n", flush=True)
+        log("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}", flush=True)
-        print(traceback.format_exc(), flush=True)
+        log(f"ERROR: {e}")
+        log(traceback.format_exc())

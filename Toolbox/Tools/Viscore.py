@@ -7,10 +7,12 @@ from tqdm import tqdm
 import re
 import pandas as pd
 
-from Common import MIR_MAPPING
-
 from API import api
+
 from Upload import upload
+
+from Common import log
+from Common import MIR_MAPPING
 
 
 # -----------------------------------------------------------------------------
@@ -21,15 +23,15 @@ def make_labelset(args):
     Creates a temporary labelset for CoralNet from the mapping file,
     just so we can reduce the amount of input parameters needed.
     """
-    print("\n###############################################", flush=True)
-    print("Making Labelset", flush=True)
-    print("###############################################\n", flush=True)
+    log("\n###############################################")
+    log("Making Labelset")
+    log("###############################################\n")
 
     # Get the mapping file
     if os.path.exists(args.mapping_path):
         mapping = pd.read_csv(args.mapping_path, index_col=None, sep=",")
     else:
-        print(f"ERROR: Mapping file provided doesn't exist; check input provided", flush=True)
+        log(f"ERROR: Mapping file provided doesn't exist; check input provided")
         sys.exit(1)
 
     # Make the labelset file using the columns 'Short Code' and 'ID'
@@ -45,9 +47,9 @@ def make_labelset(args):
     args.labelset = labelset_path
 
     if os.path.exists(labelset_path):
-        print(f"NOTE: Labelset created successfully", flush=True)
+        log(f"NOTE: Labelset created successfully")
     else:
-        print("ERROR: Labelset could not be created", flush=True)
+        log("ERROR: Labelset could not be created")
         sys.exit(1)
 
     return args
@@ -59,9 +61,9 @@ def convert_labels(args):
     files are saved in the output directory.
     """
 
-    print("\n###############################################", flush=True)
-    print("Viscore to CoralNet", flush=True)
-    print("###############################################\n", flush=True)
+    log("\n###############################################")
+    log("Viscore to CoralNet")
+    log("###############################################\n")
 
     # Get the arguments
     viscore_labels = args.viscore_labels
@@ -89,7 +91,7 @@ def convert_labels(args):
 
     # If the updated file already exists, return early
     if os.path.exists(output_file):
-        print(f"NOTE: {basename} already exists", flush=True)
+        log(f"NOTE: {basename} already exists")
         args.converted_labels = output_file
         return args
 
@@ -98,11 +100,11 @@ def convert_labels(args):
 
     # Check if labels file matches expected format
     if not re.match(pattern, os.path.basename(viscore_labels)):
-        print(f"ERROR: Label path does not match expected format; check input provided.", flush=True)
+        log(f"ERROR: Label path does not match expected format; check input provided.")
         sys.exit(1)
 
     try:
-        print(f'NOTE: Converting {os.path.basename(viscore_labels)} to CoralNet format', flush=True)
+        log(f'NOTE: Converting {os.path.basename(viscore_labels)} to CoralNet format')
         # Open the viscore labels file
         labels = pd.read_csv(viscore_labels, index_col=None)
         # Open the labelset file
@@ -164,18 +166,18 @@ def convert_labels(args):
         images.append(basename)
         annotations.append([args.prefix, basename, name, row, column, label])
 
-    print(f"NOTE: Updated {len(annotations)} annotations belonging to {len(set(images))} images", flush=True)
-    print(f"NOTE: Skipped {len(skipped)} annotations belonging to {set(skipped)}", flush=True)
+    log(f"NOTE: Updated {len(annotations)} annotations belonging to {len(set(images))} images")
+    log(f"NOTE: Skipped {len(skipped)} annotations belonging to {set(skipped)}")
 
     annotations = pd.DataFrame(annotations, columns=['Prefix', 'Image Name', 'Name', 'Row', 'Column', 'Label'])
     annotations.to_csv(output_file)
 
     # Check that file was saved
     if os.path.exists(output_file):
-        print(f'NOTE: Successfully saved {basename}', flush=True)
+        log(f'NOTE: Successfully saved {basename}')
         args.converted_labels = output_file
     else:
-        print(f'ERROR: Failed to save {basename}', flush=True)
+        log(f'ERROR: Failed to save {basename}')
         sys.exit(1)
 
     return args
@@ -201,7 +203,7 @@ def viscore(args):
         args.points = args.converted_labels
         api(args)
     else:
-        print("ERROR: Invalid action; must be Upload or API", flush=True)
+        log("ERROR: Invalid action; must be Upload or API")
         sys.exit()
 
 
@@ -261,11 +263,11 @@ def main():
 
     try:
         viscore(args)
-        print('Done.', flush=True)
+        log('Done.')
 
     except Exception as e:
-        print(f'ERROR: {e}', flush=True)
-        print(traceback.format_exc(), flush=True)
+        log(f'ERROR: {e}')
+        log(traceback.format_exc())
 
 
 if __name__ == '__main__':

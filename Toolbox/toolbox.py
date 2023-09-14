@@ -8,6 +8,7 @@ from gooey import Gooey, GooeyParser
 
 import pandas as pd
 
+from Tools.Common import log
 from Tools.Common import DATA_DIR
 from Tools.Common import MIR_MAPPING
 from Tools.Common import PATCH_EXTRACTOR
@@ -912,7 +913,7 @@ def main():
     if args.command == 'Seg3D':
         seg3d(args)
 
-    print('Done.')
+    log('Done.')
 
 
 if __name__ == '__main__':

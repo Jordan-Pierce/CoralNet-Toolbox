@@ -9,9 +9,10 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from Common import IMG_FORMATS
+from Common import log
 from Common import get_now
 from Common import print_progress
+from Common import IMG_FORMATS
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -23,9 +24,9 @@ def points(args):
     Generates a set of sample coordinates within a given image size.
     """
 
-    print("\n###############################################", flush=True)
-    print("Sample Points", flush=True)
-    print("###############################################\n", flush=True)
+    log("\n###############################################")
+    log("Sample Points")
+    log("###############################################\n")
 
     # Set the variables
     sample_method = args.sample_method
@@ -37,12 +38,12 @@ def points(args):
         image_files = [i for i in image_files if os.path.basename(i).split(".")[-1].lower() in IMG_FORMATS]
 
         if not image_files:
-            print("ERROR: No image files found in directory provided; please check input", flush=True)
+            log("ERROR: No image files found in directory provided; please check input")
             sys.exit(1)
 
-        print(f"NOTE: Sampling {num_points} points for {len(image_files)} images", flush=True)
+        log(f"NOTE: Sampling {num_points} points for {len(image_files)} images")
     else:
-        print(f"ERROR: Image directory provided doesn't exist; please check provided input", flush=True)
+        log(f"ERROR: Image directory provided doesn't exist; please check provided input")
         sys.exit(1)
 
     # Create output
@@ -103,16 +104,16 @@ def points(args):
                                     'Column': int(x),
                                     'Label': 'Unlabeled'})
     if samples:
-        print(f"NOTE: Saving {len(samples)} sampled points", flush=True)
+        log(f"NOTE: Saving {len(samples)} sampled points")
         # Store as dataframe
         samples = pd.DataFrame.from_records(samples)
         # Save as csv to points folder
         samples.to_csv(output_file)
 
         if os.path.exists(output_file):
-            print(f"NOTE: Sampled points saved to {output_file}", flush=True)
+            log(f"NOTE: Sampled points saved to {output_file}")
         else:
-            print(f"ERROR: Sampled points could not be saved; check provided input.", flush=True)
+            log(f"ERROR: Sampled points could not be saved; check provided input.")
 
 
 # -----------------------------------------------------------------------------
@@ -143,11 +144,11 @@ def main():
     try:
 
         points(args)
-        print("Done.", flush=True)
+        log("Done.")
 
     except Exception as e:
-        print(f"ERROR: {e}", flush=True)
-        print(traceback.format_exc(), flush=True)
+        log(f"ERROR: {e}")
+        log(traceback.format_exc())
 
 
 if __name__ == "__main__":
