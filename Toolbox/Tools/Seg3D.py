@@ -191,14 +191,16 @@ def seg3d_workflow(args):
         # Update all the photo paths in the classified chunk to be the labels
 
         for camera in classified_chunk.cameras:
-            # The name of segmentation mask
-            classified_photo = f"{masks_dir}{os.path.basename(camera.photo.path)}"
-            # Check that it exists
-            if os.path.exists(classified_photo):
-                camera.photo.path = classified_photo
-            else:
-                log(f"ERROR: Could not find the following file {classified_photo}; exiting")
-                sys.exit(1)
+            # If it's a photo
+            if camera.photo:
+                # The name of segmentation mask
+                classified_photo = f"{masks_dir}{os.path.basename(camera.photo.path)}"
+                # Check that it exists
+                if os.path.exists(classified_photo):
+                    camera.photo.path = classified_photo
+                else:
+                    log(f"ERROR: Could not find the following file {classified_photo}; exiting")
+                    sys.exit(1)
 
         # Save the document
         doc.save()

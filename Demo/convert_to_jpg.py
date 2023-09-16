@@ -31,7 +31,7 @@ def convert_tiff_to_jpeg(input_dir, output_dir):
                 rgb_img = Image.fromarray(img_array)
 
                 # Save the RGB image as JPEG with a quality of 95 (adjust as needed)
-                rgb_img.save(jpeg_path, 'JPEG', quality=95)
+                rgb_img.save(jpeg_path, 'JPEG', quality=100)
             print(f'NOTE: Converted {tiff_file} to {jpeg_file}')
         except Exception as e:
             print(f'ERROR: Issue with converting {tiff_file}: {e}')

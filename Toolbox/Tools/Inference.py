@@ -163,7 +163,12 @@ def inference(args):
             [[class_map[str(idx)] for idx in indices] for indices in sorted_prob_indices[:, :N]])
 
         # CoralNet format only goes to the first 5 choices
-        for index, class_num in enumerate(range(5)):
+        num_classes = model.layers[-1].output_shape[-1]
+
+        if num_classes > 5:
+            num_classes = 5
+
+        for index, class_num in enumerate(range(num_classes)):
             output['Machine confidence ' + str(index + 1)] = top_N_confidences[:, index]
             output['Machine suggestion ' + str(index + 1)] = top_N_suggestions[:, class_num]
 

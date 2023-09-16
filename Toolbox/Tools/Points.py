@@ -64,10 +64,10 @@ def points(args):
         width, height = img.size
 
         # At least half patch
-        min_width = 0 + 112
-        max_width = width - 112
-        min_height = 0 + 112
-        max_height = height - 112
+        min_width = 0 + 32
+        max_width = width - 32
+        min_height = 0 + 32
+        max_height = height - 32
 
         # Generate Uniform Samples
         if sample_method == 'Uniform':

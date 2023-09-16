@@ -6,13 +6,13 @@ import argparse
 import requests
 import traceback
 
+import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 from skimage.io import imread
 from skimage.io import imsave
-from scipy.stats import mode as mode2d
 
 import torch
 import torchvision
@@ -159,10 +159,24 @@ def find_most_common_label_in_area(points, binary_mask, bounding_box, label_col)
     mask_indices = points_in_area.apply(lambda row: binary_mask[row['Row'], row['Column']].item(), axis=1)
     points_in_mask = points_in_area[mask_indices == 1]
 
-    # Find the most common label
-    most_common_label = mode2d(points_in_mask[label_col])[0][0]
+    # Calculate the frequency of each label
+    label_counts = points_in_mask[label_col].value_counts()
 
-    return most_common_label
+    # Calculate the weighted most common label
+    total_weight = label_counts.sum()  # Sum all counts
+
+    # Initialize an empty dictionary to store weighted labels
+    weighted_labels = {}
+
+    # Iterate through the labels and calculate weighted values
+    for label in label_counts.index:
+        weighted_value = label_counts[label] / total_weight
+        weighted_labels[label] = weighted_value
+
+    # Find the label with the maximum weighted value
+    weighted_most_common_label = max(weighted_labels, key=weighted_labels.get)
+
+    return weighted_most_common_label
 
 
 def get_color_map(N):
@@ -396,6 +410,11 @@ def mss_sam(args):
 
         # Convert to numpy for plotting, saving
         final_mask = updated_mask.cpu().detach().numpy()
+
+        # Define a kernel (structuring element)
+        kernel = np.ones((5, 5), np.uint8)
+        final_mask = cv2.dilate(final_mask, kernel, iterations=2)
+        final_mask = cv2.erode(final_mask, kernel, iterations=5)
 
         # Get the final colored mask, change no data to black
         final_color = colorize_mask(final_mask, class_map, label_colors)
