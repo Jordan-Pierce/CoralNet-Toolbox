@@ -209,21 +209,22 @@ def visualize(args):
     output_dir = f"{args.output_dir}\\visualize\\"
     os.makedirs(output_dir, exist_ok=True)
 
+    if not os.path.exists(annotations):
+        log("WARNING: Annotations provided, but they do not exists; please check input.")
+    else:
+        annotations = pd.read_csv(annotations, index_col=0)
+        assert label_column in annotations.columns, log(f"ERROR: '{label_column}' not found in annotations")
+
     if not os.path.exists(image_dir):
         raise Exception("ERROR: Image directory does not exists; please check input.")
     else:
         # Create a list of image file paths in the specified directory
         image_files = [f for f in glob.glob(f"{image_dir}\*.*") if f.split(".")[-1].lower() in IMG_FORMATS]
+        image_files = [i for i in image_files if os.path.basename(i) in annotations['Name'].values]
 
         if image_files is []:
             log("NOTE: No images found; exiting")
             return
-
-    if not os.path.exists(annotations):
-        log("WARNING: Annotations provided, but they doe not exists; please check input.")
-    else:
-        annotations = pd.read_csv(annotations, index_col=0)
-        assert label_column in annotations.columns, log(f"ERROR: '{label_column}' not found in annotations")
 
     # Create the ImageViewer object with the list of images
     image_viewer = ImageViewer(image_files, annotations, label_column, output_dir)

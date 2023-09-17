@@ -452,8 +452,6 @@ def mss_sam(args):
         final_color[final_mask == 255, :] = [0, 0, 0]
         point_colors = current_points[label_col].map(label_colors).values
 
-        # Calculate accuracy
-
         # Final figure
         if args.plot:
             # Plot the final mask

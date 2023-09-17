@@ -183,9 +183,9 @@ def print_job_status(payload_imgs, active, completed):
     Print the current status of jobs and images being processed.
     """
     log("\nSTATUS: "
-          "Images in Queue: {: <8} "
-          "Active Jobs: {: <8} "
-          "Completed Jobs: {: <8}".format(len(payload_imgs), len(active), len(completed)))
+        "Images in Queue: {: <8} "
+        "Active Jobs: {: <8} "
+        "Completed Jobs: {: <8}".format(len(payload_imgs), len(active), len(completed)))
 
 
 def convert_to_csv(status, image_names):
@@ -337,7 +337,7 @@ def api(args):
             # Let the user know that not all images in points file
             # are actually on CoralNet.
             log(f"WARNING: Points file has points for {len(points['Name'].unique())} images, "
-                  f"but only {len(images)} of those images were found on CoralNet.")
+                f"but only {len(images)} of those images were found on CoralNet.")
 
             # Let them exit if they want
             time.sleep(5)
@@ -395,7 +395,7 @@ def api(args):
         # Split points into batches of 200
         if len(p) > point_batch_size:
             log(f"NOTE: {name} has {len(p)} points, "
-                  f"separating into {math.ceil(len(p) / point_batch_size)} 'images'")
+                f"separating into {math.ceil(len(p) / point_batch_size)} 'images'")
 
         for i in range(0, len(p), point_batch_size):
             # Add the data to the list for payloads
@@ -538,7 +538,7 @@ def api(args):
             # Else wait and check the status of the active jobs again.
             if len(active_jobs) < active_job_limit and payload_imgs:
                 log(f"\nNOTE: Active jobs is {len(active_jobs)}, "
-                      f"images in queue is {len(payload_imgs)}; adding more.\n")
+                    f"images in queue is {len(payload_imgs)}; adding more.\n")
                 break
 
         # Check to see everything has been completed, breaking the loop
@@ -552,11 +552,11 @@ def api(args):
     # Sort predictions to match original points file, keep original columns
     log("NOTE: Sorting predictions to align with original file provided")
     coralnet_predictions = pd.concat(coralnet_predictions)
-    final_predictions = sort_predictions(points, coralnet_predictions)
+    # final_predictions = sort_predictions(points, coralnet_predictions)
 
     # Output to disk
     log(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
-    final_predictions.to_csv(predictions_path)
+    coralnet_predictions.to_csv(predictions_path)
 
 
 # -----------------------------------------------------------------------------
