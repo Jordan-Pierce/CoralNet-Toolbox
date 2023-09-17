@@ -23,20 +23,20 @@ The `CoralNet-Toolbox` is an **unofficial** codebase that can be used to augment
 with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
 a GUI; these scripts currently include:
 
-- [`API`](./Toolbox/README.md#api): Use the CoralNet API to get predictions from any source model
-- [`Download`](./Toolbox/README.md#download): Download all data associated with a source
-- [`Upload`](./Toolbox/README.md#upload): Upload images, annotations, and labelsets to a source
-- [`Labelset`](./Toolbox/README.md#labelset): Create a custom labelset on CoralNet
-- [`Viscore`](./Toolbox/README.md#viscore): Upload annotations made in Viscore's VPI to CoralNet
-- [`Classifier`](./Toolbox/README.md#classifier): Create your own patch-based image classifier, locally
-- [`Annotate`](./Toolbox/README.md#annotation): Create your own patches from annotations, locally
-- [`Visualize`](./Toolbox/README.md#visualize): Visualize points/patches superimposed on images
-- [`Patches`](./Toolbox/README.md#patches): Extract patches from images given an annotation file
-- [`Points`](./Toolbox/README.md#points): Sample points from images (Uniform, Random, Stratified)
-- [`Inference`](./Toolbox/README.md#inference): Perform inference using a locally trained model
-- [`SAM`](./Toolbox/README.md#sam): Create segmentation masks for each image using `MSS` w/ `SAM`
-- [`SfM`](./Toolbox/README.md#sfm): Use Metashape to create 3D models (sure, why not)
-- [`Seg3D`](./Toolbox/README.md#Seg3D): Use masks and SfM to create classified 3D models
+- `API`: Use the CoralNet API to get predictions from any source model
+- `Download`: Download all data associated with a source
+- `Upload`: Upload images, annotations, and labelsets to a source
+- `Labelset`: Create a custom labelset on CoralNet
+- `Viscore`: Upload annotations made in Viscore's VPI to CoralNet
+- `Classifier`: Create your own patch-based image classifier, locally
+- `Annotate`: Create your own patches from annotations, locally
+- `Visualize`: Visualize points/patches superimposed on images
+- `Patches`: Extract patches from images given an annotation file
+- `Points`: Sample points from images (Uniform, Random, Stratified)
+- `Inference`: Perform inference using a locally trained model
+- `SAM`: Create segmentation masks for each image using `MSS` w/ `SAM`
+- `SfM`: Use Metashape to create 3D models (sure, why not)
+- `Seg3D`: Use masks and SfM to create classified 3D models
 
 
 <p align="center">
