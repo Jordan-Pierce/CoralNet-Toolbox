@@ -130,14 +130,14 @@ def main():
     parser.add_argument('--images', type=str,
                         help='Directory of images to create sampled points for')
 
-    parser.add_argument('--output_dir', type=str, required=True,
-                        help='A root directory where all output will be saved to.')
-
     parser.add_argument('--sample_method', type=str,
                         help='Method used to sample points from each image [Uniform, Random, Stratified]')
 
     parser.add_argument('--num_points', type=int, default=200,
                         help='The number of points to sample from each image')
+
+    parser.add_argument('--output_dir', type=str, required=True,
+                        help='A root directory where all output will be saved to.')
 
     args = parser.parse_args()
 

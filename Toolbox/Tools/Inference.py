@@ -128,17 +128,19 @@ def inference(args):
         # ----------------------------------------------------------------
         # Creating patches
         # ----------------------------------------------------------------
+        patch_size = args.patch_size
 
         # To hold all the patches (memory)
         patches = []
 
         # Create patches for this image
-        log(f"NOTE: Cropping patches for {image_name}")
+        log(f"NOTE: Cropping patches ({patch_size} x {patch_size}) for {image_name}")
+
         # Get the current image points
         image_points = points[points['Name'] == image_name]
 
         for i, r in image_points.iterrows():
-            patches.append(crop_patch(image, r['Row'], r['Column'], 224))
+            patches.append(crop_patch(image, r['Row'], r['Column'], patch_size))
 
         # Convert to numpy array
         patches = np.stack(patches)
@@ -206,6 +208,9 @@ def main():
 
     parser.add_argument("--class_map", type=str, required=True,
                         help="Path to the model's Class Map JSON file")
+
+    parser.add_argument("--patch_size", type=int, default=112,
+                        help="The size of each patch extracted")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

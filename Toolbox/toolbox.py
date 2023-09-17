@@ -587,6 +587,9 @@ def main():
                                         help='CoralNet annotation file, or one created using the Annotation tool',
                                         widget="FileChooser")
 
+    patches_parser_panel_1.add_argument("--patch_size", type=int, default=112,
+                                        help="The size of each patch extracted")
+
     patches_parser_panel_1.add_argument('--output_dir', required=True,
                                         metavar='Output Directory',
                                         default=DATA_DIR,
@@ -692,6 +695,9 @@ def main():
                                           help='The class mapping JSON file',
                                           widget="FileChooser")
 
+    inference_parser_panel_1.add_argument("--patch_size", type=int, default=112,
+                                          help="The size of each patch extracted")
+
     inference_parser_panel_1.add_argument('--output_dir', required=True,
                                           metavar='Output Directory',
                                           default=DATA_DIR,
@@ -725,6 +731,11 @@ def main():
                                     widget='Dropdown',
                                     choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
+    sam_parser_panel_1.add_argument("--confidence", type=int, default=75,
+                                    metavar="Confidence Threshold",
+                                    help="Confidence threshold value to filter (percentage)",
+                                    widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
+
     sam_parser_panel_1.add_argument('--model_type', type=str, required=True,
                                     metavar="Model Version",
                                     help='Version of SAM model to use',
@@ -741,12 +752,6 @@ def main():
     sam_parser_panel_1.add_argument('--plot', default=False,
                                     metavar="Plot Masks",
                                     help='Saves colorized figures of masks in subdirectory',
-                                    action="store_true",
-                                    widget='BlockCheckbox')
-
-    sam_parser_panel_1.add_argument('--plot_progress', default=False,
-                                    metavar="Plot Mask Progress",
-                                    help='Saves colorized figures of masks during creation in subdirectory',
                                     action="store_true",
                                     widget='BlockCheckbox')
 

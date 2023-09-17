@@ -2,9 +2,11 @@ import os
 import sys
 import glob
 import json
+import warnings
 import argparse
 import requests
 import traceback
+from tqdm import tqdm
 
 import cv2
 import numpy as np
@@ -28,20 +30,29 @@ from Common import print_progress
 from Common import CACHE_DIR
 from Common import IMG_FORMATS
 
+warnings.filterwarnings('ignore')
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
 class CustomDataset(Dataset):
-    def __init__(self, bboxes):
-        self.data = bboxes
+    def __init__(self, bboxes, points):
+        self.bboxes = bboxes  # List of bounding boxes
+        self.points = points  # List of points
 
     def __len__(self):
-        return len(self.data)
+        # Return the length of the dataset based on the number of bounding boxes
+        return len(self.bboxes)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        # Get the bounding box and points corresponding to the given index
+        bbox = self.bboxes[idx]
+        point = self.points[idx].unsqueeze(0)
+
+        # Return a tuple containing the bounding box and points
+        return bbox, point
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -257,21 +268,37 @@ def mss_sam(args):
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    # Convert confidence value to float
+    confidence = args.confidence / 100
+
+    if not 0 <= confidence <= 1.0:
+        log(f"ERROR: Confidence value must be between [0 - 100]")
+        sys.exit(1)
+
     # Predictions Dataframe
     if os.path.exists(args.annotations):
-        points = pd.read_csv(args.annotations, index_col=0)
-        image_names = np.unique(points['Name'].to_numpy())
-        log(f"NOTE: Found a total of {len(points)} sampled points for {len(image_names)} images")
+        points_df = pd.read_csv(args.annotations, index_col=0)
+        image_names = np.unique(points_df['Name'].to_numpy())
 
         # Create class map and color map based on annotation file
-        if args.label_col in points.columns:
+        if args.label_col in points_df.columns:
             label_col = args.label_col
             log(f"NOTE: Using labels from the column '{label_col}'")
         else:
             log(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}")
             sys.exit(1)
 
-        class_map = {l: i for i, l in enumerate(sorted(points[label_col].unique()))}
+        # Filter based on confidence scores of the label colum;
+        # if they use 'Label' deal with it
+        if 'confidence' in label_col:
+            points_df = points_df[points_df[label_col.replace("suggestion", "confidence") >= confidence]]
+            value_counts = points_df[label_col].value_counts()
+            sorted_values = value_counts.sort_values()
+            points_df = points_df.set_index(label_col).loc[sorted_values.index].reset_index()
+
+        log(f"NOTE: Found a total of {len(points_df)} sampled points for {len(image_names)} images")
+
+        class_map = {l: i for i, l in enumerate(sorted(points_df[label_col].unique()))}
         # Create a color map give the amount of classes
         unique_labels = list(class_map.keys())
         color_map = get_color_map(len(unique_labels))
@@ -335,7 +362,7 @@ def mss_sam(args):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)
-        current_points = points[points['Name'] == name]
+        current_points = points_df[points_df['Name'] == name]
 
         # Skip if there are no points for some reason
         if current_points.empty:
@@ -354,27 +381,36 @@ def mss_sam(args):
 
         # Get all the bounding boxes for the current image
         bboxes = []
+        points = []
 
         for i, r in current_points.iterrows():
             bboxes.append(get_bbox(image, r['Row'], r['Column'], args.patch_size))
+            points.append([r['Column'], r['Row']])
 
         # Create into a tensor
         bboxes = np.array(bboxes)
         transformed_boxes = torch.tensor(bboxes, device=sam_predictor.device)
         transformed_boxes = sam_predictor.transform.apply_boxes_torch(transformed_boxes, image.shape[:2])
 
+        points = np.array(points)
+        transformed_points = torch.tensor(points, device=sam_predictor.device)
+        transformed_points = sam_predictor.transform.apply_coords_torch(transformed_points, image.shape[:2])
+
         # Create a data loader containing the transformed boxes
-        custom_dataset = CustomDataset(transformed_boxes)
+        custom_dataset = CustomDataset(transformed_boxes, transformed_points)
         data_loader = DataLoader(custom_dataset, batch_size=args.batch_size, shuffle=False)
 
         # Loop through batches of boxes, faster
-        for batch_idx, batch in enumerate(data_loader):
+        for batch_idx, batch in tqdm(enumerate(data_loader)):
 
             try:
+                # Specific for SAM [0, 1] for background, foreground
+                point_label = torch.tensor([1], device=sam_predictor.device)
+
                 # After setting the current image, get masks for each point / bbox
-                masks, _, _ = sam_predictor.predict_torch(point_coords=None,
-                                                          point_labels=None,
-                                                          boxes=batch,
+                masks, _, _ = sam_predictor.predict_torch(point_coords=batch[1],
+                                                          point_labels=point_label,
+                                                          boxes=batch[0],
                                                           multimask_output=False)
             except Exception as e:
                 log(f"ERROR: Model could not make predictions\n{e}")
@@ -392,17 +428,9 @@ def mss_sam(args):
                     label = find_most_common_label_in_area(current_points, mask, box, label_col)
                     # convert binary values to correspond to label values
                     updated_mask[mask == 1] = int(class_map[label])
+
                 except:
                     pass
-
-            # Create a screenshot every N% of the number of points
-            if batch_idx % int(len(data_loader) * .2) == 0 and args.plot_progress:
-                # Colorize the updated mask
-                mask_color = colorize_mask(updated_mask.cpu().detach().numpy(), class_map, label_colors)
-                point_colors = current_points[label_col].map(label_colors).values
-                # Plot and save the mask
-                plot_path = f"{plot_dir}{name.split('.')[0]}_{str(batch_idx)}.jpg"
-                plot_mask(image, mask_color, current_points, point_colors, plot_path)
 
         # ------------------------------------------------
         # Save the final masks
@@ -494,6 +522,9 @@ def main():
     parser.add_argument("--label_col", type=str, required=True,
                         help="The column in annotations with labels to use ('Label', 'Machine suggestion N, etc).")
 
+    parser.add_argument("--confidence", type=int, default=75,
+                        help="Confidence threshold value to filter")
+
     parser.add_argument("--patch_size", type=int, default=360,
                         help="The approximate size of each superpixel formed by SAM")
 
@@ -505,9 +536,6 @@ def main():
 
     parser.add_argument("--plot", action='store_true',
                         help="Saves figures of final masks")
-
-    parser.add_argument("--plot_progress", action='store_true',
-                        help="Saves figures of masks throughout the process of creation")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

@@ -9,7 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
-from skimage.io import imread, imsave
+from skimage.io import imread
+from skimage.io import imsave
+from skimage.transform import resize
 
 from Common import log
 from Common import get_now
@@ -73,10 +75,13 @@ def crop_patch(image, y, x, patch_size=224):
                                (left_pad, right_pad),
                                (0, 0)))
 
+    # Resize the patch to 224 no matter what
+    patch = (resize(patch, (224, 224)) * 255).astype(np.uint8)
+
     return patch
 
 
-def process_image(image_name, image_dir, annotation_df, output_dir):
+def process_image(image_name, image_dir, annotation_df, output_dir, patch_size):
     # Get the name and path
     image_prefix = image_name.split(".")[0]
     image_path = os.path.join(image_dir, image_name)
@@ -97,7 +102,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir):
     for i, r in image_df.iterrows():
         try:
             # Extract the patch
-            patch = crop_patch(image, r['Row'], r['Column'])
+            patch = crop_patch(image, r['Row'], r['Column'], patch_size)
             name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}.jpg"
             path = os.path.join(output_dir, 'patches', r['Label'], name)
 
@@ -149,6 +154,9 @@ def patches(args):
     # All unique images in the annotation dataframe
     image_names = annotation_df['Name'].unique()
 
+    # Size of patches to crop
+    patch_size = args.patch_size
+
     # All patches
     patches = []
 
@@ -158,7 +166,7 @@ def patches(args):
     # Using ThreadPoolExecutor to process each image concurrently
     with ThreadPoolExecutor() as executor:
         future_to_patches = {
-            executor.submit(process_image, image_name, image_dir, annotation_df, output_dir): image_name
+            executor.submit(process_image, image_name, image_dir, annotation_df, output_dir, patch_size): image_name
             for image_name in image_names
         }
 
@@ -193,11 +201,14 @@ def main():
 
     parser = argparse.ArgumentParser(description='Patch arguments')
 
+    parser.add_argument('--image_dir', type=str, required=True,
+                        help='Directory with images associated with annotation file')
+
     parser.add_argument('--annotation_file', type=str, nargs="+", default=[],
                         help='The path to annotation file(s); expects CoralNet format')
 
-    parser.add_argument('--image_dir', type=str, required=True,
-                        help='Directory with images associated with annotation file')
+    parser.add_argument("--patch_size", type=int, default=112,
+                        help="The size of each patch extracted")
 
     parser.add_argument('--output_dir', type=str, required=True,
                         help='A root directory where all output will be saved to.')
