@@ -2,7 +2,7 @@
 
 This showcases the steps to using the CoralNet-Toolbox. In this example, we use the 
 [D3](https://csms.haifa.ac.il/profiles/tTreibitz/datasets/sea_thru/index.html) dataset. The Google Slides and
-video explanation can be found at links below below.
+video explanation can be found at the links below.
 
 <p align="center">
   <a href="https://link-to-google-slides.com">
