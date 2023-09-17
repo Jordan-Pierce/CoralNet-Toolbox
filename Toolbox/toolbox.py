@@ -745,7 +745,7 @@ def main():
                                     metavar="Patch Size",
                                     help="The approximate size of each superpixel formed by SAM")
 
-    sam_parser_panel_1.add_argument("--batch_size", type=int, default=64,
+    sam_parser_panel_1.add_argument("--batch_size", type=int, default=1,
                                     metavar="Batch Size",
                                     help="The number of samples passed to SAM in a batch (GPU dependent)")
 
