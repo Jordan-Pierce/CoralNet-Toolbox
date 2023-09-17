@@ -163,8 +163,10 @@ def find_most_common_label_in_area(points, binary_mask, bounding_box, label_col)
     min_x, min_y, max_x, max_y = bounding_box
 
     # Filter points within the bounding box
-    points_in_area = points[(points['Column'] >= min_x) & (points['Column'] <= max_x) &
-                            (points['Row'] >= min_y) & (points['Row'] <= max_y)]
+    points_in_area = points[(points['Column'] >= min_x) &
+                            (points['Column'] <= max_x) &
+                            (points['Row'] >= min_y) &
+                            (points['Row'] <= max_y)]
 
     # Filter points that correspond to 1-valued regions in the binary mask
     mask_indices = points_in_area.apply(lambda row: binary_mask[row['Row'], row['Column']].item(), axis=1)
@@ -174,7 +176,7 @@ def find_most_common_label_in_area(points, binary_mask, bounding_box, label_col)
     label_counts = points_in_mask[label_col].value_counts()
 
     # Calculate the weighted most common label
-    total_weight = label_counts.sum()  # Sum all counts
+    total_weight = label_counts.sum()
 
     # Initialize an empty dictionary to store weighted labels
     weighted_labels = {}

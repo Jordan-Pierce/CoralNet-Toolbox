@@ -834,6 +834,10 @@ def main():
                                       help='Path to existing Metashape project file (.psx)',
                                       widget="FileChooser")
 
+    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
+                                      metavar="Chunk Index",
+                                      help='Chunk index to classify; 0-based indexing')
+
     seg3d_parser_panel_1.add_argument('--masks_dir', type=str, required=True,
                                       metavar="Masks Directory",
                                       help='Directory containing colored masks for images',
@@ -843,10 +847,6 @@ def main():
                                       metavar="Color Map File",
                                       help='Path to Color Map JSON file',
                                       widget="FileChooser")
-
-    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
-                                      metavar="Chunk Index",
-                                      help='Chunk index to classify; 0-based indexing')
 
     seg3d_parser_panel_1.add_argument('--classify_mesh', action="store_true",
                                       metavar="Classify Mesh",
