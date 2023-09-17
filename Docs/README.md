@@ -5,9 +5,7 @@ This showcases the steps to using the CoralNet-Toolbox. In this example, we use 
 video explanation can be found at the links below.
 
 <p align="center">
-  <a href="https://link-to-google-slides.com">
     <img src="../Figures/CoralNet-Toolbox_Slides.PNG" alt="Slides">
-  </a>
   <br><a href="https://docs.google.com/presentation/d/19uxGpdyaR__8rqKWrSKKGH7HspIMf-v9G75Sc5Ki_vU/edit?usp=sharing">[Google Slides]</a> 
       <a href="">[Video]</a>
 </p>
