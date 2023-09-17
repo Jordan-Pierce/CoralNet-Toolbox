@@ -269,7 +269,7 @@ def mss_sam(args):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Convert confidence value to float
-    confidence = args.confidence / 100
+    confidence = float(args.confidence / 100)
 
     if not 0 <= confidence <= 1.0:
         log(f"ERROR: Confidence value must be between [0 - 100]")
@@ -290,11 +290,8 @@ def mss_sam(args):
 
         # Filter based on confidence scores of the label colum;
         # if they use 'Label' deal with it
-        if 'confidence' in label_col:
-            points_df = points_df[points_df[label_col.replace("suggestion", "confidence") >= confidence]]
-            value_counts = points_df[label_col].value_counts()
-            sorted_values = value_counts.sort_values()
-            points_df = points_df.set_index(label_col).loc[sorted_values.index].reset_index()
+        if 'suggestion' in label_col:
+            points_df = points_df[points_df[label_col.replace("suggestion", "confidence")] >= confidence]
 
         log(f"NOTE: Found a total of {len(points_df)} sampled points for {len(image_names)} images")
 
@@ -363,6 +360,12 @@ def mss_sam(args):
         # Get the points associated with current image
         name = os.path.basename(image_path)
         current_points = points_df[points_df['Name'] == name]
+
+        # Sort based on frequency for current image
+        value_counts = current_points[label_col].value_counts()
+        sorted_values = value_counts.sort_values(ascending=False)
+        current_points['index'] = current_points[label_col]
+        current_points = current_points.set_index('index').loc[sorted_values.index].reset_index()
 
         # Skip if there are no points for some reason
         if current_points.empty:
@@ -448,6 +451,8 @@ def mss_sam(args):
         final_color = colorize_mask(final_mask, class_map, label_colors)
         final_color[final_mask == 255, :] = [0, 0, 0]
         point_colors = current_points[label_col].map(label_colors).values
+
+        # Calculate accuracy
 
         # Final figure
         if args.plot:
