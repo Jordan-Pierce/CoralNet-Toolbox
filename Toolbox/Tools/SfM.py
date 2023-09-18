@@ -53,10 +53,10 @@ def sfm_workflow(args):
     t0 = time.time()
 
     # If user passes a previous project dir use it
-    # Else create a new project dir given the output dir
-    if args.project_dir:
-        if os.path.exists(args.project_dir):
-            project_dir = f"{args.project_dir}\\"
+    if args.project_file:
+        if os.path.exists(args.project_file):
+            project_file = args.project_file
+            project_dir = f"{os.path.dirname(project_file)}\\"
         else:
             raise Exception
 
@@ -64,9 +64,9 @@ def sfm_workflow(args):
         output_dir = f"{args.output_dir}\\sfm\\"
         project_dir = f"{output_dir}{get_now()}\\"
         os.makedirs(project_dir, exist_ok=True)
-
+        project_file = f"{project_dir}project.psx"
     else:
-        log(f"ERROR: Must provide either existing project or output directory")
+        log(f"ERROR: Must provide either existing project file or output directory")
         sys.exit(1)
 
     # Create filenames for data outputs
@@ -87,20 +87,13 @@ def sfm_workflow(args):
     # Create a metashape doc object
     doc = Metashape.Document()
 
-    if not os.path.exists(project_dir + "project.psx"):
+    if not os.path.exists(project_file):
         log(f"NOTE: Creating new project file")
         # Create a new Metashape document and save it as a project file in the output folder.
-        doc.save(project_dir + 'project.psx')
+        doc.save(project_file)
     else:
         log(f"NOTE: Opening existing project file")
-
-        # Else open the existing one
-        project_file = project_dir + 'project.psx'
-
-        if not os.path.exists(project_file):
-            log(f"NOTE: Cannot find 'project.psx' in directory provided; please check input")
-            sys.exit(1)
-
+        # Open existing project file.
         doc.open(project_file,
                  read_only=False,
                  ignore_lock=True,
@@ -247,9 +240,11 @@ def sfm_workflow(args):
         log("###############################################\n")
 
         # Quality
-        facecount = {"low": Metashape.FaceCount.LowFaceCount,
+        facecount = {"lowest": Metashape.FaceCount.LowFaceCount,
+                     "low": Metashape.FaceCount.LowFaceCount,
                      "medium": Metashape.FaceCount.MediumFaceCount,
-                     "high": Metashape.FaceCount.HighFaceCount}[args.quality.lower()]
+                     "high": Metashape.FaceCount.HighFaceCount,
+                     "highest": Metashape.FaceCount.HighFaceCount}[args.quality.lower()]
 
         chunk.buildModel(source_data=Metashape.DepthMapsData,
                          interpolation=Metashape.Interpolation.DisabledInterpolation,
@@ -378,8 +373,8 @@ def main():
     parser.add_argument('--output_dir', type=str, required=True,
                         help='Path to the output folder.')
 
-    parser.add_argument('--project_dir', type=str,
-                        help='Path to the previous project folder.')
+    parser.add_argument('--project_file', type=str,
+                        help='Path to existing Metashape project file (.psx).')
 
     parser.add_argument('--quality', type=str, default="Medium",
                         help='Quality of data products [Lowest, Low, Medium, High, Highest]')

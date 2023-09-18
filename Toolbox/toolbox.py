@@ -805,9 +805,9 @@ def main():
                                                        'Provide an existing project directory to pick up where the '
                                                        'program left off instead of re-running from scratch.')
 
-    sfm_parser_panel_2.add_argument('--project_dir', type=str, required=False,
-                                    metavar="Project Directory",
-                                    help='Existing project directory',
+    sfm_parser_panel_2.add_argument('--project_file', type=str, required=False,
+                                    metavar="Project File",
+                                    help='Path to existing Metashape project file (.psx)',
                                     widget='DirChooser')
 
     # ------------------------------------------------------------------------------------------------------------------
