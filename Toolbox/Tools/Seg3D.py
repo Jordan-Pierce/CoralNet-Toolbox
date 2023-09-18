@@ -319,7 +319,7 @@ def seg3d_workflow(args):
             sys.exit(1)
 
     # If the user wants to classify the orthomosaic, all that is needed is DEM
-    if args.classify_ortho and classified_chunk.elevation:
+    if args.classify_ortho and classified_chunk.model:
 
         try:
             log("\n###############################################")
@@ -327,7 +327,7 @@ def seg3d_workflow(args):
             log("###############################################\n")
 
             # Create the orthomosaic
-            classified_chunk.buildOrthomosaic(surface_data=Metashape.ElevationData,
+            classified_chunk.buildOrthomosaic(surface_data=Metashape.ModelData,
                                               blending_mode=Metashape.BlendingMode.DisabledBlending,
                                               fill_holes=False,
                                               progress=print_sfm_progress)
