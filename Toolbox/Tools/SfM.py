@@ -76,7 +76,7 @@ def sfm_workflow(args):
     output_ortho = project_dir + "Orthomosaic.tif"
 
     # Quality checking
-    if args.quality.lower() not in ["low", "medium", "high"]:
+    if args.quality.lower() not in ["lowest", "low", "medium", "high", "highest"]:
         log(f"ERROR: Quality must be low, medium, or high")
         sys.exit(1)
 
@@ -147,9 +147,11 @@ def sfm_workflow(args):
         log("###############################################\n")
 
         # Quality
-        downscale = {"low": 4,
+        downscale = {"lowest": 8,
+                     "low": 4,
                      "medium": 2,
-                     "high": 1}[args.quality.lower()]
+                     "high": 1,
+                     "highest": 0}[args.quality.lower()]
 
         chunk.matchPhotos(keypoint_limit=40000,
                           tiepoint_limit=10000,
@@ -167,10 +169,10 @@ def sfm_workflow(args):
         log("Performing gradual selection and camera optimization")
         log("###############################################\n")
 
-        reperr = 2
-        recunc = 2
+        reperr = 1
+        recunc = 15
         imgcount = 3
-        projacc = 6
+        projacc = 5
 
         f = Metashape.TiePoints.Filter()
         f.init(chunk, Metashape.TiePoints.Filter.ReprojectionError)
@@ -218,9 +220,11 @@ def sfm_workflow(args):
         log("###############################################\n")
 
         # Quality
-        downscale = {"low": 4,
-                     "medium": 2,
-                     "high": 1}[args.quality.lower()]
+        downscale = {"lowest": 16,
+                     "low": 8,
+                     "medium": 4,
+                     "high": 2,
+                     "highest": 1}[args.quality.lower()]
 
         chunk.buildDepthMaps(filter_mode=Metashape.MildFiltering,
                              downscale=downscale,
@@ -378,7 +382,7 @@ def main():
                         help='Path to the previous project folder.')
 
     parser.add_argument('--quality', type=str, default="Medium",
-                        help='Quality of data products [Low, Medium, High]')
+                        help='Quality of data products [Lowest, Low, Medium, High, Highest]')
 
     args = parser.parse_args()
 

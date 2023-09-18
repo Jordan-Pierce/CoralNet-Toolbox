@@ -798,7 +798,7 @@ def main():
     sfm_parser_panel_1.add_argument('--quality', type=str, default="Medium",
                                     metavar="Quality",
                                     help='Quality of data products',
-                                    widget="Dropdown", choices=['Low', 'Medium', 'High'])
+                                    widget="Dropdown", choices=['Lowest', 'Low', 'Medium', 'High', 'Highest'])
 
     # Panel 2
     sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',
