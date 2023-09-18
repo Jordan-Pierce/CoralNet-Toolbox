@@ -6,7 +6,6 @@ import warnings
 import argparse
 import requests
 import traceback
-from tqdm import tqdm
 
 import cv2
 import numpy as np
@@ -406,7 +405,7 @@ def mss_sam(args):
         data_loader = DataLoader(custom_dataset, batch_size=args.batch_size, shuffle=False)
 
         # Loop through batches of boxes, faster
-        for batch_idx, batch in tqdm(enumerate(data_loader)):
+        for batch_idx, batch in enumerate(data_loader):
 
             try:
                 # Specific for SAM [0, 1] for background, foreground
@@ -418,7 +417,7 @@ def mss_sam(args):
                                                           boxes=batch[0],
                                                           multimask_output=False)
             except Exception as e:
-                log(f"ERROR: Model could not make predictions\n{e}")
+                log(f"ERROR: SAM model could not make predictions\n{e}")
                 sys.exit(1)
 
             # Loop through all the individual masks in the batch

@@ -588,6 +588,7 @@ def main():
                                         widget="FileChooser")
 
     patches_parser_panel_1.add_argument("--patch_size", type=int, default=112,
+                                        metavar="Patch Size",
                                         help="The size of each patch extracted")
 
     patches_parser_panel_1.add_argument('--output_dir', required=True,
@@ -696,6 +697,7 @@ def main():
                                           widget="FileChooser")
 
     inference_parser_panel_1.add_argument("--patch_size", type=int, default=112,
+                                          metavar="Patch Size",
                                           help="The size of each patch extracted")
 
     inference_parser_panel_1.add_argument('--output_dir', required=True,
@@ -793,10 +795,10 @@ def main():
                                     help='Root directory where output will be saved',
                                     widget="DirChooser")
 
-    sfm_parser_panel_1.add_argument('--quality', type=str, default="medium",
+    sfm_parser_panel_1.add_argument('--quality', type=str, default="Medium",
                                     metavar="Quality",
                                     help='Quality of data products',
-                                    widget="Dropdown", choices=['low', 'medium', 'high'])
+                                    widget="Dropdown", choices=['Low', 'Medium', 'High'])
 
     # Panel 2
     sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',

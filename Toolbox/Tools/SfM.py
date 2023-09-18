@@ -93,8 +93,15 @@ def sfm_workflow(args):
         doc.save(project_dir + 'project.psx')
     else:
         log(f"NOTE: Opening existing project file")
+
         # Else open the existing one
-        doc.open(project_dir + 'project.psx',
+        project_file = project_dir + 'project.psx'
+
+        if not os.path.exists(project_file):
+            log(f"NOTE: Cannot find 'project.psx' in directory provided; please check input")
+            sys.exit(1)
+
+        doc.open(project_file,
                  read_only=False,
                  ignore_lock=True,
                  archive=True)
@@ -152,6 +159,56 @@ def sfm_workflow(args):
 
         # Align the cameras to estimate their relative positions in space.
         chunk.alignCameras()
+        doc.save()
+
+    # Perform gradual selection to remove messy points
+    if chunk.tie_points:
+        log("\n###############################################")
+        log("Performing gradual selection and camera optimization")
+        log("###############################################\n")
+
+        reperr = 2
+        recunc = 2
+        imgcount = 3
+        projacc = 6
+
+        f = Metashape.TiePoints.Filter()
+        f.init(chunk, Metashape.TiePoints.Filter.ReprojectionError)
+        f.removePoints(reperr)
+
+        # Optimize cameras
+        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
+                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
+                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+
+        f = Metashape.TiePoints.Filter()
+        f.init(chunk, Metashape.TiePoints.Filter.ReconstructionUncertainty)
+        f.removePoints(recunc)
+
+        # Optimize cameras
+        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
+                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
+                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+
+        f = Metashape.TiePoints.Filter()
+        f.init(chunk, Metashape.TiePoints.Filter.ImageCount)
+        f.removePoints(imgcount)
+
+        # Optimize cameras
+        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
+                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
+                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+
+        f = Metashape.TiePoints.Filter()
+        f.init(chunk, Metashape.TiePoints.Filter.ProjectionAccuracy)
+        f.removePoints(projacc)
+
+        # Optimize cameras
+        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
+                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
+                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+
+        # Save the document
         doc.save()
 
     # Build depth maps (2.5D representations of the scene) from the aligned photos.
@@ -320,8 +377,8 @@ def main():
     parser.add_argument('--project_dir', type=str,
                         help='Path to the previous project folder.')
 
-    parser.add_argument('--quality', type=str, default="medium",
-                        help='Quality of data products [low, medium, high]')
+    parser.add_argument('--quality', type=str, default="Medium",
+                        help='Quality of data products [Low, Medium, High]')
 
     args = parser.parse_args()
 

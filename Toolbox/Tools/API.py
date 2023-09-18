@@ -551,12 +551,12 @@ def api(args):
 
     # Sort predictions to match original points file, keep original columns
     log("NOTE: Sorting predictions to align with original file provided")
-    coralnet_predictions = pd.concat(coralnet_predictions)
-    # final_predictions = sort_predictions(points, coralnet_predictions)
+    final_predictions = pd.concat(coralnet_predictions)
+    # final_predictions = sort_predictions(points, final_predictions)
 
     # Output to disk
     log(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
-    coralnet_predictions.to_csv(predictions_path)
+    final_predictions.to_csv(predictions_path)
 
 
 # -----------------------------------------------------------------------------
