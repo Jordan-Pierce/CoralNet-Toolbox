@@ -181,32 +181,36 @@ def sfm_workflow(args):
         # Loop through each of the selections, identify target percentage, remove, optimize
         for s_idx, selection in enumerate(selections):
 
-            # Tie point filter
-            f = Metashape.TiePoints.Filter()
+            try:
+                # Tie point filter
+                f = Metashape.TiePoints.Filter()
 
-            if s_idx == 3:
-                # ImageCount selection method
-                f.init(chunk, selection)
-                f.removePoints(2)
-            else:
-                # Other selection methods
-                list_values = f.values
-                list_values_valid = list()
-                for i in range(len(list_values)):
-                    if points[i].valid:
-                        list_values_valid.append(list_values[i])
-                list_values_valid.sort()
-                # Find point values based on threshold
-                target = int(len(list_values_valid) * target_percentage / 100)
-                threshold = list_values_valid[target]
-                # Select and remove
-                f.selectPoints(threshold)
-                f.removePoints(threshold)
+                if s_idx == 3:
+                    # ImageCount selection method
+                    f.init(chunk, selection)
+                    f.removePoints(1)
+                else:
+                    # Other selection methods
+                    list_values = f.values
+                    list_values_valid = list()
+                    for i in range(len(list_values)):
+                        if points[i].valid:
+                            list_values_valid.append(list_values[i])
+                    list_values_valid.sort()
+                    # Find point values based on threshold
+                    target = int(len(list_values_valid) * target_percentage / 100)
+                    threshold = list_values_valid[target]
+                    # Select and remove
+                    f.selectPoints(threshold)
+                    f.removePoints(threshold)
 
-            # Optimize cameras
-            chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
-                                  fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
-                                  fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+                # Optimize cameras
+                chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
+                                      fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
+                                      fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+
+            except Exception as e:
+                print(f"WARNING: Could not filter points based on selection method {s_idx}")
 
         # Save the document
         doc.save()
