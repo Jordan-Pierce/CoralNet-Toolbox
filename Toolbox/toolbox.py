@@ -482,38 +482,6 @@ def main():
                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Visualize
-    # ------------------------------------------------------------------------------------------------------------------
-    visualize_parser = subs.add_parser('Visualize')
-
-    # Panel 1
-    visualize_parser_panel_1 = visualize_parser.add_argument_group('Visualize',
-                                                                   'View annotations superimposed on each image; toggle'
-                                                                   'annotations to be seen as points or squares.')
-
-    visualize_parser_panel_1.add_argument('--image_dir', required=True,
-                                          metavar='Image Directory',
-                                          help='A directory where all images are located.',
-                                          widget="DirChooser")
-
-    visualize_parser_panel_1.add_argument('--annotations', required=False, type=str,
-                                          metavar="Annotations",
-                                          help='The path to the annotations dataframe',
-                                          widget="FileChooser")
-
-    visualize_parser_panel_1.add_argument("--label_column", required=False, type=str, default='Label',
-                                          metavar="Label Column",
-                                          help='Label column in Annotations dataframe',
-                                          widget='Dropdown',
-                                          choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
-
-    visualize_parser_panel_1.add_argument('--output_dir',
-                                          metavar='Output Directory',
-                                          required=True,
-                                          help='Root directory where output will be saved',
-                                          widget="DirChooser")
-
-    # ------------------------------------------------------------------------------------------------------------------
     # Annotate
     # ------------------------------------------------------------------------------------------------------------------
     annotate_parser = subs.add_parser('Annotate')
@@ -534,38 +502,6 @@ def main():
                                          metavar='Image Directory',
                                          help='A directory where all images are located.',
                                          widget="DirChooser")
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # Points
-    # ------------------------------------------------------------------------------------------------------------------
-    points_parser = subs.add_parser('Points')
-
-    # Panel 1
-    points_parser_panel_1 = points_parser.add_argument_group('Points',
-                                                             'Sample points for each image; points can be used '
-                                                             'with the API or Inference tools. Methods include '
-                                                             'uniform, random, and stratified-random. Samples are '
-                                                             'saved in the Output Directory as a dataframe.')
-
-    points_parser_panel_1.add_argument('--images', required=True, type=str,
-                                       metavar="Image Directory",
-                                       help='Directory of images to create sampled points for',
-                                       widget="DirChooser")
-
-    points_parser_panel_1.add_argument('--output_dir',
-                                       metavar='Output Directory',
-                                       default=DATA_DIR,
-                                       help='Root directory where output will be saved',
-                                       widget="DirChooser")
-
-    points_parser_panel_1.add_argument('--sample_method', required=True, type=str,
-                                       metavar="Sample Method",
-                                       help='Method used to sample points from each image',
-                                       widget="Dropdown", choices=['Uniform', 'Random', 'Stratified'])
-
-    points_parser_panel_1.add_argument('--num_points', required=True, type=int, default=2048,
-                                       metavar="Number of Points",
-                                       help='The number of points to sample from each image')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Patches
@@ -598,7 +534,39 @@ def main():
                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Train
+    # Visualize
+    # ------------------------------------------------------------------------------------------------------------------
+    visualize_parser = subs.add_parser('Visualize')
+
+    # Panel 1
+    visualize_parser_panel_1 = visualize_parser.add_argument_group('Visualize',
+                                                                   'View annotations superimposed on each image; toggle'
+                                                                   'annotations to be seen as points or squares.')
+
+    visualize_parser_panel_1.add_argument('--image_dir', required=True,
+                                          metavar='Image Directory',
+                                          help='A directory where all images are located.',
+                                          widget="DirChooser")
+
+    visualize_parser_panel_1.add_argument('--annotations', required=False, type=str,
+                                          metavar="Annotations",
+                                          help='The path to the annotations dataframe',
+                                          widget="FileChooser")
+
+    visualize_parser_panel_1.add_argument("--label_column", required=False, type=str, default='Label',
+                                          metavar="Label Column",
+                                          help='Label column in Annotations dataframe',
+                                          widget='Dropdown',
+                                          choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
+
+    visualize_parser_panel_1.add_argument('--output_dir',
+                                          metavar='Output Directory',
+                                          required=True,
+                                          help='Root directory where output will be saved',
+                                          widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Classifier
     # ------------------------------------------------------------------------------------------------------------------
     classifier_parser = subs.add_parser('Classifier')
 
@@ -665,6 +633,38 @@ def main():
                                            help='Open Tensorboard for viewing model training in real-time',
                                            action="store_true",
                                            widget='BlockCheckbox')
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Points
+    # ------------------------------------------------------------------------------------------------------------------
+    points_parser = subs.add_parser('Points')
+
+    # Panel 1
+    points_parser_panel_1 = points_parser.add_argument_group('Points',
+                                                             'Sample points for each image; points can be used '
+                                                             'with the API or Inference tools. Methods include '
+                                                             'uniform, random, and stratified-random. Samples are '
+                                                             'saved in the Output Directory as a dataframe.')
+
+    points_parser_panel_1.add_argument('--images', required=True, type=str,
+                                       metavar="Image Directory",
+                                       help='Directory of images to create sampled points for',
+                                       widget="DirChooser")
+
+    points_parser_panel_1.add_argument('--output_dir',
+                                       metavar='Output Directory',
+                                       default=DATA_DIR,
+                                       help='Root directory where output will be saved',
+                                       widget="DirChooser")
+
+    points_parser_panel_1.add_argument('--sample_method', required=True, type=str,
+                                       metavar="Sample Method",
+                                       help='Method used to sample points from each image',
+                                       widget="Dropdown", choices=['Uniform', 'Random', 'Stratified'])
+
+    points_parser_panel_1.add_argument('--num_points', required=True, type=int, default=2048,
+                                       metavar="Number of Points",
+                                       help='The number of points to sample from each image')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Inference
@@ -898,20 +898,20 @@ def main():
     if args.command == 'Viscore':
         viscore(args)
 
-    if args.command == 'Visualize':
-        visualize(args)
-
     if args.command == 'Annotate':
         annotate(args)
-
-    if args.command == 'Points':
-        points(args)
 
     if args.command == 'Patches':
         patches(args)
 
+    if args.command == 'Visualize':
+        visualize(args)
+
     if args.command == 'Classifier':
         classifier(args)
+
+    if args.command == 'Points':
+        points(args)
 
     if args.command == 'Inference':
         inference(args)
