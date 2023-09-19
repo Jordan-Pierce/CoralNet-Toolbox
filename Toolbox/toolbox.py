@@ -800,6 +800,11 @@ def main():
                                     help='Quality of data products',
                                     widget="Dropdown", choices=['Lowest', 'Low', 'Medium', 'High', 'Highest'])
 
+    sfm_parser_panel_1.add_argument('--target_percentage', type=int, default=75,
+                                    metavar="Target Percentage",
+                                    help='Percentage of points to target for each gradual selection method',
+                                    widget='Slider', gooey_options={'min': 0, 'max': 99, 'increment': 1})
+
     # Panel 2
     sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',
                                                        'Provide an existing project directory to pick up where the '
@@ -808,7 +813,7 @@ def main():
     sfm_parser_panel_2.add_argument('--project_file', type=str, required=False,
                                     metavar="Project File",
                                     help='Path to existing Metashape project file (.psx)',
-                                    widget='DirChooser')
+                                    widget='FileChooser')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Seg3D

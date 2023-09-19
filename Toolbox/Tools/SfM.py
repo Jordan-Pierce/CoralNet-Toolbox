@@ -162,46 +162,51 @@ def sfm_workflow(args):
         log("Performing gradual selection and camera optimization")
         log("###############################################\n")
 
-        reperr = 1
-        recunc = 15
-        imgcount = 3
-        projacc = 5
+        # Target percentage for gradual selection
+        if 0 <= args.target_percentage <= 99:
+            target_percentage = args.target_percentage
+        else:
+            log(f"ERROR: Target Percentage provided not in range [0, 99]; check input provided")
+            sys.exit(1)
 
-        f = Metashape.TiePoints.Filter()
-        f.init(chunk, Metashape.TiePoints.Filter.ReprojectionError)
-        f.removePoints(reperr)
+        # Obtain the tie points from the chunk
+        points = chunk.tie_points.points
 
-        # Optimize cameras
-        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
-                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
-                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+        # Filter selection methods
+        selections = [Metashape.TiePoints.Filter.ReprojectionError,
+                      Metashape.TiePoints.Filter.ReconstructionUncertainty,
+                      Metashape.TiePoints.Filter.ProjectionAccuracy,
+                      Metashape.TiePoints.Filter.ImageCount]
 
-        f = Metashape.TiePoints.Filter()
-        f.init(chunk, Metashape.TiePoints.Filter.ReconstructionUncertainty)
-        f.removePoints(recunc)
+        # Loop through each of the selections, identify target percentage, remove, optimize
+        for s_idx, selection in enumerate(selections):
 
-        # Optimize cameras
-        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
-                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
-                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+            # Tie point filter
+            f = Metashape.TiePoints.Filter()
 
-        f = Metashape.TiePoints.Filter()
-        f.init(chunk, Metashape.TiePoints.Filter.ImageCount)
-        f.removePoints(imgcount)
+            if s_idx == 3:
+                # ImageCount selection method
+                f.init(chunk, selection)
+                f.removePoints(2)
+            else:
+                # Other selection methods
+                list_values = f.values
+                list_values_valid = list()
+                for i in range(len(list_values)):
+                    if points[i].valid:
+                        list_values_valid.append(list_values[i])
+                list_values_valid.sort()
+                # Find point values based on threshold
+                target = int(len(list_values_valid) * target_percentage / 100)
+                threshold = list_values_valid[target]
+                # Select and remove
+                f.selectPoints(threshold)
+                f.removePoints(threshold)
 
-        # Optimize cameras
-        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
-                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
-                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
-
-        f = Metashape.TiePoints.Filter()
-        f.init(chunk, Metashape.TiePoints.Filter.ProjectionAccuracy)
-        f.removePoints(projacc)
-
-        # Optimize cameras
-        chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
-                              fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
-                              fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
+            # Optimize cameras
+            chunk.optimizeCameras(fit_f=True, fit_cx=True, fit_cy=True, fit_b1=True, fit_b2=True, fit_k1=True,
+                                  fit_k2=True, fit_k3=True, fit_k4=True, fit_p1=True, fit_p2=True, fit_p3=True,
+                                  fit_p4=True, adaptive_fitting=False, tiepoint_covariance=False)
 
         # Save the document
         doc.save()
@@ -378,6 +383,9 @@ def main():
 
     parser.add_argument('--quality', type=str, default="Medium",
                         help='Quality of data products [Lowest, Low, Medium, High, Highest]')
+
+    parser.add_argument('--target_percentage', type=int, default=75,
+                        help='Percentage of points to target for each gradual selection method')
 
     args = parser.parse_args()
 
