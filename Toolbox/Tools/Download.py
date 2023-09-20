@@ -34,6 +34,49 @@ from Browser import check_for_browsers
 # -------------------------------------------------------------------------------------------------
 # Functions for downloading all of CoralNet
 # -------------------------------------------------------------------------------------------------
+def get_updated_labelset_list():
+    """
+    Lists all the labelsets available for gooey
+    """
+
+    if os.path.exists(CORALNET_LABELSET_FILE):
+        return pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
+
+    names = []
+
+    try:
+
+        # Make a GET request to the image page URL using the authenticated session
+        response = requests.get(CORALNET_LABELSET_URL)
+        cookies = response.cookies
+
+        # Convert the webpage to soup
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Get the table with all labelset information
+        table = soup.find_all('tr', attrs={"data-label-id": True})
+
+        # Loop through each row, grab the information, store in lists
+        names = []
+        urls = []
+
+        for row in tqdm(table):
+            # Grab attributes from row
+            attributes = row.find_all("td")
+            # Extract each attribute, store in variable
+            name = attributes[0].text
+            url = CORALNET_URL + attributes[0].find("a").get("href")
+            names.append(name)
+            urls.append(url)
+
+        # Cache so it's faster the next time
+        pd.DataFrame(list(zip(names, urls)), columns=['Name', 'URL']).to_csv(CORALNET_LABELSET_FILE)
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return names
 
 
 def download_coralnet_sources(driver, output_dir):

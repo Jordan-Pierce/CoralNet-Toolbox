@@ -47,6 +47,33 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
+def get_classifier_models():
+    """
+    Lists all the models available for gooey
+    """
+    available_models = []
+    try:
+        import tensorflow.keras.applications as models
+
+        model_names = [m for m in dir(models) if callable(getattr(models, m))]
+        model_names = [m for m in model_names if 'include_preprocessing' in getattr(models, m).__code__.co_varnames]
+        model_names = [m for m in model_names if "EfficientNetV2" in m]
+
+        available_models = model_names
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return available_models
+
+
+def get_classifier_losses():
+    """
+    Lists all the losses available for gooey
+    """
+    return ['binary_crossentropy', 'categorical_crossentropy', 'KLDivergence']
+
 
 def compute_class_weights(df, mu=0.15):
     """
@@ -199,6 +226,11 @@ def classifier(args):
     train_df.reset_index(drop=True, inplace=True)
     valid_df.reset_index(drop=True, inplace=True)
     test_df.reset_index(drop=True, inplace=True)
+
+    # Output to logs
+    train_df.to_csv(f"{logs_dir}Training_Set.csv", index=False)
+    valid_df.to_csv(f"{logs_dir}Validation_Set.csv", index=False)
+    test_df.to_csv(f"{logs_dir}Testing_Set.csv", index=False)
 
     # The number of class categories
     class_names = train_df['Label'].unique().tolist()
@@ -607,6 +639,56 @@ def classifier(args):
     log(f"NOTE: Threshold Figure saved in {logs_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
+    log(f"NOTE: Creating prediction grid")
+    test_generator = test_augmentor.flow_from_dataframe(dataframe=test_df,
+                                                        x_col='Path',
+                                                        y_col='Label',
+                                                        target_size=(224, 224),
+                                                        color_mode="rgb",
+                                                        class_mode='categorical',
+                                                        batch_size=batch_size,
+                                                        shuffle=True,
+                                                        seed=42)
+
+    # Output a grid (5 x 5) of samples with their ground truth and predictions
+    grid_size = (5, 5)
+    num_samples_to_display = grid_size[0] * grid_size[1]
+
+    # Make the figure bigger
+    fig = plt.figure(figsize=(20, 20))
+
+    test_indices = test_generator.class_indices
+    test_names = {v: k for k, v in test_indices.items()}
+
+    # Make Predictions and Display as a Grid
+    for i in range(num_samples_to_display):
+        if i % batch_size == 0:
+            batch = test_generator.next()
+            images = batch[0].astype(np.uint8)
+            ground_truths = batch[1]
+            predictions = model.predict(images)
+
+        true_class_idx = np.argmax(ground_truths[i % batch_size])
+        predicted_class_idx = np.argmax(predictions[i % batch_size])
+        true_class_name = test_names[true_class_idx]
+        predicted_class_name = test_names[predicted_class_idx]
+
+        plt.subplot(grid_size[0], grid_size[1], i + 1)
+        plt.imshow(images[i % batch_size])
+        plt.title(f"Ground Truth: {true_class_name}"
+                  f"\nPrediction: {predicted_class_name}")
+        plt.axis('off')
+
+    # Show the grid of samples
+    plt.tight_layout()
+    plt.savefig(f"{logs_dir}PredictedGrid.png")
+    plt.show()
+
+    log(f"NOTE: PredictionGrid Figure saved in {logs_dir}")
+
+    # ------------------------------------------------------------------------------------------------------------------
+
+    # ------------------------------------------------------------------------------------------------------------------
     # Save the best model
     model.save(f"{run_dir}Best_Model_and_Weights.h5")
     log(f"NOTE: Best Model and Weights saved in {run_dir}")
@@ -646,7 +728,7 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=0.0001,
                         help='Starting learning rate')
 
-    parser.add_argument('--tensorboard', type=bool, default=True,
+    parser.add_argument('--tensorboard', action='store_true',
                         help='Display training on Tensorboard')
 
     parser.add_argument('--output_dir', type=str, required=True,

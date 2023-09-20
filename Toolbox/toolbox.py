@@ -32,83 +32,10 @@ from Tools.SAM import mss_sam
 from Tools.SfM import sfm
 from Tools.Seg3D import seg3d
 
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Functions
-# ----------------------------------------------------------------------------------------------------------------------
-
-def get_updated_labelset_list():
-    """
-    Lists all the labelsets available for gooey
-    """
-
-    if os.path.exists(CORALNET_LABELSET_FILE):
-        return pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
-
-    names = []
-
-    try:
-
-        # Make a GET request to the image page URL using the authenticated session
-        response = requests.get(CORALNET_LABELSET_URL)
-        cookies = response.cookies
-
-        # Convert the webpage to soup
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Get the table with all labelset information
-        table = soup.find_all('tr', attrs={"data-label-id": True})
-
-        # Loop through each row, grab the information, store in lists
-        names = []
-        urls = []
-
-        for row in tqdm(table):
-            # Grab attributes from row
-            attributes = row.find_all("td")
-            # Extract each attribute, store in variable
-            name = attributes[0].text
-            url = CORALNET_URL + attributes[0].find("a").get("href")
-            names.append(name)
-            urls.append(url)
-
-        # Cache so it's faster the next time
-        pd.DataFrame(list(zip(names, urls)), columns=['Name', 'URL']).to_csv(CORALNET_LABELSET_FILE)
-
-    except Exception as e:
-        # Fail silently
-        pass
-
-    return names
-
-
-def get_available_models():
-    """
-    Lists all the models available for gooey
-    """
-    available_models = []
-    try:
-        import tensorflow.keras.applications as models
-
-        model_names = [m for m in dir(models) if callable(getattr(models, m))]
-        model_names = [m for m in model_names if 'include_preprocessing' in getattr(models, m).__code__.co_varnames]
-        model_names = [m for m in model_names if "EfficientNetV2" in m]
-
-        available_models = model_names
-
-    except Exception as e:
-        # Fail silently
-        pass
-
-    return available_models
-
-
-def get_available_losses():
-    """
-    Lists all the losses available for gooey
-    """
-    return ['binary_crossentropy', 'categorical_crossentropy', 'KLDivergence']
-
+# For Gooey dropdown
+from Tools.Classifier import get_classifier_models
+from Tools.Classifier import get_classifier_losses
+from Tools.Download import get_updated_labelset_list
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Gooey GUI
@@ -593,12 +520,12 @@ def main():
     classifier_parser_panel_2.add_argument('--model_name', type=str, required=True,
                                            metavar="Pretrained Encoder",
                                            help='Encoder, pre-trained on ImageNet dataset',
-                                           widget='FilterableDropdown', choices=get_available_models())
+                                           widget='FilterableDropdown', choices=get_classifier_models())
 
     classifier_parser_panel_2.add_argument('--loss_function', type=str, required=True,
                                            metavar="Loss Function",
                                            help='Loss function for training model',
-                                           widget='FilterableDropdown', choices=get_available_losses())
+                                           widget='FilterableDropdown', choices=get_classifier_losses())
 
     classifier_parser_panel_2.add_argument('--weighted_loss', default=True,
                                            metavar="Weighted Loss Function",
@@ -628,10 +555,9 @@ def main():
                                            metavar="Learning Rate",
                                            help='The floating point value used to incrementally adjust model weights')
 
-    classifier_parser_panel_2.add_argument('--tensorboard', default=True,
+    classifier_parser_panel_2.add_argument('--tensorboard', action='store_true',
                                            metavar="Tensorboard",
                                            help='Open Tensorboard for viewing model training in real-time',
-                                           action="store_true",
                                            widget='BlockCheckbox')
 
     # ------------------------------------------------------------------------------------------------------------------
