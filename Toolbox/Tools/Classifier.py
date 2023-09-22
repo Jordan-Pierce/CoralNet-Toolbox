@@ -47,32 +47,39 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
-def get_classifier_models():
+def get_classifier_encoders():
     """
     Lists all the models available for gooey
     """
-    available_models = []
+    encoders_options = []
     try:
         import tensorflow.keras.applications as models
-
-        model_names = [m for m in dir(models) if callable(getattr(models, m))]
-        model_names = [m for m in model_names if 'include_preprocessing' in getattr(models, m).__code__.co_varnames]
-        model_names = [m for m in model_names if "EfficientNetV2" in m]
-
-        available_models = model_names
+        options = [_ for _ in dir(models) if callable(getattr(models, _))]
+        options = [_ for _ in options if 'include_preprocessing' in getattr(models, _).__code__.co_varnames]
+        encoders_options = options
 
     except Exception as e:
         # Fail silently
         pass
 
-    return available_models
+    return encoders_options
 
 
 def get_classifier_losses():
     """
     Lists all the losses available for gooey
     """
-    return ['binary_crossentropy', 'categorical_crossentropy', 'KLDivergence']
+    loss_options = []
+    try:
+        import tensorflow.keras.losses as losses
+        options = [_ for _ in dir(losses) if callable(getattr(losses, _)) and "_" in _]
+        loss_options = options
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return loss_options
 
 
 def compute_class_weights(df, mu=0.15):
@@ -161,7 +168,7 @@ def classifier(args):
     output_dir = f"{args.output_dir}\\"
 
     # Run Name
-    run = f"{get_now()}_{args.model_name}"
+    run = f"{get_now()}_{args.encoder_name}"
 
     # We'll also create folders in this source to hold results of the model
     run_dir = f"{output_dir}classifier\\{run}\\"
@@ -267,7 +274,7 @@ def classifier(args):
 
     # Saving and displaying the figure
     plt.savefig(logs_dir + "DatasetSplit.png")
-    plt.show()
+    plt.close()
 
     if os.path.exists(logs_dir + "DatasetSplit.png"):
         log(f"NOTE: Datasplit Figure saved in {logs_dir}")
@@ -384,15 +391,24 @@ def classifier(args):
         f"Building Model\n"
         f"#########################################\n")
 
-    convnet = getattr(keras.applications, args.model_name)(
-        include_top=False,
-        include_preprocessing=True,
-        weights='imagenet',
-        input_shape=(224, 224, 3),
-        pooling='max',
-        classes=num_classes,
-        classifier_activation='softmax',
-    )
+    try:
+
+        if args.encoder_name not in get_classifier_encoders():
+            raise Exception(f"ERROR: Encoder must be one of {get_classifier_encoders()}")
+
+        convnet = getattr(keras.applications, args.encoder_name)(
+            include_top=False,
+            include_preprocessing=True,
+            weights='imagenet',
+            input_shape=(224, 224, 3),
+            pooling='max',
+            classes=num_classes,
+            classifier_activation='softmax',
+        )
+
+    except Exception as e:
+        log(f"ERROR: Issue with building model\n{e}")
+        sys.exit(1)
 
     # Here we create the entire model, with the convnet previously defined
     # as the encoder. Our entire model is simple, consisting of the convnet,
@@ -476,6 +492,7 @@ def classifier(args):
                             callbacks=callbacks,
                             verbose=0,
                             class_weight=class_weight)
+
     except Exception as e:
         log(f"ERROR: There was an issue with training!\n"
             f"Read the 'Error.txt file' in the Logs Directory")
@@ -555,7 +572,7 @@ def classifier(args):
     disp.plot(ax=ax, cmap=plt.cm.Blues, values_format='g')
     ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
     plt.savefig(f"{logs_dir}Confusion_Matrix.png")
-    plt.show()
+    plt.close()
 
     log(f"NOTE: Confusion Matrix saved in {logs_dir}")
 
@@ -592,7 +609,7 @@ def classifier(args):
     plt.title('Receiver Operating Characteristic (ROC) Curves')
     plt.legend(loc='lower right', title='Classes')
     plt.savefig(logs_dir + "ROC_Curves.png")
-    plt.show()
+    plt.close()
 
     log(f"NOTE: ROC Figure saved in {logs_dir}")
 
@@ -634,7 +651,7 @@ def classifier(args):
     plt.title('Identifying the ideal threshold value')
     plt.legend(['Classification Accuracy', 'Sure Percentage'])
     plt.savefig(logs_dir + "AccuracyThreshold.png")
-    plt.show()
+    plt.close()
 
     log(f"NOTE: Threshold Figure saved in {logs_dir}")
 
@@ -682,7 +699,7 @@ def classifier(args):
     # Show the grid of samples
     plt.tight_layout()
     plt.savefig(f"{logs_dir}PredictedGrid.png")
-    plt.show()
+    plt.close()
 
     log(f"NOTE: PredictionGrid Figure saved in {logs_dir}")
 
@@ -704,7 +721,7 @@ def main():
     parser.add_argument('--patches', required=True, nargs="+",
                         help='The path to the patch labels csv file output the Patches tool')
 
-    parser.add_argument('--model_name', type=str, default='EfficientNetV2B0',
+    parser.add_argument('--encoder_name', type=str, default='EfficientNetV2B0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
     parser.add_argument('--loss_function', type=str, default='categorical_crossentropy',
@@ -713,7 +730,7 @@ def main():
     parser.add_argument('--weighted_loss', type=bool, default=True,
                         help='Use a weighted loss function; good for imbalanced datasets')
 
-    parser.add_argument('--augment_data', type=bool, default=True,
+    parser.add_argument('--augment_data', action='store_true',
                         help='Apply affine augmentations to training data')
 
     parser.add_argument('--dropout_rate', type=float, default=0.5,

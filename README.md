@@ -35,18 +35,18 @@ a GUI; these scripts currently include:
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 - `Inference`: Perform inference using a locally trained model
 - `SAM`: Create segmentation masks for each image using `MSS` w/ `SAM`
+- `Seg`: Create your own semantic segmentation model, locally
 - `SfM`: Use Metashape to create 3D models (sure, why not)
 - `Seg3D`: Use masks and SfM to create classified 3D models
 
 
 <p align="center">
-  <img src="Figures/toolbox_api.PNG" alt="CoralNet-Toolbox-Features">
+  <img src="Figures/toolbox_gui.PNG" alt="CoralNet-Toolbox-Features">
 </p>
 
 #### **Future Features**
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
 - `SDM` Species distribution modeling [visualizations](https://onlinelibrary.wiley.com/doi/pdf/10.1111/ele.14281) 
-- `Seg`: Create a FCN to perform semantic segmentation 
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 - `GAN`: Synthesize samples using generative AI
 - `GPT`: LLMs for QA of annotation dataframes, plot visualizations

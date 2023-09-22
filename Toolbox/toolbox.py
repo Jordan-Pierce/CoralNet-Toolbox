@@ -1,41 +1,40 @@
 import os
 import signal
-import requests
-from tqdm import tqdm
-from bs4 import BeautifulSoup
 
 from gooey import Gooey, GooeyParser
-
-import pandas as pd
-
-from Tools.Common import log
-from Tools.Common import DATA_DIR
-from Tools.Common import MIR_MAPPING
-from Tools.Common import PATCH_EXTRACTOR
-from Tools.Common import CORALNET_URL
-from Tools.Common import FUNC_GROUPS_LIST
-from Tools.Common import CORALNET_LABELSET_URL
-from Tools.Common import CORALNET_LABELSET_FILE
 
 from Tools.API import api
 from Tools.Download import download
 from Tools.Labelset import labelset
 from Tools.Upload import upload
 from Tools.Viscore import viscore
-from Tools.Visualize import visualize
 from Tools.Annotate import annotate
-from Tools.Points import points
 from Tools.Patches import patches
+from Tools.Visualize import visualize
+from Tools.Points import points
 from Tools.Classifier import classifier
 from Tools.Inference import inference
 from Tools.SAM import mss_sam
+from Tools.Segmentation import seg
 from Tools.SfM import sfm
-from Tools.Seg3D import seg3d
+from Tools.Segmentation3D import seg3d
 
 # For Gooey dropdown
-from Tools.Classifier import get_classifier_models
-from Tools.Classifier import get_classifier_losses
 from Tools.Download import get_updated_labelset_list
+from Tools.Classifier import get_classifier_losses
+from Tools.Classifier import get_classifier_encoders
+from Tools.Segmentation import get_segmentation_losses
+from Tools.Segmentation import get_segmentation_metrics
+from Tools.Segmentation import get_segmentation_encoders
+from Tools.Segmentation import get_segmentation_decoders
+from Tools.Segmentation import get_segmentation_optimizers
+
+from Tools.Common import log
+from Tools.Common import DATA_DIR
+from Tools.Common import MIR_MAPPING
+from Tools.Common import PATCH_EXTRACTOR
+from Tools.Common import FUNC_GROUPS_LIST
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Gooey GUI
@@ -517,10 +516,10 @@ def main():
     classifier_parser_panel_2 = classifier_parser.add_argument_group('Parameters',
                                                                      'Choose the parameters for training the model')
 
-    classifier_parser_panel_2.add_argument('--model_name', type=str, required=True,
+    classifier_parser_panel_2.add_argument('--encoder_name', type=str, required=True,
                                            metavar="Pretrained Encoder",
                                            help='Encoder, pre-trained on ImageNet dataset',
-                                           widget='FilterableDropdown', choices=get_classifier_models())
+                                           widget='FilterableDropdown', choices=get_classifier_encoders())
 
     classifier_parser_panel_2.add_argument('--loss_function', type=str, required=True,
                                            metavar="Loss Function",
@@ -533,7 +532,7 @@ def main():
                                            action="store_true",
                                            widget='BlockCheckbox')
 
-    classifier_parser_panel_2.add_argument('--augment_data', default=True,
+    classifier_parser_panel_2.add_argument('--augment_data',
                                            metavar="Augment Data",
                                            help='Recommended; useful if class categories are imbalanced',
                                            action="store_true",
@@ -690,6 +689,86 @@ def main():
                                     widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
+    # Segmentation
+    # ------------------------------------------------------------------------------------------------------------------
+    seg_parser = subs.add_parser('Seg')
+
+    # Panel 1
+    seg_parser_panel_1 = seg_parser.add_argument_group('Seg',
+                                                       'Use Pytorch to train a deep learning semantic segmentation '
+                                                       'algorithm; provide custom masks, or those made by SAM')
+
+    seg_parser_panel_1.add_argument('--masks', type=str, required=True,
+                                    metavar="Masks File",
+                                    help='The path to the masks csv file',
+                                    widget='FileChooser')
+
+    seg_parser_panel_1.add_argument('--color_map', type=str, required=True,
+                                    metavar='Color Map File',
+                                    help='Path to Color Map JSON file',
+                                    widget='FileChooser')
+
+    # Panel 2
+    seg_parser_panel_2 = seg_parser.add_argument_group('Parameters',
+                                                       'Choose the parameters for training the model')
+
+    seg_parser_panel_2.add_argument('--encoder_name', type=str, default='mit_b0',
+                                    metavar="Encoder",
+                                    help='The convolutional encoder, pre-trained on ImageNet dataset',
+                                    widget="Dropdown", choices=get_segmentation_encoders())
+
+    seg_parser_panel_2.add_argument('--decoder_name', type=str, default='Unet',
+                                    metavar='Decoder',
+                                    help='The convolutional decoder',
+                                    widget="Dropdown", choices=get_segmentation_decoders())
+
+    seg_parser_panel_2.add_argument('--metrics', type=str, nargs='+', default=get_segmentation_metrics(),
+                                    metavar='Metrics',
+                                    help='The metric(s) to evaluate the model',
+                                    widget='Listbox', choices=get_segmentation_metrics())
+
+    seg_parser_panel_2.add_argument('--loss_function', type=str, default='JaccardLoss',
+                                    metavar='Loss Function',
+                                    help='The loss function to use to train the model',
+                                    widget="Dropdown", choices=get_segmentation_losses())
+
+    seg_parser_panel_2.add_argument('--freeze_encoder', action='store_true',
+                                    metavar='Freeze Encoder',
+                                    help='Only train the decoder weights during training',
+                                    widget='BlockCheckbox')
+
+    seg_parser_panel_2.add_argument('--optimizer', type=str, default='Adam',
+                                    metavar='Optimizer',
+                                    help='The optimizer to use to train the model',
+                                    widget="Dropdown", choices=get_segmentation_optimizers())
+
+    seg_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0001,
+                                    metavar='Learning Rate',
+                                    help='Starting learning rate')
+
+    seg_parser_panel_2.add_argument('--augment_data', action='store_true',
+                                    metavar='Augment Data',
+                                    help='Apply affine augmentations to training data',
+                                    widget='BlockCheckbox')
+
+    seg_parser_panel_2.add_argument('--num_epochs', type=int, default=15,
+                                    help='Starting learning rate')
+
+    seg_parser_panel_2.add_argument('--batch_size', type=int, default=2,
+                                    metavar='Batch Size',
+                                    help='Number of samples per batch during training')
+
+    seg_parser_panel_2.add_argument('--tensorboard', action='store_true',
+                                    metavar='Tensorboard',
+                                    help='Display training on Tensorboard',
+                                    widget='BlockCheckbox')
+
+    seg_parser_panel_2.add_argument('--output_dir', type=str, required=True,
+                                    metavar='Output Directory',
+                                    help='Directory to store results',
+                                    widget='DirChooser')
+
+    # ------------------------------------------------------------------------------------------------------------------
     # SfM
     # ------------------------------------------------------------------------------------------------------------------
     sfm_parser = subs.add_parser('SfM')
@@ -744,7 +823,7 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # Seg3D
     # ------------------------------------------------------------------------------------------------------------------
-    seg3d_parser = subs.add_parser('Seg3D')
+    seg3d_parser = subs.add_parser('Seg3d')
 
     # Panel 1
     seg3d_parser_panel_1 = seg3d_parser.add_argument_group('Seg3D',
@@ -844,6 +923,9 @@ def main():
 
     if args.command == 'SAM':
         mss_sam(args)
+
+    if args.command == 'Seg':
+        seg(args)
 
     if args.command == 'SfM':
         sfm(args)

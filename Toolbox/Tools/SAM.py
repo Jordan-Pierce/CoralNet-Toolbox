@@ -30,6 +30,7 @@ from Common import CACHE_DIR
 from Common import IMG_FORMATS
 
 warnings.filterwarnings('ignore')
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -296,7 +297,9 @@ def mss_sam(args):
 
         log(f"NOTE: Found a total of {len(points_df)} sampled points for {len(image_names)} images")
 
-        class_map = {l: i for i, l in enumerate(sorted(points_df[label_col].unique()))}
+        # Create the class mapping between values and colors
+        class_map = {l: i + 1 for i, l in enumerate(sorted(points_df[label_col].unique()))}
+
         # Create a color map give the amount of classes
         unique_labels = list(class_map.keys())
         color_map = get_color_map(len(unique_labels))
@@ -332,7 +335,7 @@ def mss_sam(args):
         sys.exit(1)
 
     # Setting output directories
-    output_dir = f"{args.output_dir}\\masks\\{get_now()}\\"
+    output_dir = f"{args.output_dir}\\masks\\SAM_{get_now()}\\"
     plot_dir = f"{output_dir}\\plots\\"
     seg_dir = f"{output_dir}\\segs\\"
     color_dir = f"{output_dir}\\color\\"
@@ -380,8 +383,7 @@ def mss_sam(args):
         sam_predictor.set_image(image)
 
         # To hold the updated mask, will be added onto each iteration
-        # updated_mask = np.full(shape=image.shape[:2], fill_value=255)
-        updated_mask = torch.full(image.shape[:2], fill_value=255, dtype=torch.uint8).to(device)
+        updated_mask = torch.full(image.shape[:2], fill_value=0, dtype=torch.uint8).to(device)
 
         # Get all the bounding boxes for the current image
         bboxes = []
@@ -465,7 +467,7 @@ def mss_sam(args):
             plot_path = ""
 
         # Save the seg mask
-        mask_path = f"{seg_dir}{name}"
+        mask_path = f"{seg_dir}{name.split('.')[0]}.png"
         imsave(fname=mask_path, arr=final_mask.astype(np.uint8))
         log(f"NOTE: Saved seg mask to {mask_path}")
 
@@ -475,13 +477,13 @@ def mss_sam(args):
         log(f"NOTE: Saved color mask to {color_path}")
 
         # Add to output list
-        mask_df.append([image_path, mask_path, color_path, plot_path])
+        mask_df.append([name, image_path, mask_path, color_path, plot_path])
 
         # Gooey
         print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory
-    mask_df = pd.DataFrame(mask_df, columns=['Image Path', 'Seg Path', 'Color Path', 'Plot Path'])
+    mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Seg Path', 'Color Path', 'Plot Path'])
     mask_df.to_csv(output_mask_csv)
 
     if os.path.exists(output_mask_csv):
