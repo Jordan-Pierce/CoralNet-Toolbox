@@ -14,6 +14,10 @@ from Upload import upload
 from Common import log
 from Common import MIR_MAPPING
 
+# TODO post-process labels from CoralNet back to Viscore
+# TODO Include the layer name (prefix) as a column in the API output just in casse
+# TODO Sorting isn't needed, but alignment still is
+
 
 # -----------------------------------------------------------------------------
 # Functions
