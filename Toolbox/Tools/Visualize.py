@@ -43,9 +43,10 @@ def get_color_map(N):
 
 
 class ImageViewer:
-    def __init__(self, image_files, annotations, label_column, output_dir):
+    def __init__(self, image_files, annotations, image_column, label_column, output_dir):
         self.image_files = image_files
         self.annotations = annotations
+        self.image_column = image_column
         self.label_column = label_column
         self.output_dir = output_dir
 
@@ -81,7 +82,7 @@ class ImageViewer:
 
         # Get annotations for the current image
         current_image_name = os.path.basename(filename)
-        current_annotations = self.annotations[self.annotations['Name'] == current_image_name]
+        current_annotations = self.annotations[self.annotations[self.image_column] == current_image_name]
 
         # Create legend with all class categories and corresponding colors
         legend_elements = []
@@ -214,20 +215,31 @@ def visualize(args):
     else:
         annotations = pd.read_csv(annotations, index_col=0)
         assert label_column in annotations.columns, log(f"ERROR: '{label_column}' not found in annotations")
+        assert any(n in annotations.columns for n in ['Name', 'Image Name']), log("ERROR: Image name column not found")
 
     if not os.path.exists(image_dir):
         raise Exception("ERROR: Image directory does not exists; please check input.")
     else:
         # Create a list of image file paths in the specified directory
-        image_files = [f for f in glob.glob(f"{image_dir}\*.*") if f.split(".")[-1].lower() in IMG_FORMATS]
-        image_files = [i for i in image_files if os.path.basename(i) in annotations['Name'].values]
+        files = [f for f in glob.glob(f"{image_dir}\*.*") if f.split(".")[-1].lower() in IMG_FORMATS]
 
-        if image_files is []:
+        # Try the first column
+        if 'Name' in annotations.columns:
+            image_column = 'Name'
+            image_files = [i for i in files if os.path.basename(i) in annotations['Name'].values]
+
+        # Try the other column
+        if not image_files and 'Image Name' in annotations.columns:
+            image_column = 'Image Name'
+            image_files = [i for i in files if os.path.basename(i) in annotations['Image Name'].values]
+
+        # No images found
+        if not image_files:
             log("NOTE: No images found; exiting")
             return
 
     # Create the ImageViewer object with the list of images
-    image_viewer = ImageViewer(image_files, annotations, label_column, output_dir)
+    image_viewer = ImageViewer(image_files, annotations, image_column, label_column, output_dir)
 
     plt.show()
 

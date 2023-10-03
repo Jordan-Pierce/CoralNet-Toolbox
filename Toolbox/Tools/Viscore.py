@@ -14,9 +14,9 @@ from Upload import upload
 from Common import log
 from Common import MIR_MAPPING
 
+
 # TODO post-process labels from CoralNet back to Viscore
-# TODO Include the layer name (prefix) as a column in the API output just in casse
-# TODO Sorting isn't needed, but alignment still is
+# TODO Include the layer name (prefix) as a column in the API output just in case
 
 
 # -----------------------------------------------------------------------------
@@ -59,7 +59,7 @@ def make_labelset(args):
     return args
 
 
-def convert_labels(args):
+def convert_labels_to_coralnet(args):
     """
     Converts the dots and cams JSON files to csv files for Tools. The csv
     files are saved in the output directory.
@@ -96,7 +96,7 @@ def convert_labels(args):
     # If the updated file already exists, return early
     if os.path.exists(output_file):
         log(f"NOTE: {basename} already exists")
-        args.converted_labels = output_file
+        args.converted_viscore_labels = output_file
         return args
 
     # Pattern to check against
@@ -166,20 +166,98 @@ def convert_labels(args):
         column = int(r['Column'])
         label = str(lbst['Short Code'].item())
 
+        # Everything else in the Viscore dataframe
+        annotator = r['Annotator']
+        dot = r['Dot']
+        x = r['X']
+        y = r['Y']
+        z = r['Z']
+        reprojection_error = r['ReprojectionError']
+        view_index = r['ViewIndex']
+        view_count = r['ViewCount']
+        rand_subceil = r['RandSubCeil']
+
         # Add to the list; other fields are ignored by CoralNet.
         images.append(basename)
-        annotations.append([args.prefix, basename, name, row, column, label])
+        annotations.append([args.prefix, basename, name, row, column, label,
+                            annotator, dot, x, y, z, reprojection_error, view_index, view_count, rand_subceil])
 
     log(f"NOTE: Updated {len(annotations)} annotations belonging to {len(set(images))} images")
     log(f"NOTE: Skipped {len(skipped)} annotations belonging to {set(skipped)}")
 
-    annotations = pd.DataFrame(annotations, columns=['Prefix', 'Image Name', 'Name', 'Row', 'Column', 'Label'])
+    columns = ['Prefix', 'Image Name', 'Name', 'Row', 'Column', 'Label',
+               'Annotator', 'Dot', 'X', 'Y', 'Z', 'ReprojectionError', 'ViewIndex', 'ViewCount', 'RandSubCeil']
+
+    annotations = pd.DataFrame(annotations, columns=columns)
     annotations.to_csv(output_file)
 
     # Check that file was saved
     if os.path.exists(output_file):
         log(f'NOTE: Successfully saved {basename}')
-        args.converted_labels = output_file
+        args.converted_viscore_labels = output_file
+    else:
+        log(f'ERROR: Failed to save {basename}')
+        sys.exit(1)
+
+    return args
+
+
+def convert_labels_to_viscore(args):
+    """
+
+    """
+    log("\n###############################################")
+    log("CoralNet to Viscore")
+    log("###############################################\n")
+
+    # Get the arguments
+    coralnet_predictions = args.predictions
+    viscore_labels = args.viscore_labels
+    mapping_path = args.mapping_path
+
+    # Check that the paths exist
+    assert os.path.exists(coralnet_predictions), 'ERROR: labels path does not exist'
+    assert os.path.exists(mapping_path), 'ERROR: Labelsets path does not exist'
+
+    # Make the output path
+    basename = f"{os.path.basename(viscore_labels).split('.')[0]}_predictions"
+    output_file = f"{args.output_dir}{basename}.csv"
+
+    try:
+        log(f'NOTE: Converting {os.path.basename(args.predictions)} back to Viscore format')
+        # Open the viscore labels file
+        predictions = pd.read_csv(coralnet_predictions, index_col=0)
+        # Open the labelset file
+        mapping = pd.read_csv(mapping_path, index_col=None, sep=",")
+    except Exception as e:
+        raise Exception(f'ERROR: Issue opening provided paths')
+
+    # Holds updated label names
+    updated_predictions = []
+
+    # Looping through each row
+    for i, r in tqdm(predictions.iterrows()):
+        # In each row, get the machine suggestions [1 - 5]
+        for m in [f'Machine suggestion {i}' for i in range(1, 6)]:
+            # Get the machine suggestion for the row
+            l = r[m]
+            # Find the corresponding Viscore label using short code
+            lbst = mapping[mapping['Short Code'] == l]
+            # Pass in the VPI V4 label associated with short code
+            r[m] = str(lbst['VPI_label_V4'].item())
+
+        updated_predictions.append(r)
+
+    # Output the updated predictions csv
+    log(f"NOTE: Updated {len(updated_predictions)} predictions")
+
+    updated_predictions = pd.DataFrame(updated_predictions)
+    updated_predictions.to_csv(output_file)
+
+    # Check that file was saved
+    if os.path.exists(output_file):
+        log(f'NOTE: Successfully saved {basename}')
+        args.converted_coralnet_labels = output_file
     else:
         log(f'ERROR: Failed to save {basename}')
         sys.exit(1)
@@ -192,23 +270,35 @@ def viscore(args):
 
     """
     # First convert the Viscore labels to CoralNet format
-    args = convert_labels(args)
+    args = convert_labels_to_coralnet(args)
 
-    # Then, either upload, or use the api
-    if args.action == "Upload":
-        # Make a temporary labelset from the mapping file
-        # to upload with converted labels, just in case.
-        args = make_labelset(args)
-        # Then, upload the data to CoralNet
-        args.annotations = args.converted_labels
-        upload(args)
-    elif args.action == "API":
-        # Otherwise, we'll use the API to make predictions
-        args.points = args.converted_labels
-        api(args)
-    else:
-        log("ERROR: Invalid action; must be Upload or API")
-        sys.exit()
+    try:
+
+        # Then, either upload, or use the api
+        if args.action == "Upload":
+            # Make a temporary labelset from the mapping file
+            # to upload with converted labels, just in case.
+            args = make_labelset(args)
+            args.annotations = args.converted_viscore_labels
+            # Then, upload the data to CoralNet
+            upload(args)
+        elif args.action == "API":
+            # Otherwise, we'll set the points to the converted labels
+            args.points = args.converted_viscore_labels
+            # Prepare for API by adding arguments
+            args.source_id_1 = args.source_id
+            args.source_id_2 = args.source_id
+            args.image_name_contains = args.prefix
+            # And upload those to CoralNet for the Model API
+            args = api(args)
+            # After getting predictions, convert CoralNet labels back to Viscore
+            args = convert_labels_to_viscore(args)
+        else:
+            log("ERROR: Invalid action; must be Upload or API")
+            sys.exit()
+
+    except Exception as e:
+        log(f"ERROR: Could not complete action '{args.actions}'.\n{e}")
 
 
 def main():

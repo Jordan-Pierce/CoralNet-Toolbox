@@ -31,7 +31,7 @@ from Download import check_for_browsers
 # -----------------------------------------------------------------------------
 
 
-def get_source_meta(driver, source_id_1, source_id_2=None, image_list=None):
+def get_source_meta(driver, source_id_1, source_id_2=None, image_name_contains=None, image_list=None):
     """Downloads just the information from source needed to do API calls;
     source id 1 refers to the source containing images, and source id 2
     refers to a source for a different model (if desired)"""
@@ -51,7 +51,7 @@ def get_source_meta(driver, source_id_1, source_id_2=None, image_list=None):
         raise Exception(f"ERROR: No model found for the source {source_id}.")
 
     # Get the images for the source
-    driver, source_images = get_images(driver, source_id_1, image_list)
+    driver, source_images = get_images(driver, source_id_1, image_name_contains, image_list)
 
     # Check if there are any images
     if source_images is None:
@@ -200,17 +200,18 @@ def convert_to_csv(status, image_names):
     model_predictions_list = []
 
     for (data, image_name) in zip(status['data'], image_names):
-        for point in data['attributes']['points']:
-            p = dict()
-            p['Name'] = image_name
-            p['Row'] = point['row']
-            p['Column'] = point['column']
+        if 'points' in data['attributes']:
+            for point in data['attributes']['points']:
+                p = dict()
+                p['Name'] = image_name
+                p['Row'] = point['row']
+                p['Column'] = point['column']
 
-            for index, classification in enumerate(point['classifications']):
-                p['Machine confidence ' + str(index + 1)] = classification['score']
-                p['Machine suggestion ' + str(index + 1)] = classification['label_code']
+                for index, classification in enumerate(point['classifications']):
+                    p['Machine confidence ' + str(index + 1)] = classification['score']
+                    p['Machine suggestion ' + str(index + 1)] = classification['label_code']
 
-            model_predictions_list.append(p)
+                model_predictions_list.append(p)
 
     # Create a single DataFrame from the list of dictionaries
     model_predictions = pd.DataFrame(model_predictions_list)
@@ -219,33 +220,6 @@ def convert_to_csv(status, image_names):
         log("WARNING: Predictions returned from CoralNet were empty!")
 
     return model_predictions
-
-
-def sort_predictions(original, predictions):
-    """
-
-    """
-    # Columns
-    original_col = list(original.columns)
-    predictions_col = list(predictions.columns)
-    columns = [col for col in predictions_col if col not in original_col]
-
-    # Sort the predictions dataframe based on the columns 'Name', 'Row', and 'Column'
-    sorted_predictions = predictions.sort_values(by=['Name', 'Row', 'Column'])
-
-    # Drop the indices now that they are sorted
-    original.reset_index(drop=True, inplace=True)
-    sorted_predictions.reset_index(drop=True, inplace=True)
-
-    # Merge the sorted predictions dataframe with the original dataframe
-    merged_df = pd.concat([original, sorted_predictions[columns]], axis=1)
-
-    # Drop rows with NaN values in 'columns';
-    # this occurs if not all images with points
-    # are in the CoralNet source.
-    merged_df.dropna(subset=columns, inplace=True)
-
-    return merged_df
 
 
 def api(args):
@@ -267,13 +241,13 @@ def api(args):
         # Determine if it's a single file or a folder
         if os.path.isfile(args.points):
             # If a file, just read it in
-            points = pd.read_csv(args.points)
+            points = pd.read_csv(args.points, index_col=0)
         elif os.path.isdir(args.points):
             # If a folder, read in all csv files, concatenate them together
             csv_files = glob.glob(args.points + "/*.csv")
             points = pd.DataFrame()
             for csv_file in csv_files:
-                points = pd.concat([points, pd.read_csv(csv_file)])
+                points = pd.concat([points, pd.read_csv(csv_file, index_col=0)])
         else:
             raise Exception(f"ERROR: {args.points} is invalid.")
 
@@ -283,14 +257,13 @@ def api(args):
         assert 'Column' in points.columns
         assert len(points) > 0
 
-        points = points[['Name', 'Row', 'Column']]
         images_w_points = points['Name'].to_list()
 
     except Exception as e:
         raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
 
     # -------------------------------------------------------------------------
-    # Authenticate te user
+    # Authenticate the user
     # -------------------------------------------------------------------------
     try:
         # Username, Password
@@ -321,6 +294,7 @@ def api(args):
         driver, meta, source_images = get_source_meta(driver,
                                                       args.source_id_1,
                                                       args.source_id_2,
+                                                      args.image_name_contains,
                                                       images_w_points)
 
         if meta is None:
@@ -403,15 +377,16 @@ def api(args):
             # Get the batch of points
             batch_points = p[i:i + point_batch_size]
             # Add data to payload
-            payload_data.append(
-                {
-                    "type": "image",
-                    "attributes": {
-                        "name": name,
-                        "url": None,
-                        "points": batch_points
-                    }
-                })
+            if batch_points:
+                payload_data.append(
+                    {
+                        "type": "image",
+                        "attributes": {
+                            "name": name,
+                            "url": None,
+                            "points": batch_points
+                        }
+                    })
 
     # Total number of images
     total_images = len(payload_imgs)
@@ -552,11 +527,16 @@ def api(args):
     # Sort predictions to match original points file, keep original columns
     log("NOTE: Sorting predictions to align with original file provided")
     final_predictions = pd.concat(coralnet_predictions)
-    # final_predictions = sort_predictions(points, final_predictions)
+    final_predictions = pd.merge(points, final_predictions, on=['Name', 'Row', 'Column'])
 
     # Output to disk
     log(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
     final_predictions.to_csv(predictions_path)
+
+    # Store in args, return
+    args.predictions = predictions_path
+
+    return args
 
 
 # -----------------------------------------------------------------------------
@@ -584,6 +564,10 @@ def main():
                         help='A path to a csv file, or folder containing '
                              'multiple csv files. Each csv file should '
                              'contain following: name, row, column')
+
+    parser.add_argument('--image_name_contains', type=str, default=None,
+                        help='A string that all images have in common to '
+                             'narrow the search space.')
 
     parser.add_argument('--source_id_1', type=str, required=True,
                         help='The ID of the Source containing images.')

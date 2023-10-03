@@ -77,6 +77,10 @@ def upload_multi_images(driver, source_id, images, prefix):
         driver_index = i % len(drivers)
         image_chunks[driver_index].append(image)
 
+    log("\n###############################################")
+    log("Uploading Images")
+    log("###############################################\n")
+
     log(f"NOTE: Created {N} browsers, each tasked with {len(image_chunks)} images")
 
     # Use concurrent.futures to upload each chunk of images with a separate driver

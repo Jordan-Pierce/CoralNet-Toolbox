@@ -637,7 +637,7 @@ def get_image_urls(driver, image_page_urls):
     return driver, image_urls
 
 
-def get_images(driver, source_id, image_list=None):
+def get_images(driver, source_id, image_name_contains=None, image_list=None):
     """
     Given a source ID, retrieve the image names, and page URLs.
     """
@@ -660,6 +660,17 @@ def get_images(driver, source_id, image_list=None):
     except Exception as e:
         log(f"ERROR: {e} or you do not have permission to access it")
         sys.exit(1)
+
+    # If provided, will limit the search space on CoralNet
+    if image_name_contains:
+        log(f"NOTE: Filtering search space using '{image_name_contains}'")
+        input_element = driver.find_element(By.CSS_SELECTOR, "#id_image_name")
+        input_element.clear()
+        input_element.send_keys(image_name_contains)
+
+        # Click submit
+        submit_button = driver.find_element(By.CSS_SELECTOR, ".submit_button_wrapper_center input[type='submit']")
+        submit_button.click()
 
     log(f"\nNOTE: Crawling all pages for source {source_id}")
 
