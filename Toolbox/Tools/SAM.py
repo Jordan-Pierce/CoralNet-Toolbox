@@ -339,6 +339,7 @@ def mss_sam(args):
     plot_dir = f"{output_dir}\\plots\\"
     seg_dir = f"{output_dir}\\segs\\"
     color_dir = f"{output_dir}\\color\\"
+    overlay_dir = f"{output_dir}\\overlay\\"
 
     output_mask_csv = f"{output_dir}masks.csv"
     output_color_json = f"{output_dir}Color_Map.json"
@@ -347,6 +348,7 @@ def mss_sam(args):
     os.makedirs(plot_dir, exist_ok=True)
     os.makedirs(seg_dir, exist_ok=True)
     os.makedirs(color_dir, exist_ok=True)
+    os.makedirs(overlay_dir, exist_ok=True)
 
     # Output for mask dataframe
     mask_df = []
@@ -450,40 +452,47 @@ def mss_sam(args):
         final_mask = cv2.dilate(final_mask, kernel, iterations=2)
         final_mask = cv2.erode(final_mask, kernel, iterations=5)
 
+        # Save the seg mask
+        mask_path = f"{seg_dir}{name.split('.')[0]}.png"
+        imsave(fname=mask_path, arr=final_mask.astype(np.uint8))
+        log(f"NOTE: Saved seg mask to {mask_path}")
+
         # Get the final colored mask, change no data to black
         final_color = colorize_mask(final_mask, class_map, label_colors)
         final_color[final_mask == 255, :] = [0, 0, 0]
-        point_colors = current_points[label_col].map(label_colors).values
 
-        # Final figure
+        # Save the color mask
+        color_path = f"{color_dir}{name.split('.')[0]}.png"
+        imsave(fname=color_path, arr=final_color.astype(np.uint8))
+        log(f"NOTE: Saved color mask to {color_path}")
+
+        # Get the final overlay, which is the final color mask
+        # on top of the original image, with 50% transparency, while
+        # maintaining the original resolution
+        final_overlay = cv2.addWeighted(image, 0.5, final_color, 0.5, 0)
+
+        # Save the overlay
+        overlay_path = f"{overlay_dir}{name.split('.')[0]}.png"
+        imsave(fname=overlay_path, arr=final_overlay.astype(np.uint8))
+        log(f"NOTE: Saved overlay to {overlay_path}")
+
+        # Add to output list
+        mask_df.append([name, image_path, mask_path, color_path, overlay_path])
+
         if args.plot:
+            # Get the point colors to plot
+            point_colors = current_points[label_col].map(label_colors).values
             # Plot the final mask
             fname = f"{name.split('.')[0]}.jpg"
             plot_path = f"{plot_dir}{fname}"
             plot_mask(image, final_color, current_points, point_colors, plot_path)
             log(f"NOTE: Saved plot to {plot_path}")
 
-        else:
-            plot_path = ""
-
-        # Save the seg mask
-        mask_path = f"{seg_dir}{name.split('.')[0]}.png"
-        imsave(fname=mask_path, arr=final_mask.astype(np.uint8))
-        log(f"NOTE: Saved seg mask to {mask_path}")
-
-        # Save the color mask
-        color_path = f"{color_dir}{name}"
-        imsave(fname=color_path, arr=final_color.astype(np.uint8))
-        log(f"NOTE: Saved color mask to {color_path}")
-
-        # Add to output list
-        mask_df.append([name, image_path, mask_path, color_path, plot_path])
-
         # Gooey
         print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory
-    mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Seg Path', 'Color Path', 'Plot Path'])
+    mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Seg Path', 'Color Path', 'Overlay Path'])
     mask_df.to_csv(output_mask_csv)
 
     if os.path.exists(output_mask_csv):
