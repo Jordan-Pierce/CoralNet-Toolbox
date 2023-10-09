@@ -9,6 +9,7 @@ import warnings
 import argparse
 import traceback
 import subprocess
+from tqdm import tqdm
 
 import cv2
 import numpy as np
@@ -25,7 +26,7 @@ from torch.utils.data import Dataset as BaseDataset
 from torch.utils.tensorboard import SummaryWriter
 
 import segmentation_models_pytorch as smp
-import segmentation_models_pytorch.utils
+from segmentation_models_pytorch.utils.meter import AverageValueMeter
 
 import albumentations as albu
 
@@ -41,10 +42,132 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 # ------------------------------------------------------------------------------------------------------------------
 # Classes
 # ------------------------------------------------------------------------------------------------------------------
+class Epoch:
+    def __init__(self, model, loss, metrics, stage_name, device="cpu", verbose=True):
+        self.model = model
+        self.loss = loss
+        self.metrics = metrics
+        self.stage_name = stage_name
+        self.verbose = verbose
+        self.device = device
+
+        self._to_device()
+
+    def _to_device(self):
+        self.model.to(self.device)
+        self.loss.to(self.device)
+        for metric in self.metrics:
+            metric.to(self.device)
+
+    def _format_logs(self, logs):
+        str_logs = ["{} - {:.4}".format(k, v) for k, v in logs.items()]
+        s = ", ".join(str_logs)
+        return s
+
+    def batch_update(self, x, y):
+        raise NotImplementedError
+
+    def on_epoch_start(self):
+        pass
+
+    def run(self, dataloader):
+
+        self.on_epoch_start()
+
+        logs = {}
+        loss_meter = AverageValueMeter()
+        metrics_meters = {metric.__name__: AverageValueMeter() for metric in self.metrics}
+
+        with tqdm(
+                dataloader,
+                desc=self.stage_name,
+                file=sys.stdout,
+                disable=not self.verbose,
+        ) as iterator:
+            for x, y in iterator:
+                x, y = x.to(self.device), y.to(self.device)
+                loss, y_pred = self.batch_update(x, y)
+
+                # update loss logs
+                loss_value = loss.cpu().detach().numpy()
+                loss_meter.add(loss_value)
+                loss_logs = {self.loss.__name__: loss_meter.mean}
+                logs.update(loss_logs)
+
+                # Convert y_pred
+                num_classes = y_pred.shape[1]
+                y_pred = torch.argmax(y_pred, axis=1)
+
+                # Calculate the stats
+                tp, fp, fn, tn = smp.metrics.functional._get_stats_multiclass(output=y_pred,
+                                                                              target=y,
+                                                                              num_classes=num_classes,
+                                                                              ignore_index=None)
+
+                # update metrics logs
+                for metric_fn in self.metrics:
+                    metric_values = smp.metrics.functional._compute_metric(metric_fn, tp, fp, fn, tn)
+                    metrics_meters[metric_fn.__name__].add(torch.mean(metric_values))
+                metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
+                logs.update(metrics_logs)
+
+                if self.verbose:
+                    s = self._format_logs(logs)
+                    iterator.set_postfix_str(s)
+
+        return logs
+
+
+class TrainEpoch(Epoch):
+    def __init__(self, model, loss, metrics, optimizer, device="cpu", verbose=True):
+        super().__init__(
+            model=model,
+            loss=loss,
+            metrics=metrics,
+            stage_name="train",
+            device=device,
+            verbose=verbose,
+        )
+        self.optimizer = optimizer
+
+    def on_epoch_start(self):
+        self.model.train()
+
+    def batch_update(self, x, y):
+        self.optimizer.zero_grad()
+        prediction = self.model.forward(x)
+        loss = self.loss(prediction, y)
+        loss.backward()
+        self.optimizer.step()
+        return loss, prediction
+
+
+class ValidEpoch(Epoch):
+    def __init__(self, model, loss, metrics, device="cpu", verbose=True):
+        super().__init__(
+            model=model,
+            loss=loss,
+            metrics=metrics,
+            stage_name="valid",
+            device=device,
+            verbose=verbose,
+        )
+
+    def on_epoch_start(self):
+        self.model.eval()
+
+    def batch_update(self, x, y):
+        with torch.no_grad():
+            prediction = self.model.forward(x)
+            loss = self.loss(prediction, y)
+        return loss, prediction
+
+
 class PytorchMetric(torch.nn.Module):
     """
 
     """
+
     def __init__(self, func):
         super(PytorchMetric, self).__init__()
         self.func = func  # The custom function to be wrapped
@@ -98,10 +221,6 @@ class Dataset(BaseDataset):
         image = cv2.imread(self.images_fps[i])
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         mask = cv2.imread(self.masks_fps[i], cv2.IMREAD_GRAYSCALE)
-
-        # One hot encoded
-        # masks = [(mask == v) for v in self.class_ids]
-        # mask = np.stack(masks, axis=-1).astype('float')
 
         # apply augmentations
         if self.augmentation:
@@ -178,18 +297,15 @@ def get_segmentation_metrics():
     """
 
     """
-    metric_options = []
-
-    try:
-        import segmentation_models_pytorch.utils.metrics as metrics
-
-        options = [attr for attr in dir(metrics) if callable(getattr(metrics, attr))]
-        options = [o for o in options if o != 'Activation']
-        metric_options = options
-
-    except Exception as e:
-        # Fail silently
-        pass
+    metric_options = ['accuracy',
+                      'balanced_accuracy',
+                      'f1_score',
+                      'fbeta_score',
+                      'iou_score',
+                      'precision',
+                      'recall',
+                      'sensitivity',
+                      'specificity']
 
     return metric_options
 
@@ -457,10 +573,15 @@ def seg(args):
         sys.exit(1)
 
     try:
+        assert any(m in get_segmentation_metrics() for m in args.metrics)
+        metrics = [getattr(smp.metrics, m) for m in args.metrics]
+
+        if not metrics:
+            metrics.append(smp.metrics.iou_score)
+
+        metrics = [PytorchMetric(m) for m in metrics]
 
         log(f"NOTE: Using metrics {args.metrics}")
-
-        metrics = []
 
     except Exception as e:
         log(f"ERROR: Could not get metric(s): {args.metrics}")
@@ -621,7 +742,7 @@ def seg(args):
             f"#########################################\n")
 
         log("NOTE: Starting Training")
-        train_epoch = smp.utils.train.TrainEpoch(
+        train_epoch = TrainEpoch(
             model,
             loss=loss_function,
             metrics=metrics,
@@ -630,7 +751,7 @@ def seg(args):
             verbose=True,
         )
 
-        valid_epoch = smp.utils.train.ValidEpoch(
+        valid_epoch = ValidEpoch(
             model,
             loss=loss_function,
             metrics=metrics,
@@ -774,7 +895,7 @@ def seg(args):
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
 
     # Evaluate on the test set
-    test_epoch = smp.utils.train.ValidEpoch(
+    test_epoch = ValidEpoch(
         model=model,
         loss=loss_function,
         metrics=metrics,
