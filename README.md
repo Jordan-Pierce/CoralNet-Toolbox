@@ -82,6 +82,13 @@ Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
 - `Metashape Professional 2.0.X`
 - `Google Chrome 114`
 
+For convenience, `Metashape` wheels are located in `./Packages`, and can be installed by:
+```python
+# cmd
+conda activate coralnet_toolbox
+pip install ./Packages/Metashape_Version_X.whl
+```
+
 ### **Conclusion**
 In summary, this repository provides a range of tools that can assist with interacting with 
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be 
