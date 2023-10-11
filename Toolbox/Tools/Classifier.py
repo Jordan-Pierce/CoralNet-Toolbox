@@ -218,9 +218,13 @@ def classifier(args):
     valid_df = patches_df[patches_df['Image Name'].isin(validation_images)]
     test_df = patches_df[patches_df['Image Name'].isin(testing_images)]
 
-    # If there isn't one class sample in each train and valid sets
+    train_classes = len(set(train_df['Label'].unique()))
+    valid_classes = len(set(valid_df['Label'].unique()))
+    test_classes = len(set(test_df['Label'].unique()))
+
+    # If there isn't one class sample in each data sets
     # Keras will throw an error; hacky way of fixing this.
-    if len(set(train_df['Label'].unique())) - len(set(valid_df['Label'].unique())):
+    if not (train_classes == valid_classes == test_classes):
         log("NOTE: Sampling one of each class category")
         # Holds one sample of each class category
         sample = pd.DataFrame()
@@ -740,7 +744,7 @@ def main():
     parser.add_argument('--dropout_rate', type=float, default=0.5,
                         help='Amount of dropout in model (augmentation)')
 
-    parser.add_argument('--num_epochs', type=int, default=1,
+    parser.add_argument('--num_epochs', type=int, default=25,
                         help='Starting learning rate')
 
     parser.add_argument('--batch_size', type=int, default=128,
