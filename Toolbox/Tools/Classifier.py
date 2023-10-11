@@ -41,7 +41,10 @@ from Common import log
 from Common import get_now
 
 warnings.filterwarnings("ignore")
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+gpus = tf.config.list_physical_devices(device_type='GPU')
+tf.config.experimental.set_memory_growth(gpus[0], True)
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -196,7 +199,7 @@ def classifier(args):
     for patches in args.patches:
         if os.path.exists(patches):
             # Patch dataframe
-            patches = pd.read_csv(patches)
+            patches = pd.read_csv(patches, index_col=0)
             patches = patches.dropna()
             patches_df = pd.concat((patches_df, patches))
         else:
@@ -740,10 +743,10 @@ def main():
     parser.add_argument('--num_epochs', type=int, default=1,
                         help='Starting learning rate')
 
-    parser.add_argument('--batch_size', type=int, default=64,
+    parser.add_argument('--batch_size', type=int, default=128,
                         help='Starting learning rate')
 
-    parser.add_argument('--learning_rate', type=float, default=0.0001,
+    parser.add_argument('--learning_rate', type=float, default=0.0005,
                         help='Starting learning rate')
 
     parser.add_argument('--tensorboard', action='store_true',
