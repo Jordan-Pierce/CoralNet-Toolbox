@@ -56,7 +56,16 @@ To use these tools, you should have access to the CoralNet platform. Once you ha
 you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
 various tasks.
 
-To install, use the `coralnet_toolbox.yml` file using anaconda:
+To install just the dependencies, it's recommended to use the `requirements.txt` file with pip:
+```python
+# cmd
+conda create --name coralnet_toolbox python=3.8 -y
+conda activate coralnet_toolbox
+pip install -r requirements.txt
+python Toolbox\toolbox.py
+```
+
+To install the entire repository (development), use the `coralnet_toolbox.yml` file using anaconda:
 ```python
 # cmd
 conda env create -f coralnet_toolbox.yml
