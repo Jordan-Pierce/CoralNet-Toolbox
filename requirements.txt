@@ -17,7 +17,7 @@ segment_anything
 segmentation_models_pytorch
 selenium
 scikit_image
-tensorflow
+tensorflow==2.10.1
 torch
 torchvision
 tqdm
