@@ -446,8 +446,6 @@ def classifier(args):
                       mode="auto",
                       baseline=None,
                       restore_best_weights=True),
-
-        TensorBoard(log_dir=logs_dir, histogram_freq=0),
     ]
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -463,6 +461,9 @@ def classifier(args):
             log(f"\n#########################################\n"
                 f"Tensorboard\n"
                 f"#########################################\n")
+
+            # Add callback
+            callbacks.append(TensorBoard(log_dir=logs_dir, histogram_freq=0))
 
             # Call Tensorboard using the environment's python exe
             tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')

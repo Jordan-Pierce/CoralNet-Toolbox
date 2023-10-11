@@ -82,6 +82,9 @@ def crop_patch(image, y, x, patch_size=224):
 
 
 def process_image(image_name, image_dir, annotation_df, output_dir, patch_size):
+    """
+
+    """
     # Get the name and path
     image_prefix = image_name.split(".")[0]
     image_path = os.path.join(image_dir, image_name)
@@ -131,6 +134,7 @@ def patches(args):
 
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
+        image_dir_basename = os.path.basename(args.image_dir)
     else:
         log(f"ERROR: Image directory provided doesn't exist; please check input")
         sys.exit(1)
@@ -138,12 +142,17 @@ def patches(args):
     if os.path.exists(args.annotation_file):
         annotation_file = args.annotation_file
         annotation_df = pd.read_csv(annotation_file)
+
+        assert "Row" in annotation_df.columns, log(f"ERROR: 'Row' not in provided csv")
+        assert "Column" in annotation_df.columns, log(f"ERROR: 'Column' not in provided csv")
+        assert "Label" in annotation_df.columns, log(f"ERROR: 'Label' not in provided csv")
+        assert args.image_column in annotation_df.columns, log(f"ERROR: {args.image_column} not in provided csv")
     else:
         log(f"ERROR: Annotation file provided does not exist; please check input")
         sys.exit(1)
 
     # Create output
-    output_dir = f"{args.output_dir}\\patches\\{get_now()}\\"
+    output_dir = f"{args.output_dir}\\patches\\{image_dir_basename}_{get_now()}\\"
     output_path = f"{output_dir}patches.csv"
     os.makedirs(output_dir, exist_ok=True)
 
@@ -151,8 +160,11 @@ def patches(args):
     for label in annotation_df['Label'].unique():
         os.makedirs(os.path.join(output_dir, 'patches', label), exist_ok=True)
 
+    # Subset of annotation df, simpler
+    sub_df = annotation_df[[args.image_column, 'Row', 'Column', 'Label']]
+    sub_df.columns = ['Name', 'Row', 'Column', 'Label']
     # All unique images in the annotation dataframe
-    image_names = annotation_df['Name'].unique()
+    image_names = sub_df['Name'].unique()
 
     # Size of patches to crop
     patch_size = args.patch_size
@@ -161,12 +173,12 @@ def patches(args):
     patches = []
 
     # For gooey
-    prg_total = len(annotation_df)
+    prg_total = len(sub_df)
 
     # Using ThreadPoolExecutor to process each image concurrently
     with ThreadPoolExecutor() as executor:
         future_to_patches = {
-            executor.submit(process_image, image_name, image_dir, annotation_df, output_dir, patch_size): image_name
+            executor.submit(process_image, image_name, image_dir, sub_df, output_dir, patch_size): image_name
             for image_name in image_names
         }
 
@@ -206,6 +218,9 @@ def main():
 
     parser.add_argument('--annotation_file', type=str, nargs="+", default=[],
                         help='The path to annotation file(s); expects CoralNet format')
+
+    parser.add_argument("--image_column", type=str, default="Name",
+                        help="The column specifying the image basename")
 
     parser.add_argument("--patch_size", type=int, default=112,
                         help="The size of each patch extracted")
