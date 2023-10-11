@@ -574,7 +574,7 @@ def classifier(args):
     # Create the display
     disp = ConfusionMatrixDisplay(confusion_matrix=cm_sorted, display_labels=class_labels_sorted)
     # Set the figure size
-    fig, ax = plt.subplots(figsize=(15, 10))
+    fig, ax = plt.subplots(figsize=(50, 50))
     ax.set_title(f"Confusion Matrix\nOverall Accuracy: {accuracy_str}, Samples: {num_samples_str}")
     # Plot the confusion matrix
     disp.plot(ax=ax, cmap=plt.cm.Blues, values_format='g')
@@ -676,11 +676,11 @@ def classifier(args):
                                                         seed=42)
 
     # Output a grid (5 x 5) of samples with their ground truth and predictions
-    grid_size = (5, 5)
+    grid_size = (10, 10)
     num_samples_to_display = grid_size[0] * grid_size[1]
 
     # Make the figure bigger
-    fig = plt.figure(figsize=(20, 20))
+    fig = plt.figure(figsize=(50, 50))
 
     test_indices = test_generator.class_indices
     test_names = {v: k for k, v in test_indices.items()}
