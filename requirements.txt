@@ -16,7 +16,7 @@ scipy
 segment_anything
 segmentation_models_pytorch
 selenium
-skimage
+scikit_image
 tensorflow
 torch
 torchvision
