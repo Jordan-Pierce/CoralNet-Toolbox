@@ -46,10 +46,7 @@ a GUI; these scripts currently include:
 
 #### **Future Features**
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
-- `SDM` Species distribution modeling [visualizations](https://onlinelibrary.wiley.com/doi/pdf/10.1111/ele.14281) 
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
-- `GAN`: Synthesize samples using generative AI
-- `GPT`: LLMs for QA of annotation dataframes, plot visualizations
 
 #### **How to use**
 To use these tools, you should have access to the CoralNet platform. Once you have an account, 
@@ -65,10 +62,13 @@ pip install -r requirements.txt
 python Toolbox\toolbox.py
 ```
 
-To install the entire repository (development), use the `coralnet_toolbox.yml` file using anaconda:
+To install the entire repository (development), use the one of the `coralnet_toolbox_X.yml` files using anaconda:
 ```python
 # cmd
-conda env create -f coralnet_toolbox.yml
+
+conda env create -f Environments/coralnet_toolbox_avd.yml # AVD
+# or 
+conda env create -f Environments/coralnet_toolbox_mls.yml # Azure ML Studio
 conda activate coralnet_toolbox
 python Toolbox\toolbox.py
 ```
@@ -86,7 +86,7 @@ For convenience, `Metashape` wheels are located in `./Packages`, and can be inst
 ```python
 # cmd
 conda activate coralnet_toolbox
-pip install ./Packages/Metashape_Version_X.whl
+pip install ./Packages/Metashape_Version_X_OS.whl
 ```
 
 ### **Conclusion**

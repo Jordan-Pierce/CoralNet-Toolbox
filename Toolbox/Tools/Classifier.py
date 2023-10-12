@@ -208,10 +208,10 @@ def classifier(args):
     # Names of all images; sets to be split based on images
     image_names = patches_df['Image Name'].unique()
 
-    # Split the Images into training, validation, and test sets.
+    # Split the Images into training, validation, and test sets (70/20/10)
     # We split based on the image names, so that we don't have the same image in multiple sets.
-    training_images, testing_images = train_test_split(image_names, test_size=0.35, random_state=42)
-    validation_images, testing_images = train_test_split(testing_images, test_size=0.5, random_state=42)
+    training_images, temp_images = train_test_split(image_names, test_size=0.3, random_state=42)
+    validation_images, testing_images = train_test_split(temp_images, test_size=0.33, random_state=42)
 
     # Create training, validation, and test dataframes
     train_df = patches_df[patches_df['Image Name'].isin(training_images)]
