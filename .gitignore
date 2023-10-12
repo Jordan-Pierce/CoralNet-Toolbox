@@ -8,3 +8,9 @@ Toolbox/gooey_config.json
 /Viscore/
 Toolbox/README.md
 /Test/
+# Ignore .amlignore files
+.amlignore
+
+# Ignore files with the .amltmp extension
+*.amltmp
+.ipynb_aml_checkpoints
