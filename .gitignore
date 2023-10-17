@@ -8,3 +8,7 @@ Toolbox/gooey_config.json
 /Viscore/
 Toolbox/README.md
 /Test/
+.amlignore
+*.amltmp
+.ipynb_aml_checkpoints
+/Notebooks/AVD.ipynb
