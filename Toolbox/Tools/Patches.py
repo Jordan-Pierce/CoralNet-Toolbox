@@ -31,6 +31,8 @@ def crop_patch(image, y, x, patch_size=224):
     """
 
     height, width, _ = image.shape
+    x = int(x)
+    y = int(y)
 
     # N x N
     size = patch_size // 2
