@@ -17,11 +17,9 @@ from skimage.io import imsave
 
 import torch
 import torchvision
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
 
-from segment_anything import SamPredictor
 from segment_anything import sam_model_registry
+from segment_anything import SamAutomaticMaskGenerator
 
 from Common import log
 from Common import get_now
@@ -31,28 +29,6 @@ from Common import IMG_FORMATS
 
 warnings.filterwarnings('ignore')
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
-
-class CustomDataset(Dataset):
-    def __init__(self, bboxes, points):
-        self.bboxes = bboxes  # List of bounding boxes
-        self.points = points  # List of points
-
-    def __len__(self):
-        # Return the length of the dataset based on the number of bounding boxes
-        return len(self.bboxes)
-
-    def __getitem__(self, idx):
-        # Get the bounding box and points corresponding to the given index
-        bbox = self.bboxes[idx]
-        point = self.points[idx].unsqueeze(0)
-
-        # Return a tuple containing the bounding box and points
-        return bbox, point
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -113,83 +89,58 @@ def get_sam_predictor(model_type="vit_l", device='cpu'):
     # Loading the mode, returning the predictor
     sam_model = sam_model_registry[model_type](checkpoint=path)
     sam_model.to(device=device)
-    sam_predictor = SamPredictor(sam_model)
+    sam_predictor = SamAutomaticMaskGenerator(sam_model,
+                                              points_per_side=64,
+                                              points_per_batch=64)
 
     return sam_predictor
 
 
-def get_bbox(image, y, x, patch_size=224):
-    """
-    Given an image, and a Y, X location, this function will return a bounding box.
-    """
-
-    height, width, _ = image.shape
-
-    # N x N
-    size = patch_size // 2
-
-    # Top of the patch, else edge of image
-    top = y - size
-    if top < 0:
-        top = 0
-
-    # Bottom of patch, else edge of image
-    bottom = y + size
-    if bottom > height:
-        bottom = height
-
-    # Left of patch, else edge of image
-    left = x - size
-    if left < 0:
-        left = 0
-
-    # Right of patch, else edge of image
-    right = x + size
-    if right > width:
-        right = width
-
-    # Bounding Box
-    bbox = [left, top, right, bottom]
-
-    return bbox
-
-
-def find_most_common_label_in_area(points, binary_mask, bounding_box, label_col):
+def find_most_common_label_in_area(points, binary_mask):
     """
 
     """
 
-    # Get the coordinates of the bounding box
-    min_x, min_y, max_x, max_y = bounding_box
+    # Filter points within the area
+    x = points['Column'].values
+    y = points['Row'].values
+    l = points['Label'].values
 
-    # Filter points within the bounding box
-    points_in_area = points[(points['Column'] >= min_x) &
-                            (points['Column'] <= max_x) &
-                            (points['Row'] >= min_y) &
-                            (points['Row'] <= max_y)]
+    points_in_area = np.where(binary_mask[y, x])
 
-    # Filter points that correspond to 1-valued regions in the binary mask
-    mask_indices = points_in_area.apply(lambda row: binary_mask[row['Row'], row['Column']].item(), axis=1)
-    points_in_mask = points_in_area[mask_indices == 1]
+    # If points land in area, get the most common label
+    if points_in_area[0].size > 0:
+        labels_in_area = l[points_in_area]
+        labels, counts = np.unique(labels_in_area, return_counts=True)
+        most_common_label = labels[np.argmax(counts)]
+    else:
+        # Background
+        most_common_label = None
 
-    # Calculate the frequency of each label
-    label_counts = points_in_mask[label_col].value_counts()
+    return most_common_label
 
-    # Calculate the weighted most common label
-    total_weight = label_counts.sum()
 
-    # Initialize an empty dictionary to store weighted labels
-    weighted_labels = {}
+def get_exclusive_mask(mask_id, masks):
+    """
 
-    # Iterate through the labels and calculate weighted values
-    for label in label_counts.index:
-        weighted_value = label_counts[label] / total_weight
-        weighted_labels[label] = weighted_value
+    """
+    # Get the original mask
+    result = masks[mask_id]['segmentation'].copy()
 
-    # Find the label with the maximum weighted value
-    weighted_most_common_label = max(weighted_labels, key=weighted_labels.get)
+    # Loop through all other masks
+    for m_idx, m in enumerate(masks):
 
-    return weighted_most_common_label
+        if m_idx == mask_id:
+            continue
+
+        # Subtract the mask against all others
+        exclusive = np.bitwise_xor(result, m['segmentation'].copy())
+
+        # Only retain if there was subtraction
+        if exclusive.sum() < result.sum():
+            result = exclusive
+
+    return result
 
 
 def get_color_map(N):
@@ -295,10 +246,14 @@ def mss_sam(args):
         if 'suggestion' in label_col:
             points_df = points_df[points_df[label_col.replace("suggestion", "confidence")] >= confidence]
 
+        # Make a subset containing only necessary fields
+        points_df = points_df[['Name', 'Row', 'Column', label_col]]
+        points_df.columns = ['Name', 'Row', 'Column', 'Label']
+
         log(f"NOTE: Found a total of {len(points_df)} sampled points for {len(image_names)} images")
 
         # Create the class mapping between values and colors
-        class_map = {l: i + 1 for i, l in enumerate(sorted(points_df[label_col].unique()))}
+        class_map = {l: i + 1 for i, l in enumerate(sorted(points_df['Label'].unique()))}
 
         # Create a color map give the amount of classes
         unique_labels = list(class_map.keys())
@@ -367,90 +322,46 @@ def mss_sam(args):
         name = os.path.basename(image_path)
         current_points = points_df[points_df['Name'] == name]
 
-        # Sort based on frequency for current image
-        value_counts = current_points[label_col].value_counts()
-        sorted_values = value_counts.sort_values(ascending=False)
-        current_points['index'] = current_points[label_col]
-        current_points = current_points.set_index('index').loc[sorted_values.index].reset_index()
-
         # Skip if there are no points for some reason
         if current_points.empty:
             continue
 
         # Read the image, get the points, create bounding boxes
         image = imread(image_path)
+        height, width = image.shape[0:2]
+        area = height * width
 
         log(f"NOTE: Making predictions for {name}")
         # Set the image in sam predictor
-        sam_predictor.set_image(image)
+        masks = sam_predictor.generate(image)
+        # Sort based on area (larger first)
+        masks = sorted(masks, key=(lambda x: x['area']), reverse=True)
 
         # To hold the updated mask, will be added onto each iteration
-        updated_mask = torch.full(image.shape[:2], fill_value=0, dtype=torch.uint8).to(device)
+        final_mask = np.full(image.shape[:2], fill_value=255, dtype=np.uint8)
 
-        # Get all the bounding boxes for the current image
-        bboxes = []
-        points = []
+        # Loop through all masks generated
+        for m_idx in range(len(masks)):
 
-        for i, r in current_points.iterrows():
-            bboxes.append(get_bbox(image, r['Row'], r['Column'], args.patch_size))
-            points.append([r['Column'], r['Row']])
+            # Get the generated mask
+            mask = masks[m_idx]['segmentation']
 
-        # Create into a tensor
-        bboxes = np.array(bboxes)
-        transformed_boxes = torch.tensor(bboxes, device=sam_predictor.device)
-        transformed_boxes = sam_predictor.transform.apply_boxes_torch(transformed_boxes, image.shape[:2])
+            # Check the area; if it's large, subtract it
+            # from the other masks so there isn't overlap
+            if masks[m_idx]['area'] / area > 0.35:
+                mask = get_exclusive_mask(m_idx, masks)
 
-        points = np.array(points)
-        transformed_points = torch.tensor(points, device=sam_predictor.device)
-        transformed_points = sam_predictor.transform.apply_coords_torch(transformed_points, image.shape[:2])
+            # Get the most common label in the mask area
+            label = find_most_common_label_in_area(current_points, mask)
 
-        # Create a data loader containing the transformed boxes
-        custom_dataset = CustomDataset(transformed_boxes, transformed_points)
-        data_loader = DataLoader(custom_dataset, batch_size=args.batch_size, shuffle=False)
-
-        # Loop through batches of boxes, faster
-        for batch_idx, batch in enumerate(data_loader):
-
-            try:
-                # Specific for SAM [0, 1] for background, foreground
-                point_label = torch.tensor([1], device=sam_predictor.device)
-
-                # After setting the current image, get masks for each point / bbox
-                masks, _, _ = sam_predictor.predict_torch(point_coords=batch[1],
-                                                          point_labels=point_label,
-                                                          boxes=batch[0],
-                                                          multimask_output=False)
-            except Exception as e:
-                log(f"ERROR: SAM model could not make predictions\n{e}")
-                sys.exit(1)
-
-            # Loop through all the individual masks in the batch
-            for m_idx, mask in enumerate(masks):
-
-                try:
-                    # CPU Mask
-                    mask = mask.squeeze()
-                    # Get the current box
-                    box = bboxes[batch_idx * args.batch_size: (batch_idx + 1) * args.batch_size][m_idx]
-                    # Find the most common label within the binary mask (1)
-                    label = find_most_common_label_in_area(current_points, mask, box, label_col)
-                    # convert binary values to correspond to label values
-                    updated_mask[mask == 1] = int(class_map[label])
-
-                except:
-                    pass
+            # If it's not background
+            if label:
+                label = int(class_map[label])
+                final_mask[mask] = label
 
         # ------------------------------------------------
         # Save the final masks
         # ------------------------------------------------
-
-        # Convert to numpy for plotting, saving
-        final_mask = updated_mask.cpu().detach().numpy()
-
-        # Define a kernel (structuring element)
-        kernel = np.ones((5, 5), np.uint8)
-        final_mask = cv2.dilate(final_mask, kernel, iterations=2)
-        final_mask = cv2.erode(final_mask, kernel, iterations=5)
 
         # Save the seg mask
         mask_path = f"{seg_dir}{name.split('.')[0]}.png"
@@ -539,12 +450,6 @@ def main():
 
     parser.add_argument("--confidence", type=int, default=75,
                         help="Confidence threshold value to filter")
-
-    parser.add_argument("--patch_size", type=int, default=360,
-                        help="The approximate size of each superpixel formed by SAM")
-
-    parser.add_argument("--batch_size", type=int, default=1,
-                        help="The number of samples passed to SAM in a batch (GPU dependent)")
 
     parser.add_argument("--model_type", type=str, default='vit_b',
                         help="Model to use; one of ['vit_b', 'vit_l', 'vit_h']")

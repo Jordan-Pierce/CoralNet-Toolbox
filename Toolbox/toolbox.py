@@ -672,14 +672,6 @@ def main():
                                     help='Version of SAM model to use',
                                     widget='FilterableDropdown', choices=['vit_b', 'vit_l', 'vit_h'])
 
-    sam_parser_panel_1.add_argument("--patch_size", type=int, default=360,
-                                    metavar="Patch Size",
-                                    help="The approximate size of each superpixel formed by SAM")
-
-    sam_parser_panel_1.add_argument("--batch_size", type=int, default=1,
-                                    metavar="Batch Size",
-                                    help="The number of samples passed to SAM in a batch (GPU dependent)")
-
     sam_parser_panel_1.add_argument('--plot', default=False,
                                     metavar="Plot Masks",
                                     help='Saves colorized figures of masks in subdirectory',
