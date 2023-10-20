@@ -19,6 +19,7 @@ from Common import log
 from Common import get_now
 from Common import IMG_FORMATS
 from Common import print_progress
+from Common import MIR_MAPPING
 
 from Patches import crop_patch
 from Classifier import precision
@@ -62,9 +63,20 @@ def inference(args):
     if os.path.exists(args.points):
         # Annotation file
         annotation_file = args.points
-        points = pd.read_csv(annotation_file, index_col=0)
+        points = pd.read_csv(annotation_file)
+        # Check that the needed columns are in the dataframe
+        assert "Row" in points.columns, log(f"ERROR: 'Row' not in provided csv")
+        assert "Column" in points.columns, log(f"ERROR: 'Column' not in provided csv")
+        assert "Name" in points.columns, log(f"ERROR: 'Name' not in provided csv")
+        # Redundant, just in case user passes the file path instead of the file name
+        points['Name'] = [os.path.basename(n) for n in points['Name'].values]
+        # Get the names of all the images
         image_names = np.unique(points['Name'].to_numpy())
-        log(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
+        image_names = [os.path.basename(n) for n in image_names]
+        if image_names:
+            log(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
+        else:
+            raise Exception(f"ERROR: Issue with 'Name' column; check input provided")
     else:
         log("ERROR: Points provided doesn't exist.")
         sys.exit(1)
@@ -108,6 +120,9 @@ def inference(args):
         log(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit()
 
+    # TODO Remove MIR Mapping
+    mapping = pd.read_csv(MIR_MAPPING, index_col=None, sep=",")
+
     # Output
     output_dir = f"{args.output_dir}\\predictions\\"
     output_path = f"{output_dir}classifier_{get_now()}_predictions.csv"
@@ -138,6 +153,11 @@ def inference(args):
 
         # Get the current image points
         image_points = points[points['Name'] == image_name]
+
+        # Make sure it's not empty for some reason
+        if image_points.empty:
+            log(f"ERROR: No image points found for {image_name}")
+            continue
 
         for i, r in image_points.iterrows():
             patches.append(crop_patch(image, r['Row'], r['Column'], patch_size))
@@ -173,6 +193,12 @@ def inference(args):
         for index, class_num in enumerate(range(num_classes)):
             output['Machine confidence ' + str(index + 1)] = top_N_confidences[:, index]
             output['Machine suggestion ' + str(index + 1)] = top_N_suggestions[:, class_num]
+
+        # TODO Remove MIR MAPPING
+        for index, class_num in enumerate(range(num_classes)):
+            coralnet_labels = output['Machine suggestion ' + str(index + 1)].values
+            viscore_labels = [mapping[mapping['Short Code'] == l]['VPI_label_V4'].item() for l in coralnet_labels]
+            output['Machine suggestion ' + str(index + 1)] = viscore_labels
 
         # Save with previous prediction, if any exists
         if os.path.exists(output_path):

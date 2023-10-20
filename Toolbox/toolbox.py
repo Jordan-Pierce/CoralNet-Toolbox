@@ -14,9 +14,10 @@ from Tools.Visualize import visualize
 from Tools.Points import points
 from Tools.Classifier import classifier
 from Tools.Inference import inference
-from Tools.SAM import mss_sam
+from Tools.MSS import mss
 from Tools.Segmentation import seg
 from Tools.SfM import sfm
+from Tools.TagLab import taglab
 from Tools.Segmentation3D import seg3d
 
 # For Gooey dropdown
@@ -237,7 +238,7 @@ def main():
     labelset_parser_panel_1.add_argument('--func_group', type=str, required=True,
                                          metavar="Functional Group",
                                          help='The functional group of the labelset to create',
-                                         widget='FilterableDropdown', choices=FUNC_GROUPS_LIST)
+                                         widget='Dropdown', choices=FUNC_GROUPS_LIST)
 
     labelset_parser_panel_1.add_argument('--desc', type=str, required=True,
                                          metavar="Description",
@@ -523,12 +524,12 @@ def main():
     classifier_parser_panel_2.add_argument('--encoder_name', type=str, required=True,
                                            metavar="Pretrained Encoder",
                                            help='Encoder, pre-trained on ImageNet dataset',
-                                           widget='FilterableDropdown', choices=get_classifier_encoders())
+                                           widget='Dropdown', choices=get_classifier_encoders())
 
     classifier_parser_panel_2.add_argument('--loss_function', type=str, required=True,
                                            metavar="Loss Function",
                                            help='Loss function for training model',
-                                           widget='FilterableDropdown', choices=get_classifier_losses())
+                                           widget='Dropdown', choices=get_classifier_losses())
 
     classifier_parser_panel_2.add_argument('--weighted_loss', default=True,
                                            metavar="Weighted Loss Function",
@@ -638,47 +639,47 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # MSS w/ SAM
     # ------------------------------------------------------------------------------------------------------------------
-    sam_parser = subs.add_parser('SAM')
+    mss_parser = subs.add_parser('MSS')
 
     # Panel 1
-    sam_parser_panel_1 = sam_parser.add_argument_group('SAM',
+    mss_parser_panel_1 = mss_parser.add_argument_group('MSS',
                                                        'Use the Segment Anything Model (SAM) to create '
-                                                       'segmentation masks given predicted points.')
+                                                       'segmentation masks given labeled points.')
 
-    sam_parser_panel_1.add_argument('--images', required=True,
+    mss_parser_panel_1.add_argument('--images', required=True,
                                     metavar="Image Directory",
                                     help='Directory containing images to make predictions on',
                                     widget="DirChooser")
 
-    sam_parser_panel_1.add_argument('--annotations', required=True,
+    mss_parser_panel_1.add_argument('--annotations', required=True,
                                     metavar="Annotations File",
                                     help='A file containing points with labels',
                                     widget="FileChooser")
 
-    sam_parser_panel_1.add_argument("--label_col", type=str, default='Label',
+    mss_parser_panel_1.add_argument("--label_col", type=str, default='Label',
                                     metavar='Label Column',
                                     help="The column in annotations with labels to use "
                                          "('Label', 'Machine suggestion N, etc).",
                                     widget='Dropdown',
                                     choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
-    sam_parser_panel_1.add_argument("--confidence", type=int, default=75,
+    mss_parser_panel_1.add_argument("--confidence", type=int, default=75,
                                     metavar="Confidence Threshold",
                                     help="Confidence threshold value to filter (percentage)",
                                     widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
 
-    sam_parser_panel_1.add_argument('--model_type', type=str, required=True,
+    mss_parser_panel_1.add_argument('--model_type', type=str, required=True,
                                     metavar="Model Version",
                                     help='Version of SAM model to use',
-                                    widget='FilterableDropdown', choices=['vit_b', 'vit_l', 'vit_h'])
+                                    widget='Dropdown', choices=['vit_b', 'vit_l', 'vit_h'])
 
-    sam_parser_panel_1.add_argument('--plot', default=False,
+    mss_parser_panel_1.add_argument('--plot', default=False,
                                     metavar="Plot Masks",
                                     help='Saves colorized figures of masks in subdirectory',
                                     action="store_true",
                                     widget='BlockCheckbox')
 
-    sam_parser_panel_1.add_argument('--output_dir', required=True,
+    mss_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
                                     default=DATA_DIR,
                                     help='Root directory where output will be saved',
@@ -817,6 +818,35 @@ def main():
                                     widget='FileChooser')
 
     # ------------------------------------------------------------------------------------------------------------------
+    # TagLab w/ SAM
+    # ------------------------------------------------------------------------------------------------------------------
+    taglab_parser = subs.add_parser('TagLab')
+
+    # Panel 1
+    taglab_parser_panel_1 = taglab_parser.add_argument_group('TagLab',
+                                                             'Use an orthomosaic made from Metashape w/ SAM to create '
+                                                             'a pre-segmented version for use in TagLab')
+
+    taglab_parser_panel_1.add_argument("--orthomosaic", type=str, required=True,
+                                       metavar="Orthomosaic",
+                                       help="Path to orthomosaic or image",
+                                       widget='FileChooser')
+
+    taglab_parser_panel_1.add_argument('--model_type', type=str, required=True, default='vit_b',
+                                       metavar="Model Version",
+                                       help='Version of SAM model to use',
+                                       widget='Dropdown', choices=['vit_b', 'vit_l', 'vit_h'])
+
+    taglab_parser_panel_1.add_argument("--points_per_side", type=int, default=64,
+                                       metavar="Number of Points",
+                                       help="The number of points to sample from image")
+
+    taglab_parser_panel_1.add_argument('--output_dir', type=str, required=True,
+                                       metavar='Output Directory',
+                                       help='Directory to store results',
+                                       widget='DirChooser')
+
+    # ------------------------------------------------------------------------------------------------------------------
     # Seg3D
     # ------------------------------------------------------------------------------------------------------------------
     seg3d_parser = subs.add_parser('Seg3d')
@@ -917,14 +947,17 @@ def main():
     if args.command == 'Inference':
         inference(args)
 
-    if args.command == 'SAM':
-        mss_sam(args)
+    if args.command == 'MSS':
+        mss(args)
 
     if args.command == 'Seg':
         seg(args)
 
     if args.command == 'SfM':
         sfm(args)
+
+    if args.command =='TagLab':
+        taglab(args)
 
     if args.command == 'Seg3D':
         seg3d(args)

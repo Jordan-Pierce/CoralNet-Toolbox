@@ -56,7 +56,7 @@ def download_checkpoint(url, path):
         log(f"ERROR: An error occurred: {e}")
 
 
-def get_sam_predictor(model_type="vit_l", device='cpu'):
+def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, points_per_batch=64):
     """
 
     """
@@ -90,8 +90,8 @@ def get_sam_predictor(model_type="vit_l", device='cpu'):
     sam_model = sam_model_registry[model_type](checkpoint=path)
     sam_model.to(device=device)
     sam_predictor = SamAutomaticMaskGenerator(sam_model,
-                                              points_per_side=64,
-                                              points_per_batch=64)
+                                              points_per_side=points_per_side,
+                                              points_per_batch=points_per_batch)
 
     return sam_predictor
 
@@ -205,7 +205,7 @@ def plot_mask(image, mask_color, points, point_colors, plot_path):
     plt.close()
 
 
-def mss_sam(args):
+def mss(args):
     """
 
     """
@@ -338,7 +338,7 @@ def mss_sam(args):
         masks = sorted(masks, key=(lambda x: x['area']), reverse=True)
 
         # To hold the updated mask, will be added onto each iteration
-        final_mask = np.full(image.shape[:2], fill_value=255, dtype=np.uint8)
+        final_mask = np.full(image.shape[:2], fill_value=0, dtype=np.uint8)
 
         # Loop through all masks generated
         for m_idx in range(len(masks)):
@@ -463,7 +463,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        mss_sam(args)
+        mss(args)
         log("Done.\n")
 
     except Exception as e:

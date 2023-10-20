@@ -102,7 +102,7 @@ class Epoch:
                 tp, fp, fn, tn = smp.metrics.functional._get_stats_multiclass(output=y_pred,
                                                                               target=y,
                                                                               num_classes=num_classes,
-                                                                              ignore_index=None)
+                                                                              ignore_index=0)
 
                 # update metrics logs
                 for metric_fn in self.metrics:
@@ -762,6 +762,7 @@ def seg(args):
         best_score = float('inf')
         best_epoch = 0
         since_best = 0
+        since_drop = 0
 
         # Training loop
         for e_idx in range(1, args.num_epochs + 1):
@@ -810,8 +811,8 @@ def seg(args):
             train_loss = [v for k, v in train_logs.items() if 'loss' in k.lower()][0]
             valid_loss = [v for k, v in valid_logs.items() if 'loss' in k.lower()][0]
 
-            # Update best
             if valid_loss < best_score:
+                # Update best
                 best_score = valid_loss
                 best_epoch = e_idx
                 since_best = 0
@@ -824,7 +825,9 @@ def seg(args):
                 torch.save(model, f'{path}.pth')
                 log(f'NOTE: Model saved to {path}')
             else:
-                since_best += 1  # Increment the counter
+                # Increment the counters
+                since_best += 1
+                since_drop += 1
                 log(f"NOTE: Model did not improve after epoch {e_idx}")
 
             # Overfitting indication
@@ -832,13 +835,14 @@ def seg(args):
                 log(f"NOTE: Overfitting occurred in epoch {e_idx}")
 
             # Check if it's time to decrease the learning rate
-            if since_best >= 3 and train_loss <= valid_loss:
-                new_lr = optimizer.param_groups[0]['lr'] * 0.5
+            if (since_best >= 5 or train_loss <= valid_loss) and since_drop >= 5:
+                since_drop = 0
+                new_lr = optimizer.param_groups[0]['lr'] * 0.75
                 optimizer.param_groups[0]['lr'] = new_lr
                 log(f"NOTE: Decreased learning rate to {new_lr} after epoch {e_idx}")
 
             # Exit early if progress stops
-            if since_best >= 7 and train_loss < valid_loss:
+            if since_best >= 10 and train_loss < valid_loss and since_drop >= 5:
                 log("NOTE: Model training plateaued; exiting training loop")
                 break
 
@@ -879,14 +883,10 @@ def seg(args):
     # Open an image using PIL to get the original dimensions
     original_width, original_height = Image.open(test_df.loc[0, 'Image Path']).size
 
-    # Calculate new width and height that are divisible by 32
-    new_width = (original_width // 32) * 32
-    new_height = (original_height // 32) * 32
-
     # Create test dataset
     test_dataset = Dataset(
         test_df,
-        augmentation=get_validation_augmentation(new_height, new_width),
+        augmentation=get_validation_augmentation(height, width),
         preprocessing=get_preprocessing(preprocessing_fn),
         classes=class_ids,
     )
@@ -948,7 +948,7 @@ def seg(args):
         torch.cuda.empty_cache()
 
         # Loop through some samples
-        for i in range(10):
+        for i in range(25):
             # Get a random sample
             n = np.random.choice(len(test_dataset))
             # Get the image original image without preprocessing
@@ -956,11 +956,16 @@ def seg(args):
             # Get the expected input for model
             image, gt_mask = test_dataset[n]
             gt_mask = gt_mask.squeeze().numpy()
+            gt_mask = cv2.resize(gt_mask, (original_height, original_width), interpolation=cv2.INTER_NEAREST)
+            gt_mask = colorize_mask(gt_mask, class_ids, class_colors)
+            # Prepare sample
             x_tensor = image.to(device).unsqueeze(0)
             # Make prediction
             pr_mask = model.predict(x_tensor)
             pr_mask = (pr_mask.squeeze().cpu().numpy().round())
             pr_mask = np.argmax(pr_mask, axis=0)
+            pr_mask = cv2.resize(pr_mask, (original_height, original_width), interpolation=cv2.INTER_NEAREST)
+            pr_mask = colorize_mask(pr_mask, class_ids, class_colors)
 
             # Visualize the colorized results locally
             save_path = f'{tensorboard_dir}test\\TestResult_{i}.png'
@@ -968,8 +973,8 @@ def seg(args):
             visualize(save_path=save_path,
                       save_figure=True,
                       image=image_vis,
-                      ground_truth_mask=colorize_mask(gt_mask, class_ids, class_colors),
-                      predicted_mask=colorize_mask(pr_mask, class_ids, class_colors))
+                      ground_truth_mask=gt_mask,
+                      predicted_mask=pr_mask)
 
             # Log the visualization to TensorBoard
             test_writer.add_image(f'Test_Results', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)

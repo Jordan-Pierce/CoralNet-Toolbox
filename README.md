@@ -34,9 +34,10 @@ a GUI; these scripts currently include:
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 - `Inference`: Perform inference using a locally trained model
-- `SAM`: Create segmentation masks for each image using `MSS` w/ `SAM`
+- `MSS`: Create segmentation masks for each image using labeled points and SAM
 - `Seg`: Create your own semantic segmentation model, locally
 - `SfM`: Use Metashape to create 3D models (sure, why not)
+- `TagLab`: Use SAM to auto-segment an orthomosaic prior to TagLab
 - `Seg3D`: Use masks and SfM to create classified 3D models
 
 
