@@ -55,7 +55,11 @@ def taglab(args):
     # Model Weights
     try:
         # Load the model with custom metrics
-        sam_predictor = get_sam_predictor(args.model_type, device, points_per_side=args.points_per_side)
+        sam_predictor = get_sam_predictor(args.model_type,
+                                          device,
+                                          points_per_side=args.points_per_side,
+                                          points_per_batch=args.points_per_batch)
+
         log(f"NOTE: Loaded model {args.model_type}")
 
     except Exception as e:
@@ -121,6 +125,9 @@ def main():
 
     parser.add_argument("--points_per_side", type=int, default=64,
                         help="The number of points to sample from image (power of two)")
+
+    parser.add_argument("--points_per_batch", type=int, default=64,
+                        help="The number of points per batch (power of two)")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

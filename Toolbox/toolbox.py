@@ -673,11 +673,13 @@ def main():
                                     help='Version of SAM model to use',
                                     widget='Dropdown', choices=['vit_b', 'vit_l', 'vit_h'])
 
-    mss_parser_panel_1.add_argument('--plot', default=False,
-                                    metavar="Plot Masks",
-                                    help='Saves colorized figures of masks in subdirectory',
-                                    action="store_true",
-                                    widget='BlockCheckbox')
+    mss_parser_panel_1.add_argument("--points_per_side", type=int, default=64,
+                                    metavar='Points Per Side',
+                                    help="The number of points to sample from image (power of two)")
+
+    mss_parser_panel_1.add_argument("--points_per_batch", type=int, default=64,
+                                    metavar='Points Per Batch',
+                                    help="The number of points per batch (power of two)")
 
     mss_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
@@ -841,6 +843,10 @@ def main():
                                        metavar="Number of Points",
                                        help="The number of points to sample from image")
 
+    taglab_parser_panel_1.add_argument("--points_per_batch", type=int, default=64,
+                                       metavar='Points Per Batch',
+                                       help="The number of points per batch (power of two)")
+
     taglab_parser_panel_1.add_argument('--output_dir', type=str, required=True,
                                        metavar='Output Directory',
                                        help='Directory to store results',
@@ -876,10 +882,10 @@ def main():
                                       metavar="Chunk Index",
                                       help='Chunk index to classify; 0-based indexing')
 
-    seg3d_parser_panel_1.add_argument('--masks_dir', type=str, required=True,
-                                      metavar="Masks Directory",
-                                      help='Directory containing colored masks for images',
-                                      widget='DirChooser')
+    seg3d_parser_panel_1.add_argument('--masks_file', type=str, required=True,
+                                      metavar='Masks File',
+                                      help='Masks file containing paths for color masks of images',
+                                      widget='FileChooser')
 
     seg3d_parser_panel_1.add_argument('--color_map', type=str, required=True,
                                       metavar="Color Map File",
@@ -956,7 +962,7 @@ def main():
     if args.command == 'SfM':
         sfm(args)
 
-    if args.command =='TagLab':
+    if args.command == 'TagLab':
         taglab(args)
 
     if args.command == 'Seg3D':

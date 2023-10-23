@@ -202,11 +202,11 @@ class Dataset(BaseDataset):
             preprocessing=None,
     ):
         assert 'Name' in dataframe.columns, log(f"ERROR: 'Name' not found in mask file")
-        assert 'Seg Path' in dataframe.columns, log(f"ERROR: 'Name' not found in mask file")
-        assert 'Image Path' in dataframe.columns, log(f"ERROR: 'Seg Path' not found in mask file")
+        assert 'Semantic Path' in dataframe.columns, log(f"ERROR: 'Name' not found in mask file")
+        assert 'Image Path' in dataframe.columns, log(f"ERROR: 'Semantic Path' not found in mask file")
 
         self.ids = dataframe['Name'].to_list()
-        self.masks_fps = dataframe['Seg Path'].to_list()
+        self.masks_fps = dataframe['Semantic Path'].to_list()
         self.images_fps = dataframe['Image Path'].to_list()
 
         # convert str names to class values on masks
@@ -474,11 +474,6 @@ def seg(args):
         class_names = list(color_map.keys())
         class_ids = [color_map[c]['id'] for c in class_names]
         class_colors = [color_map[c]['color'] for c in class_names]
-
-        # Add Unlabeled class
-        class_names.insert(0, "Unlabeled")
-        class_ids.insert(0, 0)
-        class_colors.insert(0, [0, 0, 0])
 
     else:
         log(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")

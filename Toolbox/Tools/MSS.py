@@ -96,6 +96,23 @@ def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, poin
     return sam_predictor
 
 
+def resize_image_aspect_ratio(image, max_width=1280):
+    """
+
+    """
+    # Get the original image dimensions
+    height, width, _ = image.shape
+
+    # Calculate the new height to maintain aspect ratio
+    new_height = int(max_width * height / width)
+
+    # Resize the image using the calculated dimensions
+    resized_image = cv2.resize(image, (max_width, new_height), interpolation=cv2.INTER_AREA)
+
+    # Save the resized image
+    return resized_image
+
+
 def find_most_common_label_in_area(points, binary_mask):
     """
 
@@ -106,6 +123,7 @@ def find_most_common_label_in_area(points, binary_mask):
     y = points['Row'].values
     l = points['Label'].values
 
+    # Finds the
     points_in_area = np.where(binary_mask[y, x])
 
     # If points land in area, get the most common label
@@ -185,26 +203,6 @@ def colorize_mask(mask, class_map, label_colors):
     return rgb_mask.astype(np.uint8)
 
 
-def plot_mask(image, mask_color, points, point_colors, plot_path):
-    """
-
-    """
-
-    # Plot title
-    fname = os.path.basename(plot_path)
-
-    # Plot masks
-    plt.figure(figsize=(10, 10))
-    plt.title(fname)
-    plt.imshow(image)
-    plt.imshow(mask_color, alpha=.75)
-    plt.scatter(points['Column'].values, points['Row'].values, c=point_colors, s=1)
-
-    # Save the plot
-    plt.savefig(plot_path)
-    plt.close()
-
-
 def mss(args):
     """
 
@@ -282,7 +280,11 @@ def mss(args):
     # Model Weights
     try:
         # Load the model with custom metrics
-        sam_predictor = get_sam_predictor(args.model_type, device)
+        sam_predictor = get_sam_predictor(args.model_type,
+                                          device,
+                                          points_per_side=args.points_per_side,
+                                          points_per_batch=args.points_per_batch)
+
         log(f"NOTE: Loaded model {args.model_type}")
 
     except Exception as e:
@@ -291,8 +293,8 @@ def mss(args):
 
     # Setting output directories
     output_dir = f"{args.output_dir}\\masks\\SAM_{get_now()}\\"
-    plot_dir = f"{output_dir}\\plots\\"
-    seg_dir = f"{output_dir}\\segs\\"
+    seg_dir = f"{output_dir}\\semantic\\"
+    mask_dir = f"{output_dir}\\mask\\"
     color_dir = f"{output_dir}\\color\\"
     overlay_dir = f"{output_dir}\\overlay\\"
 
@@ -300,8 +302,8 @@ def mss(args):
     output_color_json = f"{output_dir}Color_Map.json"
 
     # Create the output directories
-    os.makedirs(plot_dir, exist_ok=True)
     os.makedirs(seg_dir, exist_ok=True)
+    os.makedirs(mask_dir, exist_ok=True)
     os.makedirs(color_dir, exist_ok=True)
     os.makedirs(overlay_dir, exist_ok=True)
 
@@ -326,14 +328,18 @@ def mss(args):
         if current_points.empty:
             continue
 
-        # Read the image, get the points, create bounding boxes
+        # Read the image, get dimensions
         image = imread(image_path)
-        height, width = image.shape[0:2]
-        area = height * width
+        original_height, original_width = image.shape[0:2]
+
+        # Resize the image to max width
+        resized_image = resize_image_aspect_ratio(image)
+        resized_height, resized_width = resized_image.shape[0:2]
+        resized_area = resized_height * resized_width
 
         log(f"NOTE: Making predictions for {name}")
         # Set the image in sam predictor
-        masks = sam_predictor.generate(image)
+        masks = sam_predictor.generate(resized_image)
         # Sort based on area (larger first)
         masks = sorted(masks, key=(lambda x: x['area']), reverse=True)
 
@@ -344,12 +350,17 @@ def mss(args):
         for m_idx in range(len(masks)):
 
             # Get the generated mask
-            mask = masks[m_idx]['segmentation']
+            resized_mask = masks[m_idx]['segmentation']
 
             # Check the area; if it's large, subtract it
             # from the other masks so there isn't overlap
-            if masks[m_idx]['area'] / area > 0.35:
-                mask = get_exclusive_mask(m_idx, masks)
+            if masks[m_idx]['area'] / resized_area > 0.35:
+                resized_mask = get_exclusive_mask(m_idx, masks)
+
+            # Resize the mask back to original dimensions using nearest neighbor
+            resized_mask = resized_mask.astype(np.uint8)
+            mask = cv2.resize(resized_mask, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
+            mask = mask.astype(bool)
 
             # Get the most common label in the mask area
             label = find_most_common_label_in_area(current_points, mask)
@@ -363,16 +374,22 @@ def mss(args):
         # Save the final masks
         # ------------------------------------------------
 
-        # Save the seg mask
-        mask_path = f"{seg_dir}{name.split('.')[0]}.png"
-        imsave(fname=mask_path, arr=final_mask.astype(np.uint8))
-        log(f"NOTE: Saved seg mask to {mask_path}")
+        # Save the semantic mask
+        final_mask = final_mask.astype(np.uint8)
+        semantic_path = f"{seg_dir}{name.split('.')[0]}.png"
+        imsave(fname=semantic_path, arr=final_mask)
+        log(f"NOTE: Saved semantic mask to {semantic_path}")
+
+        # Create traditional masks (0 background, 255 object)
+        mask = np.zeros(shape=(original_height, original_width, 3), dtype=np.uint8)
+        mask[final_mask != 0, :] = [255, 255, 255]
+        mask_path = f"{mask_dir}{name.split('.')[0]}.png"
+        imsave(fname=mask_path, arr=final_mask.astype(bool))
+        log(f"NOTE: Saved mask to {mask_path}")
 
         # Get the final colored mask, change no data to black
         final_color = colorize_mask(final_mask, class_map, label_colors)
-        final_color[final_mask == 255, :] = [0, 0, 0]
-
-        # Save the color mask
+        final_color[final_mask == 0, :] = [0, 0, 0]
         color_path = f"{color_dir}{name.split('.')[0]}.png"
         imsave(fname=color_path, arr=final_color.astype(np.uint8))
         log(f"NOTE: Saved color mask to {color_path}")
@@ -381,29 +398,19 @@ def mss(args):
         # on top of the original image, with 50% transparency, while
         # maintaining the original resolution
         final_overlay = cv2.addWeighted(image, 0.5, final_color, 0.5, 0)
-
-        # Save the overlay
         overlay_path = f"{overlay_dir}{name.split('.')[0]}.png"
         imsave(fname=overlay_path, arr=final_overlay.astype(np.uint8))
         log(f"NOTE: Saved overlay to {overlay_path}")
 
         # Add to output list
-        mask_df.append([name, image_path, mask_path, color_path, overlay_path])
-
-        if args.plot:
-            # Get the point colors to plot
-            point_colors = current_points[label_col].map(label_colors).values
-            # Plot the final mask
-            fname = f"{name.split('.')[0]}.jpg"
-            plot_path = f"{plot_dir}{fname}"
-            plot_mask(image, final_color, current_points, point_colors, plot_path)
-            log(f"NOTE: Saved plot to {plot_path}")
+        mask_df.append([name, image_path, semantic_path, mask_path, color_path, overlay_path])
 
         # Gooey
         print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory
-    mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Seg Path', 'Color Path', 'Overlay Path'])
+    mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Semantic Path',
+                                             'Mask Path', 'Color Path', 'Overlay Path'])
     mask_df.to_csv(output_mask_csv)
 
     if os.path.exists(output_mask_csv):
@@ -413,6 +420,9 @@ def mss(args):
 
     # Create a final class mapping for the seg masks
     seg_map = {k: {} for k in class_map.keys()}
+
+    # Add Unlabeled class to represent no labeled pixels
+    seg_map['Unlabeled'] = {'id': 0, 'color': [0, 0, 0]}
 
     for l in class_map.keys():
         seg_map[l]['id'] = class_map[l]
@@ -452,10 +462,13 @@ def main():
                         help="Confidence threshold value to filter")
 
     parser.add_argument("--model_type", type=str, default='vit_b',
-                        help="Model to use; one of ['vit_b', 'vit_l', 'vit_h']")
+                        help="Model to use, one of ['vit_b', 'vit_l', 'vit_h']")
 
-    parser.add_argument("--plot", action='store_true',
-                        help="Saves figures of final masks")
+    parser.add_argument("--points_per_side", type=int, default=64,
+                        help="The number of points to sample from image (power of two)")
+
+    parser.add_argument("--points_per_batch", type=int, default=64,
+                        help="The number of points per batch (power of two)")
 
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the output directory where predictions will be saved.")

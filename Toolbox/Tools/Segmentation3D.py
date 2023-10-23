@@ -6,10 +6,12 @@ import argparse
 import traceback
 
 import numpy as np
+import pandas as pd
 
 import Metashape
 
 from plyfile import PlyData
+from scipy.stats import mode
 from scipy.spatial.distance import cdist
 
 from SfM import print_sfm_progress
@@ -103,10 +105,13 @@ def seg3d_workflow(args):
         sys.exit(1)
 
     # Segmentation masks for images in project
-    if os.path.exists(args.masks_dir):
-        masks_dir = f"{args.masks_dir}\\"
+    if os.path.exists(args.masks_file):
+        masks_df = pd.read_csv(args.masks_file, index_col=0)
+        # Check that columns needed are there
+        assert 'Image Path' in masks_df.columns, log(f"ERROR: 'Image Path not in {args.mask_file}")
+        assert 'Color Path' in masks_df.columns, log(f"Error: 'Color Path' not in {args.mask_file}")
     else:
-        log(f"ERROR: Masks directory provided doesn't exist; check input provided")
+        log(f"ERROR: Masks file provided doesn't exist; check input provided")
         sys.exit(1)
 
     # Color mapping file
@@ -194,7 +199,8 @@ def seg3d_workflow(args):
             # If it's a photo
             if camera.photo:
                 # The name of segmentation mask
-                classified_photo = f"{masks_dir}{os.path.basename(camera.photo.path)}"
+                camera_name = os.path.basename(camera.photo.path).split(".")[0]
+                classified_photo = masks_df[masks_df['Name'].str.contains(camera_name)]['Color Path'].item()
                 # Check that it exists
                 if os.path.exists(classified_photo):
                     camera.photo.path = classified_photo
@@ -205,8 +211,33 @@ def seg3d_workflow(args):
         # Save the document
         doc.save()
 
+        # Add masks if present
+        if 'Mask Path' in masks_df.columns:
+
+            log("\n###############################################")
+            log("Updating mask paths")
+            log("###############################################\n")
+            # Update all the masks paths in the classified chunk
+
+            for camera in classified_chunk.cameras:
+                # If it's a photo
+                if camera.photo:
+                    camera_name = os.path.basename(camera.photo.path).split(".")[0]
+                    mask_path = masks_df[masks_df['Name'].str.contains(camera_name)]['Mask Path'].item()
+                    # Check that it exists
+                    if os.path.exists(mask_path):
+                        chunk.generateMasks(path=mask_path,
+                                            masking_mode=Metashape.MaskingMode.MaskingModeFile,
+                                            cameras=[camera])
+                    else:
+                        log(f"ERROR: Could not find the following file {mask_path}; exiting")
+                        sys.exit(1)
+
+            # Save the document
+            doc.save()
+
     except Exception as e:
-        log(f"ERROR: Could not update camera paths\n{e}")
+        log(f"ERROR: Could not update camera paths and mask paths\n{e}")
         sys.exit()
 
     if classified_chunk.point_cloud and "Classified" not in classified_chunk.point_cloud.label:
@@ -408,8 +439,8 @@ def main():
     parser.add_argument('--project_file', type=str,
                         help='Path to the existing Metashape project file (.psx)')
 
-    parser.add_argument('--masks_dir', type=str,
-                        help='Directory containing color masks for images.')
+    parser.add_argument('--masks_file', type=str,
+                        help='Masks file containing paths for color masks of images.')
 
     parser.add_argument('--color_map', type=str,
                         help='Path to Color Map JSON file.')
