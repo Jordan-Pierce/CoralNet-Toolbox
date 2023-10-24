@@ -11,7 +11,6 @@ import pandas as pd
 import Metashape
 
 from plyfile import PlyData
-from scipy.stats import mode
 from scipy.spatial.distance import cdist
 
 from SfM import print_sfm_progress
@@ -56,14 +55,25 @@ def post_process_pcd(temp_path, dense_path, color_map, chunk_size=10000000):
     num_points = vertex_data['x'].shape[0]
     # For memory, in batches, get updated color values
     for i in range(0, num_points, chunk_size):
-        # last index in batch
+
+        # Last index in batch
         chunk_end = min(i + chunk_size, num_points)
-        # colors of batch
+
+        # Points of batch
+        x = vertex_data['x'][i:chunk_end]
+        y = vertex_data['y'][i:chunk_end]
+        z = vertex_data['z'][i:chunk_end]
+
+        # Colors of batch
         red_chunk = vertex_data['red'][i:chunk_end]
         green_chunk = vertex_data['green'][i:chunk_end]
         blue_chunk = vertex_data['blue'][i:chunk_end]
-        # Stacking and getting the closest values
+
+        # Stacking
+        point_array = np.column_stack((x, y, z))
         color_array = np.column_stack((red_chunk, green_chunk, blue_chunk))
+
+        # Getting the closest values
         modified_colors = find_closest_color(color_array, color_map)
 
         # Updating vertex colors
@@ -240,7 +250,7 @@ def seg3d_workflow(args):
         log(f"ERROR: Could not update camera paths and mask paths\n{e}")
         sys.exit()
 
-    if classified_chunk.point_cloud and "Classified" not in classified_chunk.point_cloud.label:
+    if classified_chunk.point_cloud:
         # If the point cloud is not already classified, classify it,
         # otherwise, all of these section can be skipped.
 
