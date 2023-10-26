@@ -118,8 +118,9 @@ def seg3d_workflow(args):
     if os.path.exists(args.masks_file):
         masks_df = pd.read_csv(args.masks_file, index_col=0)
         # Check that columns needed are there
+        mask_column = args.mask_column
         assert 'Image Path' in masks_df.columns, log(f"ERROR: 'Image Path not in {args.mask_file}")
-        assert 'Color Path' in masks_df.columns, log(f"Error: 'Color Path' not in {args.mask_file}")
+        assert mask_column in masks_df.columns, log(f"Error: {mask_column} not in {args.mask_file}")
     else:
         log(f"ERROR: Masks file provided doesn't exist; check input provided")
         sys.exit(1)
@@ -210,7 +211,7 @@ def seg3d_workflow(args):
             if camera.photo:
                 # The name of segmentation mask
                 camera_name = os.path.basename(camera.photo.path).split(".")[0]
-                classified_photo = masks_df[masks_df['Name'].str.contains(camera_name)]['Color Path'].item()
+                classified_photo = masks_df[masks_df['Name'].str.contains(camera_name)][mask_column].item()
                 # Check that it exists
                 if os.path.exists(classified_photo):
                     camera.photo.path = classified_photo
@@ -321,7 +322,7 @@ def seg3d_workflow(args):
             sys.exit(1)
 
     # If the user wants to classify the mesh
-    if args.classify_mesh and classified_chunk.model:
+    if classified_chunk.model:
 
         try:
 
@@ -360,7 +361,7 @@ def seg3d_workflow(args):
             sys.exit(1)
 
     # If the user wants to classify the orthomosaic, all that is needed is DEM
-    if args.classify_ortho and classified_chunk.model:
+    if classified_chunk.model:
 
         try:
             log("\n###############################################")
@@ -384,7 +385,7 @@ def seg3d_workflow(args):
 
         try:
             # If the classified orthomosaic exists, and it wasn't already output
-            if 'Classified' in classified_chunk.orthomosaic.label and not os.path.exists(output_ortho):
+            if 'Classified' in classified_chunk.orthomosaic.label:
                 log("\n###############################################")
                 log("Exporting classified orthomosaic")
                 log("###############################################\n")
@@ -455,14 +456,12 @@ def main():
     parser.add_argument('--color_map', type=str,
                         help='Path to Color Map JSON file.')
 
+    parser.add_argument('--mask_column', type=str, default='Color Path',
+                        help='Column name of masks to use for classification')
+
     parser.add_argument('--chunk_index', type=int, default=0,
                         help='Index of chunk to classify (0-based indexing)')
 
-    parser.add_argument('--classify_mesh', action='store_true',
-                        help='Classify mesh using dense point cloud')
-
-    parser.add_argument('--classify_ortho', action='store_true',
-                        help='Classify orthomosaic using mesh')
 
     args = parser.parse_args()
 

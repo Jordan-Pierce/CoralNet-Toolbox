@@ -855,7 +855,7 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # Seg3D
     # ------------------------------------------------------------------------------------------------------------------
-    seg3d_parser = subs.add_parser('Seg3d')
+    seg3d_parser = subs.add_parser('Seg3D')
 
     # Panel 1
     seg3d_parser_panel_1 = seg3d_parser.add_argument_group('Seg3D',
@@ -878,29 +878,24 @@ def main():
                                       help='Path to existing Metashape project file (.psx)',
                                       widget="FileChooser")
 
-    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
-                                      metavar="Chunk Index",
-                                      help='Chunk index to classify; 0-based indexing')
+    seg3d_parser_panel_1.add_argument('--color_map', type=str, required=True,
+                                      metavar="Color Map File",
+                                      help='Path to Color Map JSON file',
+                                      widget="FileChooser")
 
     seg3d_parser_panel_1.add_argument('--masks_file', type=str, required=True,
                                       metavar='Masks File',
                                       help='Masks file containing paths for color masks of images',
                                       widget='FileChooser')
 
-    seg3d_parser_panel_1.add_argument('--color_map', type=str, required=True,
-                                      metavar="Color Map File",
-                                      help='Path to Color Map JSON file',
-                                      widget="FileChooser")
+    seg3d_parser_panel_1.add_argument('--mask_column', type=str, default='Color Path',
+                                      metavar="Mask Column",
+                                      help='Column name of masks to use for classification')
 
-    seg3d_parser_panel_1.add_argument('--classify_mesh', action="store_true",
-                                      metavar="Classify Mesh",
-                                      help='Classify mesh using dense point cloud',
-                                      widget="BlockCheckbox")
+    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
+                                      metavar="Chunk Index",
+                                      help='Chunk index to classify; 0-based indexing')
 
-    seg3d_parser_panel_1.add_argument('--classify_ortho', action="store_true",
-                                      metavar="Classify Orthomosaic",
-                                      help='Classify orthomosaic using mesh',
-                                      widget="BlockCheckbox")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Parser
