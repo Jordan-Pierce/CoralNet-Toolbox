@@ -84,6 +84,9 @@ def taglab(args):
     # Resize the original
     orthomosaic = cv2.resize(orthomosaic, (1024, 1024))
 
+    # Use sam to generate masks
+    masks = sam_predictor.generate(orthomosaic)
+
     # Mask to store the results
     output_mask = np.full(shape=(1024, 1024, 4), fill_value=255, dtype=np.uint8)
 
@@ -92,16 +95,18 @@ def taglab(args):
     output_mask[:, :, 1] = 15
     output_mask[:, :, 2] = 15
 
-    # Use sam to generate masks
-    masks = sam_predictor.generate(orthomosaic)
-
     # Loop though, add to output mask
     for mask in masks:
         segment = mask['segmentation']
         output_mask[segment, 0:3] = [54, 54, 54]  # Other class
 
-    # Resize using nn, then save
+    # Resize using nn
     output_mask = cv2.resize(output_mask, (height, width), interpolation=cv2.INTER_NEAREST)
+    # Smooth mask after being resized
+    kernel = np.ones((3, 3), np.uint8)
+    output_mask = cv2.erode(output_mask, kernel, iterations=2)
+    output_mask = cv2.dilate(output_mask, kernel, iterations=1)
+    # Save the mask
     imsave(fname=output_path, arr=output_mask.astype(np.uint8))
     log(f"NOTE: Saved seg mask to {output_path}")
 

@@ -194,12 +194,6 @@ def inference(args):
             output['Machine confidence ' + str(index + 1)] = top_N_confidences[:, index]
             output['Machine suggestion ' + str(index + 1)] = top_N_suggestions[:, class_num]
 
-        # TODO Remove MIR MAPPING
-        for index, class_num in enumerate(range(num_classes)):
-            coralnet_labels = output['Machine suggestion ' + str(index + 1)].values
-            viscore_labels = [mapping[mapping['Short Code'] == l]['VPI_label_V4'].item() for l in coralnet_labels]
-            output['Machine suggestion ' + str(index + 1)] = viscore_labels
-
         # Save with previous prediction, if any exists
         if os.path.exists(output_path):
             previous_predictions = pd.read_csv(output_path, index_col=0)
