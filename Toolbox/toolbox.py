@@ -17,7 +17,6 @@ from Tools.Inference import inference
 from Tools.MSS import mss
 from Tools.Segmentation import seg
 from Tools.SfM import sfm
-from Tools.TagLab import taglab
 from Tools.Segmentation3D import seg3d
 
 # For Gooey dropdown
@@ -820,39 +819,6 @@ def main():
                                     widget='FileChooser')
 
     # ------------------------------------------------------------------------------------------------------------------
-    # TagLab w/ SAM
-    # ------------------------------------------------------------------------------------------------------------------
-    taglab_parser = subs.add_parser('TagLab')
-
-    # Panel 1
-    taglab_parser_panel_1 = taglab_parser.add_argument_group('TagLab',
-                                                             'Use an orthomosaic made from Metashape w/ SAM to create '
-                                                             'a pre-segmented version for use in TagLab')
-
-    taglab_parser_panel_1.add_argument("--orthomosaic", type=str, required=True,
-                                       metavar="Orthomosaic",
-                                       help="Path to orthomosaic or image",
-                                       widget='FileChooser')
-
-    taglab_parser_panel_1.add_argument('--model_type', type=str, required=True, default='vit_b',
-                                       metavar="Model Version",
-                                       help='Version of SAM model to use',
-                                       widget='Dropdown', choices=['vit_b', 'vit_l', 'vit_h'])
-
-    taglab_parser_panel_1.add_argument("--points_per_side", type=int, default=64,
-                                       metavar="Number of Points",
-                                       help="The number of points to sample from image")
-
-    taglab_parser_panel_1.add_argument("--points_per_batch", type=int, default=64,
-                                       metavar='Points Per Batch',
-                                       help="The number of points per batch (power of two)")
-
-    taglab_parser_panel_1.add_argument('--output_dir', type=str, required=True,
-                                       metavar='Output Directory',
-                                       help='Directory to store results',
-                                       widget='DirChooser')
-
-    # ------------------------------------------------------------------------------------------------------------------
     # Seg3D
     # ------------------------------------------------------------------------------------------------------------------
     seg3d_parser = subs.add_parser('Seg3D')
@@ -956,9 +922,6 @@ def main():
 
     if args.command == 'SfM':
         sfm(args)
-
-    if args.command == 'TagLab':
-        taglab(args)
 
     if args.command == 'Seg3D':
         seg3d(args)

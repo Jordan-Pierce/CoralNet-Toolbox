@@ -37,7 +37,6 @@ a GUI; these scripts currently include:
 - `MSS`: Create segmentation masks for each image using labeled points and SAM
 - `Seg`: Create your own semantic segmentation model, locally
 - `SfM`: Use Metashape to create 3D models (sure, why not)
-- `TagLab`: Use SAM to auto-segment an orthomosaic prior to TagLab
 - `Seg3D`: Use masks and SfM to create classified 3D models
 
 
