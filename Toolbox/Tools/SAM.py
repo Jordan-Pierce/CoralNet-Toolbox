@@ -203,12 +203,12 @@ def colorize_mask(mask, class_map, label_colors):
     return rgb_mask.astype(np.uint8)
 
 
-def mss(args):
+def sam(args):
     """
 
     """
     log("\n###############################################")
-    log("Multilevel Superpixel Segmentation w/ SAM")
+    log("Semantic Segmentation w/ SAM")
     log("###############################################\n")
 
     # Check for CUDA
@@ -384,7 +384,7 @@ def mss(args):
         mask = np.zeros(shape=(original_height, original_width, 3), dtype=np.uint8)
         mask[final_mask != 0, :] = [255, 255, 255]
         mask_path = f"{mask_dir}{name.split('.')[0]}.png"
-        imsave(fname=mask_path, arr=final_mask.astype(bool))
+        imsave(fname=mask_path, arr=mask.astype(bool))
         log(f"NOTE: Saved mask to {mask_path}")
 
         # Get the final colored mask, change no data to black
@@ -447,7 +447,7 @@ def main():
 
     """
 
-    parser = argparse.ArgumentParser(description="Multilevel Superpixel Segmentation w/ SAM")
+    parser = argparse.ArgumentParser(description="Semantic Segmentation w/ SAM")
 
     parser.add_argument("--images", type=str, required=True,
                         help="Directory containing images to perform inference on")
@@ -476,7 +476,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        mss(args)
+        sam(args)
         log("Done.\n")
 
     except Exception as e:

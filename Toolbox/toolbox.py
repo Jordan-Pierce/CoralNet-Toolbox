@@ -11,17 +11,18 @@ from Tools.Annotate import annotate
 from Tools.Patches import patches
 from Tools.Visualize import visualize
 from Tools.Points import points
-from Tools.Classifier import classifier
-from Tools.Inference import inference
-from Tools.MSS import mss
-from Tools.Segmentation import seg
+from Tools.Classification import classification
+from Tools.ImgInference import image_inference
+from Tools.SAM import sam
+from Tools.Segmentation import segmentation
+from Tools.SegInference import segmentation_inference
 from Tools.SfM import sfm
-from Tools.Segmentation3D import seg3d
+from Tools.Segmentation3D import segmentation3d
 
 # For Gooey dropdown
 from Tools.Download import get_updated_labelset_list
-from Tools.Classifier import get_classifier_losses
-from Tools.Classifier import get_classifier_encoders
+from Tools.Classification import get_classifier_losses
+from Tools.Classification import get_classifier_encoders
 from Tools.Segmentation import get_segmentation_losses
 from Tools.Segmentation import get_segmentation_metrics
 from Tools.Segmentation import get_segmentation_encoders
@@ -71,7 +72,8 @@ def main():
                                                        'more CSV file(s) containing the names of images to '
                                                        'perform predictions on. Images must already exist in '
                                                        'the Source, and CSV file(s) must contain the following '
-                                                       'fields: Name, Row, Column.')
+                                                       'fields: Name, Row, Column.',
+                                                       gooey_options={'show_border': True})
 
     api_parser_panel_1.add_argument('--username', type=str,
                                     metavar="Username",
@@ -127,7 +129,8 @@ def main():
     download_parser_panel_1 = download_parser.add_argument_group('Download By Source ID',
                                                                  'Specify each Source to download by providing the '
                                                                  'associated ID; for multiple sources, add a space '
-                                                                 'between each.')
+                                                                 'between each.',
+                                                                 gooey_options={'show_border': True})
 
     download_parser_panel_1.add_argument('--username', type=str,
                                          metavar="Username",
@@ -170,7 +173,8 @@ def main():
     download_parser_panel_2 = download_parser.add_argument_group('Download CoralNet Dataframes',
                                                                  'In addition to downloading Source data, dataframes '
                                                                  'containing information on all public Sources and '
-                                                                 'Labelsets can also be downloaded.')
+                                                                 'Labelsets can also be downloaded.',
+                                                                 gooey_options={'show_border': True})
 
     download_parser_panel_2.add_argument('--source_df', action="store_true",
                                          metavar="Download Source Dataframe",
@@ -198,7 +202,8 @@ def main():
                                                                  'description, and a representative image of your new '
                                                                  'labelset. The labelset will be created for the '
                                                                  'source provided the ID, but will be available '
-                                                                 'globally.')
+                                                                 'globally.',
+                                                                 gooey_options={'show_border': True})
 
     labelset_parser_panel_1.add_argument('--username', type=str,
                                          metavar="Username",
@@ -262,7 +267,8 @@ def main():
     upload_parser_panel_1 = upload_parser.add_argument_group('Upload By Source ID',
                                                              'Upload data to a Source by providing the ID. Data that '
                                                              'can be uploaded includes images, labelsets, and '
-                                                             'annotations.')
+                                                             'annotations.',
+                                                             gooey_options={'show_border': True})
 
     upload_parser_panel_1.add_argument('--username', type=str,
                                        metavar="Username",
@@ -325,7 +331,8 @@ def main():
     annotate_parser_panel_1 = annotate_parser.add_argument_group('Annotate',
                                                                  'Extract patches manually, which can be used as '
                                                                  'annotations in CoralNet, or used to train a model '
-                                                                 'locally.')
+                                                                 'locally.',
+                                                                 gooey_options={'show_border': True})
 
     annotate_parser_panel_1.add_argument('--patch_extractor_path', required=True, type=str,
                                          metavar="Patch Extractor Path",
@@ -346,7 +353,8 @@ def main():
     # Panel 1
     patches_parser_panel_1 = patches_parser.add_argument_group('Crop Patches',
                                                                'Use the following to convert CoralNet formatted '
-                                                               'annotation files into patches for training.')
+                                                               'annotation files into patches for training.',
+                                                               gooey_options={'show_border': True})
 
     patches_parser_panel_1.add_argument('--image_dir', required=False,
                                         metavar='Image Directory',
@@ -380,7 +388,8 @@ def main():
     # Panel 1
     visualize_parser_panel_1 = visualize_parser.add_argument_group('Visualize',
                                                                    'View annotations superimposed on each image; toggle'
-                                                                   'annotations to be seen as points or squares.')
+                                                                   'annotations to be seen as points or squares.',
+                                                                   gooey_options={'show_border': True})
 
     visualize_parser_panel_1.add_argument('--image_dir', required=True,
                                           metavar='Image Directory',
@@ -407,12 +416,13 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # Classifier
     # ------------------------------------------------------------------------------------------------------------------
-    classifier_parser = subs.add_parser('Classifier')
+    classifier_parser = subs.add_parser('Classification')
 
     # Panel 1
-    classifier_parser_panel_1 = classifier_parser.add_argument_group('Patch-Based Classifier',
+    classifier_parser_panel_1 = classifier_parser.add_argument_group('Image Classification',
                                                                      'Use the following to train your own patch-based '
-                                                                     'image classifier.')
+                                                                     'image classifier.',
+                                                                     gooey_options={'show_border': True})
 
     classifier_parser_panel_1.add_argument('--patches', required=True, nargs="+",
                                            metavar="Patch Data",
@@ -427,7 +437,8 @@ def main():
 
     # Panel 2
     classifier_parser_panel_2 = classifier_parser.add_argument_group('Parameters',
-                                                                     'Choose the parameters for training the model')
+                                                                     'Choose the parameters for training the model',
+                                                                     gooey_options={'show_border': True})
 
     classifier_parser_panel_2.add_argument('--encoder_name', type=str, required=True,
                                            metavar="Pretrained Encoder",
@@ -482,7 +493,8 @@ def main():
                                                              'Sample points for each image; points can be used '
                                                              'with the API or Inference tools. Methods include '
                                                              'uniform, random, and stratified-random. Samples are '
-                                                             'saved in the Output Directory as a dataframe.')
+                                                             'saved in the Output Directory as a dataframe.',
+                                                             gooey_options={'show_border': True})
 
     points_parser_panel_1.add_argument('--images', required=True, type=str,
                                        metavar="Image Directory",
@@ -505,91 +517,93 @@ def main():
                                        help='The number of points to sample from each image')
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Inference
+    # Image Inference
     # ------------------------------------------------------------------------------------------------------------------
-    inference_parser = subs.add_parser('Inference')
+    img_inference = subs.add_parser('ImgInference')
 
     # Panel 1
-    inference_parser_panel_1 = inference_parser.add_argument_group('Inference',
-                                                                   'Use a locally trained model to make predictions on '
-                                                                   'sampled points.')
+    img_inference_parser_panel_1 = img_inference.add_argument_group('Image Inference',
+                                                                    'Use a locally trained image classification model '
+                                                                    'to make predictions on sampled points.',
+                                                                    gooey_options={'show_border': True})
 
-    inference_parser_panel_1.add_argument('--images', required=True,
-                                          metavar="Image Directory",
-                                          help='Directory containing images to make predictions on',
-                                          widget="DirChooser")
+    img_inference_parser_panel_1.add_argument('--images', required=True,
+                                              metavar="Image Directory",
+                                              help='Directory containing images to make predictions on',
+                                              widget="DirChooser")
 
-    inference_parser_panel_1.add_argument('--points', required=True,
-                                          metavar="Points File",
-                                          help='A file containing sampled points',
-                                          widget="FileChooser")
+    img_inference_parser_panel_1.add_argument('--points', required=True,
+                                              metavar="Points File",
+                                              help='A file containing sampled points',
+                                              widget="FileChooser")
 
-    inference_parser_panel_1.add_argument('--model', required=True,
-                                          metavar="Model Path",
-                                          help='The path to locally trained model (.h5)',
-                                          widget="FileChooser")
+    img_inference_parser_panel_1.add_argument('--model', required=True,
+                                              metavar="Model Path",
+                                              help='The path to locally trained model (.h5)',
+                                              widget="FileChooser")
 
-    inference_parser_panel_1.add_argument('--class_map', required=True,
-                                          metavar="Class Map File",
-                                          help='The class mapping JSON file',
-                                          widget="FileChooser")
+    img_inference_parser_panel_1.add_argument('--class_map', required=True,
+                                              metavar="Class Map File",
+                                              help='The class mapping JSON file',
+                                              widget="FileChooser")
 
-    inference_parser_panel_1.add_argument("--patch_size", type=int, default=112,
-                                          metavar="Patch Size",
-                                          help="The size of each patch extracted")
+    img_inference_parser_panel_1.add_argument("--patch_size", type=int, default=112,
+                                              metavar="Patch Size",
+                                              help="The size of each patch extracted")
 
-    inference_parser_panel_1.add_argument('--output_dir', required=True,
-                                          metavar='Output Directory',
-                                          default=DATA_DIR,
-                                          help='Root directory where output will be saved',
-                                          widget="DirChooser")
+    img_inference_parser_panel_1.add_argument('--output_dir', required=True,
+                                              metavar='Output Directory',
+                                              default=DATA_DIR,
+                                              help='Root directory where output will be saved',
+                                              widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
-    # MSS w/ SAM
+    # Semantic Segmentation w/ SAM
     # ------------------------------------------------------------------------------------------------------------------
-    mss_parser = subs.add_parser('MSS')
+    sam_parser = subs.add_parser('SAM')
 
     # Panel 1
-    mss_parser_panel_1 = mss_parser.add_argument_group('MSS',
+    sam_parser_panel_1 = sam_parser.add_argument_group('SAM',
                                                        'Use the Segment Anything Model (SAM) to create '
-                                                       'segmentation masks given labeled points.')
+                                                       'segmentation masks given labeled points.',
+                                                       gooey_options={'show_border': True})
 
-    mss_parser_panel_1.add_argument('--images', required=True,
+    sam_parser_panel_1.add_argument('--images', required=True,
                                     metavar="Image Directory",
                                     help='Directory containing images to make predictions on',
                                     widget="DirChooser")
 
-    mss_parser_panel_1.add_argument('--annotations', required=True,
+    sam_parser_panel_1.add_argument('--annotations', required=True,
                                     metavar="Annotations File",
                                     help='A file containing points with labels',
                                     widget="FileChooser")
 
-    mss_parser_panel_1.add_argument("--label_col", type=str, default='Label',
+    sam_parser_panel_1.add_argument("--label_col", type=str, default='Label',
                                     metavar='Label Column',
                                     help="The column in annotations with labels to use "
                                          "('Label', 'Machine suggestion N, etc).",
                                     widget='Dropdown',
                                     choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
-    mss_parser_panel_1.add_argument("--confidence", type=int, default=75,
+    sam_parser_panel_1.add_argument("--confidence", type=int, default=75,
                                     metavar="Confidence Threshold",
                                     help="Confidence threshold value to filter (percentage)",
                                     widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
 
-    mss_parser_panel_1.add_argument('--model_type', type=str, required=True,
+    sam_parser_panel_1.add_argument('--model_type', type=str, required=True,
                                     metavar="Model Version",
                                     help='Version of SAM model to use',
                                     widget='Dropdown', choices=['vit_b', 'vit_l', 'vit_h'])
 
-    mss_parser_panel_1.add_argument("--points_per_side", type=int, default=64,
+    sam_parser_panel_1.add_argument("--points_per_side", type=int, default=64,
                                     metavar='Points Per Side',
                                     help="The number of points to sample from image (power of two)")
 
-    mss_parser_panel_1.add_argument("--points_per_batch", type=int, default=64,
+    sam_parser_panel_1.add_argument("--points_per_batch", type=int, default=64,
                                     metavar='Points Per Batch',
                                     help="The number of points per batch (power of two)")
 
-    mss_parser_panel_1.add_argument('--output_dir', required=True,
+    sam_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
                                     default=DATA_DIR,
                                     help='Root directory where output will be saved',
@@ -598,12 +612,13 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # Segmentation
     # ------------------------------------------------------------------------------------------------------------------
-    seg_parser = subs.add_parser('Seg')
+    seg_parser = subs.add_parser('Segmentation')
 
     # Panel 1
-    seg_parser_panel_1 = seg_parser.add_argument_group('Seg',
+    seg_parser_panel_1 = seg_parser.add_argument_group('Segmentation',
                                                        'Use Pytorch to train a deep learning semantic segmentation '
-                                                       'algorithm; provide custom masks, or those made by SAM')
+                                                       'algorithm; provide custom masks, or those made by SAM',
+                                                       gooey_options={'show_border': True})
 
     seg_parser_panel_1.add_argument('--masks', type=str, required=True,
                                     metavar="Masks File",
@@ -617,7 +632,8 @@ def main():
 
     # Panel 2
     seg_parser_panel_2 = seg_parser.add_argument_group('Parameters',
-                                                       'Choose the parameters for training the model')
+                                                       'Choose the parameters for training the model',
+                                                       gooey_options={'show_border': True})
 
     seg_parser_panel_2.add_argument('--encoder_name', type=str, default='mit_b0',
                                     metavar="Encoder",
@@ -676,14 +692,47 @@ def main():
                                     widget='DirChooser')
 
     # ------------------------------------------------------------------------------------------------------------------
+    # Segmentation Inference
+    # ------------------------------------------------------------------------------------------------------------------
+    seg_inference = subs.add_parser('SegInference')
+
+    # Panel 1
+    seg_inference_parser_panel_1 = seg_inference.add_argument_group('Segmentation Inference',
+                                                                    'Use a trained semantic segmentation model to '
+                                                                    'perform inference on new images',
+                                                                    gooey_options={'show_border': True})
+
+    seg_inference_parser_panel_1.add_argument('--images', required=True,
+                                              metavar="Image Directory",
+                                              help='Directory containing images to make predictions on',
+                                              widget="DirChooser")
+
+    seg_inference_parser_panel_1.add_argument('--model', required=True,
+                                              metavar="Model Path",
+                                              help='The path to locally trained model (.pth)',
+                                              widget="FileChooser")
+
+    seg_inference_parser_panel_1.add_argument('--color_map', required=True,
+                                              metavar="Color Map File",
+                                              help='The Color Mapping JSON file',
+                                              widget="FileChooser")
+
+    seg_inference_parser_panel_1.add_argument('--output_dir', required=True,
+                                              metavar='Output Directory',
+                                              default=DATA_DIR,
+                                              help='Root directory where output will be saved',
+                                              widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
     # SfM
     # ------------------------------------------------------------------------------------------------------------------
     sfm_parser = subs.add_parser('SfM')
 
     # Panel 1
-    sfm_parser_panel_1 = sfm_parser.add_argument_group('SfM',
+    sfm_parser_panel_1 = sfm_parser.add_argument_group('Structure from Motion',
                                                        'Use Metashape (2.0.X) API to perform Structure from Motion on '
-                                                       'images of a scene.')
+                                                       'images of a scene.',
+                                                       gooey_options={'show_border': True})
 
     sfm_parser_panel_1.add_argument('--metashape_license', type=str,
                                     metavar="Metashape License (Pro)",
@@ -720,7 +769,8 @@ def main():
     # Panel 2
     sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',
                                                        'Provide an existing project directory to pick up where the '
-                                                       'program left off instead of re-running from scratch.')
+                                                       'program left off instead of re-running from scratch.',
+                                                       gooey_options={'show_border': True})
 
     sfm_parser_panel_2.add_argument('--project_file', type=str, required=False,
                                     metavar="Project File",
@@ -730,12 +780,13 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # Seg3D
     # ------------------------------------------------------------------------------------------------------------------
-    seg3d_parser = subs.add_parser('Seg3D')
+    seg3d_parser = subs.add_parser('Segmentation3D')
 
     # Panel 1
-    seg3d_parser_panel_1 = seg3d_parser.add_argument_group('Seg3D',
-                                                           'Use masks made by SAM with Metashape (2.0.X) API to create '
-                                                           'classified versions of dense point clouds and meshes')
+    seg3d_parser_panel_1 = seg3d_parser.add_argument_group('Segmentation3D',
+                                                           'Use segmentation masks with Metashape (2.0.X) to create '
+                                                           'classified versions of dense point clouds and meshes',
+                                                           gooey_options={'show_border': True})
 
     seg3d_parser_panel_1.add_argument('--metashape_license', type=str,
                                       metavar="Metashape License (Pro)",
@@ -770,7 +821,6 @@ def main():
     seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
                                       metavar="Chunk Index",
                                       help='Chunk index to classify; 0-based indexing')
-
 
     # ------------------------------------------------------------------------------------------------------------------
     # Parser
@@ -811,26 +861,29 @@ def main():
     if args.command == 'Visualize':
         visualize(args)
 
-    if args.command == 'Classifier':
-        classifier(args)
+    if args.command == 'Classification':
+        classification(args)
 
     if args.command == 'Points':
         points(args)
 
-    if args.command == 'Inference':
-        inference(args)
+    if args.command == 'ImgInference':
+        image_inference(args)
 
-    if args.command == 'MSS':
-        mss(args)
+    if args.command == 'SAM':
+        sam(args)
 
-    if args.command == 'Seg':
-        seg(args)
+    if args.command == 'Segmentation':
+        segmentation(args)
+
+    if args.command == 'SegInference':
+        segmentation_inference(args)
 
     if args.command == 'SfM':
         sfm(args)
 
-    if args.command == 'Seg3D':
-        seg3d(args)
+    if args.command == 'Segmentation3D':
+        segmentation3d(args)
 
     log('Done.')
 

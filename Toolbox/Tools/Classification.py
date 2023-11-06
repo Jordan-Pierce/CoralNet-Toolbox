@@ -151,13 +151,13 @@ def f1_score(y_true, y_pred):
 # Training
 # ------------------------------------------------------------------------------------------------------------------
 
-def classifier(args):
+def classification(args):
     """
 
     """
 
     log("\n###############################################")
-    log(f"Classifier")
+    log(f"Classification")
     log("###############################################\n")
 
     # Check that the user has GPU available
@@ -174,7 +174,7 @@ def classifier(args):
     run = f"{get_now()}_{args.encoder_name}"
 
     # We'll also create folders in this source to hold results of the model
-    run_dir = f"{output_dir}classifier\\{run}\\"
+    run_dir = f"{output_dir}classification\\{run}\\"
     weights_dir = run_dir + "weights\\"
     logs_dir = run_dir + "logs\\"
 
@@ -762,7 +762,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        classifier(args)
+        classification(args)
         log("Done.\n")
 
     except Exception as e:

@@ -95,7 +95,7 @@ def post_process_pcd(temp_path, dense_path, color_map, chunk_size=10000000):
     plydata = None
 
 
-def seg3d_workflow(args):
+def segmentation3d_workflow(args):
     """
 
     """
@@ -408,7 +408,7 @@ def seg3d_workflow(args):
     log(f"NOTE: Completed in {np.around(((time.time() - t0) / 60), 2)} minutes")
 
 
-def seg3d(args):
+def segmentation3d(args):
     """
 
     """
@@ -425,7 +425,7 @@ def seg3d(args):
         # Get the Metashape License stored in the environmental variable
         Metashape.License().activate(metashape_license)
         # Run the workflow
-        seg3d_workflow(args)
+        segmentation3d_workflow(args)
 
     except Exception as e:
         log(f"{e}\nERROR: Could not finish workflow!")
@@ -462,12 +462,11 @@ def main():
     parser.add_argument('--chunk_index', type=int, default=0,
                         help='Index of chunk to classify (0-based indexing)')
 
-
     args = parser.parse_args()
 
     try:
         # Run the workflow
-        seg3d(args)
+        segmentation3d_workflow(args)
         log("Done.\n")
 
     except Exception as e:

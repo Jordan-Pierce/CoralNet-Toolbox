@@ -446,7 +446,7 @@ def get_preprocessing(preprocessing_fn):
     return albu.Compose(_transform)
 
 
-def seg(args):
+def segmentation(args):
     """
 
     """
@@ -605,6 +605,9 @@ def seg(args):
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
     os.makedirs(tensorboard_dir, exist_ok=True)
+
+    # Copy over the color map file to the run directory for users
+    shutil.copyfile(args.color_map, f"{run_dir}{os.path.basename(args.color_map)}")
 
     log(f"NOTE: Model Run - {run}")
     log(f"NOTE: Model Directory - {run_dir}")
@@ -1001,6 +1004,9 @@ def seg(args):
         time.sleep(60)
         tensorboard_process.terminate()
 
+# -----------------------------------------------------------------------------
+# Main Function
+# -----------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description='Semantic Segmentation')
@@ -1050,7 +1056,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        seg(args)
+        segmentation(args)
         log("Done.\n")
 
     except Exception as e:

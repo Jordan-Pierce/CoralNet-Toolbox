@@ -27,16 +27,17 @@ a GUI; these scripts currently include:
 - `Download`: Download all data associated with a source
 - `Upload`: Upload images, annotations, and labelsets to a source
 - `Labelset`: Create a custom labelset on CoralNet
-- `Classifier`: Create your own patch-based image classifier, locally
+- `Classification`: Create your own patch-based image classifier, locally
 - `Annotate`: Create your own patches from annotations, locally
 - `Visualize`: Visualize points/patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
-- `Inference`: Perform inference using a locally trained model
-- `MSS`: Create segmentation masks for each image using labeled points and SAM
-- `Seg`: Create your own semantic segmentation model, locally
+- `ImgInference`: Perform inference using a locally trained classification model
+- `SAM`: Create segmentation masks for each image using labeled points and SAM
+- `Segmentation`: Create your own semantic segmentation model, locally
+- `SegInference`: Perform inference using a locally trained segmentation model
 - `SfM`: Use Metashape to create 3D models (sure, why not)
-- `Seg3D`: Use masks and SfM to create classified 3D models
+- `Segmentation3D`: Use masks and SfM to create classified 3D models
 
 
 <p align="center">

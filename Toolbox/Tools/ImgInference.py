@@ -19,12 +19,11 @@ from Common import log
 from Common import get_now
 from Common import IMG_FORMATS
 from Common import print_progress
-from Common import MIR_MAPPING
 
 from Patches import crop_patch
-from Classifier import precision
-from Classifier import recall
-from Classifier import f1_score
+from Classification import precision
+from Classification import recall
+from Classification import f1_score
 
 
 warnings.filterwarnings("ignore")
@@ -45,7 +44,7 @@ def get_class_map(path):
     return class_mapping_dict
 
 
-def inference(args):
+def image_inference(args):
     """
 
     """
@@ -119,9 +118,6 @@ def inference(args):
     else:
         log(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit()
-
-    # TODO Remove MIR Mapping
-    mapping = pd.read_csv(MIR_MAPPING, index_col=None, sep=",")
 
     # Output
     output_dir = f"{args.output_dir}\\predictions\\"
@@ -238,7 +234,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        inference(args)
+        image_inference(args)
         log("Done.\n")
 
     except Exception as e:
