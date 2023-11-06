@@ -74,6 +74,8 @@ def sfm_workflow(args):
     output_mesh = project_dir + "Mesh.ply"
     output_dense = project_dir + "Dense_Cloud.ply"
     output_ortho = project_dir + "Orthomosaic.tif"
+    output_cameras = project_dir + "Cameras.xml"
+    output_report = project_dir + "Report.pdf"
 
     # Quality checking
     if args.quality.lower() not in ["lowest", "low", "medium", "high", "highest"]:
@@ -215,6 +217,15 @@ def sfm_workflow(args):
         # Save the document
         doc.save()
 
+    # Export Camera positions
+    if chunk.tie_points:
+        log("\n###############################################")
+        log("Exporting Camera Positions")
+        log("###############################################\n")
+
+        chunk.exportCameras(path=output_cameras,
+                            progress=print_sfm_progress)
+
     # Build depth maps (2.5D representations of the scene) from the aligned photos.
     if chunk.tie_points and not chunk.depth_maps:
         log("\n###############################################")
@@ -332,6 +343,12 @@ def sfm_workflow(args):
                            source_data=Metashape.OrthomosaicData,
                            image_compression=compression,
                            progress=print_sfm_progress)
+
+    # Finally, export the report
+    log("\n###############################################")
+    log("Exporting Report")
+    log("###############################################\n")
+    chunk.exportReport(path=output_report)
 
     # Print a message indicating that the processing has finished and the results have been saved.
     log(f"NOTE: Processing finished, results saved to {project_dir}")

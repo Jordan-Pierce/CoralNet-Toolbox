@@ -27,7 +27,6 @@ a GUI; these scripts currently include:
 - `Download`: Download all data associated with a source
 - `Upload`: Upload images, annotations, and labelsets to a source
 - `Labelset`: Create a custom labelset on CoralNet
-- `Viscore`: Upload annotations made in Viscore's VPI to CoralNet
 - `Classifier`: Create your own patch-based image classifier, locally
 - `Annotate`: Create your own patches from annotations, locally
 - `Visualize`: Visualize points/patches superimposed on images

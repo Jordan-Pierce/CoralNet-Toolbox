@@ -7,7 +7,6 @@ from Tools.API import api
 from Tools.Download import download
 from Tools.Labelset import labelset
 from Tools.Upload import upload
-from Tools.Viscore import viscore
 from Tools.Annotate import annotate
 from Tools.Patches import patches
 from Tools.Visualize import visualize
@@ -316,96 +315,6 @@ def main():
                                        metavar="Run in Background",
                                        help='Run browser in headless mode',
                                        widget='BlockCheckbox')
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # Viscore
-    # ------------------------------------------------------------------------------------------------------------------
-    viscore_parser = subs.add_parser('Viscore')
-
-    # Panel 1 - Convert Viscore label file to CoralNet
-    viscore_parser_panel_1 = viscore_parser.add_argument_group('Viscore to CoralNet',
-                                                               'Provide the Annotation file exported from Viscore, '
-                                                               'the Mapping file, and the Source ID. '
-                                                               'Choose the Action.')
-
-    viscore_parser_panel_1.add_argument('--username', type=str,
-                                        metavar="Username",
-                                        default=os.getenv('CORALNET_USERNAME'),
-                                        help='Username for CoralNet account.')
-
-    viscore_parser_panel_1.add_argument('--password', type=str,
-                                        metavar="Password",
-                                        default=os.getenv('CORALNET_PASSWORD'),
-                                        help='Password for CoralNet account.',
-                                        widget="PasswordField")
-
-    viscore_parser_panel_1.add_argument('--remember_username', action="store_false",
-                                        metavar="Remember Username",
-                                        help='Store Username as an Environmental Variable.',
-                                        widget="BlockCheckbox")
-
-    viscore_parser_panel_1.add_argument('--remember_password', action="store_false",
-                                        metavar="Remember Password",
-                                        help='Store Password as an Environmental Variable.',
-                                        widget="BlockCheckbox")
-
-    viscore_parser_panel_1.add_argument('--action', type=str, required=True, default='Upload',
-                                        metavar="Action",
-                                        help='Upload data, or use the API for inference.',
-                                        widget='Dropdown', choices=['Upload', 'API'], )
-
-    viscore_parser_panel_1.add_argument('--source_id', type=str, default='4346',
-                                        metavar="Source ID",
-                                        help='The ID of the CoralNet source.')
-
-    viscore_parser_panel_1.add_argument('--prefix', required=False, default="",
-                                        metavar='Layer Name',
-                                        help='The name of the Viscore layer.')
-
-    viscore_parser_panel_1.add_argument('--images', required=False, default="",
-                                        metavar='Image Directory',
-                                        help='Directory containing images to upload.',
-                                        widget="DirChooser")
-
-    viscore_parser_panel_1.add_argument('--viscore_labels', required=False, type=str,
-                                        metavar="Viscore Annotation File",
-                                        help='A path to the original Annotation file exported from Viscore.',
-                                        widget="FileChooser")
-
-    viscore_parser_panel_1.add_argument('--mapping_path', required=False, type=str,
-                                        metavar="Mapping File",
-                                        help='A path to the mapping csv file.',
-                                        default=MIR_MAPPING,
-                                        widget="FileChooser")
-
-    viscore_parser_panel_1.add_argument('--rand_sub_ceil', type=float, required=False, default=1.0,
-                                        metavar="Random Sample",
-                                        help='Value used to randomly sample the number of reprojected dots [0 - 1].')
-
-    viscore_parser_panel_1.add_argument('--reprojection_error', type=float, required=False, default=0.01,
-                                        metavar="Reprojection Error Threshold",
-                                        help='Value used to filter dots based on their reprojection error.')
-
-    viscore_parser_panel_1.add_argument('--view_index', type=int, required=False, default=9001,
-                                        metavar="VPI View Index",
-                                        help='Value used to filter views based on their VPI View Index.')
-
-    viscore_parser_panel_1.add_argument('--view_count', type=int, required=False, default=9001,
-                                        metavar="VPI View Count",
-                                        help='Value used to filter views based on the total number of VPI image views.')
-
-    viscore_parser_panel_1.add_argument('--headless', action="store_true",
-                                        default=False,
-                                        metavar="Run in Background",
-                                        help='Run browser in headless mode',
-                                        widget='BlockCheckbox')
-
-    viscore_parser_panel_1.add_argument('--output_dir', required=False,
-                                        metavar='Output Directory',
-                                        default=None,
-                                        help='Root directory where converted Annotation file will be saved; '
-                                             'defaults to the same directory as Viscore Annotation file.',
-                                        widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Annotate
@@ -892,9 +801,6 @@ def main():
 
     if args.command == 'Upload':
         upload(args)
-
-    if args.command == 'Viscore':
-        viscore(args)
 
     if args.command == 'Annotate':
         annotate(args)
