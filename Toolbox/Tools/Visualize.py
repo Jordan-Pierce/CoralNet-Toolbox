@@ -104,7 +104,7 @@ class ImageViewer:
                 class_category = r[self.label_column]
                 color_index = np.where(self.all_class_categories == class_category)[0][0]
                 color = self.color_map[color_index]
-                self.ax.plot(col, row, marker='o', markersize=8, color=color, linestyle='', markeredgecolor='black')
+                self.ax.plot(col, row, marker='o', markersize=3, color=color, linestyle='', markeredgecolor='black')
 
         elif self.show_annotations == 'squares':
             square_size = 224  # Size of the square patch (can be adjusted as needed)
