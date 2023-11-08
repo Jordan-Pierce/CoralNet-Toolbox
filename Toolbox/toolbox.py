@@ -112,7 +112,8 @@ def main():
 
     api_parser_panel_1.add_argument('--prefix', required=False, default="",
                                     metavar='Image Name Prefix',
-                                    help='A prefix to add to each image basename')
+                                    help='A prefix that all images of interest have in common to '
+                                         'narrow the search space, else leave blank')
 
     api_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
@@ -302,7 +303,7 @@ def main():
 
     upload_parser_panel_1.add_argument('--prefix', required=False, default="",
                                        metavar='Image Name Prefix',
-                                       help='A prefix to add to each image basename')
+                                       help='A prefix to add to each image basename.')
 
     upload_parser_panel_1.add_argument('--labelset', required=False, type=str, default="",
                                        metavar="Labelset File",

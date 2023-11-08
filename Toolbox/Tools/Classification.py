@@ -59,6 +59,7 @@ def get_classifier_encoders():
         import tensorflow.keras.applications as models
         options = [_ for _ in dir(models) if callable(getattr(models, _))]
         options = [_ for _ in options if 'include_preprocessing' in getattr(models, _).__code__.co_varnames]
+        options = [_ for _ in options if "EfficientNet" in _]
         encoders_options = options
 
     except Exception as e:
@@ -163,6 +164,8 @@ def classification(args):
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
         log("NOTE: Found GPU")
+        gpus = tf.config.list_physical_devices(device_type='GPU')
+        tf.config.experimental.set_memory_growth(gpus[0], True)
     else:
         log("WARNING: No GPU found; defaulting to CPU")
 
@@ -508,6 +511,10 @@ def classification(args):
         # Write the error to text file
         with open(f"{logs_dir}Error.txt", 'a') as file:
             file.write(f"Caught exception: {str(e)}\n")
+
+        if args.tensorboard:
+            # Close Tensorboard
+            process.terminate()
 
         # Exit early
         sys.exit(1)

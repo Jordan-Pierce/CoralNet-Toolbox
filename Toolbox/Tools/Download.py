@@ -637,13 +637,10 @@ def get_image_urls(driver, image_page_urls):
     return driver, image_urls
 
 
-def get_images(driver, source_id, image_name_contains=None, image_list=None):
+def get_images(driver, source_id, prefix="", image_list=None):
     """
     Given a source ID, retrieve the image names, and page URLs.
     """
-
-    # To hold the images
-    images = None
 
     # Go to the images page
     driver.get(CORALNET_URL + f"/source/{source_id}/browse/images/")
@@ -662,11 +659,11 @@ def get_images(driver, source_id, image_name_contains=None, image_list=None):
         sys.exit(1)
 
     # If provided, will limit the search space on CoralNet
-    if image_name_contains:
-        log(f"NOTE: Filtering search space using '{image_name_contains}'")
+    if prefix != "":
+        log(f"NOTE: Filtering search space using '{prefix}'")
         input_element = driver.find_element(By.CSS_SELECTOR, "#id_image_name")
         input_element.clear()
-        input_element.send_keys(image_name_contains)
+        input_element.send_keys(prefix)
 
         # Click submit
         submit_button = driver.find_element(By.CSS_SELECTOR, ".submit_button_wrapper_center input[type='submit']")

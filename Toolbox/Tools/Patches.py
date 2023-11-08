@@ -136,7 +136,6 @@ def patches(args):
 
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
-        image_dir_basename = os.path.basename(args.image_dir)
     else:
         log(f"ERROR: Image directory provided doesn't exist; please check input")
         sys.exit(1)
@@ -154,7 +153,7 @@ def patches(args):
         sys.exit(1)
 
     # Create output
-    output_dir = f"{args.output_dir}\\patches\\{image_dir_basename}_{get_now()}\\"
+    output_dir = f"{args.output_dir}\\patches\\{get_now()}\\"
     output_path = f"{output_dir}patches.csv"
     os.makedirs(output_dir, exist_ok=True)
 

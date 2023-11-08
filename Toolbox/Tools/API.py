@@ -31,7 +31,7 @@ from Download import check_for_browsers
 # -----------------------------------------------------------------------------
 
 
-def get_source_meta(driver, source_id_1, source_id_2=None, image_name_contains=None, image_list=None):
+def get_source_meta(driver, source_id_1, source_id_2=None, prefix=None, image_list=None):
     """Downloads just the information from source needed to do API calls;
     source id 1 refers to the source containing images, and source id 2
     refers to a source for a different model (if desired)"""
@@ -51,7 +51,7 @@ def get_source_meta(driver, source_id_1, source_id_2=None, image_name_contains=N
         raise Exception(f"ERROR: No model found for the source {source_id}.")
 
     # Get the images for the source
-    driver, source_images = get_images(driver, source_id_1, image_name_contains, image_list)
+    driver, source_images = get_images(driver, source_id_1, prefix, image_list)
 
     # Check if there are any images
     if source_images is None:
@@ -294,7 +294,7 @@ def api(args):
         driver, meta, source_images = get_source_meta(driver,
                                                       args.source_id_1,
                                                       args.source_id_2,
-                                                      args.image_name_contains,
+                                                      args.prefix,
                                                       images_w_points)
 
         if meta is None:
@@ -565,9 +565,9 @@ def main():
                              'multiple csv files. Each csv file should '
                              'contain following: name, row, column')
 
-    parser.add_argument('--image_name_contains', type=str, default=None,
-                        help='A string that all images have in common to '
-                             'narrow the search space.')
+    parser.add_argument('--prefix', type=str, default="",
+                        help='A prefix that all images of interest have in common to '
+                             'narrow the search space, else leave blank')
 
     parser.add_argument('--source_id_1', type=str, required=True,
                         help='The ID of the Source containing images.')
