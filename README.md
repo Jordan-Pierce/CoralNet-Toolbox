@@ -31,6 +31,7 @@ a GUI; these scripts currently include:
 - `Annotate`: Create your own patches from annotations, locally
 - `Visualize`: Visualize points/patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
+- `Projector`: Display model predictions in feature space using Tensorboard
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 - `ImgInference`: Perform inference using a locally trained classification model
 - `SAM`: Create segmentation masks for each image using labeled points and SAM

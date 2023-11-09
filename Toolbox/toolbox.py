@@ -12,6 +12,7 @@ from Tools.Patches import patches
 from Tools.Visualize import visualize
 from Tools.Points import points
 from Tools.Classification import classification
+from Tools.Projector import projector
 from Tools.ImgInference import image_inference
 from Tools.SAM import sam
 from Tools.Segmentation import segmentation
@@ -371,9 +372,15 @@ def main():
                                         metavar="Image Column",
                                         help="The column specifying the image basename")
 
+    patches_parser_panel_1.add_argument("--label_column", type=str, default="Label",
+                                        metavar="Label Column",
+                                        help="The column specifying the Label column",
+                                        widget='Dropdown',
+                                        choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
+
     patches_parser_panel_1.add_argument("--patch_size", type=int, default=112,
-                                        metavar="Patch Size",
-                                        help="The size of each patch extracted")
+                                        metavar="Patch Extent",
+                                        help="The extent of each patch extracted")
 
     patches_parser_panel_1.add_argument('--output_dir', required=True,
                                         metavar='Output Directory',
@@ -483,6 +490,42 @@ def main():
                                            metavar="Tensorboard",
                                            help='Open Tensorboard for viewing model training in real-time',
                                            widget='BlockCheckbox')
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Projector
+    # ------------------------------------------------------------------------------------------------------------------
+    projector_parser = subs.add_parser('Projector')
+
+    # Panel 1
+    projector_parser_panel_1 = projector_parser.add_argument_group('Projector',
+                                                                   'Display patch data in feature space using '
+                                                                   'Tensorboard. Requires a trained model, and a patch '
+                                                                   'file.',
+                                                                   gooey_options={'show_border': True})
+
+    projector_parser_panel_1.add_argument("--model", type=str,
+                                          metavar="Model Path",
+                                          help="Path to Best Model and Weights File (.h5)",
+                                          widget="FileChooser")
+
+    projector_parser_panel_1.add_argument('--patches', type=str,
+                                          metavar="Patch Data",
+                                          help='Patches dataframe file',
+                                          widget="FileChooser")
+
+    projector_parser_panel_1.add_argument('--output_dir', required=True,
+                                          metavar='Output Directory',
+                                          default=DATA_DIR,
+                                          help='Root directory where output will be saved',
+                                          widget="DirChooser")
+
+    projector_parser_panel_2 = projector_parser.add_argument_group('Existing Project',
+                                                                   gooey_options={'show_border': True})
+
+    projector_parser_panel_2.add_argument('--project_folder', type=str, default="",
+                                          metavar="Project Folder",
+                                          help='Path to existing projector project folder.',
+                                          widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Points
@@ -864,6 +907,9 @@ def main():
 
     if args.command == 'Classification':
         classification(args)
+
+    if args.command == 'Projector':
+        projector(args)
 
     if args.command == 'Points':
         points(args)

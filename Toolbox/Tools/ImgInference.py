@@ -55,6 +55,8 @@ def image_inference(args):
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
         log("NOTE: Found GPU")
+        gpus = tf.config.list_physical_devices(device_type='GPU')
+        tf.config.experimental.set_memory_growth(gpus[0], True)
     else:
         log("WARNING: No GPU found; defaulting to CPU")
 

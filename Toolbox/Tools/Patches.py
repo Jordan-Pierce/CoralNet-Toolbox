@@ -146,7 +146,7 @@ def patches(args):
 
         assert "Row" in annotation_df.columns, log(f"ERROR: 'Row' not in provided csv")
         assert "Column" in annotation_df.columns, log(f"ERROR: 'Column' not in provided csv")
-        assert "Label" in annotation_df.columns, log(f"ERROR: 'Label' not in provided csv")
+        assert args.label_column in annotation_df.columns, log(f"ERROR: '{args.label_column}' not in provided csv")
         assert args.image_column in annotation_df.columns, log(f"ERROR: {args.image_column} not in provided csv")
     else:
         log(f"ERROR: Annotation file provided does not exist; please check input")
@@ -158,11 +158,11 @@ def patches(args):
     os.makedirs(output_dir, exist_ok=True)
 
     # Make sub-folders for all the class categories
-    for label in annotation_df['Label'].unique():
+    for label in annotation_df[args.label_column].unique():
         os.makedirs(os.path.join(output_dir, 'patches', label), exist_ok=True)
 
     # Subset of annotation df, simpler
-    sub_df = annotation_df[[args.image_column, 'Row', 'Column', 'Label']]
+    sub_df = annotation_df[[args.image_column, 'Row', 'Column', args.label_column]]
     sub_df.columns = ['Name', 'Row', 'Column', 'Label']
     # All unique images in the annotation dataframe
     image_names = sub_df['Name'].unique()
@@ -222,6 +222,9 @@ def main():
 
     parser.add_argument("--image_column", type=str, default="Name",
                         help="The column specifying the image basename")
+
+    parser.add_argument("--label_column", required=False, type=str, default='Label',
+                        help='Label column in Annotations dataframe.')
 
     parser.add_argument("--patch_size", type=int, default=112,
                         help="The size of each patch extracted")
