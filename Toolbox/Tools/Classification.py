@@ -43,8 +43,6 @@ from Common import get_now
 warnings.filterwarnings("ignore")
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-gpus = tf.config.list_physical_devices(device_type='GPU')
-tf.config.experimental.set_memory_growth(gpus[0], True)
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -166,6 +164,7 @@ def classification(args):
         log("NOTE: Found GPU")
         gpus = tf.config.list_physical_devices(device_type='GPU')
         tf.config.experimental.set_memory_growth(gpus[0], True)
+        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     else:
         log("WARNING: No GPU found; defaulting to CPU")
 

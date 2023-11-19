@@ -52,43 +52,26 @@ a GUI; these scripts currently include the following:
 #### **How to use**
 To use these tools, you should have access to the CoralNet platform. Once you have an account, 
 you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
-various tasks.
+various other tasks locally.
 
-To install just the dependencies, it's recommended to use the `requirements.txt` file with pip:
+To install on `Windows`, use the `install.py` script within an `Anaconda` environment:
+file with pip:
 ```python
 # cmd
 conda create --name coralnet_toolbox python=3.8 -y
 conda activate coralnet_toolbox
-pip install -r requirements.txt
-python Toolbox\toolbox.py
-```
-
-To install the entire repository (development), use the one of the `coralnet_toolbox_X.yml` files using anaconda:
-```python
-# cmd
-
-conda env create -f Environments/coralnet_toolbox_avd.yml # AVD
-# or 
-conda env create -f Environments/coralnet_toolbox_mls.yml # Azure ML Studio
-conda activate coralnet_toolbox
+python install.py
 python Toolbox\toolbox.py
 ```
 
 Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
-- `Windows 11`
+- `Windows 10`
 - `Python 3.8`
-- `Torch 2.0.1 + CUDA 11.8`
+- `Torch 2.0.0 + CUDA 11.8`
 - `Tensorflow 2.10.1 + CUDA 11.8`
 - `Keras 2.10.0 + CUDA 11.8`
 - `Metashape Professional 2.0.X`
 - `Google Chrome 114`
-
-For convenience, `Metashape` wheels are located in `./Packages`, and can be installed by:
-```python
-# cmd
-conda activate coralnet_toolbox
-pip install ./Packages/Metashape_Version_X_OS.whl
-```
 
 ### **Conclusion**
 In summary, this repository provides a range of tools that can assist with interacting with 

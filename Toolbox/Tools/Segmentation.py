@@ -35,8 +35,8 @@ from Common import get_now
 from Common import print_progress
 
 torch.cuda.empty_cache()
+
 warnings.filterwarnings('ignore')
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -1003,6 +1003,7 @@ def segmentation(args):
         log("NOTE: Closing Tensorboard in 60 seconds")
         time.sleep(60)
         tensorboard_process.terminate()
+
 
 # -----------------------------------------------------------------------------
 # Main Function

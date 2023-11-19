@@ -5,7 +5,6 @@ import glob
 import warnings
 import argparse
 import traceback
-from tqdm import tqdm
 
 import cv2
 import numpy as np

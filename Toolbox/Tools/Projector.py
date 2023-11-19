@@ -23,7 +23,6 @@ from Common import print_progress
 from Classification import precision
 from Classification import recall
 from Classification import f1_score
-from ImgInference import get_class_map
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
