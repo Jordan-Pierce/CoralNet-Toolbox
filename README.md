@@ -55,12 +55,19 @@ you can use the `CoralNet-Toolbox` codebase to programmatically interact with th
 various other tasks locally.
 
 To install on `Windows`, use the `install.py` script within an `Anaconda` environment:
-file with pip:
 ```python
 # cmd
+
+# Create an environment
 conda create --name coralnet_toolbox python=3.8 -y
+
+# Activate the environment
 conda activate coralnet_toolbox
+
+# Run the install script
 python install.py
+
+# Run the toolbox script
 python Toolbox\toolbox.py
 ```
 
