@@ -55,7 +55,6 @@ def post_process_pcd(temp_path, dense_path, color_map, chunk_size=10000000):
     num_points = vertex_data['x'].shape[0]
     # For memory, in batches, get updated color values
     for i in range(0, num_points, chunk_size):
-
         # Last index in batch
         chunk_end = min(i + chunk_size, num_points)
 
@@ -223,7 +222,7 @@ def segmentation3d_workflow(args):
         doc.save()
 
         # Add masks if present
-        if 'Mask Path' in masks_df.columns:
+        if 'Mask Path' in masks_df.columns and args.include_binary_masks:
 
             log("\n###############################################")
             log("Updating mask paths")
@@ -237,9 +236,9 @@ def segmentation3d_workflow(args):
                     mask_path = masks_df[masks_df['Name'].str.contains(camera_name)]['Mask Path'].item()
                     # Check that it exists
                     if os.path.exists(mask_path):
-                        chunk.generateMasks(path=mask_path,
-                                            masking_mode=Metashape.MaskingMode.MaskingModeFile,
-                                            cameras=[camera])
+                        classified_chunk.generateMasks(path=mask_path,
+                                                       masking_mode=Metashape.MaskingMode.MaskingModeFile,
+                                                       cameras=[camera])
                     else:
                         log(f"ERROR: Could not find the following file {mask_path}; exiting")
                         sys.exit(1)
@@ -458,6 +457,9 @@ def main():
 
     parser.add_argument('--mask_column', type=str, default='Color Path',
                         help='Column name of masks to use for classification')
+
+    parser.add_argument('--include_binary_masks', action='store_true',
+                        help='Include the use of binary masks as well as colored masks')
 
     parser.add_argument('--chunk_index', type=int, default=0,
                         help='Index of chunk to classify (0-based indexing)')

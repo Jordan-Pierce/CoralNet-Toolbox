@@ -954,7 +954,7 @@ def segmentation(args):
             # Get the expected input for model
             image, gt_mask = test_dataset[n]
             gt_mask = gt_mask.squeeze().numpy()
-            gt_mask = cv2.resize(gt_mask, (original_height, original_width), interpolation=cv2.INTER_NEAREST)
+            gt_mask = cv2.resize(gt_mask, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
             gt_mask = colorize_mask(gt_mask, class_ids, class_colors)
             # Prepare sample
             x_tensor = image.to(device).unsqueeze(0)
@@ -962,7 +962,7 @@ def segmentation(args):
             pr_mask = model.predict(x_tensor)
             pr_mask = (pr_mask.squeeze().cpu().numpy().round())
             pr_mask = np.argmax(pr_mask, axis=0)
-            pr_mask = cv2.resize(pr_mask, (original_height, original_width), interpolation=cv2.INTER_NEAREST)
+            pr_mask = cv2.resize(pr_mask, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
             pr_mask = colorize_mask(pr_mask, class_ids, class_colors)
 
             # Visualize the colorized results locally

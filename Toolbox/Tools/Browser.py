@@ -165,7 +165,8 @@ def login(driver):
 
     # Confirm login was successful; after 60 seconds, throw an error.
     try:
-        path = "//a[@href='/accounts/logout/']/span[text()='Sign out']"
+        path = "//button[text()='Sign out']"
+
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, path)))
 

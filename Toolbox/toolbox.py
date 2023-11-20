@@ -848,19 +848,23 @@ def main():
                                       help='Path to existing Metashape project file (.psx)',
                                       widget="FileChooser")
 
-    seg3d_parser_panel_1.add_argument('--color_map', type=str, required=True,
-                                      metavar="Color Map File",
-                                      help='Path to Color Map JSON file',
-                                      widget="FileChooser")
-
     seg3d_parser_panel_1.add_argument('--masks_file', type=str, required=True,
                                       metavar='Masks File',
                                       help='Masks file containing paths for color masks of images',
                                       widget='FileChooser')
 
+    seg3d_parser_panel_1.add_argument('--color_map', type=str, required=True,
+                                      metavar="Color Map File",
+                                      help='Path to Color Map JSON file',
+                                      widget="FileChooser")
+
     seg3d_parser_panel_1.add_argument('--mask_column', type=str, default='Color Path',
                                       metavar="Mask Column",
                                       help='Column name of masks to use for classification')
+
+    seg3d_parser_panel_1.add_argument('--include_binary_masks', action='store_true',
+                                      metavar='Include Binary Masks',
+                                      help='Include the use of binary masks as well as colored masks')
 
     seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
                                       metavar="Chunk Index",
