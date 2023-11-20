@@ -47,12 +47,12 @@ def download_checkpoint(url, path):
             with open(path, 'wb') as file:
                 # Write the content to the file
                 file.write(response.content)
-            log(f"NOTE: Downloaded file successfully")
-            log(f"NOTE: Saved file to {path}")
+            print(f"NOTE: Downloaded file successfully")
+            print(f"NOTE: Saved file to {path}")
         else:
-            log(f"ERROR: Failed to download file. Status code: {response.status_code}")
+            print(f"ERROR: Failed to download file. Status code: {response.status_code}")
     except requests.exceptions.RequestException as e:
-        log(f"ERROR: An error occurred: {e}")
+        print(f"ERROR: An error occurred: {e}")
 
 
 def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, points_per_batch=64):
@@ -72,7 +72,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, poin
                 "vit_h": "sam_vit_h_4b8939.pth"}
 
     if model_type not in list(sam_dict.keys()):
-        log(f"ERROR: Invalid model type provided; choices are:\n{list(sam_dict.keys())}")
+        print(f"ERROR: Invalid model type provided; choices are:\n{list(sam_dict.keys())}")
         sys.exit(1)
 
     # Checkpoint path to model
@@ -80,7 +80,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, poin
 
     # Check to see if the weights of the model type were already downloaded
     if not os.path.exists(path):
-        log("NOTE: Model checkpoint does not exist; downloading")
+        print("NOTE: Model checkpoint does not exist; downloading")
         url = f"{sam_url}{sam_dict[model_type]}"
         # Download the file
         download_checkpoint(url, path)
@@ -206,14 +206,14 @@ def sam(args):
     """
 
     """
-    log("\n###############################################")
-    log("Semantic Segmentation w/ SAM")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Semantic Segmentation w/ SAM")
+    print("###############################################\n")
 
     # Check for CUDA
-    log(f"NOTE: PyTorch version - {torch.__version__}")
-    log(f"NOTE: Torchvision version - {torchvision.__version__}")
-    log(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
 
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -222,7 +222,7 @@ def sam(args):
     confidence = float(args.confidence / 100)
 
     if not 0 <= confidence <= 1.0:
-        log(f"ERROR: Confidence value must be between [0 - 100]")
+        print(f"ERROR: Confidence value must be between [0 - 100]")
         sys.exit(1)
 
     # Predictions Dataframe
@@ -233,9 +233,9 @@ def sam(args):
         # Create class map and color map based on annotation file
         if args.label_col in points_df.columns:
             label_col = args.label_col
-            log(f"NOTE: Using labels from the column '{label_col}'")
+            print(f"NOTE: Using labels from the column '{label_col}'")
         else:
-            log(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}")
+            print(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}")
             sys.exit(1)
 
         # Filter based on confidence scores of the label colum;
@@ -247,7 +247,7 @@ def sam(args):
         points_df = points_df[['Name', 'Row', 'Column', label_col]]
         points_df.columns = ['Name', 'Row', 'Column', 'Label']
 
-        log(f"NOTE: Found a total of {len(points_df)} sampled points for {len(image_names)} images")
+        print(f"NOTE: Found a total of {len(points_df)} sampled points for {len(image_names)} images")
 
         # Create the class mapping between values and colors
         class_map = {l: i + 1 for i, l in enumerate(sorted(points_df['Label'].unique()))}
@@ -259,7 +259,7 @@ def sam(args):
         label_colors = {l: color_map[i] / 255.0 for i, l in enumerate(unique_labels)}
 
     else:
-        log("ERROR: Points file provided doesn't exist.")
+        print("ERROR: Points file provided doesn't exist.")
         sys.exit(1)
 
     # Image files
@@ -271,9 +271,9 @@ def sam(args):
         if not images:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            log(f"NOTE: Found {len(images)} images in directory provided")
+            print(f"NOTE: Found {len(images)} images in directory provided")
     else:
-        log("ERROR: Image directory provided doesn't exist.")
+        print("ERROR: Image directory provided doesn't exist.")
         sys.exit(1)
 
     # Model Weights
@@ -284,10 +284,10 @@ def sam(args):
                                           points_per_side=args.points_per_side,
                                           points_per_batch=args.points_per_batch)
 
-        log(f"NOTE: Loaded model {args.model_type}")
+        print(f"NOTE: Loaded model {args.model_type}")
 
     except Exception as e:
-        log(f"ERROR: There was an issue loading the model\n{e}")
+        print(f"ERROR: There was an issue loading the model\n{e}")
         sys.exit(1)
 
     # Setting output directories
@@ -312,9 +312,9 @@ def sam(args):
     # ----------------------------------------------------------------
     # Inference
     # ----------------------------------------------------------------
-    log("\n###############################################")
-    log("Making Masks")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Making Masks")
+    print("###############################################\n")
 
     # Loop through each image, extract the corresponding patches
     for i_idx, image_path in enumerate(images):
@@ -336,7 +336,7 @@ def sam(args):
         resized_height, resized_width = resized_image.shape[0:2]
         resized_area = resized_height * resized_width
 
-        log(f"NOTE: Making predictions for {name}")
+        print(f"NOTE: Making predictions for {name}")
         # Set the image in sam predictor
         masks = sam_predictor.generate(resized_image)
         # Sort based on area (larger first)
@@ -377,21 +377,21 @@ def sam(args):
         final_mask = final_mask.astype(np.uint8)
         semantic_path = f"{seg_dir}{name.split('.')[0]}.png"
         imsave(fname=semantic_path, arr=final_mask)
-        log(f"NOTE: Saved semantic mask to {semantic_path}")
+        print(f"NOTE: Saved semantic mask to {semantic_path}")
 
         # Create traditional masks (0 background, 255 object)
         mask = np.zeros(shape=(original_height, original_width, 3), dtype=np.uint8)
         mask[final_mask != 0, :] = [255, 255, 255]
         mask_path = f"{mask_dir}{name.split('.')[0]}.png"
         imsave(fname=mask_path, arr=mask.astype(bool))
-        log(f"NOTE: Saved mask to {mask_path}")
+        print(f"NOTE: Saved mask to {mask_path}")
 
         # Get the final colored mask, change no data to black
         final_color = colorize_mask(final_mask, class_map, label_colors)
         final_color[final_mask == 0, :] = [0, 0, 0]
         color_path = f"{color_dir}{name.split('.')[0]}.png"
         imsave(fname=color_path, arr=final_color.astype(np.uint8))
-        log(f"NOTE: Saved color mask to {color_path}")
+        print(f"NOTE: Saved color mask to {color_path}")
 
         # Get the final overlay, which is the final color mask
         # on top of the original image, with 50% transparency, while
@@ -399,7 +399,7 @@ def sam(args):
         final_overlay = cv2.addWeighted(image, 0.5, final_color, 0.5, 0)
         overlay_path = f"{overlay_dir}{name.split('.')[0]}.png"
         imsave(fname=overlay_path, arr=final_overlay.astype(np.uint8))
-        log(f"NOTE: Saved overlay to {overlay_path}")
+        print(f"NOTE: Saved overlay to {overlay_path}")
 
         # Add to output list
         mask_df.append([name, image_path, semantic_path, mask_path, color_path, overlay_path])
@@ -413,9 +413,9 @@ def sam(args):
     mask_df.to_csv(output_mask_csv)
 
     if os.path.exists(output_mask_csv):
-        log(f"NOTE: Mask dataframe saved to {output_dir}")
+        print(f"NOTE: Mask dataframe saved to {output_dir}")
     else:
-        log(f"ERROR: Could not save mask dataframe")
+        print(f"ERROR: Could not save mask dataframe")
 
     # Create a final class mapping for the seg masks
     seg_map = {k: {} for k in class_map.keys()}
@@ -432,9 +432,9 @@ def sam(args):
         json.dump(seg_map, output_file, indent=4)
 
     if os.path.exists(output_color_json):
-        log(f"NOTE: Color Mapping JSON file saved to {output_dir}")
+        print(f"NOTE: Color Mapping JSON file saved to {output_dir}")
     else:
-        log(f"ERROR: Could not save Color Mapping JSON file")
+        print(f"ERROR: Could not save Color Mapping JSON file")
 
 
 # -----------------------------------------------------------------------------
@@ -476,11 +476,11 @@ def main():
 
     try:
         sam(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

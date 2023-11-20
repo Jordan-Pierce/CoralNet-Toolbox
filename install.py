@@ -129,6 +129,8 @@ install_requires = [
     './Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl',
 
     'gooey',
+    'gradio',
+    'rich',
     'tqdm'
 ]
 

@@ -48,17 +48,17 @@ def image_inference(args):
     """
 
     """
-    log("\n###############################################")
-    log("Inference")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Inference")
+    print("###############################################\n")
 
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
-        log("NOTE: Found GPU")
+        print("NOTE: Found GPU")
         gpus = tf.config.list_physical_devices(device_type='GPU')
         tf.config.experimental.set_memory_growth(gpus[0], True)
     else:
-        log("WARNING: No GPU found; defaulting to CPU")
+        print("WARNING: No GPU found; defaulting to CPU")
 
     # Points Dataframe
     if os.path.exists(args.points):
@@ -66,20 +66,20 @@ def image_inference(args):
         annotation_file = args.points
         points = pd.read_csv(annotation_file)
         # Check that the needed columns are in the dataframe
-        assert "Row" in points.columns, log(f"ERROR: 'Row' not in provided csv")
-        assert "Column" in points.columns, log(f"ERROR: 'Column' not in provided csv")
-        assert "Name" in points.columns, log(f"ERROR: 'Name' not in provided csv")
+        assert "Row" in points.columns, print(f"ERROR: 'Row' not in provided csv")
+        assert "Column" in points.columns, print(f"ERROR: 'Column' not in provided csv")
+        assert "Name" in points.columns, print(f"ERROR: 'Name' not in provided csv")
         # Redundant, just in case user passes the file path instead of the file name
         points['Name'] = [os.path.basename(n) for n in points['Name'].values]
         # Get the names of all the images
         image_names = np.unique(points['Name'].to_numpy())
         image_names = [os.path.basename(n) for n in image_names]
         if image_names:
-            log(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
+            print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
         else:
             raise Exception(f"ERROR: Issue with 'Name' column; check input provided")
     else:
-        log("ERROR: Points provided doesn't exist.")
+        print("ERROR: Points provided doesn't exist.")
         sys.exit(1)
 
     # Image files
@@ -94,9 +94,9 @@ def image_inference(args):
         if not image_files:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            log(f"NOTE: Found {len(image_files)} images in directory provided")
+            print(f"NOTE: Found {len(image_files)} images in directory provided")
     else:
-        log("ERROR: Directory provided doesn't exist.")
+        print("ERROR: Directory provided doesn't exist.")
         sys.exit(1)
 
     # Model Weights
@@ -105,20 +105,20 @@ def image_inference(args):
             # Load the model with custom metrics
             custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
             model = load_model(args.model, custom_objects=custom_objects)
-            log(f"NOTE: Loaded model {args.model}")
+            print(f"NOTE: Loaded model {args.model}")
 
         except Exception as e:
-            log(f"ERROR: There was an issue loading the model\n{e}")
+            print(f"ERROR: There was an issue loading the model\n{e}")
             sys.exit(1)
     else:
-        log("ERROR: Model provided doesn't exist.")
+        print("ERROR: Model provided doesn't exist.")
         sys.exit(1)
 
     # Class map
     if os.path.exists(args.class_map):
         class_map = get_class_map(args.class_map)
     else:
-        log(f"ERROR: Class Map file provided doesn't exist.")
+        print(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit()
 
     # Output
@@ -147,14 +147,14 @@ def image_inference(args):
         patches = []
 
         # Create patches for this image
-        log(f"NOTE: Cropping patches ({patch_size} x {patch_size}) for {image_name}")
+        print(f"NOTE: Cropping patches ({patch_size} x {patch_size}) for {image_name}")
 
         # Get the current image points
         image_points = points[points['Name'] == image_name]
 
         # Make sure it's not empty for some reason
         if image_points.empty:
-            log(f"ERROR: No image points found for {image_name}")
+            print(f"ERROR: No image points found for {image_name}")
             continue
 
         for i, r in image_points.iterrows():
@@ -168,7 +168,7 @@ def image_inference(args):
         # ----------------------------------------------------------------
 
         # Model to make predictions
-        log(f"NOTE: Making predictions on patches for {image_name}")
+        print(f"NOTE: Making predictions on patches for {image_name}")
         probabilities = model.predict(patches, verbose=0)
         predictions = np.argmax(probabilities, axis=1)
         class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
@@ -199,7 +199,7 @@ def image_inference(args):
 
         # Save each image predictions
         output.to_csv(output_path)
-        log(f"NOTE: Predictions saved to {output_path}")
+        print(f"NOTE: Predictions saved to {output_path}")
 
         print_progress(n_idx, len(image_names))
 
@@ -237,11 +237,11 @@ def main():
 
     try:
         image_inference(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

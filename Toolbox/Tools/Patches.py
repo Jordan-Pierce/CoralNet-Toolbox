@@ -92,7 +92,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir, patch_size):
     image_path = os.path.join(image_dir, image_name)
 
     if not os.path.exists(image_path):
-        log(f"ERROR: Image {image_path} does not exist; skipping")
+        print(f"ERROR: Image {image_path} does not exist; skipping")
         return
 
     # Open the image as np array just once
@@ -119,7 +119,7 @@ def process_image(image_name, image_dir, annotation_df, output_dir, patch_size):
                 patches.append([name, path, r['Label'], r['Row'], r['Column'], image_name, image_path])
 
         except Exception as e:
-            log(f"ERROR: {e}")
+            print(f"ERROR: {e}")
             continue
 
     return patches
@@ -130,26 +130,26 @@ def patches(args):
     Given an image dataframe, this function will crop a patch for each annotation
     """
 
-    log("\n###############################################")
-    log("Cropping Patches")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Cropping Patches")
+    print("###############################################\n")
 
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
     else:
-        log(f"ERROR: Image directory provided doesn't exist; please check input")
+        print(f"ERROR: Image directory provided doesn't exist; please check input")
         sys.exit(1)
 
     if os.path.exists(args.annotation_file):
         annotation_file = args.annotation_file
         annotation_df = pd.read_csv(annotation_file)
 
-        assert "Row" in annotation_df.columns, log(f"ERROR: 'Row' not in provided csv")
-        assert "Column" in annotation_df.columns, log(f"ERROR: 'Column' not in provided csv")
-        assert args.label_column in annotation_df.columns, log(f"ERROR: '{args.label_column}' not in provided csv")
-        assert args.image_column in annotation_df.columns, log(f"ERROR: {args.image_column} not in provided csv")
+        assert "Row" in annotation_df.columns, print(f"ERROR: 'Row' not in provided csv")
+        assert "Column" in annotation_df.columns, print(f"ERROR: 'Column' not in provided csv")
+        assert args.label_column in annotation_df.columns, print(f"ERROR: '{args.label_column}' not in provided csv")
+        assert args.image_column in annotation_df.columns, print(f"ERROR: {args.image_column} not in provided csv")
     else:
-        log(f"ERROR: Annotation file provided does not exist; please check input")
+        print(f"ERROR: Annotation file provided does not exist; please check input")
         sys.exit(1)
 
     # Create output
@@ -196,10 +196,10 @@ def patches(args):
     patches.to_csv(output_path)
 
     if os.path.exists(output_path):
-        log(f"NOTE: Patches dataframe saved to {output_path}")
+        print(f"NOTE: Patches dataframe saved to {output_path}")
         return output_path
     else:
-        log(f"ERROR: Patches dataframe could not be saved")
+        print(f"ERROR: Patches dataframe could not be saved")
         return None
 
 
@@ -237,11 +237,11 @@ def main():
     try:
 
         patches(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

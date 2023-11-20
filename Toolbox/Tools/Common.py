@@ -79,7 +79,7 @@ def print_progress(prg, prg_total):
     """
     Formatted print for Gooey to show progress in progress bar
     """
-    log("progress: {}/{}".format(prg, prg_total))
+    print("progress: {}/{}".format(prg, prg_total))
 
 
 def get_now():

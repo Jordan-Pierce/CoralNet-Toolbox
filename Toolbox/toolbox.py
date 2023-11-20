@@ -936,7 +936,7 @@ def main():
     if args.command == 'Segmentation3D':
         segmentation3d(args)
 
-    log('Done.')
+    print('Done.')
 
 
 if __name__ == '__main__':

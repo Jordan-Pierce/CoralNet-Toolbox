@@ -23,14 +23,14 @@ def print_labelset(labelset):
     """
     Pretty prints to user in gooey the total number of annotations made in session
     """
-    log("\n" * 20)
-    log("\n###############################################")
-    log("Label Tracker")
-    log("###############################################\n")
+    print("\n" * 20)
+    print("\n###############################################")
+    print("Label Tracker")
+    print("###############################################\n")
 
     for k, v in labelset.items():
         if v:
-            log(f"{k}: {v}")
+            print(f"{k}: {v}")
 
 
 def extract_label(string):
@@ -75,9 +75,9 @@ def annotate(args):
     Once it's closed, the results are stored as annotation dataframe in root directory, and temp files are deleted.
     """
 
-    log("\n###############################################")
-    log("Patch Extractor Tool")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Patch Extractor Tool")
+    print("###############################################\n")
 
     if not os.path.exists(args.image_dir):
         raise NotADirectoryError(f"ERROR: Image Directory not found. Please check the path provided.")
@@ -89,14 +89,14 @@ def annotate(args):
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
     else:
-        log(f"ERROR: Image directory provided doesn't exist; please check input")
+        print(f"ERROR: Image directory provided doesn't exist; please check input")
         sys.exit(1)
 
     # Set exe
     if os.path.exists(args.patch_extractor_path):
         exe_path = args.patch_extractor_path
     else:
-        log(f"ERROR: Path to Patch Extractor doesn't exist; please check input")
+        print(f"ERROR: Path to Patch Extractor doesn't exist; please check input")
         sys.exit(1)
 
     # Set the paths for output
@@ -129,7 +129,7 @@ def annotate(args):
         if num_logs != len(log_files):
             # The log file name will stay the same throughout the entire session
             log_file = max(log_files, key=os.path.getmtime)
-            log(f"NOTE: Logging to {os.path.basename(log_file)}")
+            print(f"NOTE: Logging to {os.path.basename(log_file)}")
             break
 
     # Continuously loop while app is on
@@ -146,9 +146,9 @@ def annotate(args):
             # Print to user
             extracted_label = extract_label(patch_name)
             if extracted_label is None:
-                log("WARNING: Annotation not recorded; convention should only contain a single '_'")
+                print("WARNING: Annotation not recorded; convention should only contain a single '_'")
             else:
-                log(f"NOTE: Annotation created for class '{extracted_label}'")
+                print(f"NOTE: Annotation created for class '{extracted_label}'")
                 if extracted_label not in labelset:
                     labelset[extracted_label] = 0
 
@@ -174,7 +174,7 @@ def annotate(args):
             patch_path = f"{tmp_dir}/{r['Name']}"
 
             if not os.path.exists(patch_path):
-                log("WARNING: Do not move patches while still annotating!")
+                print("WARNING: Do not move patches while still annotating!")
                 continue
 
             # Width and height of patch
@@ -196,10 +196,10 @@ def annotate(args):
         annotations.to_csv(output_path)
 
         if os.path.exists(output_path):
-            log(f"\nNOTE: Annotations saved in {output_path}")
+            print(f"\nNOTE: Annotations saved in {output_path}")
 
         else:
-            log(f"ERROR: Could not save annotations; leaving tmp files where they are.")
+            print(f"ERROR: Could not save annotations; leaving tmp files where they are.")
             sys.exit(1)
 
         # Clean up
@@ -232,11 +232,11 @@ def main():
     try:
         # Call the annotate function
         annotate(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

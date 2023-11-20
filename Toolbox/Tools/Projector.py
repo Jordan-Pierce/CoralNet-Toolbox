@@ -40,7 +40,7 @@ def load_patches(paths):
     for path in paths:
 
         if not os.path.exists(path):
-            log(f"WARNING: {path} does not exist, skipping.")
+            print(f"WARNING: {path} does not exist, skipping.")
 
         # Read patch and add to list
         patches.append(imread(path))
@@ -119,7 +119,7 @@ def activate_tensorboard(logs_dir):
 
     """
     # Activate tensorboard
-    log("NOTE: Activating Tensorboard...")
+    print("NOTE: Activating Tensorboard...")
     tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
     process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
 
@@ -128,7 +128,7 @@ def activate_tensorboard(logs_dir):
             continue
 
     except Exception:
-        log("NOTE: Deactivating Tensorboard...")
+        print("NOTE: Deactivating Tensorboard...")
 
     finally:
         process.terminate()
@@ -139,27 +139,27 @@ def projector(args):
 
     """
 
-    log("\n###############################################")
-    log("Projector")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Projector")
+    print("###############################################\n")
 
     # Check that the user has GPU available
     if tf.config.list_physical_devices('GPU'):
-        log("NOTE: Found GPU")
+        print("NOTE: Found GPU")
         gpus = tf.config.list_physical_devices(device_type='GPU')
         tf.config.experimental.set_memory_growth(gpus[0], True)
     else:
-        log("WARNING: No GPU found; defaulting to CPU")
+        print("WARNING: No GPU found; defaulting to CPU")
 
     # ---------------------------------------------------------------------------------------
     # If there's an existing project
     if args.project_folder:
         try:
             if os.path.exists(args.project_folder):
-                log("NOTE: Opening existing project")
+                print("NOTE: Opening existing project")
                 activate_tensorboard(args.project_folder)
             else:
-                log("ERROR: Project file provided does not exist, check provided input")
+                print("ERROR: Project file provided does not exist, check provided input")
             raise Exception
         except Exception as e:
             sys.exit(1)
@@ -175,8 +175,8 @@ def projector(args):
         patches_df = patches_df.dropna()
         patches_df.replace({'NotCoral': 'Substrate', 'DVR': 'Background', 'SclBar': 'Color Palette'}, inplace=True)
         # Get the image base names
-        assert "Path" in patches_df.columns, log(f"ERROR: 'Path' not in provided csv")
-        assert "Name" in patches_df.columns, log("ERROR: 'Image Name' not in provided csv")
+        assert "Path" in patches_df.columns, print(f"ERROR: 'Path' not in provided csv")
+        assert "Name" in patches_df.columns, print("ERROR: 'Image Name' not in provided csv")
         image_names = patches_df['Image Name'].unique().tolist()
     else:
         raise Exception(f"ERROR: Patches dataframe {args.patches} does not exist")
@@ -189,13 +189,13 @@ def projector(args):
             custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
             model = load_model(args.model, custom_objects=custom_objects)
             feature_extractor = model.layers[0]
-            log(f"NOTE: Loaded model {args.model}")
+            print(f"NOTE: Loaded model {args.model}")
 
         except Exception as e:
-            log(f"ERROR: There was an issue loading the model\n{e}")
+            print(f"ERROR: There was an issue loading the model\n{e}")
             sys.exit(1)
     else:
-        log("ERROR: Model provided doesn't exist.")
+        print("ERROR: Model provided doesn't exist.")
         sys.exit(1)
 
     # Loop through each of the images, extract features from associated patches
@@ -203,7 +203,7 @@ def projector(args):
     labels_sorted = []
     features_sorted = []
 
-    log("NOTE: Creating feature embeddings")
+    print("NOTE: Creating feature embeddings")
 
     for i_idx, image_name in enumerate(image_names):
         # Patches for current image
@@ -257,11 +257,11 @@ def main():
 
     try:
         projector(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":
