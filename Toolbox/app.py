@@ -22,16 +22,18 @@ def download_page():
     """
 
     """
-    print("Opening Download tool")
+    print("Opening Download tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\download.py"])
     reset_logs()
 
 
-def test_page():
+def api_page():
     """
 
     """
-    subprocess.run(["python", f"{PAGES_DIR}\\test.py"])
+    print("Opening API tool...")
+    subprocess.run(["python", f"{PAGES_DIR}\\api.py"])
+    reset_logs()
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -68,12 +70,12 @@ def create_interface():
     """
     reset_logs()
 
-    with gr.Blocks(analytics_enabled=False) as interface:
+    with gr.Blocks(title="CoralNet Toolbox", analytics_enabled=False, theme=gr.themes.Soft()) as interface:
         # Title
         gr.Markdown("# CoralNet Toolbox")
 
         api_button = gr.Button("CoralNet API")
-        api_process = api_button.click(download_page)
+        api_process = api_button.click(api_page)
 
         download_button = gr.Button("CoralNet Download")
         download_process = download_button.click(download_page)

@@ -1,11 +1,11 @@
 import os
 import re
 import sys
+import socket
 import string
 from tkinter import Tk, filedialog
 
 from Toolbox.Tools.Common import LOG_PATH
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants
@@ -15,9 +15,38 @@ from Toolbox.Tools.Common import LOG_PATH
 PAGES_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-SERVER_PORTS = {"main": 7860,
-                "download": 7861,
-                "test": 7862}
+# ----------------------------------------------------------------------------------------------------------------------
+# Ports
+# ----------------------------------------------------------------------------------------------------------------------
+
+def find_available_ports(ports):
+    """
+    Find available ports from the given list.
+    """
+    available_ports = []
+    for port in ports:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('127.0.0.1', port))
+        sock.close()
+        if result != 0:  # If the connection attempt fails, the port is available
+            available_ports.append(port)
+
+    if not available_ports:
+        raise RuntimeError("No available ports in the specified list.")
+
+    return available_ports
+
+
+PROCESS_LIST = ["main", "download", "api"]
+PORT_RANGE_START = 7860
+PORT_RANGE_END = 7880
+
+# Create a list of ports for each process
+process_ports = find_available_ports(list(range(PORT_RANGE_START, PORT_RANGE_END + 1)))
+
+# Create a dictionary mapping each process to its assigned port
+SERVER_PORTS = dict(zip(PROCESS_LIST, process_ports))
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -63,9 +92,50 @@ def filter_printable(text):
 def filter_logs(text):
     return re.sub(r'^.*progress:.*$', '', text, flags=re.MULTILINE)
 
+
 # ----------------------------------------------------------------------------------------------------------------------
-# Functions
+# Browsing
 # ----------------------------------------------------------------------------------------------------------------------
+def choose_file():
+    """
+
+    """
+    root = Tk()
+    root.attributes("-topmost", True)
+    root.withdraw()
+
+    file_path = filedialog.askopenfilename()
+    if file_path:
+        if os.path.isfile(file_path):
+            root.destroy()
+            return str(file_path)
+        else:
+            root.destroy()
+            return "Invalid file selected"
+    else:
+        file_path = "File not selected"
+        root.destroy()
+        return file_path
+
+
+def choose_files():
+    """
+
+    """
+    root = Tk()
+    root.attributes("-topmost", True)
+    root.withdraw()
+
+    file_paths = list(filedialog.askopenfilenames())
+
+    if file_paths:
+        valid_file_paths = " ".join([path for path in file_paths if os.path.isfile(path)])
+        root.destroy()
+        return valid_file_paths
+    else:
+        root.destroy()
+        return []
+
 
 def choose_directory():
     """
@@ -75,15 +145,15 @@ def choose_directory():
     root.attributes("-topmost", True)
     root.withdraw()
 
-    filename = filedialog.askdirectory()
-    if filename:
-        if os.path.isdir(filename):
+    dir_path = filedialog.askdirectory()
+    if dir_path:
+        if os.path.isdir(dir_path):
             root.destroy()
-            return str(filename)
+            return str(dir_path)
         else:
             root.destroy()
-            return str(filename)
+            return "Invalid directory selected"
     else:
-        filename = "Folder not selected"
+        dir_path = "Folder not selected"
         root.destroy()
-        return str(filename)
+        return str(dir_path)
