@@ -112,8 +112,8 @@ def create_interface():
 
         # Browse buttons
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
-        output_dir_button = gr.Button("Browse Output Directory")
-        output_dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
+        dir_button = gr.Button("Browse Directory")
+        dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
 
         with gr.Row():
             # Run button (callback)

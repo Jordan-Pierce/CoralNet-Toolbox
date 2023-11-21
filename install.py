@@ -130,7 +130,6 @@ install_requires = [
 
     'gooey',
     'gradio',
-    'rich',
     'tqdm'
 ]
 

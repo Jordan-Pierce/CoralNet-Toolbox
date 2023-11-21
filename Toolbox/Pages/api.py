@@ -100,13 +100,13 @@ def create_interface():
 
         # Browse buttons
         points = gr.Textbox("", label="Selected Points File")
-        points_button = gr.Button("Browse Files")
-        points_button.click(choose_files, outputs=points, show_progress="hidden")
+        files_button = gr.Button("Browse Files")
+        files_button.click(choose_files, outputs=points, show_progress="hidden")
 
         # Browse buttons
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
-        output_dir_button = gr.Button("Browse Output Directory")
-        output_dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
+        dir_button = gr.Button("Browse Directory")
+        dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
 
         with gr.Row():
             # Run button (callback)
