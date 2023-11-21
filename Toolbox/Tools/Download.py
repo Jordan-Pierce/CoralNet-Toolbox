@@ -40,10 +40,11 @@ def get_updated_labelset_list():
     """
 
     if os.path.exists(CORALNET_LABELSET_FILE):
-        # Convert bytes to megabytes
-        file_size = os.path.getsize(CORALNET_LABELSET_FILE) / (1024 * 1024)
-        if file_size >= 1:
-            return pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
+        # Get the names
+        names = pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
+
+        if names:
+            return names
 
     names = []
 
