@@ -12,3 +12,4 @@ Toolbox/README.md
 *.amltmp
 .ipynb_aml_checkpoints
 /Notebooks/AVD.ipynb
+/Toolbox/flagged

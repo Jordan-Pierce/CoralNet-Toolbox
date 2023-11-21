@@ -1,31 +1,49 @@
 import gradio as gr
 
-import os
 import subprocess
 
+from Toolbox.Pages.common import SERVER_PORTS
+from Toolbox.Pages.common import PAGES_DIR
+
+
 # ----------------------------------------------------------------------------------------------------------------------
-# Modules
+# Pages
 # ----------------------------------------------------------------------------------------------------------------------
-def module_callback():
+def download_page():
     """
 
     """
-    subprocess.run(["python", r"C:\Users\jordan.pierce\Documents\GitHub\CoralNet-Toolbox\Toolbox\download_app.py"])
+    subprocess.run(["python", f"{PAGES_DIR}\\download.py"])
+
+
+def test_page():
+    """
+
+    """
+    subprocess.run(["python", f"{PAGES_DIR}\\test.py"])
+
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Gradio
+# Main Gradio Interface
 # ----------------------------------------------------------------------------------------------------------------------
 
 demo = gr.Blocks()
 
 with demo:
     # Title
-    gr.Markdown("# CoralNet Toolobox")
+    gr.Markdown("# CoralNet Toolbox")
 
     # Input Parameters
-    run_button = gr.Button("CoralNet Download")
-    run = run_button.click(module_callback)
+    api_button = gr.Button("CoralNet API")
+    api_process = api_button.click(download_page)
 
+    # Input Parameters
+    download_button = gr.Button("CoralNet Download")
+    download_process = download_button.click(download_page)
+
+    # Input Parameters
+    test_button = gr.Button("Gradio Test")
+    test_process = test_button.click(test_page)
 
 if __name__ == "__main__":
-    demo.launch(share=False, server_port=7860, inbrowser=True)
+    demo.launch(share=False, server_port=SERVER_PORTS['main'], inbrowser=True)
