@@ -6,6 +6,7 @@ import time
 import argparse
 import traceback
 
+from Toolbox.Pages.common import js
 from Toolbox.Pages.common import Logger
 from Toolbox.Pages.common import read_logs
 from Toolbox.Pages.common import reset_logs
@@ -84,7 +85,7 @@ def create_interface():
     """
     reset_logs()
 
-    with gr.Blocks(title="CoralNet API", analytics_enabled=False, theme=gr.themes.Soft()) as interface:
+    with gr.Blocks(title="CoralNet API", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
         gr.Markdown("# CoralNet API")
 
@@ -98,12 +99,12 @@ def create_interface():
             source_id_2 = gr.Textbox("", label="Source ID (for model)")
             prefix = gr.Textbox("", label="Image Name Prefix")
 
-        # Browse buttons
+        # Files button
         points = gr.Textbox("", label="Selected Points File")
         files_button = gr.Button("Browse Files")
         files_button.click(choose_files, outputs=points, show_progress="hidden")
 
-        # Browse buttons
+        # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
         dir_button = gr.Button("Browse Directory")
         dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")

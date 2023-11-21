@@ -14,6 +14,13 @@ from Toolbox.Tools.Common import LOG_PATH
 # Get the Pages directory
 PAGES_DIR = os.path.dirname(os.path.abspath(__file__))
 
+js = """function () {
+  gradioURL = window.location.href
+  if (!gradioURL.endsWith('?__theme=dark')) {
+    window.location.replace(gradioURL + '?__theme=dark');
+  }
+}"""
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Ports

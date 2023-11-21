@@ -5,6 +5,7 @@ import sys
 import time
 import subprocess
 
+from Toolbox.Pages.common import js
 from Toolbox.Pages.common import Logger
 from Toolbox.Pages.common import read_logs
 from Toolbox.Pages.common import reset_logs
@@ -70,7 +71,7 @@ def create_interface():
     """
     reset_logs()
 
-    with gr.Blocks(title="CoralNet Toolbox", analytics_enabled=False, theme=gr.themes.Soft()) as interface:
+    with gr.Blocks(title="CoralNet Toolbox", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
         gr.Markdown("# CoralNet Toolbox")
 
