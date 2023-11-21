@@ -1,5 +1,7 @@
 import os
+import re
 import sys
+import string
 from tkinter import Tk, filedialog
 
 from Toolbox.Tools.Common import LOG_PATH
@@ -40,22 +42,26 @@ class Logger:
 
 
 def read_logs():
-    """
-
-    """
     sys.stdout.flush()
     with open(LOG_PATH, "r") as f:
-        return f.read()
+        log_content = f.read()
+        log_content = filter_logs(log_content)
+        log_content = filter_printable(log_content)
+        return log_content
 
 
 def reset_logs():
-    """
-
-    """
-    # Clear it
     with open(LOG_PATH, 'w') as file:
         pass
 
+
+def filter_printable(text):
+    printable_chars = set(string.printable)
+    return ''.join(char for char in text if char in printable_chars)
+
+
+def filter_logs(text):
+    return re.sub(r'^.*progress:.*$', '', text, flags=re.MULTILINE)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions

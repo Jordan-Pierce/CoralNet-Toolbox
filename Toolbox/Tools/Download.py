@@ -348,8 +348,7 @@ def download_metadata(driver, source_id, source_dir=None):
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
-        sys.exit(1)
+        raise Exception(f"ERROR: {e} or you do not have permission to access it")
 
     print(f"\nNOTE: Downloading model metadata for {source_id}")
 
@@ -433,8 +432,7 @@ def download_labelset(driver, source_id, source_dir):
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
-        sys.exit(1)
+        raise Exception(f"ERROR: {e} or you do not have permission to access it")
 
     print(f"\nNOTE: Downloading labelset for {source_id}")
 
@@ -659,8 +657,7 @@ def get_images(driver, source_id, prefix="", image_list=None):
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
-        print(f"ERROR: {e} or you do not have permission to access it")
-        sys.exit(1)
+        raise Exception(f"ERROR: {e} or you do not have permission to access it")
 
     # If provided, will limit the search space on CoralNet
     if prefix != "":
@@ -786,15 +783,12 @@ def download_annotations(driver, source_id, source_dir):
             # Pass along the cookies
             cookies = response.cookies
 
-            # Get the status of the source
-            status = response.text.split(".")[0]
-
             # Check the response to see if the source exists and the user has access to it
-            if "Page could not be found" in status or "don't have permission" in status:
-                raise Exception(f"ERROR: {status} or you do not have permission to access it")
+            if response.status_code == 404:
+                raise Exception(f"ERROR: Page could not be found or you do not have permission to access it")
 
             # Download the annotations
-            print(f"\nNOTE: Downloading annotations for source {source_id}")
+            print(f"NOTE: Downloading annotations for source {source_id}")
 
             # Parse the HTML response using BeautifulSoup
             soup = BeautifulSoup(response.text, "html.parser")
@@ -839,7 +833,7 @@ def download_annotations(driver, source_id, source_dir):
                 raise Exception("ERROR: Could not submit form, likely due to a timeout")
 
         except Exception as e:
-            print(f"ERROR: Issue with downloading annotations")
+            print(f"ERROR: Unable to get annotations from source {source_id}\n{e}\n")
             annotations = None
 
     return driver, annotations
@@ -881,7 +875,7 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have a trained model")
 
     except Exception as e:
-        print(f"ERROR: Unable to get model metadata from source {source_id}\n{e}")
+        print(f"ERROR: Unable to get model metadata from source {source_id}\n{e}\n")
         meta = None
 
     try:
@@ -892,7 +886,7 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have a labelset")
 
     except Exception as e:
-        print(f"ERROR: Unable to get labelset from source {source_id}\n{e}")
+        print(f"ERROR: Unable to get labelset from source {source_id}\n{e}\n")
         labelset = None
 
     try:
@@ -912,7 +906,7 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have any images")
 
     except Exception as e:
-        print(f"ERROR: Unable to get images from source {source_id}\n{e}")
+        print(f"ERROR: Unable to get images from source {source_id}\n{e}\n")
         images = None
 
     try:
@@ -923,8 +917,7 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have any annotations")
 
     except Exception as e:
-        print(f"ERROR: Unable to get annotations from source {source_id}\n{e}")
-        print("NOTE: If there are annotations, you may need to increase the wait time variable")
+        print(f"ERROR: Unable to get annotations from source {source_id}\n{e}\n")
         annotations = None
 
     return driver, meta, labelset, images, annotations

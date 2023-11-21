@@ -21,7 +21,7 @@ RESTART = False
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Modules
+# Module
 # ----------------------------------------------------------------------------------------------------------------------
 
 def module_callback(username, password, source_ids, source_df, labelset_df, sources_with, output_dir, headless):
@@ -49,18 +49,35 @@ def module_callback(username, password, source_ids, source_df, labelset_df, sour
         download(args)
         print("Done.")
     except Exception as e:
-        return f"ERROR: {e}\n{traceback.format_exc()}"
+        print(f"ERROR: {e}\n{traceback.format_exc()}")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Interface
 # ----------------------------------------------------------------------------------------------------------------------
-def set_interface_arguments():
+def check_interface():
     """
 
     """
     global RESTART
     RESTART = True
+
+    return
+
+
+def exit_interface():
+    """
+
+    """
+    reset_logs()
+
+    print("")
+    print("Stopped program successfully!")
+    print("Connection closed!")
+    print("")
+    print("Please close the browser tab.")
+    time.sleep(1)
+    sys.exit(1)
 
 
 def create_interface():
@@ -69,9 +86,7 @@ def create_interface():
     """
     reset_logs()
 
-    interface = gr.Blocks()
-
-    with interface:
+    with gr.Blocks(analytics_enabled=False) as interface:
         # Title
         gr.Markdown("# CoralNet Downloader")
 
@@ -113,23 +128,24 @@ def create_interface():
                                     headless])
 
             stop_button = gr.Button(value="Stop")
-            stop = stop_button.click(set_interface_arguments)
+            stop = stop_button.click(check_interface)
 
         with gr.Accordion("Console Logs"):
             logs = gr.Textbox(label="")
             interface.load(read_logs, None, logs, every=1)
 
-    interface.queue()
-    interface.launch(share=False, server_port=SERVER_PORTS['download'], inbrowser=True)
+    interface.launch(prevent_thread_lock=True, server_port=SERVER_PORTS['download'], inbrowser=True, show_error=True)
 
     return interface
 
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------------------------------------------------------
 
 interface = create_interface()
 
 while True:
     time.sleep(0.5)
     if RESTART:
-        RESTART = False
-        interface.close()
-        interface = create_interface()
+        exit_interface()
