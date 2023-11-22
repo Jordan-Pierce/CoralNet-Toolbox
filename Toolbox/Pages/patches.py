@@ -18,7 +18,7 @@ from Toolbox.Pages.common import get_port
 from Toolbox.Tools.Common import DATA_DIR
 from Toolbox.Tools.Common import LOG_PATH
 
-from Toolbox.Tools.API import api
+from Toolbox.Tools.Patches import patches
 
 RESTART = False
 
@@ -27,25 +27,24 @@ RESTART = False
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(username, password, source_id_1, source_id_2, points, prefix, output_dir):
+def module_callback(image_dir, annotation_file, image_column, label_column, patch_size, output_dir):
     """
 
     """
     sys.stdout = Logger(LOG_PATH)
 
     args = argparse.Namespace(
-        username=username,
-        password=password,
-        source_id_1=source_id_1,
-        source_id_2=source_id_2,
-        points=points,
-        prefix=prefix,
+        image_dir=image_dir,
+        annotation_file=annotation_file,
+        image_column=image_column,
+        label_column=label_column,
+        patch_size=patch_size,
         output_dir=output_dir,
     )
 
     try:
         # Call the function
-        api(args)
+        patches(args)
         print("Done.")
     except Exception as e:
         print(f"ERROR: {e}\n{traceback.format_exc()}")
@@ -85,24 +84,26 @@ def create_interface():
     """
     reset_logs()
 
-    with gr.Blocks(title="CoralNet API 🕹️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="Patches 🟩", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# CoralNet API 🕹️")
+        gr.Markdown("# Patches 🟩")
 
-        # Input Parameters
+        # Browse button
+        image_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
+        dir_button = gr.Button("Browse Directory")
+        dir_button.click(choose_directory, outputs=image_dir, show_progress="hidden")
+
+        annotation_file = gr.Textbox(label="Selected Annotation File")
+        file_button = gr.Button("Browse Files")
+        file_button.click(choose_files, outputs=annotation_file, show_progress="hidden")
+
         with gr.Row():
-            username = gr.Textbox(os.getenv('CORALNET_USERNAME'), label="Username", type='email')
-            password = gr.Textbox(os.getenv('CORALNET_PASSWORD'), label="Password", type='password')
+            image_column = gr.Textbox("Name", label="Image Name Field")
 
-        with gr.Row():
-            source_id_1 = gr.Textbox("", label="Source ID (for images)")
-            source_id_2 = gr.Textbox("", label="Source ID (for model)")
-            prefix = gr.Textbox("", label="Image Name Prefix")
+            label_column = gr.Dropdown(label="Label Name Field", multiselect=False,
+                                       choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
-        # Files button
-        points = gr.Textbox("", label="Selected Points File")
-        files_button = gr.Button("Browse Files")
-        files_button.click(choose_files, outputs=points, show_progress="hidden")
+            patch_size = gr.Number(112, label="Patch Size", precision=0)
 
         # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
@@ -113,12 +114,11 @@ def create_interface():
             # Run button (callback)
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
-                                   [username,
-                                    password,
-                                    source_id_1,
-                                    source_id_2,
-                                    points,
-                                    prefix,
+                                   [image_dir,
+                                    annotation_file,
+                                    image_column,
+                                    label_column,
+                                    patch_size,
                                     output_dir])
 
             stop_button = gr.Button(value="Stop")

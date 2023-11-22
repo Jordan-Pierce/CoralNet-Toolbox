@@ -98,7 +98,7 @@ def compute_class_weights(df, mu=0.15):
 
     # Compute the class weights for each class
     for key in keys:
-        score = math.print(mu * total / float(value_counts[key]))
+        score = math.log(mu * total / float(value_counts[key]))
         class_weight[key] = score if score > 1.0 else 1.0
 
     return class_weight
@@ -192,8 +192,8 @@ def classification(args):
     # ---------------------------------------------------------------------------------------
     # Data setup
     print(f"\n#########################################\n"
-        f"Creating Datasets\n"
-        f"#########################################\n")
+          f"Creating Datasets\n"
+          f"#########################################\n")
 
     # If the user provides multiple patch dataframes
     patches_df = pd.DataFrame()
@@ -291,8 +291,8 @@ def classification(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Start of parameter setting
     print(f"\n#########################################\n"
-        f"Setting Parameters\n"
-        f"#########################################\n")
+          f"Setting Parameters\n"
+          f"#########################################\n")
 
     # Calculate weights
     if args.weighted_loss:
@@ -397,8 +397,8 @@ def classification(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Building Model
     print(f"\n#########################################\n"
-        f"Building Model\n"
-        f"#########################################\n")
+          f"Building Model\n"
+          f"#########################################\n")
 
     try:
 
@@ -468,8 +468,8 @@ def classification(args):
     if args.tensorboard:
         try:
             print(f"\n#########################################\n"
-                f"Tensorboard\n"
-                f"#########################################\n")
+                  f"Tensorboard\n"
+                  f"#########################################\n")
 
             # Add callback
             callbacks.append(TensorBoard(log_dir=logs_dir, histogram_freq=0))
@@ -481,6 +481,8 @@ def classification(args):
             # Let it load
             time.sleep(15)
 
+            print("NOTE: View TensorBoard 2.10.1 at http://localhost:6006/")
+
         except Exception as e:
             print(f"WARNING: Could not open TensorBoard; check that it is installed\n{e}")
 
@@ -490,8 +492,8 @@ def classification(args):
     try:
 
         print(f"\n#########################################\n"
-            f"Training\n"
-            f"#########################################\n")
+              f"Training\n"
+              f"#########################################\n")
 
         print("NOTE: Starting Training")
         history = model.fit(train_generator,
@@ -505,7 +507,7 @@ def classification(args):
 
     except Exception as e:
         print(f"ERROR: There was an issue with training!\n"
-            f"Read the 'Error.txt file' in the Logs Directory")
+              f"Read the 'Error.txt file' in the Logs Directory")
 
         # Write the error to text file
         with open(f"{logs_dir}Error.txt", 'a') as file:
@@ -526,8 +528,8 @@ def classification(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Test Dataset
     print(f"\n#########################################\n"
-        f"Validating with Test Dataset\n"
-        f"#########################################\n")
+          f"Validating with Test Dataset\n"
+          f"#########################################\n")
 
     # Get the best weights
     weights = sorted(glob.glob(weights_dir + "*.h5"), key=os.path.getmtime)

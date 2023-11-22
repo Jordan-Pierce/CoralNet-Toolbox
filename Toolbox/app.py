@@ -11,8 +11,8 @@ from Toolbox.Pages.common import js
 from Toolbox.Pages.common import Logger
 from Toolbox.Pages.common import read_logs
 from Toolbox.Pages.common import reset_logs
+from Toolbox.Pages.common import get_port
 from Toolbox.Pages.common import LOG_PATH
-from Toolbox.Pages.common import SERVER_PORTS
 from Toolbox.Pages.common import PAGES_DIR
 
 RESTART = False
@@ -102,12 +102,12 @@ def annotate_page():
     reset_logs()
 
 
-def classifier_page():
+def classification_page():
     """
 
     """
-    print("Opening Classifier tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\classifier.py"])
+    print("Opening Classification tool...")
+    subprocess.run(["python", f"{PAGES_DIR}\\classification.py"])
     reset_logs()
 
 
@@ -256,7 +256,7 @@ def create_interface():
                     "\nUse these tool to create and visualize label data</p>")
         with gr.Row():
             points_button = gr.Button("Points 🏓")
-            points_process = api_button.click(points_page)
+            points_process = points_button.click(points_page)
 
             patches_button = gr.Button("Patches 🟩️️")
             patches_process = patches_button.click(patches_page)
@@ -274,8 +274,8 @@ def create_interface():
         gr.Markdown("## Image Classification Tools 🛠️ <p style='font-size:14px'>"
                     "\nUse these tool to train an image classifier</p>")
         with gr.Row():
-            classifier_button = gr.Button("Train 👨‍💻")
-            classifier_process = classifier_button.click(classifier_page)
+            classification_button = gr.Button("Train 👨‍💻")
+            classification_process = classification_button.click(classification_page)
 
             img_inference_button = gr.Button("Predict 🤖️")
             img_inference_button = img_inference_button.click(img_inference_page)
@@ -327,7 +327,7 @@ def create_interface():
             interface.load(read_logs, None, logs, every=1)
 
     # Launch the interface
-    interface.launch(prevent_thread_lock=True, server_port=SERVER_PORTS['main'], inbrowser=True, show_error=True)
+    interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
     return interface
 

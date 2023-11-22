@@ -78,7 +78,7 @@ def crop_patch(image, y, x, patch_size=224):
                                (0, 0)))
 
     # Resize the patch to 224 no matter what
-    patch = (resize(patch, (224, 224)) * 255).astype(np.uint8)
+    patch = (resize(patch, (224, 224)) * 255).astype(np.uint8)[:, :, 0:3]
 
     return patch
 

@@ -53,7 +53,7 @@ if osused == 'Windows':
 # ----------------------------------------------
 try:
     # Command for installing cuda nvcc
-    conda_command = [conda_exe, "install", "-c", f"nvidia/label/cuda-11.8.0", "cuda-toolkit", "-y"]
+    conda_command = [conda_exe, "install", "-c", f"nvidia/label/cuda-11.8.0", "cuda-nvcc", "-y"]
 
     # Run the conda command
     print("NOTE: Installing CUDA Toolkit 11.8")

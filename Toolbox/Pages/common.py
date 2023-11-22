@@ -26,38 +26,24 @@ js = """function () {
 # Ports
 # ----------------------------------------------------------------------------------------------------------------------
 
-def find_available_ports(ports):
+def get_port():
     """
-    Find available ports from the given list.
+    Find the first available port from the given list.
     """
-    available_ports = []
-    for port in ports:
+
+    PORT_RANGE_START = 7860
+    PORT_RANGE_END = 7880
+
+    for port in list(range(PORT_RANGE_START, PORT_RANGE_END + 1)):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         result = sock.connect_ex(('127.0.0.1', port))
         sock.close()
         if result != 0:  # If the connection attempt fails, the port is available
-            available_ports.append(port)
+            return port
 
-    if not available_ports:
-        raise RuntimeError("No available ports in the specified list.")
+    raise RuntimeError("No available ports in the specified list.")
 
-    return available_ports
-
-
-PROCESS_LIST = ["main", "download", "api"]
-PORT_RANGE_START = 7860
-PORT_RANGE_END = 7880
-
-# Create a list of ports for each process
-# process_ports = find_available_ports(list(range(PORT_RANGE_START, PORT_RANGE_END + 1)))
-
-# Create a dictionary mapping each process to its assigned port
-# SERVER_PORTS = dict(zip(PROCESS_LIST, process_ports))
-
-SERVER_PORTS = {'main': 7860,
-                'api': 7861,
-                'download': 7862}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Logger

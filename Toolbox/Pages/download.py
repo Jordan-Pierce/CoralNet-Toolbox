@@ -11,7 +11,7 @@ from Toolbox.Pages.common import Logger
 from Toolbox.Pages.common import read_logs
 from Toolbox.Pages.common import reset_logs
 from Toolbox.Pages.common import choose_directory
-from Toolbox.Pages.common import SERVER_PORTS
+from Toolbox.Pages.common import get_port
 
 from Toolbox.Tools.Common import DATA_DIR
 from Toolbox.Tools.Common import LOG_PATH
@@ -47,7 +47,7 @@ def module_callback(username, password, source_ids, source_df, labelset_df, sour
     )
 
     try:
-        # Call the download function from your module
+        # Call the function
         download(args)
         print("Done.")
     except Exception as e:
@@ -137,7 +137,7 @@ def create_interface():
             logs = gr.Code(label="", language="shell", interactive=False)
             interface.load(read_logs, None, logs, every=1)
 
-    interface.launch(prevent_thread_lock=True, server_port=SERVER_PORTS['download'], inbrowser=True, show_error=True)
+    interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
     return interface
 

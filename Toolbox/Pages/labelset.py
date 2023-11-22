@@ -10,15 +10,14 @@ from Toolbox.Pages.common import js
 from Toolbox.Pages.common import Logger
 from Toolbox.Pages.common import read_logs
 from Toolbox.Pages.common import reset_logs
-from Toolbox.Pages.common import choose_files
-from Toolbox.Pages.common import choose_directory
+from Toolbox.Pages.common import choose_file
 from Toolbox.Pages.common import get_port
-
 
 from Toolbox.Tools.Common import DATA_DIR
 from Toolbox.Tools.Common import LOG_PATH
+from Toolbox.Tools.Common import FUNC_GROUPS_LIST
 
-from Toolbox.Tools.API import api
+from Toolbox.Tools.Labelset import labelset
 
 RESTART = False
 
@@ -27,7 +26,7 @@ RESTART = False
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(username, password, source_id_1, source_id_2, points, prefix, output_dir):
+def module_callback(username, password, source_id, labelset_name, short_code, func_group, desc, image_path, headless):
     """
 
     """
@@ -36,16 +35,18 @@ def module_callback(username, password, source_id_1, source_id_2, points, prefix
     args = argparse.Namespace(
         username=username,
         password=password,
-        source_id_1=source_id_1,
-        source_id_2=source_id_2,
-        points=points,
-        prefix=prefix,
-        output_dir=output_dir,
+        source_id=source_id,
+        labelset_name=labelset_name,
+        short_code=short_code,
+        func_group=func_group,
+        desc=desc,
+        image_path=image_path,
+        headless=headless
     )
 
     try:
         # Call the function
-        api(args)
+        labelset(args)
         print("Done.")
     except Exception as e:
         print(f"ERROR: {e}\n{traceback.format_exc()}")
@@ -85,29 +86,29 @@ def create_interface():
     """
     reset_logs()
 
-    with gr.Blocks(title="CoralNet API 🕹️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="Labelset 📝", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# CoralNet API 🕹️")
+        gr.Markdown("# Labelset 📝")
 
-        # Input Parameters
         with gr.Row():
             username = gr.Textbox(os.getenv('CORALNET_USERNAME'), label="Username", type='email')
             password = gr.Textbox(os.getenv('CORALNET_PASSWORD'), label="Password", type='password')
 
         with gr.Row():
-            source_id_1 = gr.Textbox("", label="Source ID (for images)")
-            source_id_2 = gr.Textbox("", label="Source ID (for model)")
-            prefix = gr.Textbox("", label="Image Name Prefix")
+            source_id = gr.Number(label="Source ID", precision=0)
+            headless = gr.Checkbox(label="Run Browser in Headless Mode", value=True)
 
-        # Files button
-        points = gr.Textbox("", label="Selected Points File")
-        files_button = gr.Button("Browse Files")
-        files_button.click(choose_files, outputs=points, show_progress="hidden")
+        with gr.Row():
+            labelset_name = gr.Textbox(label="Labelset Name")
+            short_code = gr.Textbox(label="Short Code")
+            func_group = gr.Dropdown(label="Functional Group", multiselect=False,
+                                     choices=FUNC_GROUPS_LIST)
 
-        # Browse button
-        output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
-        dir_button = gr.Button("Browse Directory")
-        dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
+        desc = gr.Textbox(label="Labelset Description")
+
+        image_path = gr.Textbox(f"{DATA_DIR}", label="Selected Thumbnail File")
+        file_button = gr.Button("Browse Files")
+        file_button.click(choose_file, outputs=image_path, show_progress="hidden")
 
         with gr.Row():
             # Run button (callback)
@@ -115,11 +116,13 @@ def create_interface():
             run = run_button.click(module_callback,
                                    [username,
                                     password,
-                                    source_id_1,
-                                    source_id_2,
-                                    points,
-                                    prefix,
-                                    output_dir])
+                                    source_id,
+                                    labelset_name,
+                                    short_code,
+                                    func_group,
+                                    desc,
+                                    image_path,
+                                    headless])
 
             stop_button = gr.Button(value="Stop")
             stop = stop_button.click(check_interface)

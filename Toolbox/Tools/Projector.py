@@ -120,6 +120,7 @@ def activate_tensorboard(logs_dir):
     """
     # Activate tensorboard
     print("NOTE: Activating Tensorboard...")
+    print("NOTE: View TensorBoard 2.10.1 at http://localhost:6006/")
     tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
     process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
 
