@@ -88,9 +88,9 @@ def create_interface():
     """
     reset_logs()
 
-    with gr.Blocks(title="CoralNet Download", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="CoralNet Download ⬇️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# CoralNet Downloader")
+        gr.Markdown("# CoralNet Downloader ⬇️")
 
         # Input Parameters
         with gr.Tab("Download Source Data"):
@@ -99,7 +99,7 @@ def create_interface():
                 password = gr.Textbox(os.getenv('CORALNET_PASSWORD'), label="Password", type='password')
 
             with gr.Row():
-                source_ids = gr.Textbox("4085", label="Source IDs (space-separated)")
+                source_ids = gr.Textbox("", label="Source IDs (space-separated)")
                 headless = gr.Checkbox(label="Run Browser in Headless Mode", value=True)
 
         with gr.Tab("Download CoralNet Dataframes"):
@@ -133,7 +133,8 @@ def create_interface():
             stop = stop_button.click(check_interface)
 
         with gr.Accordion("Console Logs"):
-            logs = gr.Textbox(label="")
+            # Add logs
+            logs = gr.Code(label="", language="shell", interactive=False)
             interface.load(read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=SERVER_PORTS['download'], inbrowser=True, show_error=True)

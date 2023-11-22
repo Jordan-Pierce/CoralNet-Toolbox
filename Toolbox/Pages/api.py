@@ -85,9 +85,9 @@ def create_interface():
     """
     reset_logs()
 
-    with gr.Blocks(title="CoralNet API", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="CoralNet API 🕹️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# CoralNet API")
+        gr.Markdown("# CoralNet API 🕹️")
 
         # Input Parameters
         with gr.Row():
@@ -125,7 +125,7 @@ def create_interface():
             stop = stop_button.click(check_interface)
 
         with gr.Accordion("Console Logs"):
-            logs = gr.Textbox(label="")
+            logs = gr.Code(label="", language="shell", interactive=False, container=True)
             interface.load(read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=SERVER_PORTS['api'], inbrowser=True, show_error=True)

@@ -50,11 +50,14 @@ PORT_RANGE_START = 7860
 PORT_RANGE_END = 7880
 
 # Create a list of ports for each process
-process_ports = find_available_ports(list(range(PORT_RANGE_START, PORT_RANGE_END + 1)))
+# process_ports = find_available_ports(list(range(PORT_RANGE_START, PORT_RANGE_END + 1)))
 
 # Create a dictionary mapping each process to its assigned port
-SERVER_PORTS = dict(zip(PROCESS_LIST, process_ports))
+# SERVER_PORTS = dict(zip(PROCESS_LIST, process_ports))
 
+SERVER_PORTS = {'main': 7860,
+                'api': 7861,
+                'download': 7862}
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Logger
@@ -79,6 +82,7 @@ class Logger:
 
 def read_logs():
     sys.stdout.flush()
+
     with open(LOG_PATH, "r") as f:
         log_content = f.read()
         log_content = filter_logs(log_content)
