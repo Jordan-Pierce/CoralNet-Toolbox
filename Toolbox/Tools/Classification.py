@@ -12,20 +12,21 @@ import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import torch.cuda
 
-import tensorflow as tf
+os.environ["KERAS_BACKEND"] = 'torch'
 
-keras = tf.keras
-from keras import backend as K
-from keras.models import Sequential
-from keras import optimizers
-from keras.layers import Dense, Activation, Dropout
+import keras_core
+from keras_core import backend as K
+from keras_core.models import Sequential
+from keras_core import optimizers
+from keras_core.layers import Dense, Activation, Dropout
+from keras_core.callbacks import TensorBoard
+from keras_core.callbacks import EarlyStopping
+from keras_core.callbacks import ModelCheckpoint
+from keras_core.callbacks import ReduceLROnPlateau
+
 from keras.preprocessing.image import ImageDataGenerator
-
-from keras.callbacks import TensorBoard
-from keras.callbacks import EarlyStopping
-from keras.callbacks import ModelCheckpoint
-from keras.callbacks import ReduceLROnPlateau
 
 from plot_keras_history import plot_history
 from sklearn.metrics import roc_curve, auc
@@ -160,11 +161,8 @@ def classification(args):
     print("###############################################\n")
 
     # Check that the user has GPU available
-    if tf.config.list_physical_devices('GPU'):
+    if torch.cuda.is_available():
         print("NOTE: Found GPU")
-        gpus = tf.config.list_physical_devices(device_type='GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     else:
         print("WARNING: No GPU found; defaulting to CPU")
 
@@ -335,6 +333,9 @@ def classification(args):
     steps_per_epoch_train = len(train_df) / batch_size
     steps_per_epoch_valid = len(valid_df) / batch_size
 
+    if steps_per_epoch_valid < 1 or steps_per_epoch_train < 1:
+        raise Exception("ERROR: Not enough data provided to train a model")
+
     # Learning rate
     lr = args.learning_rate
 
@@ -405,7 +406,7 @@ def classification(args):
         if args.encoder_name not in get_classifier_encoders():
             raise Exception(f"ERROR: Encoder must be one of {get_classifier_encoders()}")
 
-        convnet = getattr(keras.applications, args.encoder_name)(
+        convnet = getattr(keras_core.applications, args.encoder_name)(
             include_top=False,
             include_preprocessing=True,
             weights='imagenet',
@@ -442,7 +443,7 @@ def classification(args):
                           patience=3,
                           verbose=1),
 
-        ModelCheckpoint(filepath=weights_dir + "model-{epoch:03d}-{acc:03f}-{val_acc:03f}.h5",
+        ModelCheckpoint(filepath=weights_dir + "model-{epoch:03d}-{acc:03f}-{val_acc:03f}.keras",
                         monitor='val_loss',
                         save_weights_only=False,
                         save_best_only=True,
@@ -532,7 +533,7 @@ def classification(args):
           f"#########################################\n")
 
     # Get the best weights
-    weights = sorted(glob.glob(weights_dir + "*.h5"), key=os.path.getmtime)
+    weights = sorted(glob.glob(weights_dir + "*.keras"), key=os.path.getmtime)
     best_weights = weights[-1]
 
     # Load into the model
@@ -723,7 +724,7 @@ def classification(args):
 
     # ------------------------------------------------------------------------------------------------------------------
     # Save the best model
-    model.save(f"{run_dir}Best_Model_and_Weights.h5")
+    model.save(f"{run_dir}Best_Model_and_Weights.keras")
     print(f"NOTE: Best Model and Weights saved in {run_dir}")
 
     if args.tensorboard:

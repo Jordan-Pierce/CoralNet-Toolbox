@@ -1,11 +1,18 @@
 import os
 import re
 import sys
+import time
 import socket
 import string
+import argparse
+import traceback
 from tkinter import Tk, filedialog
 
+from Toolbox.Tools.Common import DATA_DIR
 from Toolbox.Tools.Common import LOG_PATH
+from Toolbox.Tools.Common import PATCH_EXTRACTOR
+from Toolbox.Tools.Common import FUNC_GROUPS_LIST
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants
@@ -48,11 +55,29 @@ def get_port():
 # ----------------------------------------------------------------------------------------------------------------------
 # Logger
 # ----------------------------------------------------------------------------------------------------------------------
+def read_logs():
+    sys.stdout.flush()
+
+    with open(LOG_PATH, "r") as f:
+        log_content = f.readlines()
+
+    # Filter out lines containing null characters
+    log_content = [line for line in log_content if '\x00' not in line]
+
+    # Get the latest 30 lines
+    recent_lines = log_content[-30:]
+
+    return ''.join(recent_lines)
+
 
 class Logger:
     def __init__(self, filename):
+
+        self.filename = filename
+        self.clear_console()
         self.terminal = sys.stdout
-        self.log = open(filename, "w")
+        self.reset_logs()
+        self.log = open(self.filename, "w")
 
     def write(self, message):
         self.terminal.write(message)
@@ -65,29 +90,15 @@ class Logger:
     def isatty(self):
         return False
 
+    def clear_console(self):
+        if os.name == 'nt':  # Windows
+            os.system('cls')
+        else:  # Linux, macOS, etc.
+            os.system('clear')
 
-def read_logs():
-    sys.stdout.flush()
-
-    with open(LOG_PATH, "r") as f:
-        log_content = f.read()
-        log_content = filter_logs(log_content)
-        log_content = filter_printable(log_content)
-        return log_content
-
-
-def reset_logs():
-    with open(LOG_PATH, 'w') as file:
-        pass
-
-
-def filter_printable(text):
-    printable_chars = set(string.printable)
-    return ''.join(char for char in text if char in printable_chars)
-
-
-def filter_logs(text):
-    return re.sub(r'^.*progress:.*$', '', text, flags=re.MULTILINE)
+    def reset_logs(self):
+        with open(self.filename, 'w') as file:
+            file.truncate(0)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

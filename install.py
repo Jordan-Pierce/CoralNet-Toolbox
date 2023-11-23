@@ -56,6 +56,13 @@ try:
     conda_command = [conda_exe, "install", "-c", f"nvidia/label/cuda-11.8.0", "cuda-nvcc", "-y"]
 
     # Run the conda command
+    print("NOTE: Installing CUDA NVCC 11.8")
+    subprocess.run(conda_command, check=True)
+
+    # Command for installing cuda nvcc
+    conda_command = [conda_exe, "install", "-c", f"nvidia/label/cuda-11.8.0", "cuda-toolkit", "-y"]
+
+    # Run the conda command
     print("NOTE: Installing CUDA Toolkit 11.8")
     subprocess.run(conda_command, check=True)
 
@@ -67,8 +74,9 @@ except Exception as e:
 # Tensorflow & Keras
 # ----------------------------------------------
 try:
-    print("NOTE: Installing Tensorflow 2.10.1")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", 'tensorflow==2.10.1'])
+    print("NOTE: Installing Tensorflow and Keras Core")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", 'keras-core'])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", 'tensorflow==2.12.0'])
 
 except Exception as e:
     print("ERROR: Could not install Tensorflow")

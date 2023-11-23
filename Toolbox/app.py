@@ -10,12 +10,11 @@ import subprocess
 from Toolbox.Pages.common import js
 from Toolbox.Pages.common import Logger
 from Toolbox.Pages.common import read_logs
-from Toolbox.Pages.common import reset_logs
 from Toolbox.Pages.common import get_port
 from Toolbox.Pages.common import LOG_PATH
 from Toolbox.Pages.common import PAGES_DIR
 
-RESTART = False
+EXIT_APP = False
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -25,204 +24,170 @@ def api_page():
     """
 
     """
-    print("Opening API tool...")
+    gr.Info("Opening API tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\api.py"])
-    reset_logs()
 
 
 def download_page():
     """
 
     """
-    print("Opening Download tool...")
+    gr.Info("Opening Download tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\download.py"])
-    reset_logs()
 
 
 def labelset_page():
     """
 
     """
-    print("Opening Labelset tool...")
+    gr.Info("Opening Labelset tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\labelset.py"])
-    reset_logs()
 
 
 def upload_page():
     """
 
     """
-    print("Opening Upload tool...")
+    gr.Info("Opening Upload tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\upload.py"])
-    reset_logs()
 
 
 def points_page():
     """
 
     """
-    print("Opening Points tool...")
+    gr.Info("Opening Points tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\points.py"])
-    reset_logs()
 
 
 def patches_page():
     """
 
     """
-    print("Opening Patches tool...")
+    gr.Info("Opening Patches tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\patches.py"])
-    reset_logs()
 
 
 def projector_page():
     """
 
     """
-    print("Opening Projector tool...")
+    gr.Info("Opening Projector tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\projector.py"])
-    reset_logs()
 
 
 def visualize_page():
     """
 
     """
-    print("Opening Visualize tool...")
+    gr.Info("Opening Visualize tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\visualize.py"])
-    reset_logs()
 
 
 def annotate_page():
     """
 
     """
-    print("Opening Annotate tool...")
+    gr.Info("Opening Annotate tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\annotate.py"])
-    reset_logs()
 
 
 def classification_page():
     """
 
     """
-    print("Opening Classification tool...")
+    gr.Info("Opening Classification tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\classification.py"])
-    reset_logs()
 
 
 def img_inference_page():
     """
 
     """
-    print("Opening Image Inference tool...")
+    gr.Info("Opening Image Inference tool...")
     subprocess.run(["python", f"{PAGES_DIR}\img_inference.py"])
-    reset_logs()
 
 
 def classifier_demo_page():
     """
 
     """
-    print("Opening Classifier Demo tool...")
+    gr.Info("Opening Classifier Demo tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\classifier_demo.py"])
-    reset_logs()
 
 
 def sam_page():
     """
 
     """
-    print("Opening SAM tool...")
+    gr.Info("Opening SAM tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\sam.py"])
-    reset_logs()
 
 
 def sam_demo_page():
     """
 
     """
-    print("Opening SAM Demo tool...")
+    gr.Info("Opening SAM Demo tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\sam_demo.py"])
-    reset_logs()
 
 
 def segmentation_page():
     """
 
     """
-    print("Opening Segmentation tool...")
+    gr.Info("Opening Segmentation tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\segmentation.py"])
-    reset_logs()
 
 
 def seg_inference_page():
     """
 
     """
-    print("Opening Segmentation Inference tool...")
+    gr.Info("Opening Segmentation Inference tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\seg_inference.py"])
-    reset_logs()
 
 
 def segmentation_demo_page():
     """
 
     """
-    print("Opening Segmentation Demo tool...")
+    gr.Info("Opening Segmentation Demo tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\segmentation_demo.py"])
-    reset_logs()
 
 
 def sfm_page():
     """
 
     """
-    print("Opening SfM tool...")
+    gr.Info("Opening SfM tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\sfm.py"])
-    reset_logs()
 
 
 def seg_3d_page():
     """
 
     """
-    print("Opening Segmentation 3D tool...")
+    gr.Info("Opening Segmentation 3D tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\seg_3d.py"])
-    reset_logs()
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Interface
 # ----------------------------------------------------------------------------------------------------------------------
-def check_interface():
-    """
-
-    """
-    global RESTART
-    RESTART = True
-
-    return
-
-
 def exit_interface():
     """
 
     """
-    reset_logs()
+    global EXIT_APP
+    EXIT_APP = True
 
-    print("")
-    print("Stopped program successfully!")
-    print("Connection closed!")
-    print("")
-    print("Please close the browser tab.")
-    time.sleep(1)
-    sys.exit(1)
+    gr.Info("Please close the browser tab.")
+    gr.Info("Stopped program successfully!")
+    time.sleep(3)
 
 
 def create_interface():
-    # Reset logs function (assuming it is defined)
-    reset_logs()
 
     with gr.Blocks(title="CoralNet Toolbox 🧰️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
@@ -319,12 +284,7 @@ def create_interface():
                     "\nTo properly close the application, press the button below</p>")
         with gr.Row():
             exit_button = gr.Button(value="Exit ⏏️")
-            stop = exit_button.click(check_interface)
-
-        # Console Logs
-        with gr.Accordion("Console Logs"):
-            logs = gr.Code(label="", language="shell", interactive=False, container=True)
-            interface.load(read_logs, None, logs, every=1)
+            stop = exit_button.click(exit_interface)
 
     # Launch the interface
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
@@ -336,9 +296,8 @@ def create_interface():
 # Main
 # ----------------------------------------------------------------------------------------------------------------------
 interface = create_interface()
-sys.stdout = Logger(LOG_PATH)
 
 while True:
     time.sleep(0.5)
-    if RESTART:
-        exit_interface()
+    if EXIT_APP:
+        break

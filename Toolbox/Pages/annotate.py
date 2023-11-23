@@ -1,26 +1,10 @@
 import gradio as gr
 
-import os
-import sys
-import time
-import argparse
-import traceback
-
-from Toolbox.Pages.common import js
-from Toolbox.Pages.common import Logger
-from Toolbox.Pages.common import read_logs
-from Toolbox.Pages.common import reset_logs
-from Toolbox.Pages.common import choose_directory
-from Toolbox.Pages.common import choose_file
-from Toolbox.Pages.common import get_port
-
-from Toolbox.Tools.Common import DATA_DIR
-from Toolbox.Tools.Common import LOG_PATH
-from Toolbox.Tools.Common import PATCH_EXTRACTOR
+from Toolbox.Pages.common import *
 
 from Toolbox.Tools.Annotate import annotate
 
-RESTART = False
+EXIT_APP = False
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -43,42 +27,29 @@ def module_callback(patch_extractor_path, image_dir):
         annotate(args)
         print("Done.")
     except Exception as e:
+        gr.Error("Could not complete process")
         print(f"ERROR: {e}\n{traceback.format_exc()}")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Interface
 # ----------------------------------------------------------------------------------------------------------------------
-def check_interface():
-    """
-
-    """
-    global RESTART
-    RESTART = True
-
-    return
-
-
 def exit_interface():
     """
 
     """
-    reset_logs()
+    global EXIT_APP
+    EXIT_APP = True
 
-    print("")
-    print("Stopped program successfully!")
-    print("Connection closed!")
-    print("")
-    print("Please close the browser tab.")
-    time.sleep(1)
-    sys.exit(1)
+    gr.Info("Please close the browser tab.")
+    gr.Info("Stopped program successfully!")
+    time.sleep(3)
 
 
 def create_interface():
     """
 
     """
-    reset_logs()
 
     with gr.Blocks(title="Annotate 🧮", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
@@ -102,10 +73,11 @@ def create_interface():
                                     image_dir])
 
             stop_button = gr.Button(value="Stop")
-            stop = stop_button.click(check_interface)
+            stop = stop_button.click(exit_interface)
 
         with gr.Accordion("Console Logs"):
-            logs = gr.Code(label="", language="shell", interactive=False, container=True)
+            # Add logs
+            logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
             interface.load(read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
@@ -116,10 +88,9 @@ def create_interface():
 # ----------------------------------------------------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------------------------------------------------
-
 interface = create_interface()
 
 while True:
     time.sleep(0.5)
-    if RESTART:
-        exit_interface()
+    if EXIT_APP:
+        break
