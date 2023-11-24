@@ -74,10 +74,10 @@ class Logger:
     def __init__(self, filename):
 
         self.filename = filename
-        self.clear_console()
         self.terminal = sys.stdout
         self.reset_logs()
         self.log = open(self.filename, "w")
+        self.flush()
 
     def write(self, message):
         self.terminal.write(message)
@@ -89,12 +89,6 @@ class Logger:
 
     def isatty(self):
         return False
-
-    def clear_console(self):
-        if os.name == 'nt':  # Windows
-            os.system('cls')
-        else:  # Linux, macOS, etc.
-            os.system('clear')
 
     def reset_logs(self):
         with open(self.filename, 'w') as file:

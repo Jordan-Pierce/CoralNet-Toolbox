@@ -15,6 +15,7 @@ def module_callback(image_dir, annotation_file, image_column, label_column, patc
     """
 
     """
+    console = sys.stdout
     sys.stdout = Logger(LOG_PATH)
 
     args = argparse.Namespace(
@@ -28,11 +29,14 @@ def module_callback(image_dir, annotation_file, image_column, label_column, patc
 
     try:
         # Call the function
+        gr.Info("Starting process...")
         patches(args)
-        print("Done.")
+        gr.Info("Completed process!")
     except Exception as e:
-        gr.Error("Could not complete process")
+        gr.Error("Could not complete process!")
         print(f"ERROR: {e}\n{traceback.format_exc()}")
+
+    sys.stdout = console
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -113,4 +117,7 @@ interface = create_interface()
 while True:
     time.sleep(0.5)
     if EXIT_APP:
+        Logger(LOG_PATH).reset_logs()
         break
+
+

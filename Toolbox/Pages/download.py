@@ -18,6 +18,7 @@ def module_callback(username, password, source_ids, source_df, labelset_df, sour
     """
 
     """
+    console = sys.stdout
     sys.stdout = Logger(LOG_PATH)
 
     # Custom pre-processing
@@ -42,6 +43,8 @@ def module_callback(username, password, source_ids, source_df, labelset_df, sour
     except Exception as e:
         gr.Error("Could not complete process!")
         print(f"ERROR: {e}\n{traceback.format_exc()}")
+
+    sys.stdout = console
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -122,10 +125,10 @@ def create_interface():
 # Main
 # ----------------------------------------------------------------------------------------------------------------------
 interface = create_interface()
-sys.stdout = Logger(LOG_PATH)
 
 while True:
     time.sleep(0.5)
     if EXIT_APP:
-        sys.stdout.reset_logs()
+        Logger(LOG_PATH).reset_logs()
         break
+

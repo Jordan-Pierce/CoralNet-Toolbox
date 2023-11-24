@@ -1,3 +1,5 @@
+import sys
+
 import gradio as gr
 
 from Toolbox.Pages.common import *
@@ -15,6 +17,7 @@ def module_callback(images, sample_method, num_points, output_dir):
     """
 
     """
+    console = sys.stdout
     sys.stdout = Logger(LOG_PATH)
 
     args = argparse.Namespace(
@@ -26,11 +29,14 @@ def module_callback(images, sample_method, num_points, output_dir):
 
     try:
         # Call the function
+        gr.Info("Starting process...")
         points(args)
-        print("Done.")
+        gr.Info("Completed process!")
     except Exception as e:
-        gr.Error("Could not complete process")
+        gr.Error("Could not complete process!")
         print(f"ERROR: {e}\n{traceback.format_exc()}")
+
+    sys.stdout = console
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -104,4 +110,5 @@ interface = create_interface()
 while True:
     time.sleep(0.5)
     if EXIT_APP:
+        Logger(LOG_PATH).reset_logs()
         break
