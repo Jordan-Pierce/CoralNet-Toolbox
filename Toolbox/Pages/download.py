@@ -65,6 +65,7 @@ def create_interface():
     """
 
     """
+    Logger(LOG_PATH).reset_logs()
 
     with gr.Blocks(title="CoralNet Download ⬇️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title

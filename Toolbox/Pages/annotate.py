@@ -27,6 +27,7 @@ def module_callback(patch_extractor_path, image_dir):
         # Call the function
         gr.Info("Starting process...")
         annotate(args)
+        print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
         gr.Error("Could not complete process!")
@@ -54,6 +55,7 @@ def create_interface():
     """
 
     """
+    Logger(LOG_PATH).reset_logs()
 
     with gr.Blocks(title="Annotate 🧮", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title

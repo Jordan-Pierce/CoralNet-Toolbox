@@ -8,10 +8,10 @@ import datetime
 # ------------------------------------------------------------------------------------------------------------------
 
 # Get the current script's directory (where init_project.py is located)
-script_dir = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # Add the parent directory (Project) to the Python path
-PROJECT_DIR = os.path.dirname(script_dir)
+PROJECT_DIR = os.path.dirname(ROOT)
 sys.path.append(PROJECT_DIR)
 
 # Make the Data directory
@@ -24,9 +24,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Patch extractor path
 PATCH_EXTRACTOR = f'{PROJECT_DIR}\\Tools\\Patch_Extractor\\CNNDataExtractor.exe'
-
-# For all the logging
-LOG_PATH = f"{DATA_DIR}\\Cache\\logs.log"
 
 # MIR specific, mapping path
 MIR_MAPPING = f'{DATA_DIR}\\Mission_Iconic_Reefs\\MIR_VPI_CoralNet_Mapping.csv'

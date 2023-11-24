@@ -29,6 +29,7 @@ def module_callback(model, patches, output_dir, project_folder):
         # Call the function
         gr.Info("Starting process...")
         projector(args)
+        print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
         gr.Error("Could not complete process!")
@@ -56,6 +57,7 @@ def create_interface():
     """
 
     """
+    Logger(LOG_PATH).reset_logs()
 
     with gr.Blocks(title="Projector 📽️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title

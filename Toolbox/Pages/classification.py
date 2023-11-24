@@ -42,6 +42,7 @@ def module_callback(patches, output_dir, encoder_name, loss_function, weighted_l
         # Call the function
         gr.Info("Starting process...")
         classification(args)
+        print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
         gr.Error("Could not complete process!")
@@ -69,6 +70,7 @@ def create_interface():
     """
 
     """
+    Logger(LOG_PATH).reset_logs()
 
     with gr.Blocks(title="Train 👨‍💻", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title

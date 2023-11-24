@@ -31,6 +31,7 @@ def module_callback(image_dir, annotation_file, image_column, label_column, patc
         # Call the function
         gr.Info("Starting process...")
         patches(args)
+        print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
         gr.Error("Could not complete process!")
@@ -58,6 +59,7 @@ def create_interface():
     """
 
     """
+    Logger(LOG_PATH).reset_logs()
 
     with gr.Blocks(title="Patches 🟩", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title

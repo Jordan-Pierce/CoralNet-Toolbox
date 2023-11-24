@@ -9,7 +9,6 @@ import traceback
 from tkinter import Tk, filedialog
 
 from Toolbox.Tools.Common import DATA_DIR
-from Toolbox.Tools.Common import LOG_PATH
 from Toolbox.Tools.Common import PATCH_EXTRACTOR
 from Toolbox.Tools.Common import FUNC_GROUPS_LIST
 
@@ -20,6 +19,9 @@ from Toolbox.Tools.Common import FUNC_GROUPS_LIST
 
 # Get the Pages directory
 PAGES_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# For all the logging
+LOG_PATH = f"{DATA_DIR}\\Cache\\logs.log"
 
 js = """function () {
   gradioURL = window.location.href

@@ -32,6 +32,7 @@ def module_callback(username, password, source_id_1, source_id_2, points, prefix
         # Call the function
         gr.Info("Starting process...")
         api(args)
+        print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
         gr.Error("Could not complete process!")
@@ -59,6 +60,7 @@ def create_interface():
     """
 
     """
+    Logger(LOG_PATH).reset_logs()
 
     with gr.Blocks(title="CoralNet API 🕹️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title

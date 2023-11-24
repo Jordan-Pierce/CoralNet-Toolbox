@@ -22,7 +22,7 @@ def print_labelset(labelset):
     """
     Pretty prints to user in gooey the total number of annotations made in session
     """
-    print("\n" * 20)
+    print("\n" * 30)
     print("\n###############################################")
     print("Label Tracker")
     print("###############################################\n")
