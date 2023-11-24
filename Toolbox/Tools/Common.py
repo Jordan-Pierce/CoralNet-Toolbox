@@ -1,6 +1,5 @@
 import os
 import sys
-import logging
 import datetime
 
 
@@ -75,14 +74,6 @@ IMG_FORMATS = ["jpg", "jpeg", "png", "bmp"]
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
 
-
-def print_progress(prg, prg_total):
-    """
-    Formatted print for Gooey to show progress in progress bar
-    """
-    print("progress: {}/{}".format(prg, prg_total))
-
-
 def get_now():
     """
     Returns a timestamp; used for file and folder names
@@ -90,44 +81,13 @@ def get_now():
     # Get the current datetime
     now = datetime.datetime.now()
     now = now.strftime("%Y-%m-%d_%H-%M-%S")
+
     return now
 
 
-def setup_logger(log_file_path):
+def print_sfm_progress(p):
     """
 
     """
-    # Create a logger instance
-    logger = logging.getLogger(__name__)
 
-    # Configure the root logger (optional, if you want to set a default level)
-    logger.setLevel(logging.DEBUG)
-
-    # Create a file handler to log to the specified file (INFO level)
-    file_handler_info = logging.FileHandler(log_file_path)
-    file_handler_info.setLevel(logging.INFO)
-
-    # Create a console handler to log to the console (INFO level)
-    console_handler_info = logging.StreamHandler()
-    console_handler_info.setLevel(logging.INFO)
-
-    # Set the formatter for all handlers
-    formatter = logging.Formatter('%(message)s')
-    file_handler_info.setFormatter(formatter)
-    console_handler_info.setFormatter(formatter)
-
-    # Add the handlers to the logger
-    logger.addHandler(file_handler_info)
-    logger.addHandler(console_handler_info)
-
-    return logger
-
-
-# Setup logger
-LOGGER = setup_logger(LOG_PATH)
-
-
-# Define a custom logging function that mimics 'print'
-def log(*args):
-    message = ' '.join(map(str, args))
-    LOGGER.info(message)  # Log the message at INFO level
+    print("progress: {}/{}".format(int(p), 100))

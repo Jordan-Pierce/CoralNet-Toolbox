@@ -58,6 +58,7 @@ def get_port():
 def read_logs():
     sys.stdout.flush()
 
+    # Read the entire content of the log file
     with open(LOG_PATH, "r") as f:
         log_content = f.readlines()
 
@@ -67,6 +68,7 @@ def read_logs():
     # Get the latest 30 lines
     recent_lines = log_content[-30:]
 
+    # Return the joined recent lines
     return ''.join(recent_lines)
 
 

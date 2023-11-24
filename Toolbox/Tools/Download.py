@@ -1,12 +1,10 @@
 import os
 import io
-import sys
 import time
 import shutil
 import requests
 import argparse
 import traceback
-from tqdm import tqdm
 from bs4 import BeautifulSoup
 
 from selenium.webdriver.common.by import By
@@ -16,8 +14,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
-from Common import log
-from Common import print_progress
 from Common import CACHE_DIR
 from Common import LOGIN_URL
 from Common import CORALNET_URL
@@ -64,7 +60,7 @@ def get_updated_labelset_list():
         names = []
         urls = []
 
-        for row in tqdm(table):
+        for row in table:
             # Grab attributes from row
             attributes = row.find_all("td")
             # Extract each attribute, store in variable
@@ -113,7 +109,7 @@ def download_coralnet_sources(driver, output_dir):
         source_names = []
 
         # Now, get all the source IDs and names on the page
-        for link in tqdm(links):
+        for link in links:
             # Parse the information
             url = CORALNET_URL + link.find("a").get("href")
             source_id = url.split("/")[-2]
@@ -172,7 +168,7 @@ def download_coralnet_labelsets(driver, output_dir):
 
         # Loop through each row, grab the information, store in lists
         rows = []
-        for row in tqdm(table):
+        for row in table:
             # Grab attributes from row
             attributes = row.find_all("td")
             # Extract each attribute, store in variable
@@ -265,7 +261,7 @@ def get_sources_with(driver, choices, output_dir):
         labelsets = labelsets[labelsets['Name'].isin(choices)]
 
         # Loop through all labelset URLs
-        for i, r in tqdm(labelsets.iterrows()):
+        for i, r in labelsets.iterrows():
 
             # Go to the labeset page
             driver.get(r['URL'])
@@ -373,7 +369,7 @@ def download_metadata(driver, source_id, source_dir=None):
         data = eval(data[data.find("[{"):])
 
         # Loop through and collect meta from each model instance, store
-        for point in tqdm(data):
+        for point in data:
             classifier_nbr = point["x"]
             score = point["y"]
             nimages = point["nimages"]
@@ -514,29 +510,26 @@ def download_images(dataframe, source_dir):
     # To hold the expired images
     expired_images = []
 
-    with tqdm(total=len(dataframe)) as pbar:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+    with concurrent.futures.ThreadPoolExecutor() as executor:
 
-            results = []
+        results = []
 
-            for index, row in dataframe.iterrows():
-                # Get the image name and URL from the dataframe
-                name = row['Name']
-                url = row['Image URL']
-                path = image_dir + name
-                # Add the download task to the executor
-                results.append(executor.submit(download_image, url, path))
+        for index, row in dataframe.iterrows():
+            # Get the image name and URL from the dataframe
+            name = row['Name']
+            url = row['Image URL']
+            path = image_dir + name
+            # Add the download task to the executor
+            results.append(executor.submit(download_image, url, path))
 
-            # Wait for all tasks to complete and collect the results
-            for result in concurrent.futures.as_completed(results):
-                # Get the downloaded image path
-                downloaded_image_path, downloaded = result.result()
-                # Get the image name from the downloaded image path
-                basename = os.path.basename(downloaded_image_path)
-                if not downloaded:
-                    expired_images.append(basename)
-                # Update the progress bar
-                pbar.update(1)
+        # Wait for all tasks to complete and collect the results
+        for result in concurrent.futures.as_completed(results):
+            # Get the downloaded image path
+            downloaded_image_path, downloaded = result.result()
+            # Get the image name from the downloaded image path
+            basename = os.path.basename(downloaded_image_path)
+            if not downloaded:
+                expired_images.append(basename)
 
     if expired_images:
         print(f"NOTE: {len(expired_images)} images had expired before being downloaded")
@@ -615,24 +608,21 @@ def get_image_urls(driver, image_page_urls):
     # Use session.post() to submit the login form
     session.post(LOGIN_URL, data=data, headers=headers, cookies=cookies)
 
-    with tqdm(total=len(image_page_urls)) as pbar:
-        with ThreadPoolExecutor() as executor:
-            # Submit the image_url retrieval tasks to the thread pool
-            future_to_url = {executor.submit(get_image_url, session, url):
-                                 url for url in image_page_urls}
+    with ThreadPoolExecutor() as executor:
+        # Submit the image_url retrieval tasks to the thread pool
+        future_to_url = {executor.submit(get_image_url, session, url):
+                             url for url in image_page_urls}
 
-            # Retrieve the completed results as they become available
-            for future in concurrent.futures.as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    image_url = future.result()
-                    if image_url:
-                        image_urls.append(image_url)
-                except Exception as e:
-                    print(f"ERROR: issue retrieving image URL for {url}\n{e}")
-                finally:
-                    pbar.update(1)
-                    pbar.refresh()
+        # Retrieve the completed results as they become available
+        for future in concurrent.futures.as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                image_url = future.result()
+                if image_url:
+                    image_urls.append(image_url)
+            except Exception as e:
+                print(f"ERROR: issue retrieving image URL for {url}\n{e}")
+
 
     print(f"NOTE: Retrieved {len(image_urls)} image URLs for {len(image_page_urls)} images")
 
@@ -681,44 +671,40 @@ def get_images(driver, source_id, prefix="", image_list=None):
         page_element = driver.find_element(By.CSS_SELECTOR, 'div.line')
         num_pages = int(page_element.text.split(" ")[-1]) // 20 + 1
 
-        with tqdm(total=num_pages) as pbar:
+        while True:
 
-            while True:
+            # Find all the image elements
+            url_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
+            name_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
 
-                # Find all the image elements
-                url_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
-                name_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
+            # Iterate over the image elements
+            for url_element, name_element in list(zip(url_elements, name_elements)):
+                # Extract the href attribute (URL)
+                image_page_url = url_element.get_attribute('href')
+                image_page_urls.append(image_page_url)
 
-                # Iterate over the image elements
-                for url_element, name_element in list(zip(url_elements, name_elements)):
-                    # Extract the href attribute (URL)
-                    image_page_url = url_element.get_attribute('href')
-                    image_page_urls.append(image_page_url)
+                # Extract the title attribute (image name)
+                image_name = name_element.get_attribute('title').split(" - ")[0]
+                image_names.append(image_name)
 
-                    # Extract the title attribute (image name)
-                    image_name = name_element.get_attribute('title').split(" - ")[0]
-                    image_names.append(image_name)
+            path = 'input[title="Next page"]'
+            next_button = driver.find_elements(By.CSS_SELECTOR, path)
 
-                path = 'input[title="Next page"]'
-                next_button = driver.find_elements(By.CSS_SELECTOR, path)
-
-                # Exit early if user only wants specific images, and they are found
-                if image_list:
-                    if all(image in image_names for image in image_list):
-                        print("\nNOTE: All desired images found; exiting early")
-                        break
-
-                if next_button:
-                    next_button[0].click()
-                    pbar.update(1)
-                    pbar.refresh()
-
-                else:
-                    print("\nNOTE: Finished crawling all pages")
+            # Exit early if user only wants specific images, and they are found
+            if image_list:
+                if all(image in image_names for image in image_list):
+                    print("\nNOTE: All desired images found; exiting early")
                     break
 
-            images = pd.DataFrame({'Image Page': image_page_urls,
-                                   'Name': image_names})
+            if next_button:
+                next_button[0].click()
+
+            else:
+                print("\nNOTE: Finished crawling all pages")
+                break
+
+        images = pd.DataFrame({'Image Page': image_page_urls,
+                               'Name': image_names})
 
     except Exception as e:
         print(f"ERROR: Issue with crawling pages")
@@ -982,15 +968,8 @@ def download(args):
     try:
         for idx, source_id in enumerate(args.source_ids):
 
-            # Skip
-            if not source_id:
-                continue
-
             # Download all data from source
             driver, m, l, i, a = download_data(driver, source_id, output_dir)
-
-            # Gooey
-            print_progress(idx+1, len(args.source_ids))
 
     except Exception as e:
         raise Exception(f"ERROR: Could not download data\n{e}")

@@ -20,9 +20,7 @@ import torchvision
 from segment_anything import sam_model_registry
 from segment_anything import SamAutomaticMaskGenerator
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 from Common import CACHE_DIR
 from Common import IMG_FORMATS
 
@@ -403,9 +401,6 @@ def sam(args):
 
         # Add to output list
         mask_df.append([name, image_path, semantic_path, mask_path, color_path, overlay_path])
-
-        # Gooey
-        print_progress(i_idx, len(image_names))
 
     # Save dataframe to root directory
     mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Semantic Path',

@@ -16,9 +16,7 @@ from tensorboard.plugins import projector as P
 keras = tf.keras
 from keras.models import load_model
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 
 from Classification import precision
 from Classification import recall
@@ -220,9 +218,6 @@ def projector(args):
         patches_sorted.extend(patches)
         labels_sorted.extend(labels)
         features_sorted.extend(features)
-
-        # Gooey
-        print_progress(i_idx + 1, len(image_names))
 
     # Write the embeddings to the logs dir
     write_embeddings(logs_dir, patches_sorted, labels_sorted, features_sorted)

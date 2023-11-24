@@ -8,8 +8,8 @@ import numpy as np
 
 import Metashape
 
-from Common import log
 from Common import get_now
+from Common import print_sfm_progress
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"
@@ -29,14 +29,6 @@ def find_files(folder, types):
     """
     return [entry.path for entry in os.scandir(folder) if
             (entry.is_file() and os.path.splitext(entry.name)[1].lower() in types)]
-
-
-def print_sfm_progress(p):
-    """
-
-    """
-
-    print("progress: {}/{}".format(int(p), 100))
 
 
 def sfm_workflow(args):

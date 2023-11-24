@@ -12,7 +12,6 @@ from matplotlib.widgets import Button
 from matplotlib.widgets import TextBox
 from matplotlib.patches import Rectangle
 
-from Common import log
 from Common import IMG_FORMATS
 
 # Set plot backend

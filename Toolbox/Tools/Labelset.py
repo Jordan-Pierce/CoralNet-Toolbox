@@ -7,7 +7,6 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from Common import log
 from Common import IMG_FORMATS
 from Common import CORALNET_URL
 from Common import FUNC_GROUPS_LIST

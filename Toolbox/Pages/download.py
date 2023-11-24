@@ -1,5 +1,3 @@
-import sys
-
 import gradio as gr
 
 from Toolbox.Pages.common import *
@@ -39,6 +37,7 @@ def module_callback(username, password, source_ids, source_df, labelset_df, sour
         # Call the function
         gr.Info("Starting process...")
         download(args)
+        print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
         gr.Error("Could not complete process!")
@@ -126,9 +125,15 @@ def create_interface():
 # ----------------------------------------------------------------------------------------------------------------------
 interface = create_interface()
 
-while True:
-    time.sleep(0.5)
-    if EXIT_APP:
-        Logger(LOG_PATH).reset_logs()
-        break
+try:
+    while True:
+        time.sleep(0.5)
+        if EXIT_APP:
+            break
+except:
+    pass
+
+finally:
+    Logger(LOG_PATH).reset_logs()
+
 

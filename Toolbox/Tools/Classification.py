@@ -38,7 +38,6 @@ from sklearn.model_selection import train_test_split
 
 from imgaug import augmenters as iaa
 
-from Common import log
 from Common import get_now
 
 warnings.filterwarnings("ignore")

@@ -9,7 +9,6 @@ import subprocess
 
 from Toolbox.Pages.common import js
 from Toolbox.Pages.common import Logger
-from Toolbox.Pages.common import read_logs
 from Toolbox.Pages.common import get_port
 from Toolbox.Pages.common import LOG_PATH
 from Toolbox.Pages.common import PAGES_DIR
@@ -297,7 +296,14 @@ def create_interface():
 # ----------------------------------------------------------------------------------------------------------------------
 interface = create_interface()
 
-while True:
-    time.sleep(0.5)
-    if EXIT_APP:
-        break
+try:
+    while True:
+        time.sleep(0.5)
+        if EXIT_APP:
+            break
+except:
+    pass
+
+finally:
+    Logger(LOG_PATH).reset_logs()
+

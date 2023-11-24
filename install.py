@@ -138,7 +138,6 @@ install_requires = [
 
     'gooey',
     'gradio',
-    'tqdm'
 ]
 
 # Installing all the other packages

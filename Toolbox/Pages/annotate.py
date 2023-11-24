@@ -94,8 +94,13 @@ def create_interface():
 # ----------------------------------------------------------------------------------------------------------------------
 interface = create_interface()
 
-while True:
-    time.sleep(0.5)
-    if EXIT_APP:
-        Logger(LOG_PATH).reset_logs()
-        break
+try:
+    while True:
+        time.sleep(0.5)
+        if EXIT_APP:
+            break
+except:
+    pass
+
+finally:
+    Logger(LOG_PATH).reset_logs()

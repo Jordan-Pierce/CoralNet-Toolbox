@@ -13,10 +13,7 @@ import Metashape
 from plyfile import PlyData
 from scipy.spatial.distance import cdist
 
-from SfM import print_sfm_progress
-
-from Common import log
-from Common import print_progress
+from Common import print_sfm_progress
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"
@@ -79,8 +76,6 @@ def post_process_pcd(temp_path, dense_path, color_map, chunk_size=10000000):
         vertex_data['red'][i:chunk_end] = modified_colors[:, 0]
         vertex_data['green'][i:chunk_end] = modified_colors[:, 1]
         vertex_data['blue'][i:chunk_end] = modified_colors[:, 2]
-        # Gooey
-        print_progress(i, num_points)
 
     print("NOTE: Writing post-processed point cloud to disk")
     plydata.write(dense_path)

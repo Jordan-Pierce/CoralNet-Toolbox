@@ -18,9 +18,7 @@ from torch.utils.data import Dataset as BaseDataset
 
 import segmentation_models_pytorch as smp
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 from Common import IMG_FORMATS
 
 from Segmentation import colorize_mask
@@ -236,9 +234,6 @@ def segmentation_inference(args):
         print(f"NOTE: Saved overlay to {overlay_path}")
 
         mask_df.append([image_name, image_path, semantic_path, mask_path, color_path, overlay_path])
-
-        # Gooey
-        print_progress(_, len(test_dataset))
 
     # Save dataframe to root directory
     mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Semantic Path',

@@ -30,9 +30,7 @@ from segmentation_models_pytorch.utils.meter import AverageValueMeter
 
 import albumentations as albu
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 
 torch.cuda.empty_cache()
 
@@ -843,9 +841,6 @@ def segmentation(args):
             if since_best >= 10 and train_loss < valid_loss and since_drop >= 5:
                 print("NOTE: Model training plateaued; exiting training loop")
                 break
-
-            # Gooey
-            print_progress(e_idx, args.num_epochs)
 
     except KeyboardInterrupt:
         print("NOTE: Exiting training loop")

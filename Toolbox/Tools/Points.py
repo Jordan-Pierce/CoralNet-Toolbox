@@ -9,9 +9,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 from Common import IMG_FORMATS
 
 
@@ -54,9 +52,6 @@ def points(args):
     samples = []
 
     for idx, image_file in enumerate(image_files):
-
-        # Gooey
-        print_progress(idx, len(image_files))
 
         # Read it to get the size
         image_name = os.path.basename(image_file)

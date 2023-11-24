@@ -10,7 +10,6 @@ import re
 import pandas as pd
 from PIL import Image
 
-from Common import log
 from Common import get_now
 from Common import PATCH_EXTRACTOR
 

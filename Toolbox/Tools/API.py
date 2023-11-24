@@ -11,9 +11,7 @@ import re
 import math
 import pandas as pd
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 
 from Browser import login
 from Browser import get_token
@@ -499,9 +497,6 @@ def api(args):
 
                     # Store the coralnet predictions for sorting later
                     coralnet_predictions.append(predictions)
-
-                    # Gooey
-                    print_progress(len(completed_imgs), total_images)
 
                 # Wait for the specified time before checking the status again
                 time.sleep(wait)

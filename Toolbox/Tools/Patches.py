@@ -13,9 +13,7 @@ from skimage.io import imread
 from skimage.io import imsave
 from skimage.transform import resize
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 
 warnings.filterwarnings("ignore")
 
@@ -186,7 +184,6 @@ def patches(args):
         for future in concurrent.futures.as_completed(future_to_patches):
             image_name = future_to_patches[future]
             patches.extend(future.result())
-            print_progress(len(patches), prg_total)
 
     # Save patches dataframe
     patches = pd.DataFrame(patches, columns=['Name', 'Path',

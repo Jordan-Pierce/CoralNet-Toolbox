@@ -15,10 +15,8 @@ import tensorflow as tf
 keras = tf.keras
 from keras.models import load_model
 
-from Common import log
 from Common import get_now
 from Common import IMG_FORMATS
-from Common import print_progress
 
 from Patches import crop_patch
 from Classification import precision
@@ -200,8 +198,6 @@ def image_inference(args):
         # Save each image predictions
         output.to_csv(output_path)
         print(f"NOTE: Predictions saved to {output_path}")
-
-        print_progress(n_idx, len(image_names))
 
 
 # -----------------------------------------------------------------------------
