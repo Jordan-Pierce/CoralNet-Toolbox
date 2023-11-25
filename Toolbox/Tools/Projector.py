@@ -179,7 +179,6 @@ def projector(args):
         image_names = patches_df['Image Name'].unique().tolist()
     else:
         raise Exception(f"ERROR: Patches dataframe {args.patches} does not exist")
-    pass
 
     # Model Weights
     if os.path.exists(args.model):

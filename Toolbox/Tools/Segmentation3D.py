@@ -13,7 +13,7 @@ import Metashape
 from plyfile import PlyData
 from scipy.spatial.distance import cdist
 
-from Common import print_sfm_progress
+from Common import print_progress
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"
@@ -178,7 +178,7 @@ def segmentation3d_workflow(args):
             print("Duplicating chunk")
             print("###############################################\n")
             # Create a copy to serve as the classified chunk
-            classified_chunk = chunk.copy(progress=print_sfm_progress)
+            classified_chunk = chunk.copy(progress=print_progress)
             # Rename classified chunk
             classified_chunk.label = chunk.label + " Classified"
 
@@ -256,7 +256,7 @@ def segmentation3d_workflow(args):
             # Classify (colorize) the dense point cloud using the labels.
             # Update the point cloud to apply the new colorization settings
             classified_chunk.colorizePointCloud(Metashape.ImagesData,
-                                                progress=print_sfm_progress)
+                                                progress=print_progress)
             doc.save()
 
         except Exception as e:
@@ -274,7 +274,7 @@ def segmentation3d_workflow(args):
                                               save_point_normal=True,
                                               save_point_confidence=True,
                                               crs=classified_chunk.crs,
-                                              progress=print_sfm_progress)
+                                              progress=print_progress)
         except Exception as e:
             print(f"ERROR: Could not export classified dense point cloud\n{e}")
             sys.exit(1)
@@ -304,7 +304,7 @@ def segmentation3d_workflow(args):
             # Import the updated version
             classified_chunk.importPointCloud(output_dense,
                                               replace_asset=True,
-                                              progress=print_sfm_progress)
+                                              progress=print_progress)
 
             # Change the name of the point cloud
             classified_chunk.point_cloud.label = "Classified Point Cloud"
@@ -328,7 +328,7 @@ def segmentation3d_workflow(args):
                 # Classify (colorize) the mesh using the classified dense point cloud.
                 # Update the mesh to apply the new colorization settings
                 classified_chunk.colorizeModel(Metashape.PointCloudData,
-                                               progress=print_sfm_progress)
+                                               progress=print_progress)
 
                 classified_chunk.model.label = "Classified 3D Model"
 
@@ -348,7 +348,7 @@ def segmentation3d_workflow(args):
                 print("###############################################\n")
 
                 classified_chunk.exportModel(path=output_mesh,
-                                             progress=print_sfm_progress)
+                                             progress=print_progress)
 
         except Exception as e:
             print(f"ERROR: Could not classify mesh\n{e}")
@@ -366,7 +366,7 @@ def segmentation3d_workflow(args):
             classified_chunk.buildOrthomosaic(surface_data=Metashape.ModelData,
                                               blending_mode=Metashape.BlendingMode.DisabledBlending,
                                               fill_holes=False,
-                                              progress=print_sfm_progress)
+                                              progress=print_progress)
 
             classified_chunk.orthomosaic.label = "Classified Orthomosaic"
 
@@ -391,7 +391,7 @@ def segmentation3d_workflow(args):
                 classified_chunk.exportRaster(path=output_ortho,
                                               source_data=Metashape.OrthomosaicData,
                                               image_compression=compression,
-                                              progress=print_sfm_progress)
+                                              progress=print_progress)
 
         except Exception as e:
             print(f"ERROR: Could not classify orthomosaic\n{e}")

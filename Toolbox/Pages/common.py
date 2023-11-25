@@ -67,8 +67,20 @@ def read_logs():
     # Filter out lines containing null characters
     log_content = [line for line in log_content if '\x00' not in line]
 
+    # Define the regex pattern for the progress bar
+    progress_pattern = re.compile(r'\[.*\] \d+\.\d+%')
+
+    # Find lines matching the progress bar pattern
+    progress_lines = [line for line in log_content if progress_pattern.search(line)]
+
+    # If there are multiple progress bars, keep only the last one in recent_lines
+    if progress_lines:
+        valid_content = [line for line in log_content if line not in progress_lines[:-1]]
+    else:
+        valid_content = log_content
+
     # Get the latest 30 lines
-    recent_lines = log_content[-30:]
+    recent_lines = valid_content[-30:]
 
     # Return the joined recent lines
     return ''.join(recent_lines)

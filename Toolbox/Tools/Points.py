@@ -11,6 +11,7 @@ from PIL import Image
 
 from Common import get_now
 from Common import IMG_FORMATS
+from Common import print_progress
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -98,6 +99,9 @@ def points(args):
                                     'Row': int(y),
                                     'Column': int(x),
                                     'Label': 'Unlabeled'})
+
+        print_progress(idx, len(image_files))
+
     if samples:
         print(f"NOTE: Saving {len(samples)} sampled points")
         # Store as dataframe

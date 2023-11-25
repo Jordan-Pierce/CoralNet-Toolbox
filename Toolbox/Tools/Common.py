@@ -82,6 +82,31 @@ def get_now():
     return now
 
 
+def print_progress(prg, prg_total=100, bar_length=50):
+    """
+    Print a custom progress bar. Always add at the end of a loop
+
+    Parameters:
+    - prg (int): Current progress value.
+    - prg_total (int): Total progress value; default is 100
+    - bar_length (int): Length of the progress bar.
+    """
+    progress = prg / prg_total
+    block = int(round(bar_length * progress))
+
+    # Custom progress bar format
+    progress_bar = "#" * block + "-" * (bar_length - block)
+
+    # Check if it's the last iteration
+    if prg == prg_total - 1:
+        end_char = '\n'
+    else:
+        end_char = ''
+
+    # Print the progress bar
+    print("\r[{}] {:.2%}".format(progress_bar, progress), end=end_char, flush=True)
+
+
 def print_sfm_progress(p):
     """
 

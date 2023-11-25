@@ -9,7 +9,7 @@ import numpy as np
 import Metashape
 
 from Common import get_now
-from Common import print_sfm_progress
+from Common import print_progress
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"
@@ -123,7 +123,7 @@ def sfm_workflow(args):
         print("Adding photos")
         print("###############################################\n")
 
-        chunk.addPhotos(photos, progress=print_sfm_progress)  # No MT
+        chunk.addPhotos(photos, progress=print_progress)  # No MT
         print(str(len(chunk.cameras)) + " images loaded")
         doc.save()
 
@@ -216,7 +216,7 @@ def sfm_workflow(args):
         print("###############################################\n")
 
         chunk.exportCameras(path=output_cameras,
-                            progress=print_sfm_progress)
+                            progress=print_progress)
 
     # Build depth maps (2.5D representations of the scene) from the aligned photos.
     if chunk.tie_points and not chunk.depth_maps:
@@ -233,7 +233,7 @@ def sfm_workflow(args):
 
         chunk.buildDepthMaps(filter_mode=Metashape.MildFiltering,
                              downscale=downscale,
-                             progress=print_sfm_progress)
+                             progress=print_progress)
         doc.save()
 
     # Build a dense point cloud using the depth maps.
@@ -261,7 +261,7 @@ def sfm_workflow(args):
         chunk.buildModel(source_data=Metashape.DepthMapsData,
                          interpolation=Metashape.Interpolation.DisabledInterpolation,
                          face_count=facecount,
-                         progress=print_sfm_progress)
+                         progress=print_progress)
         doc.save()
 
     # Build a DEM from the 3D model.
@@ -272,7 +272,7 @@ def sfm_workflow(args):
 
         chunk.buildDem(source_data=Metashape.ModelData,
                        interpolation=Metashape.Interpolation.DisabledInterpolation,
-                       progress=print_sfm_progress)
+                       progress=print_progress)
         doc.save()
 
     # Build an orthomosaic from the 3D model.
@@ -285,7 +285,7 @@ def sfm_workflow(args):
         chunk.buildOrthomosaic(surface_data=Metashape.ModelData,
                                blending_mode=Metashape.BlendingMode.MosaicBlending,
                                fill_holes=False,
-                               progress=print_sfm_progress)
+                               progress=print_progress)
         # Save the document
         doc.save()
 
@@ -301,7 +301,7 @@ def sfm_workflow(args):
                                save_point_normal=True,
                                save_point_confidence=True,
                                crs=chunk.crs,
-                               progress=print_sfm_progress)
+                               progress=print_progress)
 
     # Export the mesh if it exists in the chunk.
     if chunk.model and not os.path.exists(output_mesh):
@@ -309,7 +309,7 @@ def sfm_workflow(args):
         print("Exporting mesh")
         print("###############################################\n")
 
-        chunk.exportModel(path=output_mesh, progress=print_sfm_progress)
+        chunk.exportModel(path=output_mesh, progress=print_progress)
 
     # Export the DEM if it exists in the chunk.
     if chunk.elevation and not os.path.exists(output_dem):
@@ -319,7 +319,7 @@ def sfm_workflow(args):
 
         chunk.exportRaster(path=output_dem,
                            source_data=Metashape.ElevationData,
-                           progress=print_sfm_progress)
+                           progress=print_progress)
 
     # Export the orthomosaic as a TIFF file if it exists in the chunk.
     if chunk.orthomosaic and not os.path.exists(output_ortho):
@@ -334,7 +334,7 @@ def sfm_workflow(args):
         chunk.exportRaster(path=output_ortho,
                            source_data=Metashape.OrthomosaicData,
                            image_compression=compression,
-                           progress=print_sfm_progress)
+                           progress=print_progress)
 
     # Finally, export the report
     print("\n###############################################")
