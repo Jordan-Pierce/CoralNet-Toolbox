@@ -92,16 +92,18 @@ def print_progress(prg, prg_total=100, bar_length=50):
     - bar_length (int): Length of the progress bar.
     """
     progress = prg / prg_total
+
+    # Check if it's the last iteration
+    if prg >= prg_total - 1:
+        progress = 1.0
+        end_char = ' - Completed!\n'
+    else:
+        end_char = ''
+
     block = int(round(bar_length * progress))
 
     # Custom progress bar format
     progress_bar = "#" * block + "-" * (bar_length - block)
-
-    # Check if it's the last iteration
-    if prg == prg_total - 1:
-        end_char = '\n'
-    else:
-        end_char = ''
 
     # Print the progress bar
     print("\r[{}] {:.2%}".format(progress_bar, progress), end=end_char, flush=True)

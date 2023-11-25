@@ -71,11 +71,13 @@ def read_logs():
     progress_pattern = re.compile(r'\[.*\] \d+\.\d+%')
 
     # Find lines matching the progress bar pattern
-    progress_lines = [line for line in log_content if progress_pattern.search(line)]
+    progress_lines = [line for line in log_content if progress_pattern.search(line) and " - Completed!\n" not in line]
 
     # If there are multiple progress bars, keep only the last one in recent_lines
     if progress_lines:
-        valid_content = [line for line in log_content if line not in progress_lines[:-1]]
+        valid_content = [line for line in log_content if line not in progress_lines]
+        if log_content[-1] == progress_lines[-1]:
+            valid_content.append(progress_lines[-1].strip("\n"))
     else:
         valid_content = log_content
 
