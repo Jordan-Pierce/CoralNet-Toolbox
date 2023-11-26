@@ -12,6 +12,7 @@ import math
 import pandas as pd
 
 from Common import get_now
+from Common import progress_printer
 
 from Browser import login
 from Browser import get_token
@@ -30,9 +31,11 @@ from Download import check_for_browsers
 
 
 def get_source_meta(driver, source_id_1, source_id_2=None, prefix=None, image_list=None):
-    """Downloads just the information from source needed to do API calls;
+    """
+    Downloads just the information from source needed to do API calls;
     source id 1 refers to the source containing images, and source id 2
-    refers to a source for a different model (if desired)"""
+    refers to a source for a different model (if desired)
+    """
 
     # Variables for the model
     source_id = source_id_1 if source_id_2 is None else source_id_2
@@ -181,9 +184,9 @@ def print_job_status(payload_imgs, active, completed):
     Print the current status of jobs and images being processed.
     """
     print("\nSTATUS: "
-        "Images in Queue: {: <8} "
-        "Active Jobs: {: <8} "
-        "Completed Jobs: {: <8}".format(len(payload_imgs), len(active), len(completed)))
+          "Images in Queue: {: <8} "
+          "Active Jobs: {: <8} "
+          "Completed Jobs: {: <8}".format(len(payload_imgs), len(active), len(completed)))
 
 
 def convert_to_csv(status, image_names):
@@ -197,7 +200,7 @@ def convert_to_csv(status, image_names):
     # A list to store all the model predictions (dictionaries)
     model_predictions_list = []
 
-    for (data, image_name) in zip(status['data'], image_names):
+    for (data, image_name) in progress_printer(zip(status['data'], image_names)):
         if 'points' in data['attributes']:
             for point in data['attributes']['points']:
                 p = dict()
@@ -309,7 +312,7 @@ def api(args):
             # Let the user know that not all images in points file
             # are actually on CoralNet.
             print(f"WARNING: Points file has points for {len(points['Name'].unique())} images, "
-                f"but only {len(images)} of those images were found on CoralNet.")
+                  f"but only {len(images)} of those images were found on CoralNet.")
 
             # Let them exit if they want
             time.sleep(5)
@@ -367,7 +370,7 @@ def api(args):
         # Split points into batches of 200
         if len(p) > point_batch_size:
             print(f"NOTE: {name} has {len(p)} points, "
-                f"separating into {math.ceil(len(p) / point_batch_size)} 'images'")
+                  f"separating into {math.ceil(len(p) / point_batch_size)} 'images'")
 
         for i in range(0, len(p), point_batch_size):
             # Add the data to the list for payloads
@@ -508,7 +511,7 @@ def api(args):
             # Else wait and check the status of the active jobs again.
             if len(active_jobs) < active_job_limit and payload_imgs:
                 print(f"\nNOTE: Active jobs is {len(active_jobs)}, "
-                    f"images in queue is {len(payload_imgs)}; adding more.\n")
+                      f"images in queue is {len(payload_imgs)}; adding more.\n")
                 break
 
         # Check to see everything has been completed, breaking the loop

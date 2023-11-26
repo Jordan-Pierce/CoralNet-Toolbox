@@ -20,6 +20,7 @@ import segmentation_models_pytorch as smp
 
 from Common import get_now
 from Common import IMG_FORMATS
+from Common import progress_printer
 
 from Segmentation import colorize_mask
 from Segmentation import get_preprocessing
@@ -28,6 +29,7 @@ from Segmentation import get_validation_augmentation
 torch.cuda.empty_cache()
 warnings.filterwarnings('ignore')
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
 
 # ------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -181,8 +183,7 @@ def segmentation_inference(args):
     # Output dataframe
     mask_df = []
 
-    for _ in range(len(test_dataset)):
-
+    for _ in progress_printer(range(len(test_dataset))):
         # Image name
         image_name = test_dataset.ids[_]
         # Image path

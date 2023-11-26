@@ -11,7 +11,7 @@ from PIL import Image
 
 from Common import get_now
 from Common import IMG_FORMATS
-from Common import print_progress
+from Common import progress_printer
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -52,7 +52,7 @@ def points(args):
 
     samples = []
 
-    for idx, image_file in enumerate(image_files):
+    for idx, image_file in progress_printer(enumerate(image_files)):
 
         # Read it to get the size
         image_name = os.path.basename(image_file)
@@ -100,7 +100,7 @@ def points(args):
                                     'Column': int(x),
                                     'Label': 'Unlabeled'})
 
-        print_progress(idx, len(image_files))
+        # print_progress(idx, len(image_files))
 
     if samples:
         print(f"NOTE: Saving {len(samples)} sampled points")

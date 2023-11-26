@@ -14,6 +14,7 @@ from skimage.io import imsave
 from skimage.transform import resize
 
 from Common import get_now
+from Common import progress_printer
 
 warnings.filterwarnings("ignore")
 
@@ -181,7 +182,7 @@ def patches(args):
             for image_name in image_names
         }
 
-        for future in concurrent.futures.as_completed(future_to_patches):
+        for future in progress_printer(concurrent.futures.as_completed(future_to_patches)):
             image_name = future_to_patches[future]
             patches.extend(future.result())
 

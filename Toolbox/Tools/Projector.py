@@ -17,6 +17,7 @@ keras = tf.keras
 from keras.models import load_model
 
 from Common import get_now
+from Common import progress_printer
 
 from Classification import precision
 from Classification import recall
@@ -63,7 +64,9 @@ def create_sprite_image(patches, output_path):
         size=(sprite_width * grid, sprite_height * grid),
         color=(0, 0, 0))
 
-    for i in range(len(patches)):
+    print("NOTE: Creating sprites")
+
+    for i in progress_printer(range(len(patches))):
         row = i // grid
         col = i % grid
         img = patches[i]
@@ -203,7 +206,7 @@ def projector(args):
 
     print("NOTE: Creating feature embeddings")
 
-    for i_idx, image_name in enumerate(image_names):
+    for i_idx, image_name in progress_printer(enumerate(image_names)):
         # Patches for current image
         current_patches = patches_df[patches_df['Image Name'] == image_name]
         # Get the patch labels

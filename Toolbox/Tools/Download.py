@@ -21,6 +21,7 @@ from Common import CORALNET_SOURCE_URL
 from Common import CORALNET_LABELSET_URL
 from Common import CORALNET_LABELSET_FILE
 from Common import print_progress
+from Common import progress_printer
 
 from Browser import login
 from Browser import authenticate
@@ -61,7 +62,7 @@ def get_updated_labelset_list():
         names = []
         urls = []
 
-        for idx, row in enumerate(table):
+        for idx, row in progress_printer(enumerate(table)):
             # Grab attributes from row
             attributes = row.find_all("td")
             # Extract each attribute, store in variable
@@ -69,8 +70,6 @@ def get_updated_labelset_list():
             url = CORALNET_URL + attributes[0].find("a").get("href")
             names.append(name)
             urls.append(url)
-
-            print_progress(idx, len(table))
 
         # Cache so it's faster the next time
         pd.DataFrame(list(zip(names, urls)), columns=['Name', 'URL']).to_csv(CORALNET_LABELSET_FILE)
@@ -112,7 +111,7 @@ def download_coralnet_sources(driver, output_dir):
         source_names = []
 
         # Now, get all the source IDs and names on the page
-        for idx, link in enumerate(links):
+        for idx, link in progress_printer(enumerate(links)):
             # Parse the information
             url = CORALNET_URL + link.find("a").get("href")
             source_id = url.split("/")[-2]
@@ -123,8 +122,6 @@ def download_coralnet_sources(driver, output_dir):
                 source_urls.append(url)
                 source_ids.append(source_id)
                 source_names.append(source_name)
-
-            print_progress(idx, len(links))
 
         # Store as a dict
         sources = {'Source_ID': source_ids,
@@ -174,7 +171,7 @@ def download_coralnet_labelsets(driver, output_dir):
         # Loop through each row, grab the information, store in lists
         rows = []
 
-        for idx, row in enumerate(table):
+        for idx, row in progress_printer(enumerate(table)):
             # Grab attributes from row
             attributes = row.find_all("td")
             # Extract each attribute, store in variable
@@ -210,8 +207,6 @@ def download_coralnet_labelsets(driver, output_dir):
                          notes,
                          is_verified,
                          has_calcification])
-
-            print_progress(idx, len(table))
 
         # Create dataframe
         labelset = pd.DataFrame(rows, columns=['Label ID',
@@ -269,7 +264,7 @@ def get_sources_with(driver, choices, output_dir):
         labelsets = labelsets[labelsets['Name'].isin(choices)]
 
         # Loop through all labelset URLs
-        for i, r in labelsets.iterrows():
+        for i, r in progress_printer(labelsets.iterrows()):
 
             print(f"NOTE: Searching for sources with {r['Name']}\n")
 
@@ -379,7 +374,7 @@ def download_metadata(driver, source_id, source_dir=None):
         data = eval(data[data.find("[{"):])
 
         # Loop through and collect meta from each model instance, store
-        for idx, point in enumerate(data):
+        for idx, point in progress_printer(enumerate(data)):
 
             classifier_nbr = point["x"]
             score = point["y"]
@@ -394,8 +389,6 @@ def download_metadata(driver, source_id, source_dir=None):
                          traintime,
                          date,
                          src_id])
-
-            print_progress(idx, len(data))
 
         # Convert list to dataframe
         meta = pd.DataFrame(meta, columns=['Classifier nbr',
@@ -536,15 +529,13 @@ def download_images(dataframe, source_dir):
             results.append(executor.submit(download_image, url, path))
 
         # Wait for all tasks to complete and collect the results
-        for idx, result in enumerate(concurrent.futures.as_completed(results)):
+        for idx, result in progress_printer(enumerate(concurrent.futures.as_completed(results))):
             # Get the downloaded image path
             downloaded_image_path, downloaded = result.result()
             # Get the image name from the downloaded image path
             basename = os.path.basename(downloaded_image_path)
             if not downloaded:
                 expired_images.append(basename)
-
-            print_progress(idx, len(results))
 
     if expired_images:
         print(f"NOTE: {len(expired_images)} images had expired before being downloaded")
@@ -629,7 +620,7 @@ def get_image_urls(driver, image_page_urls):
                              url for url in image_page_urls}
 
         # Retrieve the completed results as they become available
-        for idx, future in enumerate(concurrent.futures.as_completed(future_to_url)):
+        for idx, future in progress_printer(enumerate(concurrent.futures.as_completed(future_to_url))):
             url = future_to_url[future]
             try:
                 image_url = future.result()
@@ -637,8 +628,6 @@ def get_image_urls(driver, image_page_urls):
                     image_urls.append(image_url)
             except Exception as e:
                 print(f"ERROR: issue retrieving image URL for {url}\n{e}")
-
-        print_progress(idx, len(image_page_urls))
 
     print(f"NOTE: Retrieved {len(image_urls)} image URLs for {len(image_page_urls)} images")
 

@@ -82,9 +82,23 @@ def get_now():
     return now
 
 
+def progress_printer(iterable):
+    """
+
+    """
+    if isinstance(iterable, enumerate):
+        iterable = list(iterable)
+
+    max_iteration = len(iterable)
+
+    for i, item in iterable:
+        yield i, item
+        print_progress(i, max_iteration)
+
+
 def print_progress(prg, prg_total=100, bar_length=50):
     """
-    Print a custom progress bar. Always add at the end of a loop
+    Print a custom progress bar.
 
     Parameters:
     - prg (int): Current progress value.
@@ -107,11 +121,3 @@ def print_progress(prg, prg_total=100, bar_length=50):
 
     # Print the progress bar
     print("\r[{}] {:.2%}".format(progress_bar, progress), end=end_char, flush=True)
-
-
-def print_sfm_progress(p):
-    """
-
-    """
-
-    print("progress: {}/{}".format(int(p), 100))

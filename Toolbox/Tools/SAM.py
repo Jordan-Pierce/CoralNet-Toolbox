@@ -23,6 +23,7 @@ from segment_anything import SamAutomaticMaskGenerator
 from Common import get_now
 from Common import CACHE_DIR
 from Common import IMG_FORMATS
+from Common import progress_printer
 
 warnings.filterwarnings('ignore')
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -315,7 +316,7 @@ def sam(args):
     print("###############################################\n")
 
     # Loop through each image, extract the corresponding patches
-    for i_idx, image_path in enumerate(images):
+    for i_idx, image_path in progress_printer(enumerate(images)):
 
         # Get the points associated with current image
         name = os.path.basename(image_path)

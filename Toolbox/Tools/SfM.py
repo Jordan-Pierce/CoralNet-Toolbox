@@ -123,8 +123,11 @@ def sfm_workflow(args):
         print("Adding photos")
         print("###############################################\n")
 
-        chunk.addPhotos(photos, progress=print_progress)  # No MT
+        chunk.addPhotos(photos, progress=print_progress)
         print(str(len(chunk.cameras)) + " images loaded")
+
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Match the photos by finding common features and establishing correspondences.
@@ -144,10 +147,14 @@ def sfm_workflow(args):
                           tiepoint_limit=10000,
                           generic_preselection=True,
                           reference_preselection=True,
-                          downscale=downscale)
+                          downscale=downscale,
+                          progress=print_progress)
 
         # Align the cameras to estimate their relative positions in space.
         chunk.alignCameras()
+
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Perform gradual selection to remove messy points
@@ -206,7 +213,8 @@ def sfm_workflow(args):
             except Exception as e:
                 print(f"WARNING: Could not filter points based on selection method {s_idx}")
 
-        # Save the document
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Export Camera positions
@@ -217,6 +225,10 @@ def sfm_workflow(args):
 
         chunk.exportCameras(path=output_cameras,
                             progress=print_progress)
+
+        print("")
+        print("Process Successful!")
+        doc.save()
 
     # Build depth maps (2.5D representations of the scene) from the aligned photos.
     if chunk.tie_points and not chunk.depth_maps:
@@ -234,6 +246,9 @@ def sfm_workflow(args):
         chunk.buildDepthMaps(filter_mode=Metashape.MildFiltering,
                              downscale=downscale,
                              progress=print_progress)
+
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Build a dense point cloud using the depth maps.
@@ -242,7 +257,11 @@ def sfm_workflow(args):
         print("Building dense point cloud")
         print("###############################################\n")
 
-        chunk.buildPointCloud(source_data=Metashape.DepthMapsData)
+        chunk.buildPointCloud(source_data=Metashape.DepthMapsData,
+                              progress=print_progress)
+
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Build a 3D model from the depth maps.
@@ -262,6 +281,9 @@ def sfm_workflow(args):
                          interpolation=Metashape.Interpolation.DisabledInterpolation,
                          face_count=facecount,
                          progress=print_progress)
+
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Build a DEM from the 3D model.
@@ -273,6 +295,9 @@ def sfm_workflow(args):
         chunk.buildDem(source_data=Metashape.ModelData,
                        interpolation=Metashape.Interpolation.DisabledInterpolation,
                        progress=print_progress)
+
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Build an orthomosaic from the 3D model.
@@ -286,7 +311,9 @@ def sfm_workflow(args):
                                blending_mode=Metashape.BlendingMode.MosaicBlending,
                                fill_holes=False,
                                progress=print_progress)
-        # Save the document
+
+        print("")
+        print("Process Successful!")
         doc.save()
 
     # Export the dense point cloud if it exists in the chunk.
@@ -303,6 +330,10 @@ def sfm_workflow(args):
                                crs=chunk.crs,
                                progress=print_progress)
 
+        print("")
+        print("Process Successful!")
+        doc.save()
+
     # Export the mesh if it exists in the chunk.
     if chunk.model and not os.path.exists(output_mesh):
         print("\n###############################################")
@@ -310,6 +341,10 @@ def sfm_workflow(args):
         print("###############################################\n")
 
         chunk.exportModel(path=output_mesh, progress=print_progress)
+
+        print("")
+        print("Process Successful!")
+        doc.save()
 
     # Export the DEM if it exists in the chunk.
     if chunk.elevation and not os.path.exists(output_dem):
@@ -320,6 +355,10 @@ def sfm_workflow(args):
         chunk.exportRaster(path=output_dem,
                            source_data=Metashape.ElevationData,
                            progress=print_progress)
+
+        print("")
+        print("Process Successful!")
+        doc.save()
 
     # Export the orthomosaic as a TIFF file if it exists in the chunk.
     if chunk.orthomosaic and not os.path.exists(output_ortho):
@@ -336,14 +375,22 @@ def sfm_workflow(args):
                            image_compression=compression,
                            progress=print_progress)
 
+        print("")
+        print("Process Successful!")
+        doc.save()
+
     # Finally, export the report
     print("\n###############################################")
     print("Exporting Report")
     print("###############################################\n")
     chunk.exportReport(path=output_report)
 
+    print("")
+    print("Process Successful!")
+    doc.save()
+
     # Print a message indicating that the processing has finished and the results have been saved.
-    print(f"NOTE: Processing finished, results saved to {project_dir}")
+    print(f"\nNOTE: Processing finished, results saved to {project_dir}")
     print(f"NOTE: Completed in {np.around(((time.time() - t0) / 60), 2)} minutes")
 
 
