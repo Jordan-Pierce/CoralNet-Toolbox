@@ -323,39 +323,35 @@ def segmentation3d_workflow(args):
 
         try:
 
-            # Check that the mesh hasn't already been classified
-            if "Classified" not in classified_chunk.model.label:
-                print("\n###############################################")
-                print("Classifying mesh")
-                print("###############################################\n")
-                # Classify (colorize) the mesh using the classified dense point cloud.
-                # Update the mesh to apply the new colorization settings
-                classified_chunk.colorizeModel(Metashape.PointCloudData,
-                                               progress=print_progress)
+            print("\n###############################################")
+            print("Classifying mesh")
+            print("###############################################\n")
+            # Classify (colorize) the mesh using the classified dense point cloud.
+            # Update the mesh to apply the new colorization settings
+            classified_chunk.colorizeModel(Metashape.PointCloudData,
+                                           progress=print_progress)
 
-                classified_chunk.model.label = "Classified 3D Model"
+            classified_chunk.model.label = "Classified 3D Model"
 
-                print("")
-                print("Process Successful!")
-                doc.save()
+            print("")
+            print("Process Successful!")
+            doc.save()
 
         except Exception as e:
             raise Exception(f"ERROR: Could not classify mesh\n{e}")
 
         try:
 
-            # If the classified mesh exists, and it wasn't already output
-            if 'Classified' in classified_chunk.model.label and not os.path.exists(output_mesh):
-                print("\n###############################################")
-                print("Exporting classified mesh")
-                print("###############################################\n")
+            print("\n###############################################")
+            print("Exporting classified mesh")
+            print("###############################################\n")
 
-                classified_chunk.exportModel(path=output_mesh,
-                                             progress=print_progress)
+            classified_chunk.exportModel(path=output_mesh,
+                                         progress=print_progress)
 
-                print("")
-                print("Process Successful!")
-                doc.save()
+            print("")
+            print("Process Successful!")
+            doc.save()
 
         except Exception as e:
             raise Exception(f"ERROR: Could not classify mesh\n{e}")
