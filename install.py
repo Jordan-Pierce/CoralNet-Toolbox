@@ -162,7 +162,7 @@ print('Downloading networks...')
 THIS_DIRECTORY = os.path.abspath(__file__)
 
 # Make the Data directory
-SAM_DIR = f"{os.path.dirname(THIS_DIRECTORY)}\\Data\\Cache\\SAM_Weights"
+SAM_DIR = f"{os.path.dirname(THIS_DIRECTORY)}/Data/Cache/SAM_Weights"
 os.makedirs(SAM_DIR, exist_ok=True)
 
 # ---------------
@@ -174,7 +174,7 @@ net_file_names = ["sam_vit_b_01ec64.pth",
                   "sam_vit_h_4b8939.pth"]
 
 for net_name in net_file_names:
-    path_dextr = f"{SAM_DIR}\\{net_name}"
+    path_dextr = f"{SAM_DIR}/{net_name}"
     if not os.path.exists(path_dextr):
         try:
             url_dextr = base_url + net_name
