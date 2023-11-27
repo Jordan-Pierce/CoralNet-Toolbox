@@ -10,8 +10,8 @@ import urllib.request
 # ----------------------------------------------
 osused = platform.system()
 
-if osused != 'Windows':
-    raise Exception("This install script is only for Windows")
+if osused not in ['Windows', 'Linux']:
+    raise Exception("This install script is only for Windows or Linux")
 
 # ----------------------------------------------
 # Conda
@@ -21,7 +21,7 @@ console_output = subprocess.getstatusoutput('conda --version')
 
 # Returned 1; conda not installed
 if console_output[0]:
-    raise Exception("This install script is only for Windows with Conda already installed")
+    raise Exception("This install script is only for machines with Conda already installed")
 
 conda_exe = shutil.which('conda')
 
@@ -133,12 +133,15 @@ install_requires = [
     'plot_keras_history',
     'segment_anything',
     'segmentation_models_pytorch',
-
-    './Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl',
-
     'gooey',
     'gradio',
 ]
+
+# Metashape; OS dependent wheel
+if osused == 'Windows':
+    install_requires.append('./Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl')
+else:
+    install_requires.append('./Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-abi3-linux_x86_64.whl')
 
 # Installing all the other packages
 for package in install_requires:
