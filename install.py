@@ -133,7 +133,7 @@ install_requires = [
     'plot_keras_history',
     'segment_anything',
     'segmentation_models_pytorch',
-    'gooey',
+
     'gradio',
 ]
 
