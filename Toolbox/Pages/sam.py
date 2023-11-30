@@ -2,7 +2,7 @@ import gradio as gr
 
 from Toolbox.Pages.common import *
 
-from Toolbox.Tools.Patches import patches
+from Toolbox.Tools.SAM import sam
 
 EXIT_APP = False
 
@@ -11,7 +11,8 @@ EXIT_APP = False
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(image_dir, annotation_file, image_column, label_column, patch_size, output_dir):
+def module_callback(images, annotations, label_col, confidence, model_type, points_per_side, points_per_batch,
+                    output_dir):
     """
 
     """
@@ -19,18 +20,20 @@ def module_callback(image_dir, annotation_file, image_column, label_column, patc
     sys.stdout = Logger(LOG_PATH)
 
     args = argparse.Namespace(
-        image_dir=image_dir,
-        annotation_file=annotation_file,
-        image_column=image_column,
-        label_column=label_column,
-        patch_size=patch_size,
+        images=images,
+        annotations=annotations,
+        label_col=label_col,
+        confidence=confidence,
+        model_type=model_type,
+        points_per_side=points_per_side,
+        points_per_batch=points_per_batch,
         output_dir=output_dir,
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        patches(args)
+        sam(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -61,26 +64,39 @@ def create_interface():
     """
     Logger(LOG_PATH).reset_logs()
 
-    with gr.Blocks(title="Patches 🟩", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="SAM 🧠", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# Patches 🟩")
+        gr.Markdown("# SAM 🧠")
 
         # Browse button
-        image_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
+        images = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
         dir_button = gr.Button("Browse Directory")
-        dir_button.click(choose_directory, outputs=image_dir, show_progress="hidden")
+        dir_button.click(choose_directory, outputs=images, show_progress="hidden")
 
-        annotation_file = gr.Textbox(label="Selected Annotation File")
-        file_button = gr.Button("Browse Files")
-        file_button.click(choose_files, outputs=annotation_file, show_progress="hidden")
+        annotations = gr.Textbox(label="Selected Annotation File")
+        files_button = gr.Button("Browse Files")
+        files_button.click(choose_file, outputs=annotations, show_progress="hidden")
 
         with gr.Row():
-            image_column = gr.Textbox("Name", label="Image Name Field")
 
-            label_column = gr.Dropdown(label="Label Name Field", multiselect=False, allow_custom_value=True,
-                                       choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
+            label_col = gr.Dropdown(label="Label Name Field", multiselect=False, allow_custom_value=True,
+                                    choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
-            patch_size = gr.Number(112, label="Patch Size", precision=0)
+            confidence = gr.Slider(label="Point Confidence Filter",
+                                   minimum=0, maximum=100, step=1)
+
+        with gr.Group("SAM Model"):
+            with gr.Row():
+
+                model_type = gr.Dropdown(label="SAM Model Weights",
+                                         choices=['vit_b', 'vit_l', 'vit_h'],
+                                         multiselect=False, allow_custom_value=False)
+
+                points_per_side = gr.Number(64, label="Number of Points (Squared)",
+                                            precision=0)
+
+                points_per_batch = gr.Number(128, label="Points per Batch (GPU dependent)",
+                                             precision=0)
 
         # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
@@ -91,11 +107,13 @@ def create_interface():
             # Run button (callback)
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
-                                   [image_dir,
-                                    annotation_file,
-                                    image_column,
-                                    label_column,
-                                    patch_size,
+                                   [images,
+                                    annotations,
+                                    label_col,
+                                    confidence,
+                                    model_type,
+                                    points_per_side,
+                                    points_per_batch,
                                     output_dir])
 
             stop_button = gr.Button(value="Stop")

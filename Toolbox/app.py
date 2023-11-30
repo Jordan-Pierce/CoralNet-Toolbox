@@ -206,14 +206,14 @@ def create_interface():
             api_button = gr.Button("API 🕹️")
             api_process = api_button.click(api_page)
 
-            download_button = gr.Button("Download ⬇️")
+            download_button = gr.Button("Download ⬇")
             download_process = download_button.click(download_page)
 
         with gr.Row():
-            labelset_button = gr.Button("Labelset 📝")
+            labelset_button = gr.Button("Labelset 📝", visible=False)
             labelset_process = labelset_button.click(labelset_page)
 
-            upload_button = gr.Button("Upload ⬆️️")
+            upload_button = gr.Button("Upload ⬆", visible=False)
             upload_process = upload_button.click(upload_page)
 
         gr.Markdown("## Annotation Tools 🛠️ <p style='font-size:14px'>"
@@ -252,7 +252,7 @@ def create_interface():
                     "\nUse these tools to automatically create segmented images</p>")
         with gr.Row():
             sam_button = gr.Button("SAM 🧠")
-            sam_process = api_button.click(sam_page)
+            sam_process = sam_button.click(sam_page)
 
             sam_demo_button = gr.Button("Demo 🧙")
             sam_demo_process = sam_demo_button.click(sam_demo_page)
@@ -306,4 +306,3 @@ except:
 
 finally:
     Logger(LOG_PATH).reset_logs()
-

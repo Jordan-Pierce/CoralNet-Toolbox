@@ -488,8 +488,8 @@ def segmentation(args):
     # Model building, parameters
     # ------------------------------------------------------------------------------------------------------------------
     print(f"\n#########################################\n"
-        f"Building Model\n"
-        f"#########################################\n")
+          f"Building Model\n"
+          f"#########################################\n")
 
     try:
         encoder_weights = 'imagenet'
@@ -621,8 +621,8 @@ def segmentation(args):
     # Open tensorboard
     if args.tensorboard:
         print(f"\n#########################################\n"
-            f"Tensorboard\n"
-            f"#########################################\n")
+              f"Tensorboard\n"
+              f"#########################################\n")
 
         # Create a subprocess that opens tensorboard
         tensorboard_process = subprocess.Popen(['tensorboard', '--logdir', tensorboard_dir],
@@ -635,8 +635,8 @@ def segmentation(args):
     # Loading data, creating datasets
     # ------------------------------------------------------------------------------------------------------------------
     print(f"\n#########################################\n"
-        f"Loading Data\n"
-        f"#########################################\n")
+          f"Loading Data\n"
+          f"#########################################\n")
 
     # Names of all images; sets to be split based on images
     image_names = dataframe['Name'].unique()
@@ -706,8 +706,8 @@ def segmentation(args):
     # Show sample of training data
     # ------------------------------------------------------------------------------------------------------------------
     print(f"\n#########################################\n"
-        f"Viewing Training Samples\n"
-        f"#########################################\n")
+          f"Viewing Training Samples\n"
+          f"#########################################\n")
 
     # Create a sample version dataset
     sample_dataset = Dataset(train_df,
@@ -734,8 +734,8 @@ def segmentation(args):
     try:
 
         print(f"\n#########################################\n"
-            f"Training\n"
-            f"#########################################\n")
+              f"Training\n"
+              f"#########################################\n")
 
         print("NOTE: Starting Training")
         train_epoch = TrainEpoch(
@@ -899,8 +899,8 @@ def segmentation(args):
     # Calculate metrics
     # ------------------------------------------------------------------------------------------------------------------
     print(f"\n#########################################\n"
-        f"Calculating Metrics\n"
-        f"#########################################\n")
+          f"Calculating Metrics\n"
+          f"#########################################\n")
 
     try:
         # Empty cache from training

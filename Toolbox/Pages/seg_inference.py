@@ -2,7 +2,7 @@ import gradio as gr
 
 from Toolbox.Pages.common import *
 
-from Toolbox.Tools.Patches import patches
+from Toolbox.Tools.SegInference import segmentation_inference
 
 EXIT_APP = False
 
@@ -11,7 +11,7 @@ EXIT_APP = False
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(image_dir, annotation_file, image_column, label_column, patch_size, output_dir):
+def module_callback(images, model, color_map, output_dir):
     """
 
     """
@@ -19,18 +19,16 @@ def module_callback(image_dir, annotation_file, image_column, label_column, patc
     sys.stdout = Logger(LOG_PATH)
 
     args = argparse.Namespace(
-        image_dir=image_dir,
-        annotation_file=annotation_file,
-        image_column=image_column,
-        label_column=label_column,
-        patch_size=patch_size,
+        images=images,
+        model=model,
+        color_map=color_map,
         output_dir=output_dir,
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        patches(args)
+        segmentation_inference(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -61,28 +59,23 @@ def create_interface():
     """
     Logger(LOG_PATH).reset_logs()
 
-    with gr.Blocks(title="Patches 🟩", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="Predict 🤖️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# Patches 🟩")
+        gr.Markdown("# Predict 🤖️")
 
         # Browse button
-        image_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
-        dir_button = gr.Button("Browse Directory")
-        dir_button.click(choose_directory, outputs=image_dir, show_progress="hidden")
+        images = gr.Textbox(label="Selected Images Directory")
+        files_button = gr.Button("Browse Directory")
+        files_button.click(choose_directory, outputs=images, show_progress="hidden")
 
-        annotation_file = gr.Textbox(label="Selected Annotation File")
-        file_button = gr.Button("Browse Files")
-        file_button.click(choose_files, outputs=annotation_file, show_progress="hidden")
+        model = gr.Textbox(label="Selected Model File")
+        files_button = gr.Button("Browse Files")
+        files_button.click(choose_file, outputs=model, show_progress="hidden")
 
-        with gr.Row():
-            image_column = gr.Textbox("Name", label="Image Name Field")
+        color_map = gr.Textbox(label="Selected Color Map File")
+        files_button = gr.Button("Browse Files")
+        files_button.click(choose_file, outputs=color_map, show_progress="hidden")
 
-            label_column = gr.Dropdown(label="Label Name Field", multiselect=False, allow_custom_value=True,
-                                       choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
-
-            patch_size = gr.Number(112, label="Patch Size", precision=0)
-
-        # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
         dir_button = gr.Button("Browse Directory")
         dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
@@ -91,11 +84,9 @@ def create_interface():
             # Run button (callback)
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
-                                   [image_dir,
-                                    annotation_file,
-                                    image_column,
-                                    label_column,
-                                    patch_size,
+                                   [images,
+                                    model,
+                                    color_map,
                                     output_dir])
 
             stop_button = gr.Button(value="Stop")
