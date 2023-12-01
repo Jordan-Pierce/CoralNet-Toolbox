@@ -40,7 +40,6 @@ def get_updated_labelset_list():
     if os.path.exists(CORALNET_LABELSET_FILE):
         # Get the names
         names = pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
-
         if names:
             return names
 
@@ -49,7 +48,7 @@ def get_updated_labelset_list():
     try:
 
         # Make a GET request to the image page URL using the authenticated session
-        response = requests.get(CORALNET_LABELSET_URL)
+        response = requests.get(CORALNET_LABELSET_URL, timeout=30)
         cookies = response.cookies
 
         # Convert the webpage to soup
@@ -582,8 +581,12 @@ def get_image_urls(driver, image_page_urls):
     # List to hold all the image URLs
     image_urls = []
 
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
+    try:
+        # Send a GET request to the login page to retrieve the login form
+        response = requests.get(LOGIN_URL, timeout=30)
+
+    except Exception as e:
+        raise Exception(f"ERROR: CoralNet timed out after 30 seconds.\n{e}")
 
     # Pass along the cookies
     cookies = response.cookies
@@ -732,8 +735,12 @@ def download_annotations(driver, source_id, source_dir):
     # The URL of the source page
     source_url = CORALNET_URL + f"/source/{source_id}/browse/images/"
 
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
+    try:
+        # Send a GET request to the login page to retrieve the login form
+        response = requests.get(LOGIN_URL, timeout=30)
+
+    except Exception as e:
+        raise Exception(f"ERROR: CoralNet timed out after 30 seconds.\n{e}")
 
     # Pass along the cookies
     cookies = response.cookies

@@ -200,8 +200,8 @@ class Dataset(BaseDataset):
             preprocessing=None,
     ):
         assert 'Name' in dataframe.columns, print(f"ERROR: 'Name' not found in mask file")
-        assert 'Semantic Path' in dataframe.columns, print(f"ERROR: 'Name' not found in mask file")
-        assert 'Image Path' in dataframe.columns, print(f"ERROR: 'Semantic Path' not found in mask file")
+        assert 'Image Path' in dataframe.columns, print(f"ERROR: 'Image Path' not found in mask file")
+        assert 'Semantic Path' in dataframe.columns, print(f"ERROR: 'Semantic Path' not found in mask file")
 
         self.ids = dataframe['Name'].to_list()
         self.masks_fps = dataframe['Semantic Path'].to_list()
@@ -246,7 +246,7 @@ def get_segmentation_encoders():
     encoder_options = []
 
     try:
-        options = smp.encoders.encoders.keys()
+        options = smp.encoders.get_encoder_names()
         encoder_options = options
 
     except Exception as e:

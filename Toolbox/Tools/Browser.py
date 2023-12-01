@@ -31,8 +31,12 @@ def authenticate(username, password):
     print("###############################################\n")
     print(f"NOTE: Authenticating user {username}")
 
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
+    try:
+        # Send a GET request to the login page to retrieve the login form
+        response = requests.get(LOGIN_URL, timeout=30)
+
+    except Exception as e:
+        raise Exception(f"ERROR: CoralNet timed out after 30 seconds.\n{e}")
 
     # Pass along the cookies
     cookies = response.cookies
@@ -212,10 +216,15 @@ def get_token(username, password):
     HEADERS = {"Content-type": "application/vnd.api+json"}
     PAYLOAD = {"username": username, "password": password}
 
-    # Response from CoralNet when provided credentials
-    response = requests.post(CORALNET_AUTH,
-                             data=json.dumps(PAYLOAD),
-                             headers=HEADERS)
+    try:
+
+        # Response from CoralNet when provided credentials
+        response = requests.post(CORALNET_AUTH,
+                                 data=json.dumps(PAYLOAD),
+                                 headers=HEADERS,
+                                 timeout=10)
+    except Exception as e:
+        raise Exception(f"ERROR: {e}")
 
     if response.ok:
 

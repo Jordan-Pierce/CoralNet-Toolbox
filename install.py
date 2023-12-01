@@ -71,18 +71,6 @@ except Exception as e:
     sys.exit(1)
 
 # ----------------------------------------------
-# Tensorflow & Keras
-# ----------------------------------------------
-try:
-    print("NOTE: Installing Tensorflow and Keras Core")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", 'keras-core'])
-    subprocess.check_call([sys.executable, "-m", "pip", "install", 'tensorflow==2.12.0'])
-
-except Exception as e:
-    print("ERROR: Could not install Tensorflow")
-    sys.exit(1)
-
-# ----------------------------------------------
 # Pytorch
 # ----------------------------------------------
 try:
@@ -121,7 +109,6 @@ install_requires = [
     'opencv_python',
     'scikit_image',
     'albumentations',
-    'imgaug',
     'plyfile',
 
     'Requests',
@@ -130,7 +117,7 @@ install_requires = [
     'selenium',
     'webdriver_manager',
 
-    'plot_keras_history',
+    'torcheval',
     'segment_anything',
     'segmentation_models_pytorch',
 
