@@ -21,12 +21,12 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 
 import torch
-import torcheval
 import torchvision
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as BaseDataset
 from torch.utils.tensorboard import SummaryWriter
+from torcheval.metrics import functional as torch_metrics
 
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
@@ -85,30 +85,27 @@ class Epoch:
                 file=sys.stdout,
                 disable=not self.verbose,
         ) as iterator:
-            for x, y in iterator:
+            for x, y, _, in iterator:
+                # Pass forward
                 x, y = x.to(self.device), y.to(self.device)
                 loss, y_pred = self.batch_update(x, y)
 
-                # update loss logs
+                # Update loss logs
                 loss_value = loss.cpu().detach().numpy()
                 loss_meter.add(loss_value)
-                loss_logs = {self.loss.__name__: loss_meter.mean}
+                loss_logs = {self.loss._get_name(): loss_meter.mean}
                 logs.update(loss_logs)
 
-                # Convert y_pred
+                # Reshape the prediction and ground-truth
                 num_classes = y_pred.shape[1]
                 y_pred = torch.argmax(y_pred, axis=1)
+                y = torch.argmax(y, axis=1)
 
-                # Calculate the stats
-                tp, fp, fn, tn = smp.metrics.functional._get_stats_multiclass(output=y_pred,
-                                                                              target=y,
-                                                                              num_classes=num_classes,
-                                                                              ignore_index=0)
-
-                # update metrics logs
+                # Update metrics logs
                 for metric_fn in self.metrics:
-                    metric_values = smp.metrics.functional._compute_metric(metric_fn, tp, fp, fn, tn)
+                    metric_values = metric_fn(y_pred, y, average=None, num_classes=num_classes)
                     metrics_meters[metric_fn.__name__].add(torch.mean(metric_values))
+
                 metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
                 logs.update(metrics_logs)
 
@@ -220,7 +217,6 @@ class Dataset(BaseDataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         label = self.labels[i]
-        label = np.array([self.class_map[label]])
 
         # apply augmentations
         if self.augmentation:
@@ -230,7 +226,14 @@ class Dataset(BaseDataset):
         if self.preprocessing:
             image = self.preprocessing(image=image)['image']
 
-        return torch.from_numpy(image), torch.from_numpy(label)
+        # Convert the image
+        image = torch.from_numpy(image)
+        # Convert the label
+        label = torch.tensor([self.class_map[label]])
+        label = F.one_hot(label.view(-1), len(self.class_map.keys()))
+        label = label.squeeze().to(torch.float)
+
+        return image, label, self.patches[i]
 
     def __len__(self):
         return len(self.ids)
@@ -417,7 +420,10 @@ def compute_class_weights(df, mu=0.15):
     Compute class weights for the given dataframe.
     """
     # Compute the value counts for each class
-    value_counts = df['Label'].value_counts().to_dict()
+    class_categories = sorted(df['Label'].unique())
+    class_values = [df['Label'].value_counts()[c] for c in class_categories]
+    value_counts = dict(zip(class_categories, class_values))
+
     total = sum(value_counts.values())
     keys = value_counts.keys()
 
@@ -430,6 +436,51 @@ def compute_class_weights(df, mu=0.15):
         class_weight[key] = score if score > 1.0 else 1.0
 
     return class_weight
+
+
+def plot_samples(model, data_loader, num_samples=100):
+    """
+
+    """
+    model.eval()
+
+    # Get validation samples
+    samples = iter(data_loader)
+    images, labels, paths = next(samples)
+
+    # Move data to the same device as the model
+    device = next(model.parameters()).device
+    images = images.to(device)
+
+    with torch.no_grad():
+        preds = model(images)
+
+    labels = np.argmax(labels.cpu().numpy(), axis=1)
+    preds = np.argmax(preds.cpu().numpy(), axis=1)
+
+    class_names = list(data_loader.dataset.class_map.keys())
+
+    # Create a grid for plotting the images
+    rows = int(np.ceil(num_samples / 10))
+    fig, axes = plt.subplots(rows, 10, figsize=(20, 2 * rows))
+
+    for i in range(num_samples):
+        ax = axes[i // 10, i % 10] if num_samples > 10 else axes[i]
+
+        actual_label = class_names[labels[i]]
+        predicted_label = class_names[preds[i]]
+
+        # Set title color based on prediction correctness
+        title_color = 'green' if labels[i] == preds[i] else 'red'
+
+        ax.imshow(plt.imread(paths[i]))
+        ax.set_title(f'Actual: {actual_label}\n'
+                     f'Prediction: {predicted_label}', fontsize=8, color=title_color)
+        ax.axis('off')
+
+    plt.tight_layout()
+
+    return fig
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -456,9 +507,6 @@ def classification(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Check input data
     # ------------------------------------------------------------------------------------------------------------------
-    print(f"\n#########################################\n"
-          f"Creating Datasets\n"
-          f"#########################################\n")
 
     # If the user provides multiple patch dataframes
     patches_df = pd.DataFrame()
@@ -472,8 +520,9 @@ def classification(args):
         else:
             raise Exception(f"ERROR: Patches dataframe {patches_path} does not exist")
 
-    class_names = patches_df['Label'].unique()
-    class_map = {f"{class_names[_]}": _ for _ in range(len(class_names))}
+    class_names = sorted(patches_df['Label'].unique())
+    num_classes = len(class_names)
+    class_map = {f"{class_names[_]}": _ for _ in range(num_classes)}
 
     # ------------------------------------------------------------------------------------------------------------------
     # Building Model
@@ -491,8 +540,8 @@ def classification(args):
         # Building model using user's input
         model = CustomModel(encoder_name=args.encoder_name,
                             weights=encoder_weights,
-                            num_classes=len(class_names),
-                            dropout_rate=args.dropout)
+                            num_classes=num_classes,
+                            dropout_rate=args.dropout_rate)
 
         if args.freeze_encoder:
             print(f"NOTE: Freezing encoder weights")
@@ -501,7 +550,7 @@ def classification(args):
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
-        print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
+        print(f"NOTE: Using {args.encoder_name} encoder")
 
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
@@ -510,6 +559,10 @@ def classification(args):
     # ---------------------------------------------------------------------------------------
     # Source directory setup
     # ---------------------------------------------------------------------------------------
+    print("\n###############################################")
+    print("Logging")
+    print("###############################################\n")
+
     output_dir = f"{args.output_dir}\\"
 
     # Run Name
@@ -556,7 +609,9 @@ def classification(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
     # ------------------------------------------------------------------------------------------------------------------
-
+    print("\n###############################################")
+    print("Creating Datasets")
+    print("###############################################\n")
     # Names of all images; sets to be split based on images
     image_names = patches_df['Image Name'].unique()
 
@@ -599,8 +654,6 @@ def classification(args):
     test_df.to_csv(f"{logs_dir}Testing_Set.csv", index=False)
 
     # The number of class categories
-    class_names = train_df['Label'].unique().tolist()
-    num_classes = len(class_names)
     print(f"NOTE: Number of classes in training set is {len(train_df['Label'].unique())}")
     print(f"NOTE: Number of classes in validation set is {len(valid_df['Label'].unique())}")
     print(f"NOTE: Number of classes in testing set is {len(test_df['Label'].unique())}")
@@ -664,15 +717,8 @@ def classification(args):
         class_map=class_map,
     )
 
-    # For visualizing progress
-    valid_dataset_vis = Dataset(
-        valid_df,
-        augmentation=get_validation_augmentation(),
-        class_map=class_map,
-    )
-
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    valid_loader = DataLoader(valid_dataset, batch_size=1, shuffle=False, num_workers=0)
+    valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Show sample of training data
@@ -689,13 +735,17 @@ def classification(args):
     # Loop through a few samples
     for i in range(5):
         # Get a random sample from dataset
-        image, label = sample_dataset[np.random.randint(0, len(train_df))]
+        image, label, _ = sample_dataset[np.random.randint(0, len(train_df))]
+        image = image.numpy()
+        label = np.argmax(label.numpy())
         # Visualize and save to logs dir
         save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
-        visualize(save_path=save_path,
-                  save_figure=True,
-                  image=image,
-                  label=label)
+        plt.figure()
+        plt.imshow(image)
+        plt.title(f"{class_names[label]}")
+        plt.savefig(save_path)
+        plt.tight_layout()
+        plt.close()
 
         # Write to tensorboard
         train_writer.add_image(f'Training_Samples', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
@@ -711,18 +761,19 @@ def classification(args):
     if args.weighted_loss:
         print(f"NOTE: Calculating weights for weighted loss function")
         class_weight = compute_class_weights(train_df)
+        print(f"NOTE: {class_weight}")
     else:
-        class_weight = {c: 1.0 for c in range(len(class_names))}
+        class_weight = {c: 1.0 for c in range(num_classes)}
 
-    # Reformat for model.fit()
-    class_weight = list(class_weight.keys())
+    # Reformat for training
+    class_weight = torch.tensor(list(class_weight.values()))
 
     try:
         # Get the loss function
         assert args.loss_function in get_classifier_losses()
 
         # Get the loss function
-        loss_function = getattr(torch.nn, args.loss_function).to(device)
+        loss_function = getattr(torch.nn, args.loss_function)().to(device)
 
         # Get the parameters of the DiceLoss class using inspect.signature
         params = inspect.signature(loss_function.__init__).parameters
@@ -743,7 +794,7 @@ def classification(args):
         assert args.optimizer in get_classifier_optimizers()
         optimizer = getattr(torch.optim, args.optimizer)(model.parameters(), args.learning_rate)
 
-        print(f"NOTE: Using optimizer {args.optimizer}")
+        print(f"NOTE: Using optimizer function {args.optimizer}")
 
     except Exception as e:
         print(f"ERROR: Could not get optimizer {args.optimizer}")
@@ -752,24 +803,21 @@ def classification(args):
 
     try:
         # Get the metrics
-        if len(args.metrics) == 0:
-            args.metrics = get_classifier_metrics()
-
         if not any(m in get_classifier_metrics() for m in args.metrics):
             args.metrics = get_classifier_metrics()
 
-        metrics = [getattr(torcheval.metrics.functional, m) for m in args.metrics]
-
         if len(class_names) == 2:
-            metrics = [m for m in metrics if "binary" in m]
+            metrics = [m for m in args.metrics if "binary" in m]
         elif len(class_names) > 2:
-            metrics = [m for m in metrics if "multiclass" in m]
+            metrics = [m for m in args.metrics if "multiclass" in m]
         else:
             raise Exception("ERROR: There is only one class present in dataset, cannot train model")
 
-        metrics = [PytorchMetric(m) for m in metrics]
+        print(f"NOTE: Using metrics {metrics}")
+        metrics = [getattr(torch_metrics, m) for m in metrics]
 
-        print(f"NOTE: Using metrics {args.metrics}")
+        # Convert for CUDA
+        metrics = [PytorchMetric(m) for m in metrics]
 
     except Exception as e:
         print(f"ERROR: Could not get metric(s): {args.metrics}")
@@ -824,31 +872,13 @@ def classification(args):
             for key, value in valid_logs.items():
                 valid_writer.add_scalar(key, value, global_step=e_idx)
 
-            # Visualize a validation sample on tensorboard
-            n = np.random.choice(len(valid_dataset))
-            # Get the image original image without preprocessing
-            image_vis = valid_dataset_vis[n][0].numpy()
-            # Get the expected input for model
-            image, gt_mask = valid_dataset[n]
-            gt_mask = gt_mask.squeeze().numpy()
-            x_tensor = image.to(device).unsqueeze(0)
-            # Make prediction
-            pr_mask = model.predict(x_tensor)
-            pr_mask = (pr_mask.squeeze().cpu().numpy().round())
-            pr_mask = np.argmax(pr_mask, axis=0)
-
-            # Visualize the colorized results locally
+            # Plot validation samples
             save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
-
-            visualize(save_path=save_path,
-                      save_figure=True,
-                      image=image_vis,
-                      ground_truth_mask=colorize_mask(gt_mask, class_ids, class_colors),
-                      predicted_mask=colorize_mask(pr_mask, class_ids, class_colors))
-
-            figure = np.array(Image.open(save_path))
+            figure = plot_samples(model, valid_loader)
+            figure.savefig(save_path)
 
             # Log the visualization to TensorBoard
+            figure = np.array(Image.open(save_path))
             valid_writer.add_image(f'Valid_Results', figure, dataformats="HWC", global_step=e_idx)
 
             # Get the loss values
@@ -894,7 +924,6 @@ def classification(args):
         print("NOTE: Exiting training loop")
 
     except Exception as e:
-
         print(f"ERROR: There was an issue with training!\n{e}")
 
         if 'CUDA out of memory' in str(e):
@@ -922,9 +951,6 @@ def classification(args):
     # Evaluate model on test set
     # ------------------------------------------------------------------------------------------------------------------
 
-    # Open an image using PIL to get the original dimensions
-    original_width, original_height = Image.open(test_df.loc[0, 'Image Path']).size
-
     # Create test dataset
     test_dataset = Dataset(
         test_df,
@@ -934,7 +960,7 @@ def classification(args):
     )
 
     # Create test dataloader
-    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     # Evaluate on the test set
     test_epoch = ValidEpoch(
@@ -963,11 +989,8 @@ def classification(args):
             test_writer.add_scalar(key, value, global_step=best_epoch)
 
     except Exception as e:
-
-        # Catch the error
         print(f"ERROR: Could not calculate metrics")
 
-        # Likely Memory
         if 'CUDA out of memory' in str(e):
             print(f"WARNING: Not enough GPU memory for the provided parameters")
 
@@ -980,54 +1003,22 @@ def classification(args):
     # Visualize results
     # ------------------------------------------------------------------------------------------------------------------
 
-    # Test dataset without preprocessing
-    test_dataset_vis = Dataset(
-        test_df,
-        class_map=class_map,
-    )
-
     try:
         # Empty cache from testing
         torch.cuda.empty_cache()
 
-        # Loop through some samples
-        for i in range(25):
-            # Get a random sample
-            n = np.random.choice(len(test_dataset))
-            # Get the image original image without preprocessing
-            image_vis = test_dataset_vis[n][0].numpy()
-            # Get the expected input for model
-            image, gt_mask = test_dataset[n]
-            gt_mask = gt_mask.squeeze().numpy()
-            gt_mask = cv2.resize(gt_mask, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
-            gt_mask = colorize_mask(gt_mask, class_ids, class_colors)
-            # Prepare sample
-            x_tensor = image.to(device).unsqueeze(0)
-            # Make prediction
-            pr_mask = model.predict(x_tensor)
-            pr_mask = (pr_mask.squeeze().cpu().numpy().round())
-            pr_mask = np.argmax(pr_mask, axis=0)
-            pr_mask = cv2.resize(pr_mask, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
-            pr_mask = colorize_mask(pr_mask, class_ids, class_colors)
+        # Visualize the colorized results locally
+        save_path = f'{tensorboard_dir}test\\TestResults.png'
+        figure = plot_samples(model, test_loader)
+        figure.savefig(save_path)
 
-            # Visualize the colorized results locally
-            save_path = f'{tensorboard_dir}test\\TestResult_{i}.png'
-
-            visualize(save_path=save_path,
-                      save_figure=True,
-                      image=image_vis,
-                      ground_truth_mask=gt_mask,
-                      predicted_mask=pr_mask)
-
-            # Log the visualization to TensorBoard
-            test_writer.add_image(f'Test_Results', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+        # Log the visualization to TensorBoard
+        figure = np.array(Image.open(save_path))
+        test_writer.add_image(f'Test_Results', figure, dataformats="HWC", global_step=i)
 
     except Exception as e:
-
-        # Catch the error
         print(f"ERROR: Could not make predictions")
 
-        # Likely Memory
         if 'CUDA out of memory' in str(e):
             print(f"WARNING: Not enough GPU memory for the provided parameters")
 
@@ -1060,23 +1051,26 @@ def main():
     parser.add_argument('--patches', required=True, nargs="+",
                         help='The path to the patch labels csv file output the Patches tool')
 
-    parser.add_argument('--encoder_name', type=str, default='resnet18',
+    parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
-    parser.add_argument('--loss_function', type=str, default='categorical_crossentropy',
+    parser.add_argument('--freeze_encoder', action='store_true',
+                        help='Train only the final layer of the model')
+
+    parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
                         help='The loss function to use to train the model')
 
     parser.add_argument('--weighted_loss', type=bool, default=True,
                         help='Use a weighted loss function; good for imbalanced datasets')
 
-    parser.add_argument('--metrics', required=True, nargs="+",
+    parser.add_argument('--metrics', nargs="+", default=[],
                         help='The metrics used to evaluate the model (default is all applicable)')
 
-    parser.add_argument('--optimizer', required=True, default="Adam",
+    parser.add_argument('--optimizer', default="Adam",
                         help='Optimizer for training the model')
 
     parser.add_argument('--learning_rate', type=float, default=0.0005,
-                        help='Starting learning rate')
+                        help='Initial learning rate')
 
     parser.add_argument('--augment_data', action='store_true',
                         help='Apply affine augmentations to training data')
@@ -1084,7 +1078,7 @@ def main():
     parser.add_argument('--dropout_rate', type=float, default=0.5,
                         help='Amount of dropout in model (augmentation)')
 
-    parser.add_argument('--num_epochs', type=int, default=25,
+    parser.add_argument('--num_epochs', type=int, default=5,
                         help='Starting learning rate')
 
     parser.add_argument('--batch_size', type=int, default=128,

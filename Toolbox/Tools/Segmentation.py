@@ -791,16 +791,14 @@ def segmentation(args):
 
             # Visualize the colorized results locally
             save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
-
             visualize(save_path=save_path,
                       save_figure=True,
                       image=image_vis,
                       ground_truth_mask=colorize_mask(gt_mask, class_ids, class_colors),
                       predicted_mask=colorize_mask(pr_mask, class_ids, class_colors))
 
-            figure = np.array(Image.open(save_path))
-
             # Log the visualization to TensorBoard
+            figure = np.array(Image.open(save_path))
             valid_writer.add_image(f'Valid_Results', figure, dataformats="HWC", global_step=e_idx)
 
             # Get the loss values
