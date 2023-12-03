@@ -10,18 +10,18 @@ import pandas as pd
 from PIL import Image
 from skimage.io import imread
 
-import tensorflow as tf
 from tensorboard.plugins import projector as P
 
-keras = tf.keras
-from keras.models import load_model
+import torch
+import torchvision
+
+import segmentation_models_pytorch as smp
 
 from Common import get_now
 from Common import progress_printer
 
-from Classification import precision
-from Classification import recall
-from Classification import f1_score
+from Classification import get_preprocessing
+from Classification import get_validation_augmentation
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -145,13 +145,13 @@ def projector(args):
     print("Projector")
     print("###############################################\n")
 
-    # Check that the user has GPU available
-    if tf.config.list_physical_devices('GPU'):
-        print("NOTE: Found GPU")
-        gpus = tf.config.list_physical_devices(device_type='GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-    else:
-        print("WARNING: No GPU found; defaulting to CPU")
+    # Check for CUDA
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+
+    # Whether to run on GPU or CPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # ---------------------------------------------------------------------------------------
     # If there's an existing project
@@ -161,10 +161,10 @@ def projector(args):
                 print("NOTE: Opening existing project")
                 activate_tensorboard(args.project_folder)
             else:
-                print("ERROR: Project file provided does not exist, check provided input")
-            raise Exception
+                raise Exception
+
         except Exception as e:
-            sys.exit(1)
+            raise Exception("ERROR: Project file provided does not exist, check provided input")
 
     # Source directory setup
     logs_dir = f"{args.output_dir}\\projector\\{get_now()}"
@@ -186,18 +186,25 @@ def projector(args):
     # Model Weights
     if os.path.exists(args.model):
         try:
-            # Load the model with custom metrics
-            custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
-            model = load_model(args.model, custom_objects=custom_objects)
-            feature_extractor = model.layers[0]
-            print(f"NOTE: Loaded model {args.model}")
+            # Load into the model
+            model = torch.load(args.model)
+            model_name = "-".join(model.name.split("-")[1:])
+            print(f"NOTE: Loaded weights {model.name}")
+
+            # Get the preprocessing function that was used during training
+            preprocessing_fn = smp.encoders.get_preprocessing_fn(model_name, 'imagenet')
+
+            # Convert patches to PyTorch tensor with validation augmentation and preprocessing
+            validation_augmentation = get_validation_augmentation(height=224, width=224)
+            preprocessing = get_preprocessing(preprocessing_fn=preprocessing_fn)
+
+            # Set the model to evaluation mode
+            model.eval()
 
         except Exception as e:
-            print(f"ERROR: There was an issue loading the model\n{e}")
-            sys.exit(1)
+            raise Exception(f"ERROR: There was an issue loading the model\n{e}")
     else:
-        print("ERROR: Model provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Model provided doesn't exist.")
 
     # Loop through each of the images, extract features from associated patches
     patches_sorted = []
@@ -213,8 +220,14 @@ def projector(args):
         labels = current_patches['Label'].values.tolist()
         # Get the patch arrays
         patches = load_patches(current_patches['Path'].values.tolist())
-        # Get the features for patches
-        features = feature_extractor.predict(np.stack(patches), verbose=0)
+        patches = np.stack(patches)
+        # Convert to tensors
+        patches_tensor = torch.stack([torch.Tensor(preprocessing(validation_augmentation(patch))) for patch in patches])
+        patches_tensor = patches_tensor.to(device)
+
+        # Extract features
+        with torch.no_grad():
+            features = model.encoder(patches_tensor)[-1]
 
         # Store the path to patches, labels, and features
         patches_sorted.extend(patches)

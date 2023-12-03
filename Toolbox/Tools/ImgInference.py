@@ -110,6 +110,13 @@ def image_inference(args):
             # Get the preprocessing function that was used during training
             preprocessing_fn = smp.encoders.get_preprocessing_fn(model_name, 'imagenet')
 
+            # Convert patches to PyTorch tensor with validation augmentation and preprocessing
+            validation_augmentation = get_validation_augmentation(height=224, width=224)
+            preprocessing = get_preprocessing(preprocessing_fn=preprocessing_fn)
+
+            # Set the model to evaluation mode
+            model.eval()
+
         except Exception as e:
             print(f"ERROR: There was an issue loading the model\n{e}")
             sys.exit(1)
@@ -166,15 +173,8 @@ def image_inference(args):
         # Convert to numpy array
         patches = np.stack(patches)
 
-        # Convert patches to PyTorch tensor with validation augmentation and preprocessing
-        validation_augmentation = get_validation_augmentation(height=224, width=224)
-        preprocessing = get_preprocessing(preprocessing_fn=preprocessing_fn)
-
         patches_tensor = torch.stack([torch.Tensor(preprocessing(validation_augmentation(patch))) for patch in patches])
         patches_tensor = patches_tensor.to(device)
-
-        # Set the model to evaluation mode
-        model.eval()
 
         # ----------------------------------------------------------------
         # Inference
