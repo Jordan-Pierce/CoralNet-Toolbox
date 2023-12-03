@@ -104,7 +104,7 @@ def img_inference_page():
 
     """
     gr.Info("Opening Image Inference tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\img_inference.py"])
+    subprocess.run(["python", f"{PAGES_DIR}\\img_inference.py"])
 
 
 def classifier_demo_page():

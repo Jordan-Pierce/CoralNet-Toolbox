@@ -543,9 +543,14 @@ def classification(args):
                             num_classes=num_classes,
                             dropout_rate=args.dropout_rate)
 
-        if args.freeze_encoder:
-            print(f"NOTE: Freezing encoder weights")
-            for param in model.encoder.parameters():
+        # Freezing percentage of the encoder
+        num_params = len(list(model.encoder.parameters()))
+        freeze_params = int(num_params * args.freeze_encoder)
+
+        # Give users the ability to freeze N percent of the encoder
+        print(f"NOTE: Freezing {args.freeze_encoder}% of encoder weights")
+        for idx, param in enumerate(model.encoder.parameters()):
+            if idx < freeze_params:
                 param.requires_grad = False
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
@@ -1054,8 +1059,8 @@ def main():
     parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
-    parser.add_argument('--freeze_encoder', action='store_true',
-                        help='Train only the final layer of the model')
+    parser.add_argument('--freeze_encoder', type=float,
+                        help='Freeze N% of the encoder [0 - 1]')
 
     parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
                         help='The loss function to use to train the model')

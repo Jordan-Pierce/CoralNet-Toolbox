@@ -10,18 +10,19 @@ import numpy as np
 import pandas as pd
 from skimage.io import imread
 
-import tensorflow as tf
+import torch
+import torchvision
 
-keras = tf.keras
-from keras.models import load_model
+import segmentation_models_pytorch as smp
 
 from Common import get_now
 from Common import IMG_FORMATS
+from Common import progress_printer
 
 from Patches import crop_patch
-from Classification import precision
-from Classification import recall
-from Classification import f1_score
+
+from Classification import get_preprocessing
+from Classification import get_validation_augmentation
 
 
 warnings.filterwarnings("ignore")
@@ -47,16 +48,16 @@ def image_inference(args):
 
     """
     print("\n###############################################")
-    print("Inference")
+    print("Classification Inference")
     print("###############################################\n")
 
-    # Check that the user has GPU available
-    if tf.config.list_physical_devices('GPU'):
-        print("NOTE: Found GPU")
-        gpus = tf.config.list_physical_devices(device_type='GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-    else:
-        print("WARNING: No GPU found; defaulting to CPU")
+    # Check for CUDA
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+
+    # Whether to run on GPU or CPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Points Dataframe
     if os.path.exists(args.points):
@@ -100,10 +101,14 @@ def image_inference(args):
     # Model Weights
     if os.path.exists(args.model):
         try:
-            # Load the model with custom metrics
-            custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
-            model = load_model(args.model, custom_objects=custom_objects)
-            print(f"NOTE: Loaded model {args.model}")
+
+            # Load into the model
+            model = torch.load(args.model)
+            model_name = "-".join(model.name.split("-")[1:])
+            print(f"NOTE: Loaded weights {model.name}")
+
+            # Get the preprocessing function that was used during training
+            preprocessing_fn = smp.encoders.get_preprocessing_fn(model_name, 'imagenet')
 
         except Exception as e:
             print(f"ERROR: There was an issue loading the model\n{e}")
@@ -129,7 +134,7 @@ def image_inference(args):
     # ----------------------------------------------------------------
 
     # Loop through each of the images
-    for n_idx, image_file in enumerate(image_files):
+    for n_idx, image_file in progress_printer(enumerate(image_files)):
 
         # Get the image name
         image_name = os.path.basename(image_file)
@@ -161,14 +166,30 @@ def image_inference(args):
         # Convert to numpy array
         patches = np.stack(patches)
 
+        # Convert patches to PyTorch tensor with validation augmentation and preprocessing
+        validation_augmentation = get_validation_augmentation(height=224, width=224)
+        preprocessing = get_preprocessing(preprocessing_fn=preprocessing_fn)
+
+        patches_tensor = torch.stack([torch.Tensor(preprocessing(validation_augmentation(patch))) for patch in patches])
+        patches_tensor = patches_tensor.to(device)
+
+        # Set the model to evaluation mode
+        model.eval()
+
         # ----------------------------------------------------------------
         # Inference
         # ----------------------------------------------------------------
 
         # Model to make predictions
         print(f"NOTE: Making predictions on patches for {image_name}")
-        probabilities = model.predict(patches, verbose=0)
-        predictions = np.argmax(probabilities, axis=1)
+        with torch.no_grad():
+            probabilities = model(patches_tensor)
+
+        # Get predicted class indices
+        _, predictions = torch.max(probabilities, 1)
+
+        # Convert PyTorch tensor to numpy array
+        predictions = predictions.cpu().numpy()
         class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
 
         # Make a copy
@@ -177,8 +198,7 @@ def image_inference(args):
         N = probabilities.shape[1]
         sorted_prob_indices = np.argsort(probabilities, axis=1)[:, ::-1]
         top_N_confidences = probabilities[np.arange(probabilities.shape[0])[:, np.newaxis], sorted_prob_indices[:, :N]]
-        top_N_suggestions = np.array(
-            [[class_map[str(idx)] for idx in indices] for indices in sorted_prob_indices[:, :N]])
+        top_N_suggestions = np.array([[class_map[str(i)] for i in indices] for indices in sorted_prob_indices[:, :N]])
 
         # CoralNet format only goes to the first 5 choices
         num_classes = model.layers[-1].output_shape[-1]
@@ -218,7 +238,7 @@ def main():
                         help="Path to the points file containing 'Name', 'Row', and 'Column' information.")
 
     parser.add_argument("--model", type=str, required=True,
-                        help="Path to Best Model and Weights File (.h5)")
+                        help="Path to Best Model and Weights File (.pth)")
 
     parser.add_argument("--class_map", type=str, required=True,
                         help="Path to the model's Class Map JSON file")

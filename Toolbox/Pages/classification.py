@@ -4,7 +4,10 @@ from Toolbox.Pages.common import *
 
 from Toolbox.Tools.Classification import classification
 from Toolbox.Tools.Classification import get_classifier_losses
+from Toolbox.Tools.Classification import get_classifier_metrics
 from Toolbox.Tools.Classification import get_classifier_encoders
+from Toolbox.Tools.Classification import get_classifier_optimizers
+
 
 EXIT_APP = False
 
@@ -13,8 +16,8 @@ EXIT_APP = False
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(patches, output_dir, encoder_name, loss_function, weighted_loss, augment_data, dropout_rate,
-                    num_epochs, batch_size, learning_rate, tensorboard):
+def module_callback(patches, encoder_name, freeze_encoder, loss_function, weighted_loss, metrics, optimizer,
+                    learning_rate, augment_data, dropout_rate, num_epochs, batch_size, tensorboard, output_dir):
     """
 
     """
@@ -26,16 +29,19 @@ def module_callback(patches, output_dir, encoder_name, loss_function, weighted_l
 
     args = argparse.Namespace(
         patches=patches,
-        output_dir=output_dir,
         encoder_name=encoder_name,
+        freeze_encoder=freeze_encoder,
         loss_function=loss_function,
         weighted_loss=weighted_loss,
+        metrics=metrics,
+        optimizer=optimizer,
+        learning_rate=learning_rate,
         augment_data=augment_data,
         dropout_rate=dropout_rate,
         num_epochs=num_epochs,
         batch_size=batch_size,
-        learning_rate=learning_rate,
         tensorboard=tensorboard,
+        output_dir=output_dir,
     )
 
     try:
@@ -82,23 +88,25 @@ def create_interface():
         file_button.click(choose_files, outputs=patches, show_progress="hidden")
 
         with gr.Row():
-            encoder_name = gr.Dropdown(label="Encoder", multiselect=False, choices=get_classifier_encoders())
+            encoder_name = gr.Dropdown(label="Encoder", multiselect=False, allow_custom_value=False,
+                                       choices=get_classifier_encoders())
 
-            freeze_encoder = gr.Dropdown(label="Freeze Encoder", multiselect=False, allow_custom_value=False,
-                                         choices=[True, False])
+            freeze_encoder = gr.Slider(0.0, label="Freeze Encoder", minimum=0.0, maximum=1.0, step=0.01)
 
         with gr.Row():
             optimizer = gr.Dropdown(label="Optimizer", multiselect=False, allow_custom_value=False,
-                                    choices=[])
+                                    choices=get_classifier_optimizers())
 
             learning_rate = gr.Slider(0.0001, label="Initial Learning Rate",
                                       minimum=0.00001, maximum=1, step=0.0001)
 
         with gr.Row():
 
-            metrics = gr.Dropdown(label="Metrics", multiselect=True, choices=[])
+            metrics = gr.Dropdown(label="Metrics", multiselect=True, allow_custom_value=False,
+                                  choices=get_classifier_metrics())
 
-            loss_function = gr.Dropdown(label="Loss Function", multiselect=False, choices=get_classifier_losses())
+            loss_function = gr.Dropdown(label="Loss Function", multiselect=False, allow_custom_value=False,
+                                        choices=get_classifier_losses())
 
             weighted_loss = gr.Dropdown(label="Weighted Loss", multiselect=False, allow_custom_value=False,
                                         choices=[True, False])
@@ -126,16 +134,19 @@ def create_interface():
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
                                    [patches,
-                                    output_dir,
                                     encoder_name,
+                                    freeze_encoder,
                                     loss_function,
                                     weighted_loss,
+                                    metrics,
+                                    optimizer,
+                                    learning_rate,
                                     augment_data,
                                     dropout_rate,
                                     num_epochs,
                                     batch_size,
-                                    learning_rate,
-                                    tensorboard])
+                                    tensorboard,
+                                    output_dir])
 
             stop_button = gr.Button(value="Stop")
             stop = stop_button.click(exit_interface)

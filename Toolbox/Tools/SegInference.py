@@ -90,7 +90,7 @@ def segmentation_inference(args):
 
     """
     print("\n###############################################")
-    print("Semantic Segmentation")
+    print("Semantic Segmentation Inference")
     print("###############################################\n")
 
     # Check for CUDA

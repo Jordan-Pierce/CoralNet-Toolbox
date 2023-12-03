@@ -14,7 +14,6 @@ from skimage.io import imsave
 from skimage.transform import resize
 
 from Common import get_now
-from Common import progress_printer
 
 warnings.filterwarnings("ignore")
 
@@ -172,9 +171,6 @@ def patches(args):
     # All patches
     patches = []
 
-    # For gooey
-    prg_total = len(sub_df)
-
     # Using ThreadPoolExecutor to process each image concurrently
     with ThreadPoolExecutor() as executor:
         future_to_patches = {
@@ -182,7 +178,7 @@ def patches(args):
             for image_name in image_names
         }
 
-        for future in progress_printer(concurrent.futures.as_completed(future_to_patches)):
+        for future in concurrent.futures.as_completed(future_to_patches):
             image_name = future_to_patches[future]
             patches.extend(future.result())
 
