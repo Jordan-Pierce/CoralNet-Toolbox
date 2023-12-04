@@ -99,20 +99,20 @@ def classification_page():
     subprocess.run(["python", f"{PAGES_DIR}\\classification.py"])
 
 
-def img_inference_page():
+def classification_inference_page():
     """
 
     """
-    gr.Info("Opening Image Inference tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\img_inference.py"])
+    gr.Info("Opening Classification Inference tool...")
+    subprocess.run(["python", f"{PAGES_DIR}\\classification_inference.py"])
 
 
-def classifier_demo_page():
+def classification_demo_page():
     """
 
     """
-    gr.Info("Opening Classifier Demo tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\classifier_demo.py"])
+    gr.Info("Opening Classification Demo tool...")
+    subprocess.run(["python", f"{PAGES_DIR}\\classification_demo.py"])
 
 
 def sam_page():
@@ -139,12 +139,12 @@ def segmentation_page():
     subprocess.run(["python", f"{PAGES_DIR}\\segmentation.py"])
 
 
-def seg_inference_page():
+def segmentation_inference_page():
     """
 
     """
     gr.Info("Opening Segmentation Inference tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\seg_inference.py"])
+    subprocess.run(["python", f"{PAGES_DIR}\\segmentation_inference.py"])
 
 
 def segmentation_demo_page():
@@ -163,12 +163,12 @@ def sfm_page():
     subprocess.run(["python", f"{PAGES_DIR}\\sfm.py"])
 
 
-def seg_3d_page():
+def segmentation_3d_page():
     """
 
     """
     gr.Info("Opening Segmentation 3D tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\seg_3d.py"])
+    subprocess.run(["python", f"{PAGES_DIR}\\segmentation_3d.py"])
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -241,12 +241,12 @@ def create_interface():
             classification_button = gr.Button("Train 👨‍💻")
             classification_process = classification_button.click(classification_page)
 
-            img_inference_button = gr.Button("Predict 🤖️")
-            img_inference_button = img_inference_button.click(img_inference_page)
+            classification_inference_button = gr.Button("Predict 🤖️")
+            classification_inference_process = classification_inference_button.click(classification_inference_page)
 
         with gr.Row():
-            classifier_demo_button = gr.Button("Demo 🧙")
-            classifier_demo_process = classifier_demo_button.click(classifier_demo_page)
+            classification_demo_button = gr.Button("Demo 🧙")
+            classification_demo_process = classification_demo_button.click(classification_demo_page)
 
         gr.Markdown("## Segment Anything Model 🛠️ <p style='font-size:14px'>"
                     "\nUse these tools to automatically create segmented images</p>")
@@ -263,8 +263,8 @@ def create_interface():
             segmentation_button = gr.Button("Train 👨‍💻")
             segmentation_process = segmentation_button.click(segmentation_page)
 
-            seg_inference_button = gr.Button("Predict 🤖️")
-            seg_inference_process = seg_inference_button.click(seg_inference_page)
+            segmentation_inference_button = gr.Button("Predict 🤖️")
+            segmentation_inference_process = segmentation_inference_button.click(segmentation_inference_page)
 
         with gr.Row():
             segmentation_demo_button = gr.Button("Demo 🧙")
@@ -276,8 +276,8 @@ def create_interface():
             sfm_button = gr.Button("SfM (Metashape) 🧊")
             sfm_process = sfm_button.click(sfm_page)
 
-            seg_3d_button = gr.Button("3D Semantic Segmentation 🤖️")
-            seg_3d_process = seg_3d_button.click(seg_3d_page)
+            segmentation_3d_button = gr.Button("3D Semantic Segmentation 🤖️")
+            segmentation_3d_process = segmentation_3d_button.click(segmentation_3d_page)
 
         gr.Markdown("## Shutdown 🥺 <p style='font-size:14px'>"
                     "\nTo properly close the application, press the button below</p>")

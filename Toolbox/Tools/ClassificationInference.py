@@ -32,7 +32,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
 
-def image_inference(args):
+def classification_inference(args):
     """
 
     """
@@ -67,8 +67,7 @@ def image_inference(args):
         else:
             raise Exception(f"ERROR: Issue with 'Name' column; check input provided")
     else:
-        print("ERROR: Points provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Points provided doesn't exist.")
 
     # Image files
     if os.path.exists(args.images):
@@ -84,8 +83,7 @@ def image_inference(args):
         else:
             print(f"NOTE: Found {len(image_files)} images in directory provided")
     else:
-        print("ERROR: Directory provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Directory provided doesn't exist.")
 
     # Model Weights
     if os.path.exists(args.model):
@@ -106,11 +104,10 @@ def image_inference(args):
             model.eval()
 
         except Exception as e:
-            print(f"ERROR: There was an issue loading the model\n{e}")
-            sys.exit(1)
+            raise Exception(f"ERROR: There was an issue loading the model\n{e}")
+
     else:
-        print("ERROR: Model provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Model provided doesn't exist.")
 
     # Class map
     if os.path.exists(args.class_map):
@@ -121,8 +118,7 @@ def image_inference(args):
         num_classes = len(class_map)
 
     else:
-        print(f"ERROR: Class Map file provided doesn't exist.")
-        sys.exit()
+        raise Exception(f"ERROR: Class Map file provided doesn't exist.")
 
     # Output
     output_dir = f"{args.output_dir}\\predictions\\"
@@ -242,7 +238,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        image_inference(args)
+        classification_inference(args)
         print("Done.\n")
 
     except Exception as e:
