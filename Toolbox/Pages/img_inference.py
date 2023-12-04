@@ -65,24 +65,27 @@ def create_interface():
         # Title
         gr.Markdown("# Predict 🤖️")
 
-        # Browse button
-        images = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
-        dir_button = gr.Button("Browse Directory")
-        dir_button.click(choose_directory, outputs=images, show_progress="hidden")
+        with gr.Group("Data"):
+            #
+            images = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
+            dir_button = gr.Button("Browse Directory")
+            dir_button.click(choose_directory, outputs=images, show_progress="hidden")
 
-        points = gr.Textbox(label="Selected Annotation File")
-        file_button = gr.Button("Browse Files")
-        file_button.click(choose_file, outputs=points, show_progress="hidden")
+            points = gr.Textbox(label="Selected Points File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=points, show_progress="hidden")
 
-        model = gr.Textbox(label="Selected Model File")
-        file_button = gr.Button("Browse Files")
-        file_button.click(choose_file, outputs=model, show_progress="hidden")
+            patch_size = gr.Number(112, label="Patch Size", precision=0)
 
-        class_map = gr.Textbox(label="Selected Class Map File")
-        file_button = gr.Button("Browse Files")
-        file_button.click(choose_file, outputs=class_map, show_progress="hidden")
+        with gr.Group("Model"):
+            #
+            model = gr.Textbox(label="Selected Model File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=model, show_progress="hidden")
 
-        patch_size = gr.Number(112, label="Patch Size", precision=0)
+            class_map = gr.Textbox(label="Selected Class Map File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=class_map, show_progress="hidden")
 
         # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")

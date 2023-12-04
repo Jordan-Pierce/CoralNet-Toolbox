@@ -243,6 +243,9 @@ class CustomModel(torch.nn.Module):
     def __init__(self, encoder_name, weights, num_classes, dropout_rate):
         super(CustomModel, self).__init__()
 
+        # Name
+        self.name = encoder_name
+
         # Pre-trained encoder
         self.encoder = smp.encoders.get_encoder(name=encoder_name,
                                                 weights=weights)
@@ -253,6 +256,10 @@ class CustomModel(torch.nn.Module):
 
         # Dropout layer
         self.dropout = torch.nn.Dropout(dropout_rate)
+
+    # Add a method to get the name attribute
+    def get_name(self):
+        return self.name
 
     def forward(self, x):
         # Forward pass through the encoder

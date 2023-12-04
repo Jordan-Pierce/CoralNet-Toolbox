@@ -21,7 +21,6 @@ from Common import progress_printer
 
 from Patches import crop_patch
 
-from Classification import get_preprocessing
 from Classification import get_validation_augmentation
 
 
@@ -32,16 +31,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
-
-def get_class_map(path):
-    """
-
-    """
-    with open(path, 'r') as json_file:
-        class_mapping_dict = json.load(json_file)
-
-    return class_mapping_dict
-
 
 def image_inference(args):
     """
@@ -104,7 +93,7 @@ def image_inference(args):
 
             # Load into the model
             model = torch.load(args.model)
-            model_name = "-".join(model.name.split("-")[1:])
+            model_name = model.name
             print(f"NOTE: Loaded weights {model.name}")
 
             # Get the preprocessing function that was used during training
@@ -112,7 +101,6 @@ def image_inference(args):
 
             # Convert patches to PyTorch tensor with validation augmentation and preprocessing
             validation_augmentation = get_validation_augmentation(height=224, width=224)
-            preprocessing = get_preprocessing(preprocessing_fn=preprocessing_fn)
 
             # Set the model to evaluation mode
             model.eval()
@@ -126,7 +114,12 @@ def image_inference(args):
 
     # Class map
     if os.path.exists(args.class_map):
-        class_map = get_class_map(args.class_map)
+        with open(args.class_map, 'r') as json_file:
+            class_mapping_dict = json.load(json_file)
+
+        class_map = list(class_mapping_dict.keys())
+        num_classes = len(class_map)
+
     else:
         print(f"ERROR: Class Map file provided doesn't exist.")
         sys.exit()
@@ -157,7 +150,7 @@ def image_inference(args):
         patches = []
 
         # Create patches for this image
-        print(f"NOTE: Cropping patches ({patch_size} x {patch_size}) for {image_name}")
+        print(f"\nNOTE: Cropping patches ({patch_size} x {patch_size}) for {image_name}")
 
         # Get the current image points
         image_points = points[points['Name'] == image_name]
@@ -172,8 +165,8 @@ def image_inference(args):
 
         # Convert to numpy array
         patches = np.stack(patches)
-
-        patches_tensor = torch.stack([torch.Tensor(preprocessing(validation_augmentation(patch))) for patch in patches])
+        patches = [torch.Tensor(preprocessing_fn(validation_augmentation(image=patch)['image'])) for patch in patches]
+        patches_tensor = torch.stack(patches).permute(0, 3, 1, 2)
         patches_tensor = patches_tensor.to(device)
 
         # ----------------------------------------------------------------
@@ -185,12 +178,11 @@ def image_inference(args):
         with torch.no_grad():
             probabilities = model(patches_tensor)
 
-        # Get predicted class indices
-        _, predictions = torch.max(probabilities, 1)
-
         # Convert PyTorch tensor to numpy array
-        predictions = predictions.cpu().numpy()
-        class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
+        probabilities = probabilities.cpu().numpy()
+        # Get predicted class indices
+        predictions = np.argmax(probabilities, axis=1)
+        class_predictions = np.array([class_map[v] for v in predictions]).astype(str)
 
         # Make a copy
         output = image_points.copy()
@@ -198,11 +190,9 @@ def image_inference(args):
         N = probabilities.shape[1]
         sorted_prob_indices = np.argsort(probabilities, axis=1)[:, ::-1]
         top_N_confidences = probabilities[np.arange(probabilities.shape[0])[:, np.newaxis], sorted_prob_indices[:, :N]]
-        top_N_suggestions = np.array([[class_map[str(i)] for i in indices] for indices in sorted_prob_indices[:, :N]])
+        top_N_suggestions = np.array([[class_map[i] for i in indices] for indices in sorted_prob_indices[:, :N]])
 
         # CoralNet format only goes to the first 5 choices
-        num_classes = model.layers[-1].output_shape[-1]
-
         if num_classes > 5:
             num_classes = 5
 

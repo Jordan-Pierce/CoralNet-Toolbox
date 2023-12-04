@@ -14,13 +14,13 @@ from tensorboard.plugins import projector as P
 
 import torch
 import torchvision
+import torch.nn.functional as F
 
 import segmentation_models_pytorch as smp
 
 from Common import get_now
 from Common import progress_printer
 
-from Classification import get_preprocessing
 from Classification import get_validation_augmentation
 
 warnings.filterwarnings("ignore")
@@ -66,7 +66,7 @@ def create_sprite_image(patches, output_path):
 
     print("NOTE: Creating sprites")
 
-    for i in progress_printer(range(len(patches))):
+    for i in range(len(patches)):
         row = i // grid
         col = i % grid
         img = patches[i]
@@ -84,6 +84,8 @@ def write_embeddings(logs_dir, patches, labels, features):
     """
 
     """
+    print("NOTE: Setting up projector")
+
     metadata_file = f"{logs_dir}\\metadata.csv"
     tensor_file = f"{logs_dir}\\features.tsv"
     sprite_file = f"{logs_dir}\\sprite.jpg"
@@ -95,7 +97,7 @@ def write_embeddings(logs_dir, patches, labels, features):
 
     # Write the configs
     with open(os.path.join(logs_dir, tensor_file), "w") as f:
-        for tensor in features:
+        for _, tensor in progress_printer(enumerate(features)):
             f.write("{}\n".format("\t".join(str(x) for x in tensor)))
 
     # Convert list of np arrays to list of Images
@@ -121,9 +123,10 @@ def activate_tensorboard(logs_dir):
     """
     # Activate tensorboard
     print("NOTE: Activating Tensorboard...")
-    print("NOTE: View TensorBoard 2.10.1 at http://localhost:6006/")
     tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
     process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
+    process.wait()
+    print("NOTE: View TensorBoard 2.10.1 at http://localhost:6006/")
 
     try:
         while True:
@@ -188,7 +191,7 @@ def projector(args):
         try:
             # Load into the model
             model = torch.load(args.model)
-            model_name = "-".join(model.name.split("-")[1:])
+            model_name = model.name
             print(f"NOTE: Loaded weights {model.name}")
 
             # Get the preprocessing function that was used during training
@@ -196,7 +199,6 @@ def projector(args):
 
             # Convert patches to PyTorch tensor with validation augmentation and preprocessing
             validation_augmentation = get_validation_augmentation(height=224, width=224)
-            preprocessing = get_preprocessing(preprocessing_fn=preprocessing_fn)
 
             # Set the model to evaluation mode
             model.eval()
@@ -219,15 +221,18 @@ def projector(args):
         # Get the patch labels
         labels = current_patches['Label'].values.tolist()
         # Get the patch arrays
-        patches = load_patches(current_patches['Path'].values.tolist())
-        patches = np.stack(patches)
+        patches = np.stack(load_patches(current_patches['Path'].values.tolist()))
         # Convert to tensors
-        patches_tensor = torch.stack([torch.Tensor(preprocessing(validation_augmentation(patch))) for patch in patches])
+        patches_tensor = [torch.Tensor(preprocessing_fn(validation_augmentation(image=p)['image'])) for p in patches]
+        patches_tensor = torch.stack(patches_tensor).permute(0, 3, 1, 2)
         patches_tensor = patches_tensor.to(device)
 
-        # Extract features
+        # Extract features from the encoder, reshape
         with torch.no_grad():
             features = model.encoder(patches_tensor)[-1]
+            features = F.adaptive_avg_pool2d(features, (1, 1))
+            features = features.view(features.size(0), -1)
+            features = features.cpu().numpy()
 
         # Store the path to patches, labels, and features
         patches_sorted.extend(patches)

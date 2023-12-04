@@ -8,7 +8,6 @@ from Toolbox.Tools.Classification import get_classifier_metrics
 from Toolbox.Tools.Classification import get_classifier_encoders
 from Toolbox.Tools.Classification import get_classifier_optimizers
 
-
 EXIT_APP = False
 
 
@@ -57,6 +56,15 @@ def module_callback(patches, encoder_name, freeze_encoder, loss_function, weight
     sys.stdout = console
 
 
+def tensorboard_iframe():
+    """
+
+    """
+    url = 'http://localhost:6006/#timeseries'
+    iframe = """<iframe src="{}" style="width:100%; height:1000px;"></iframe>""".format(url)
+    return iframe
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Interface
 # ----------------------------------------------------------------------------------------------------------------------
@@ -87,43 +95,44 @@ def create_interface():
         file_button = gr.Button("Browse Files")
         file_button.click(choose_files, outputs=patches, show_progress="hidden")
 
-        with gr.Row():
-            encoder_name = gr.Dropdown(label="Encoder", multiselect=False, allow_custom_value=False,
-                                       choices=get_classifier_encoders())
+        with gr.Group("Training Parameters"):
+            #
+            with gr.Row():
+                encoder_name = gr.Dropdown(label="Encoder", multiselect=False, allow_custom_value=False,
+                                           choices=get_classifier_encoders())
 
-            freeze_encoder = gr.Slider(0.0, label="Freeze Encoder", minimum=0.0, maximum=1.0, step=0.01)
+                freeze_encoder = gr.Slider(0.0, label="Freeze Encoder", minimum=0.0, maximum=1.0, step=0.01)
 
-        with gr.Row():
-            optimizer = gr.Dropdown(label="Optimizer", multiselect=False, allow_custom_value=False,
-                                    choices=get_classifier_optimizers())
+            with gr.Row():
+                optimizer = gr.Dropdown(label="Optimizer", multiselect=False, allow_custom_value=False,
+                                        choices=get_classifier_optimizers())
 
-            learning_rate = gr.Slider(0.0001, label="Initial Learning Rate",
-                                      minimum=0.00001, maximum=1, step=0.0001)
+                learning_rate = gr.Slider(0.0001, label="Initial Learning Rate",
+                                          minimum=0.00001, maximum=1, step=0.0001)
 
-        with gr.Row():
+            with gr.Row():
+                metrics = gr.Dropdown(label="Metrics", multiselect=True, allow_custom_value=False,
+                                      choices=get_classifier_metrics())
 
-            metrics = gr.Dropdown(label="Metrics", multiselect=True, allow_custom_value=False,
-                                  choices=get_classifier_metrics())
+                loss_function = gr.Dropdown(label="Loss Function", multiselect=False, allow_custom_value=False,
+                                            choices=get_classifier_losses())
 
-            loss_function = gr.Dropdown(label="Loss Function", multiselect=False, allow_custom_value=False,
-                                        choices=get_classifier_losses())
+                weighted_loss = gr.Dropdown(label="Weighted Loss", multiselect=False, allow_custom_value=False,
+                                            choices=[True, False])
 
-            weighted_loss = gr.Dropdown(label="Weighted Loss", multiselect=False, allow_custom_value=False,
-                                        choices=[True, False])
+            with gr.Row():
+                augment_data = gr.Dropdown(label="Augment Data", multiselect=False, allow_custom_value=False,
+                                           choices=[True, False])
 
-        with gr.Row():
-            augment_data = gr.Dropdown(label="Augment Data", multiselect=False, allow_custom_value=False,
-                                       choices=[True, False])
+                dropout_rate = gr.Slider(0, label="Dropout Rate", minimum=0, maximum=1, step=0.1)
 
-            dropout_rate = gr.Slider(0, label="Dropout Rate", minimum=0, maximum=1, step=0.1)
+            with gr.Row():
+                num_epochs = gr.Number(25, label="Number of Epochs", precision=0)
 
-        with gr.Row():
-            num_epochs = gr.Number(25, label="Number of Epochs", precision=0)
+                batch_size = gr.Number(128, label="Batch Size (Power of 2 Recommended)", precision=0)
 
-            batch_size = gr.Number(128, label="Batch Size (Power of 2 Recommended)", precision=0)
-
-            tensorboard = gr.Dropdown(label="Tensorboard", multiselect=False, allow_custom_value=False,
-                                      choices=[True, False])
+                tensorboard = gr.Dropdown(label="Tensorboard", multiselect=False, allow_custom_value=False,
+                                          choices=[True, False])
 
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
         dir_button = gr.Button("Browse Directory")
@@ -152,9 +161,15 @@ def create_interface():
             stop = stop_button.click(exit_interface)
 
         with gr.Accordion("Console Logs"):
-            # Add logs
+            # Add to console in page
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
             interface.load(read_logs, None, logs, every=1)
+
+        with gr.Accordion("TensorBoard"):
+            # Display Tensorboard in page
+            tensorboard_button = gr.Button("Show TensorBoard")
+            iframe = gr.HTML(every=0.1)
+            tensorboard_button.click(fn=tensorboard_iframe, outputs=iframe, every=0.1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 

@@ -38,6 +38,15 @@ def module_callback(model, patches, output_dir, project_folder):
     sys.stdout = console
 
 
+def tensorboard_iframe():
+    """
+
+    """
+    url = 'http://localhost:6006/#projector'
+    iframe = """<iframe src="{}" style="width:100%; height:1000px;"></iframe>""".format(url)
+    return iframe
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Interface
 # ----------------------------------------------------------------------------------------------------------------------
@@ -102,6 +111,12 @@ def create_interface():
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
             interface.load(read_logs, None, logs, every=1)
 
+        with gr.Accordion("TensorBoard"):
+            # Display Tensorboard in page
+            tensorboard_button = gr.Button("Show TensorBoard")
+            iframe = gr.HTML(every=0.1)
+            tensorboard_button.click(fn=tensorboard_iframe, outputs=iframe, every=0.1)
+
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
     return interface
@@ -122,5 +137,3 @@ except:
 
 finally:
     Logger(LOG_PATH).reset_logs()
-
-

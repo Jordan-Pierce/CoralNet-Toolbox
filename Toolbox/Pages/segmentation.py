@@ -54,6 +54,15 @@ def module_callback(masks, color_map, encoder_name, decoder_name, metrics, loss_
     sys.stdout = console
 
 
+def tensorboard_iframe():
+    """
+
+    """
+    url = 'http://localhost:6006/#timeseries'
+    iframe = """<iframe src="{}" style="width:100%; height:1000px;"></iframe>""".format(url)
+    return iframe
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Interface
 # ----------------------------------------------------------------------------------------------------------------------
@@ -154,6 +163,12 @@ def create_interface():
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
             interface.load(read_logs, None, logs, every=1)
+
+        with gr.Accordion("TensorBoard"):
+            # Display Tensorboard in page
+            tensorboard_button = gr.Button("Show TensorBoard")
+            iframe = gr.HTML(every=0.1)
+            tensorboard_button.click(fn=tensorboard_iframe, outputs=iframe, every=0.1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 

@@ -131,9 +131,9 @@ def choose_file():
             return str(file_path)
         else:
             root.destroy()
-            return "Invalid file selected"
+            return ""
     else:
-        file_path = "File not selected"
+        file_path = ""
         root.destroy()
         return file_path
 
@@ -154,7 +154,7 @@ def choose_files():
         return valid_file_paths
     else:
         root.destroy()
-        return []
+        return ""
 
 
 def choose_directory():
@@ -172,8 +172,8 @@ def choose_directory():
             return str(dir_path)
         else:
             root.destroy()
-            return "Invalid directory selected"
+            return ""
     else:
-        dir_path = "Folder not selected"
+        dir_path = ""
         root.destroy()
         return str(dir_path)
