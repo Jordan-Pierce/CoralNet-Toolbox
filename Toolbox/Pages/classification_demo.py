@@ -1,7 +1,6 @@
 import gradio as gr
 
 import json
-import secrets
 import numpy as np
 
 import torch
@@ -14,8 +13,6 @@ from Toolbox.Tools.Patches import crop_patch
 from Toolbox.Tools.Classification import get_validation_augmentation
 
 MODEL = None
-COLOR_MAP = None
-
 EXIT_APP = False
 
 
@@ -31,7 +28,7 @@ def load_model(model_path):
         try:
             # Load into the model
             model = torch.load(model_path)
-            print(f"NOTE: Loaded weights {model.name}")
+            gr.Info(f"Loaded weights for {model.name}")
 
             # Set the model to evaluation mode
             model.eval()
@@ -54,23 +51,9 @@ def get_class_map(class_map_path):
             class_mapping_dict = json.load(json_file)
 
         class_map = list(class_mapping_dict.keys())
-        num_classes = len(class_map)
 
     else:
         raise Exception(f"ERROR: Class Map file provided doesn't exist.")
-
-    global COLOR_MAP
-
-    # Create color map for class categories
-    if not COLOR_MAP:
-
-        COLOR_MAP = {}
-
-        # Generate random RGB values
-        for idx in range(num_classes):
-            rgb_values = [secrets.randbelow(256) for _ in range(3)]
-            color = "#{:02x}{:02x}{:02x}".format(*rgb_values)
-            COLOR_MAP[class_map[idx]] = color
 
     return class_map
 
@@ -111,6 +94,9 @@ def inference(patches, class_map):
     """
     global MODEL
 
+    # Empty cache
+    torch.cuda.empty_cache()
+
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -141,7 +127,7 @@ def create_annotations(image, x, y, class_predictions):
 
     """
     # Buffer around predicted points
-    radii = 20
+    radii = 10
 
     # Create a dictionary to store masks for each class
     class_masks = {label: np.zeros_like(image[:, :, 0]) for label in set(class_predictions)}
@@ -181,15 +167,21 @@ def pipeline(model_path, class_map_path, image, sample_method, num_points, patch
     class_map = get_class_map(class_map_path)
 
     # Get the data samples
+    gr.Info("Preparing samples")
     x, y, patches = prepare_data(image, patch_size, sample_method, num_points)
 
-    # Perform inference
-    probabilities, class_predictions = inference(patches, class_map)
+    try:
+        # Perform inference
+        gr.Info("Making predictions")
+        probabilities, class_predictions = inference(patches, class_map)
 
-    # Create the annotated image
-    annotated_image = create_annotations(image, x, y, class_predictions)
+        # Create the annotated image
+        annotated_image = create_annotations(image, x, y, class_predictions)
 
-    return annotated_image
+        return annotated_image
+
+    except:
+        gr.Warning("GPU out of memory, try reducing patches and points")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -239,8 +231,7 @@ def create_interface():
         with gr.Row():
             #
             image = gr.Image(label="Input Image", type='numpy')
-            pred = gr.AnnotatedImage(label="Prediction",
-                                     color_map=COLOR_MAP)
+            pred = gr.AnnotatedImage(label="Prediction")
 
         with gr.Row():
             # Run button (callback)
