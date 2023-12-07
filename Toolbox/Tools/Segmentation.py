@@ -30,9 +30,7 @@ from segmentation_models_pytorch.utils.meter import AverageValueMeter
 
 import albumentations as albu
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 
 torch.cuda.empty_cache()
 
@@ -201,9 +199,9 @@ class Dataset(BaseDataset):
             augmentation=None,
             preprocessing=None,
     ):
-        assert 'Name' in dataframe.columns, log(f"ERROR: 'Name' not found in mask file")
-        assert 'Semantic Path' in dataframe.columns, log(f"ERROR: 'Name' not found in mask file")
-        assert 'Image Path' in dataframe.columns, log(f"ERROR: 'Semantic Path' not found in mask file")
+        assert 'Name' in dataframe.columns, print(f"ERROR: 'Name' not found in mask file")
+        assert 'Image Path' in dataframe.columns, print(f"ERROR: 'Image Path' not found in mask file")
+        assert 'Semantic Path' in dataframe.columns, print(f"ERROR: 'Semantic Path' not found in mask file")
 
         self.ids = dataframe['Name'].to_list()
         self.masks_fps = dataframe['Semantic Path'].to_list()
@@ -248,7 +246,7 @@ def get_segmentation_encoders():
     encoder_options = []
 
     try:
-        options = smp.encoders.encoders.keys()
+        options = smp.encoders.get_encoder_names()
         encoder_options = options
 
     except Exception as e:
@@ -345,7 +343,7 @@ def visualize(save_path=None, save_figure=False, image=None, **masks):
     # Save the figure if save_figure is True and save_path is provided
     if save_figure and save_path:
         plt.savefig(save_path, bbox_inches='tight')
-        log(f"NOTE: Figure saved to {save_path}")
+        print(f"NOTE: Figure saved to {save_path}")
 
     # Show the figure
     plt.close()
@@ -450,14 +448,14 @@ def segmentation(args):
     """
 
     """
-    log("\n###############################################")
-    log("Semantic Segmentation")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Semantic Segmentation")
+    print("###############################################\n")
 
     # Check for CUDA
-    log(f"NOTE: PyTorch version - {torch.__version__}")
-    log(f"NOTE: Torchvision version - {torchvision.__version__}")
-    log(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
 
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -476,22 +474,22 @@ def segmentation(args):
         class_colors = [color_map[c]['color'] for c in class_names]
 
     else:
-        log(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
+        print(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
         sys.exit(1)
 
     # Data
     if os.path.exists(args.masks):
         dataframe = pd.read_csv(args.masks)
     else:
-        log(f"ERROR: Mask file provided does not exist; please check input")
+        print(f"ERROR: Mask file provided does not exist; please check input")
         sys.exit(1)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Model building, parameters
     # ------------------------------------------------------------------------------------------------------------------
-    log(f"\n#########################################\n"
-        f"Building Model\n"
-        f"#########################################\n")
+    print(f"\n#########################################\n"
+          f"Building Model\n"
+          f"#########################################\n")
 
     try:
         encoder_weights = 'imagenet'
@@ -511,16 +509,16 @@ def segmentation(args):
         )
 
         if args.freeze_encoder:
-            log(f"NOTE: Freezing encoder weights")
+            print(f"NOTE: Freezing encoder weights")
             for param in model.encoder.parameters():
                 param.requires_grad = False
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
-        log(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
+        print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
 
     except Exception as e:
-        log(f"ERROR: Could not build model\n{e}")
+        print(f"ERROR: Could not build model\n{e}")
         sys.exit(1)
 
     try:
@@ -548,11 +546,11 @@ def segmentation(args):
         else:
             pass
 
-        log(f"NOTE: Using loss function {args.loss_function}")
+        print(f"NOTE: Using loss function {args.loss_function}")
 
     except Exception as e:
-        log(f"ERROR: Could not get loss function {args.loss_function}")
-        log(f"NOTE: Choose one of the following: {get_segmentation_losses()}")
+        print(f"ERROR: Could not get loss function {args.loss_function}")
+        print(f"NOTE: Choose one of the following: {get_segmentation_losses()}")
         sys.exit(1)
 
     try:
@@ -560,11 +558,11 @@ def segmentation(args):
         assert args.optimizer in get_segmentation_optimizers()
         optimizer = getattr(torch.optim, args.optimizer)(model.parameters(), args.learning_rate)
 
-        log(f"NOTE: Using optimizer {args.optimizer}")
+        print(f"NOTE: Using optimizer {args.optimizer}")
 
     except Exception as e:
-        log(f"ERROR: Could not get optimizer {args.optimizer}")
-        log(f"NOTE: Choose one of the following: {get_segmentation_optimizers()}")
+        print(f"ERROR: Could not get optimizer {args.optimizer}")
+        print(f"NOTE: Choose one of the following: {get_segmentation_optimizers()}")
         sys.exit(1)
 
     try:
@@ -576,19 +574,19 @@ def segmentation(args):
 
         metrics = [PytorchMetric(m) for m in metrics]
 
-        log(f"NOTE: Using metrics {args.metrics}")
+        print(f"NOTE: Using metrics {args.metrics}")
 
     except Exception as e:
-        log(f"ERROR: Could not get metric(s): {args.metrics}")
-        log(f"NOTE: Choose one or more of the following: {get_segmentation_metrics()}")
+        print(f"ERROR: Could not get metric(s): {args.metrics}")
+        print(f"NOTE: Choose one or more of the following: {get_segmentation_metrics()}")
         sys.exit(1)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Source directory setup
     # ------------------------------------------------------------------------------------------------------------------
-    log("\n###############################################")
-    log("Logging")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Logging")
+    print("###############################################\n")
     output_dir = f"{args.output_dir}\\"
 
     # Run Name
@@ -609,11 +607,11 @@ def segmentation(args):
     # Copy over the color map file to the run directory for users
     shutil.copyfile(args.color_map, f"{run_dir}{os.path.basename(args.color_map)}")
 
-    log(f"NOTE: Model Run - {run}")
-    log(f"NOTE: Model Directory - {run_dir}")
-    log(f"NOTE: Weights Directory - {weights_dir}")
-    log(f"NOTE: Log Directory - {logs_dir}")
-    log(f"NOTE: Tensorboard Directory - {tensorboard_dir}")
+    print(f"NOTE: Model Run - {run}")
+    print(f"NOTE: Model Directory - {run_dir}")
+    print(f"NOTE: Weights Directory - {weights_dir}")
+    print(f"NOTE: Log Directory - {logs_dir}")
+    print(f"NOTE: Tensorboard Directory - {tensorboard_dir}")
 
     # Create a SummaryWriter for logging to tensorboard
     train_writer = SummaryWriter(log_dir=tensorboard_dir + "train")
@@ -622,28 +620,28 @@ def segmentation(args):
 
     # Open tensorboard
     if args.tensorboard:
-        log(f"\n#########################################\n"
-            f"Tensorboard\n"
-            f"#########################################\n")
+        print(f"\n#########################################\n"
+              f"Tensorboard\n"
+              f"#########################################\n")
 
         # Create a subprocess that opens tensorboard
         tensorboard_process = subprocess.Popen(['tensorboard', '--logdir', tensorboard_dir],
                                                stdout=subprocess.PIPE,
                                                stderr=subprocess.PIPE)
 
-        log("NOTE: View Tensorboard at 'http://localhost:6006'")
+        print("NOTE: View Tensorboard at 'http://localhost:6006'")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
     # ------------------------------------------------------------------------------------------------------------------
-    log(f"\n#########################################\n"
-        f"Loading Data\n"
-        f"#########################################\n")
+    print(f"\n#########################################\n"
+          f"Loading Data\n"
+          f"#########################################\n")
 
     # Names of all images; sets to be split based on images
     image_names = dataframe['Name'].unique()
 
-    log(f"NOTE: Found {len(image_names)} samples in dataset")
+    print(f"NOTE: Found {len(image_names)} samples in dataset")
 
     # Split the Images into training, validation, and test sets.
     # We split based on the image names, so that we don't have the same image in multiple sets.
@@ -664,9 +662,9 @@ def segmentation(args):
     valid_df.to_csv(f"{logs_dir}Validation_Set.csv", index=False)
     test_df.to_csv(f"{logs_dir}Testing_Set.csv", index=False)
 
-    log(f"NOTE: Number of samples in training set is {len(train_df['Name'].unique())}")
-    log(f"NOTE: Number of samples in validation set is {len(valid_df['Name'].unique())}")
-    log(f"NOTE: Number of samples in testing set is {len(test_df['Name'].unique())}")
+    print(f"NOTE: Number of samples in training set is {len(train_df['Name'].unique())}")
+    print(f"NOTE: Number of samples in validation set is {len(valid_df['Name'].unique())}")
+    print(f"NOTE: Number of samples in testing set is {len(test_df['Name'].unique())}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Dataset creation
@@ -707,9 +705,9 @@ def segmentation(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Show sample of training data
     # ------------------------------------------------------------------------------------------------------------------
-    log(f"\n#########################################\n"
-        f"Viewing Training Samples\n"
-        f"#########################################\n")
+    print(f"\n#########################################\n"
+          f"Viewing Training Samples\n"
+          f"#########################################\n")
 
     # Create a sample version dataset
     sample_dataset = Dataset(train_df,
@@ -735,11 +733,11 @@ def segmentation(args):
     # ------------------------------------------------------------------------------------------------------------------
     try:
 
-        log(f"\n#########################################\n"
-            f"Training\n"
-            f"#########################################\n")
+        print(f"\n#########################################\n"
+              f"Training\n"
+              f"#########################################\n")
 
-        log("NOTE: Starting Training")
+        print("NOTE: Starting Training")
         train_epoch = TrainEpoch(
             model,
             loss=loss_function,
@@ -765,7 +763,7 @@ def segmentation(args):
         # Training loop
         for e_idx in range(1, args.num_epochs + 1):
 
-            log(f"\nEpoch: {e_idx} / {args.num_epochs}")
+            print(f"\nEpoch: {e_idx} / {args.num_epochs}")
             # Go through an epoch for train, valid
             train_logs = train_epoch.run(train_loader)
             valid_logs = valid_epoch.run(valid_loader)
@@ -793,16 +791,14 @@ def segmentation(args):
 
             # Visualize the colorized results locally
             save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
-
             visualize(save_path=save_path,
                       save_figure=True,
                       image=image_vis,
                       ground_truth_mask=colorize_mask(gt_mask, class_ids, class_colors),
                       predicted_mask=colorize_mask(pr_mask, class_ids, class_colors))
 
-            figure = np.array(Image.open(save_path))
-
             # Log the visualization to TensorBoard
+            figure = np.array(Image.open(save_path))
             valid_writer.add_image(f'Valid_Results', figure, dataformats="HWC", global_step=e_idx)
 
             # Get the loss values
@@ -814,51 +810,48 @@ def segmentation(args):
                 best_score = valid_loss
                 best_epoch = e_idx
                 since_best = 0
-                log(f"NOTE: Current best epoch {e_idx}")
+                print(f"NOTE: Current best epoch {e_idx}")
 
                 # Save the model
                 prefix = f'{weights_dir}model-{str(e_idx)}-'
                 suffix = f'{str(np.around(train_loss, 4))}-{str(np.around(valid_loss, 4))}'
                 path = prefix + suffix
                 torch.save(model, f'{path}.pth')
-                log(f'NOTE: Model saved to {path}')
+                print(f'NOTE: Model saved to {path}')
             else:
                 # Increment the counters
                 since_best += 1
                 since_drop += 1
-                log(f"NOTE: Model did not improve after epoch {e_idx}")
+                print(f"NOTE: Model did not improve after epoch {e_idx}")
 
             # Overfitting indication
             if train_loss < valid_loss:
-                log(f"NOTE: Overfitting occurred in epoch {e_idx}")
+                print(f"NOTE: Overfitting occurred in epoch {e_idx}")
 
             # Check if it's time to decrease the learning rate
             if (since_best >= 5 or train_loss <= valid_loss) and since_drop >= 5:
                 since_drop = 0
                 new_lr = optimizer.param_groups[0]['lr'] * 0.75
                 optimizer.param_groups[0]['lr'] = new_lr
-                log(f"NOTE: Decreased learning rate to {new_lr} after epoch {e_idx}")
+                print(f"NOTE: Decreased learning rate to {new_lr} after epoch {e_idx}")
 
             # Exit early if progress stops
             if since_best >= 10 and train_loss < valid_loss and since_drop >= 5:
-                log("NOTE: Model training plateaued; exiting training loop")
+                print("NOTE: Model training plateaued; exiting training loop")
                 break
 
-            # Gooey
-            print_progress(e_idx, args.num_epochs)
-
     except KeyboardInterrupt:
-        log("NOTE: Exiting training loop")
+        print("NOTE: Exiting training loop")
 
     except Exception as e:
 
-        log(f"ERROR: There was an issue with training!\n{e}")
+        print(f"ERROR: There was an issue with training!\n{e}")
 
         if 'CUDA out of memory' in str(e):
-            log(f"WARNING: Not enough GPU memory for the provided parameters")
+            print(f"WARNING: Not enough GPU memory for the provided parameters")
 
         # Write the error to text file
-        log(f"NOTE: Please see {logs_dir}Error.txt")
+        print(f"NOTE: Please see {logs_dir}Error.txt")
         with open(f"{logs_dir}Error.txt", 'a') as file:
             file.write(f"Caught exception: {str(traceback.print_exc())}\n")
 
@@ -873,7 +866,7 @@ def segmentation(args):
 
     # Load into the model
     model = torch.load(best_weights)
-    log(f"NOTE: Loaded best weights {best_weights}")
+    print(f"NOTE: Loaded best weights {best_weights}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Evaluate model on test set
@@ -903,9 +896,9 @@ def segmentation(args):
     # ------------------------------------------------------------------------------------------------------------------
     # Calculate metrics
     # ------------------------------------------------------------------------------------------------------------------
-    log(f"\n#########################################\n"
-        f"Calculating Metrics\n"
-        f"#########################################\n")
+    print(f"\n#########################################\n"
+          f"Calculating Metrics\n"
+          f"#########################################\n")
 
     try:
         # Empty cache from training
@@ -921,14 +914,14 @@ def segmentation(args):
     except Exception as e:
 
         # Catch the error
-        log(f"ERROR: Could not calculate metrics")
+        print(f"ERROR: Could not calculate metrics")
 
         # Likely Memory
         if 'CUDA out of memory' in str(e):
-            log(f"WARNING: Not enough GPU memory for the provided parameters")
+            print(f"WARNING: Not enough GPU memory for the provided parameters")
 
         # Write the error to text file
-        log(f"NOTE: Please see {logs_dir}Error.txt")
+        print(f"NOTE: Please see {logs_dir}Error.txt")
         with open(f"{logs_dir}Error.txt", 'a') as file:
             file.write(f"Caught exception: {str(e)}\n")
 
@@ -980,18 +973,18 @@ def segmentation(args):
     except Exception as e:
 
         # Catch the error
-        log(f"ERROR: Could not make predictions")
+        print(f"ERROR: Could not make predictions")
 
         # Likely Memory
         if 'CUDA out of memory' in str(e):
-            log(f"WARNING: Not enough GPU memory for the provided parameters")
+            print(f"WARNING: Not enough GPU memory for the provided parameters")
 
         # Write the error to text file
-        log(f"NOTE: Please see {logs_dir}Error.txt")
+        print(f"NOTE: Please see {logs_dir}Error.txt")
         with open(f"{logs_dir}Error.txt", 'a') as file:
             file.write(f"Caught exception: {str(e)}\n")
 
-    log(f"NOTE: Saving best weights in {run_dir}")
+    print(f"NOTE: Saving best weights in {run_dir}")
     shutil.copyfile(best_weights, f"{run_dir}Best_Model_and_Weights.pth")
 
     # Close tensorboard writers
@@ -1000,7 +993,7 @@ def segmentation(args):
 
     # Close tensorboard
     if args.tensorboard:
-        log("NOTE: Closing Tensorboard in 60 seconds")
+        print("NOTE: Closing Tensorboard in 60 seconds")
         time.sleep(60)
         tensorboard_process.terminate()
 
@@ -1058,11 +1051,11 @@ def main():
 
     try:
         segmentation(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == '__main__':

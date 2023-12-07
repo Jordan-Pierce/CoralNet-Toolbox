@@ -1,17 +1,17 @@
 import os
 import sys
-import logging
 import datetime
+
 
 # ------------------------------------------------------------------------------------------------------------------
 # Constants
 # ------------------------------------------------------------------------------------------------------------------
 
 # Get the current script's directory (where init_project.py is located)
-script_dir = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # Add the parent directory (Project) to the Python path
-PROJECT_DIR = os.path.dirname(script_dir)
+PROJECT_DIR = os.path.dirname(ROOT)
 sys.path.append(PROJECT_DIR)
 
 # Make the Data directory
@@ -24,9 +24,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Patch extractor path
 PATCH_EXTRACTOR = f'{PROJECT_DIR}\\Tools\\Patch_Extractor\\CNNDataExtractor.exe'
-
-# For all the logging
-LOG_PATH = f"{DATA_DIR}\\Cache\\logs.log"
 
 # MIR specific, mapping path
 MIR_MAPPING = f'{DATA_DIR}\\Mission_Iconic_Reefs\\MIR_VPI_CoralNet_Mapping.csv'
@@ -74,14 +71,6 @@ IMG_FORMATS = ["jpg", "jpeg", "png", "bmp"]
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
 
-
-def print_progress(prg, prg_total):
-    """
-    Formatted print for Gooey to show progress in progress bar
-    """
-    log("progress: {}/{}".format(prg, prg_total))
-
-
 def get_now():
     """
     Returns a timestamp; used for file and folder names
@@ -89,44 +78,46 @@ def get_now():
     # Get the current datetime
     now = datetime.datetime.now()
     now = now.strftime("%Y-%m-%d_%H-%M-%S")
+
     return now
 
 
-def setup_logger(log_file_path):
+def progress_printer(iterable):
     """
 
     """
-    # Create a logger instance
-    logger = logging.getLogger(__name__)
+    if isinstance(iterable, enumerate):
+        iterable = list(iterable)
 
-    # Configure the root logger (optional, if you want to set a default level)
-    logger.setLevel(logging.DEBUG)
+    max_iteration = len(iterable)
 
-    # Create a file handler to log to the specified file (INFO level)
-    file_handler_info = logging.FileHandler(log_file_path)
-    file_handler_info.setLevel(logging.INFO)
-
-    # Create a console handler to log to the console (INFO level)
-    console_handler_info = logging.StreamHandler()
-    console_handler_info.setLevel(logging.INFO)
-
-    # Set the formatter for all handlers
-    formatter = logging.Formatter('%(message)s')
-    file_handler_info.setFormatter(formatter)
-    console_handler_info.setFormatter(formatter)
-
-    # Add the handlers to the logger
-    logger.addHandler(file_handler_info)
-    logger.addHandler(console_handler_info)
-
-    return logger
+    for i, item in iterable:
+        yield i, item
+        print_progress(i, max_iteration)
 
 
-# Setup logger
-LOGGER = setup_logger(LOG_PATH)
+def print_progress(prg, prg_total=100, bar_length=50):
+    """
+    Print a custom progress bar.
 
+    Parameters:
+    - prg (int): Current progress value.
+    - prg_total (int): Total progress value; default is 100
+    - bar_length (int): Length of the progress bar.
+    """
+    progress = prg / prg_total
 
-# Define a custom logging function that mimics 'print'
-def log(*args):
-    message = ' '.join(map(str, args))
-    LOGGER.info(message)  # Log the message at INFO level
+    # Check if it's the last iteration
+    if prg >= prg_total - 1:
+        progress = 1.0
+        end_char = ' - Completed!\n'
+    else:
+        end_char = ''
+
+    block = int(round(bar_length * progress))
+
+    # Custom progress bar format
+    progress_bar = "#" * block + "-" * (bar_length - block)
+
+    # Print the progress bar
+    print("\r[{}] {:.2%}".format(progress_bar, progress), end=end_char, flush=True)

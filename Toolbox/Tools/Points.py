@@ -9,24 +9,63 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 from Common import IMG_FORMATS
+from Common import progress_printer
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
+def get_points(min_width, min_height, max_width, max_height, sample_method='Random', num_points=200):
+    """
+
+    """
+    x = []
+    y = []
+
+    # Generate Uniform Samples
+    if sample_method == 'Uniform':
+        x_coords = np.linspace(min_width, max_width - 1, int(np.sqrt(num_points))).astype(int)
+        y_coords = np.linspace(min_height, max_height - 1, int(np.sqrt(num_points))).astype(int)
+        for x_coord in x_coords:
+            for y_coord in y_coords:
+                x.append(x_coord)
+                y.append(y_coord)
+
+    # Generate Random Samples
+    elif sample_method == 'Random':
+        for i in range(num_points):
+            x_coord = random.randint(min_width, max_width - 1)
+            y_coord = random.randint(min_height, max_height - 1)
+
+            x.append(x_coord)
+            y.append(y_coord)
+
+    # Generate Stratified Samples
+    else:
+        n = int(np.sqrt(num_points))
+        x_range = np.linspace(min_width, max_width - 1, n + 1)
+        y_range = np.linspace(min_height, max_height - 1, n + 1)
+        for i in range(n):
+            for j in range(n):
+                x_coords = np.random.uniform(x_range[i], x_range[i + 1])
+                y_coords = np.random.uniform(y_range[j], y_range[j + 1])
+
+                x.append(int(x_coords))
+                y.append(int(y_coords))
+
+    return np.array(x), np.array(y)
+
 
 def points(args):
     """
     Generates a set of sample coordinates within a given image size.
     """
 
-    log("\n###############################################")
-    log("Sample Points")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Sample Points")
+    print("###############################################\n")
 
     # Set the variables
     sample_method = args.sample_method
@@ -38,12 +77,12 @@ def points(args):
         image_files = [i for i in image_files if os.path.basename(i).split(".")[-1].lower() in IMG_FORMATS]
 
         if not image_files:
-            log("ERROR: No image files found in directory provided; please check input")
+            print("ERROR: No image files found in directory provided; please check input")
             sys.exit(1)
 
-        log(f"NOTE: Sampling {num_points} points for {len(image_files)} images")
+        print(f"NOTE: Sampling {num_points} points for {len(image_files)} images")
     else:
-        log(f"ERROR: Image directory provided doesn't exist; please check provided input")
+        print(f"ERROR: Image directory provided doesn't exist; please check provided input")
         sys.exit(1)
 
     # Create output
@@ -53,67 +92,39 @@ def points(args):
 
     samples = []
 
-    for idx, image_file in enumerate(image_files):
-
-        # Gooey
-        print_progress(idx, len(image_files))
+    for idx, image_file in progress_printer(enumerate(image_files)):
 
         # Read it to get the size
         image_name = os.path.basename(image_file)
         img = Image.open(image_file)
         width, height = img.size
 
-        # At least half patch
+        # Slight offset
         min_width = 0 + 32
         max_width = width - 32
         min_height = 0 + 32
         max_height = height - 32
 
-        # Generate Uniform Samples
-        if sample_method == 'Uniform':
-            x_coords = np.linspace(min_width, max_width - 1, int(np.sqrt(num_points)))
-            y_coords = np.linspace(min_height, max_height - 1, int(np.sqrt(num_points)))
-            for x in x_coords:
-                for y in y_coords:
-                    samples.append({'Name': image_name,
-                                    'Row': int(y),
-                                    'Column': int(x),
-                                    'Label': 'Unlabeled'})
+        x, y = get_points(min_width, min_height, max_width, max_height, sample_method, num_points)
 
-        # Generate Random Samples
-        elif sample_method == 'Random':
-            for i in range(num_points):
-                x = random.randint(min_width, max_width - 1)
-                y = random.randint(min_height, max_height - 1)
-                samples.append({'Name': image_name,
-                                'Row': int(y),
-                                'Column': int(x),
-                                'Label': 'Unlabeled'})
+        for _ in range(num_points):
 
-        # Generate Stratified Samples
-        else:
-            n = int(np.sqrt(num_points))
-            x_range = np.linspace(min_width, max_width - 1, n + 1)
-            y_range = np.linspace(min_height, max_height - 1, n + 1)
-            for i in range(n):
-                for j in range(n):
-                    x = np.random.uniform(x_range[i], x_range[i + 1])
-                    y = np.random.uniform(y_range[j], y_range[j + 1])
-                    samples.append({'Name': image_name,
-                                    'Row': int(y),
-                                    'Column': int(x),
-                                    'Label': 'Unlabeled'})
+            samples.append({'Name': image_name,
+                            'Row': int(y[_]),
+                            'Column': int(x[_]),
+                            'Label': 'Unlabeled'})
+
     if samples:
-        log(f"NOTE: Saving {len(samples)} sampled points")
+        print(f"NOTE: Saving {len(samples)} sampled points")
         # Store as dataframe
         samples = pd.DataFrame.from_records(samples)
         # Save as csv to points folder
         samples.to_csv(output_file)
 
         if os.path.exists(output_file):
-            log(f"NOTE: Sampled points saved to {output_file}")
+            print(f"NOTE: Sampled points saved to {output_file}")
         else:
-            log(f"ERROR: Sampled points could not be saved; check provided input.")
+            print(f"ERROR: Sampled points could not be saved; check provided input.")
 
 
 # -----------------------------------------------------------------------------
@@ -144,11 +155,11 @@ def main():
     try:
 
         points(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

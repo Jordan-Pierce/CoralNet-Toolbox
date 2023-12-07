@@ -12,7 +12,6 @@ from matplotlib.widgets import Button
 from matplotlib.widgets import TextBox
 from matplotlib.patches import Rectangle
 
-from Common import log
 from Common import IMG_FORMATS
 
 # Set plot backend
@@ -153,7 +152,7 @@ class ImageViewer:
     def on_save_figure(self, event):
         filename = f"{self.output_dir}figure_{self.current_index + 1}.png"
         self.fig.savefig(filename)
-        log(f"Figure saved as {filename}")
+        print(f"Figure saved as {filename}")
 
     def on_go_to_image(self, event):
         try:
@@ -162,9 +161,9 @@ class ImageViewer:
                 self.current_index = index - 1
                 self.show_image()
             else:
-                log("Invalid image index. Please enter a valid image index.")
+                print("Invalid image index. Please enter a valid image index.")
         except ValueError:
-            log("Invalid input. Please enter a valid image index (numeric value).")
+            print("Invalid input. Please enter a valid image index (numeric value).")
 
     def create_buttons(self):
         ax_home = plt.axes([0.1, 0.05, 0.1, 0.075])
@@ -198,9 +197,9 @@ def visualize(args):
     """
     # Set the backend to 'TkAgg' for an external viewer
 
-    log("\n###############################################")
-    log("Visualize")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Visualize")
+    print("###############################################\n")
 
     # Pass the variables
     image_dir = args.image_dir
@@ -211,11 +210,11 @@ def visualize(args):
     os.makedirs(output_dir, exist_ok=True)
 
     if not os.path.exists(annotations):
-        log("WARNING: Annotations provided, but they do not exists; please check input.")
+        print("WARNING: Annotations provided, but they do not exists; please check input.")
     else:
         annotations = pd.read_csv(annotations, index_col=0)
-        assert label_column in annotations.columns, log(f"ERROR: '{label_column}' not found in annotations")
-        assert any(n in annotations.columns for n in ['Name', 'Image Name']), log("ERROR: Image name column not found")
+        assert label_column in annotations.columns, print(f"ERROR: '{label_column}' not found in annotations")
+        assert any(n in annotations.columns for n in ['Name', 'Image Name']), print("ERROR: Image name column not found")
 
     if not os.path.exists(image_dir):
         raise Exception("ERROR: Image directory does not exists; please check input.")
@@ -235,7 +234,7 @@ def visualize(args):
 
         # No images found
         if not image_files:
-            log("NOTE: No images found; exiting")
+            print("NOTE: No images found; exiting")
             return
 
     # Create the ImageViewer object with the list of images
@@ -264,8 +263,8 @@ if __name__ == "__main__":
 
     try:
         visualize(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())

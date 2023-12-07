@@ -18,10 +18,9 @@ from torch.utils.data import Dataset as BaseDataset
 
 import segmentation_models_pytorch as smp
 
-from Common import log
 from Common import get_now
-from Common import print_progress
 from Common import IMG_FORMATS
+from Common import progress_printer
 
 from Segmentation import colorize_mask
 from Segmentation import get_preprocessing
@@ -30,6 +29,7 @@ from Segmentation import get_validation_augmentation
 torch.cuda.empty_cache()
 warnings.filterwarnings('ignore')
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
 
 # ------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -47,8 +47,8 @@ class Dataset(BaseDataset):
             augmentation=None,
             preprocessing=None,
     ):
-        assert 'Name' in dataframe.columns, log(f"ERROR: 'Name' not found in mask file")
-        assert 'Image Path' in dataframe.columns, log(f"ERROR: 'Semantic Path' not found in mask file")
+        assert 'Name' in dataframe.columns, print(f"ERROR: 'Name' not found in mask file")
+        assert 'Image Path' in dataframe.columns, print(f"ERROR: 'Semantic Path' not found in mask file")
 
         self.ids = dataframe['Name'].to_list()
         self.images_paths = dataframe['Image Path'].to_list()
@@ -89,14 +89,14 @@ def segmentation_inference(args):
     """
 
     """
-    log("\n###############################################")
-    log("Semantic Segmentation")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Semantic Segmentation Inference")
+    print("###############################################\n")
 
     # Check for CUDA
-    log(f"NOTE: PyTorch version - {torch.__version__}")
-    log(f"NOTE: Torchvision version - {torchvision.__version__}")
-    log(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
 
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -111,7 +111,7 @@ def segmentation_inference(args):
         if not image_paths:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            log(f"NOTE: Found {len(image_paths)} images in directory provided")
+            print(f"NOTE: Found {len(image_paths)} images in directory provided")
 
         # Get the names of the images
         image_names = [os.path.basename(i) for i in image_paths]
@@ -119,7 +119,7 @@ def segmentation_inference(args):
         # Create a dataframe
         test_df = pd.DataFrame(list(zip(image_names, image_paths)), columns=['Name', 'Image Path'])
     else:
-        log("ERROR: Directory provided doesn't exist.")
+        print("ERROR: Directory provided doesn't exist.")
         sys.exit(1)
 
     # Color mapping file
@@ -133,7 +133,7 @@ def segmentation_inference(args):
         class_colors = [color_map[c]['color'] for c in class_names]
 
     else:
-        log(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
+        print(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
         sys.exit(1)
 
     # Model weights, load it up
@@ -142,7 +142,7 @@ def segmentation_inference(args):
         # Load into the model
         model = torch.load(args.model)
         model_name = "-".join(model.name.split("-")[1:])
-        log(f"NOTE: Loaded weights {model.name}")
+        print(f"NOTE: Loaded weights {model.name}")
 
         # Get the preprocessing function that was used during training
         preprocessing_fn = smp.encoders.get_preprocessing_fn(model_name, 'imagenet')
@@ -183,8 +183,7 @@ def segmentation_inference(args):
     # Output dataframe
     mask_df = []
 
-    for _ in range(len(test_dataset)):
-
+    for _ in progress_printer(range(len(test_dataset))):
         # Image name
         image_name = test_dataset.ids[_]
         # Image path
@@ -213,32 +212,29 @@ def segmentation_inference(args):
         seg_mask = pr_mask.astype(np.uint8)
         semantic_path = f"{seg_dir}{image_name.split('.')[0]}.png"
         io.imsave(fname=semantic_path, arr=seg_mask)
-        log(f"NOTE: Saved semantic mask to {semantic_path}")
+        print(f"NOTE: Saved semantic mask to {semantic_path}")
 
         # Save the traditional mask (0 background, 255 object)
         mask = np.zeros(shape=(original_height, original_width, 3), dtype=np.uint8)
         mask[pr_mask != 0] = [255, 255, 255]
         mask_path = f"{mask_dir}{image_name.split('.')[0]}.png"
         io.imsave(fname=mask_path, arr=mask.astype(bool))
-        log(f"NOTE: Saved mask to {mask_path}")
+        print(f"NOTE: Saved mask to {mask_path}")
 
         # Save the color mask
         color_mask = colorize_mask(pr_mask, class_ids, class_colors)
         color_mask[pr_mask == 0, :] = [0, 0, 0]
         color_path = f"{color_dir}{image_name.split('.')[0]}.png"
         io.imsave(fname=color_path, arr=color_mask.astype(np.uint8))
-        log(f"NOTE: Saved color mask to {color_path}")
+        print(f"NOTE: Saved color mask to {color_path}")
 
         # Save the overlay mask
         overlay_mask = cv2.addWeighted(image_og, 0.5, color_mask, 0.5, 0)
         overlay_path = f"{overlay_dir}{image_name.split('.')[0]}.png"
         io.imsave(fname=overlay_path, arr=overlay_mask.astype(np.uint8))
-        log(f"NOTE: Saved overlay to {overlay_path}")
+        print(f"NOTE: Saved overlay to {overlay_path}")
 
         mask_df.append([image_name, image_path, semantic_path, mask_path, color_path, overlay_path])
-
-        # Gooey
-        print_progress(_, len(test_dataset))
 
     # Save dataframe to root directory
     mask_df = pd.DataFrame(mask_df, columns=['Name', 'Image Path', 'Semantic Path',
@@ -246,9 +242,9 @@ def segmentation_inference(args):
     mask_df.to_csv(output_mask_csv)
 
     if os.path.exists(output_mask_csv):
-        log(f"NOTE: Mask dataframe saved to {output_dir}")
+        print(f"NOTE: Mask dataframe saved to {output_dir}")
     else:
-        log(f"ERROR: Could not save mask dataframe")
+        print(f"ERROR: Could not save mask dataframe")
 
 
 # -----------------------------------------------------------------------------
@@ -278,11 +274,11 @@ def main():
 
     try:
         segmentation_inference(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

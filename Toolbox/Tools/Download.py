@@ -1,12 +1,10 @@
 import os
 import io
-import sys
 import time
 import shutil
 import requests
 import argparse
 import traceback
-from tqdm import tqdm
 from bs4 import BeautifulSoup
 
 from selenium.webdriver.common.by import By
@@ -16,14 +14,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
-from Common import log
-from Common import print_progress
 from Common import CACHE_DIR
 from Common import LOGIN_URL
 from Common import CORALNET_URL
 from Common import CORALNET_SOURCE_URL
 from Common import CORALNET_LABELSET_URL
 from Common import CORALNET_LABELSET_FILE
+from Common import print_progress
+from Common import progress_printer
 
 from Browser import login
 from Browser import authenticate
@@ -40,17 +38,17 @@ def get_updated_labelset_list():
     """
 
     if os.path.exists(CORALNET_LABELSET_FILE):
-        # Convert bytes to megabytes
-        file_size = os.path.getsize(CORALNET_LABELSET_FILE) / (1024 * 1024)
-        if file_size >= 1:
-            return pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
+        # Get the names
+        names = pd.read_csv(os.path.abspath(CORALNET_LABELSET_FILE))['Name'].values.tolist()
+        if names:
+            return names
 
     names = []
 
     try:
 
         # Make a GET request to the image page URL using the authenticated session
-        response = requests.get(CORALNET_LABELSET_URL)
+        response = requests.get(CORALNET_LABELSET_URL, timeout=30)
         cookies = response.cookies
 
         # Convert the webpage to soup
@@ -63,7 +61,7 @@ def get_updated_labelset_list():
         names = []
         urls = []
 
-        for row in tqdm(table):
+        for idx, row in progress_printer(enumerate(table)):
             # Grab attributes from row
             attributes = row.find_all("td")
             # Extract each attribute, store in variable
@@ -87,9 +85,9 @@ def download_coralnet_sources(driver, output_dir):
     Downloads a list of all the public sources currently on CoralNet.
     """
 
-    log("\n###############################################")
-    log("Downloading CoralNet Source Dataframe")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Downloading CoralNet Source Dataframe")
+    print("###############################################\n")
 
     # Variable to hold the list of sources
     sources = None
@@ -97,7 +95,7 @@ def download_coralnet_sources(driver, output_dir):
     # Go to the images page
     driver.get(CORALNET_SOURCE_URL)
 
-    log("NOTE: Downloading CoralNet Source Dataframe")
+    print("NOTE: Downloading CoralNet Source Dataframe")
 
     try:
         # Parse the HTML response using BeautifulSoup
@@ -112,7 +110,7 @@ def download_coralnet_sources(driver, output_dir):
         source_names = []
 
         # Now, get all the source IDs and names on the page
-        for link in tqdm(links):
+        for idx, link in progress_printer(enumerate(links)):
             # Parse the information
             url = CORALNET_URL + link.find("a").get("href")
             source_id = url.split("/")[-2]
@@ -134,12 +132,12 @@ def download_coralnet_sources(driver, output_dir):
         sources.to_csv(f"{output_dir}\\CoralNet_Source_ID_Dataframe.csv")
 
         if os.path.exists(f"{output_dir}\\CoralNet_Source_ID_Dataframe.csv"):
-            log("NOTE: CoralNet Source Dataframe saved successfully")
+            print("NOTE: CoralNet Source Dataframe saved successfully")
         else:
             raise Exception("ERROR: Could not download Source ID Dataframe; "
                             "check that variable CoralNet URL is correct.")
     except Exception as e:
-        log(f"ERROR: Unable to get source Dataframe from CoralNet.\n{e}")
+        print(f"ERROR: Unable to get source Dataframe from CoralNet.\n{e}")
         sources = None
 
     return driver, sources
@@ -150,9 +148,9 @@ def download_coralnet_labelsets(driver, output_dir):
     Download a list of all labelsets in CoralNet.
     """
 
-    log("\n###############################################")
-    log("Downloading CoralNet Labelset Dataframe")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Downloading CoralNet Labelset Dataframe")
+    print("###############################################\n")
 
     # Variable to hold the list of sources
     labelset = None
@@ -160,7 +158,7 @@ def download_coralnet_labelsets(driver, output_dir):
     # Go to the images page
     driver.get(CORALNET_LABELSET_URL)
 
-    log("NOTE: Downloading CoralNet Labelset Dataframe")
+    print("NOTE: Downloading CoralNet Labelset Dataframe")
 
     try:
         # Parse the HTML response using BeautifulSoup
@@ -171,7 +169,8 @@ def download_coralnet_labelsets(driver, output_dir):
 
         # Loop through each row, grab the information, store in lists
         rows = []
-        for row in tqdm(table):
+
+        for idx, row in progress_printer(enumerate(table)):
             # Grab attributes from row
             attributes = row.find_all("td")
             # Extract each attribute, store in variable
@@ -224,13 +223,13 @@ def download_coralnet_labelsets(driver, output_dir):
         labelset.to_csv(f"{output_dir}\\CoralNet_Labelset_Dataframe.csv")
 
         if os.path.exists(f"{output_dir}\\CoralNet_Labelset_Dataframe.csv"):
-            log("NOTE: Labelset Dataframe saved successfully")
+            print("NOTE: Labelset Dataframe saved successfully")
         else:
             raise Exception("ERROR: Could not download Labelset Dataframe; "
                             "check that variable Labelset URL is correct.")
 
     except Exception as e:
-        log(f"ERROR: Unable to get Labelset Dataframe from CoralNet.\n{e}")
+        print(f"ERROR: Unable to get Labelset Dataframe from CoralNet.\n{e}")
         labelset = None
 
     return driver, labelset
@@ -241,9 +240,9 @@ def get_sources_with(driver, choices, output_dir):
     Downloads a list of sources that contain the specified labelsets.
     """
 
-    log("\n###############################################")
-    log("Downloading CoralNet Sources 'With' Dataframe")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Downloading CoralNet Sources 'With' Dataframe")
+    print("###############################################\n")
 
     # Variable to hold sources of interest
     source_list = []
@@ -251,20 +250,22 @@ def get_sources_with(driver, choices, output_dir):
     try:
         labelsets = pd.read_csv(CORALNET_LABELSET_FILE)
     except Exception as e:
-        log(f"ERROR: {CORALNET_LABELSET_FILE} could not located")
-        log(f"ERROR: Cannot download Sources 'With' Dataframe")
+        print(f"ERROR: {CORALNET_LABELSET_FILE} could not located")
+        print(f"ERROR: Cannot download Sources 'With' Dataframe")
         return driver, source_list
 
     # Go to the images page
     driver.get(CORALNET_LABELSET_URL)
-    log("NOTE: Downloading Sources 'With' Dataframe")
+    print("NOTE: Downloading Sources 'With' Dataframe")
 
     try:
         # Get the subset of interested choices
         labelsets = labelsets[labelsets['Name'].isin(choices)]
 
         # Loop through all labelset URLs
-        for i, r in tqdm(labelsets.iterrows()):
+        for i, r in progress_printer(labelsets.iterrows()):
+
+            print(f"NOTE: Searching for sources with {r['Name']}\n")
 
             # Go to the labeset page
             driver.get(r['URL'])
@@ -274,7 +275,7 @@ def get_sources_with(driver, choices, output_dir):
 
             # Find all the source ids on the page
             a_tags = soup.find_all('a')
-            for a_tag in a_tags:
+            for idx, a_tag in enumerate(a_tags):
 
                 # It's an a_tag, but not one of interest
                 if not '/source/' in a_tag.get('href'):
@@ -309,14 +310,14 @@ def get_sources_with(driver, choices, output_dir):
             source_list.to_csv(f"{output_file}")
             # Check that it exists
             if os.path.exists(f"{output_file}"):
-                log("NOTE: Sources 'With' dataframe saved successfully")
+                print("NOTE: Sources 'With' dataframe saved successfully")
             else:
                 raise Exception("ERROR: Could not save Sources 'With' dataframe")
         else:
             raise Exception("ERROR: No sources found that match the provided criteria")
 
     except Exception as e:
-        log(f"{e}")
+        print(f"{e}")
         source_list = None
 
     return driver, source_list
@@ -347,10 +348,9 @@ def download_metadata(driver, source_id, source_dir=None):
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
-        log(f"ERROR: {e} or you do not have permission to access it")
-        sys.exit(1)
+        raise Exception(f"ERROR: {e} or you do not have permission to access it")
 
-    log(f"\nNOTE: Downloading model metadata for {source_id}")
+    print(f"\nNOTE: Downloading model metadata for {source_id}")
 
     try:
         # Convert the page to soup
@@ -373,7 +373,8 @@ def download_metadata(driver, source_id, source_dir=None):
         data = eval(data[data.find("[{"):])
 
         # Loop through and collect meta from each model instance, store
-        for point in tqdm(data):
+        for idx, point in progress_printer(enumerate(data)):
+
             classifier_nbr = point["x"]
             score = point["y"]
             nimages = point["nimages"]
@@ -402,10 +403,10 @@ def download_metadata(driver, source_id, source_dir=None):
 
             # Check that it was saved
             if os.path.exists(f"{source_dir}{source_id}_metadata.csv"):
-                log("NOTE: Metadata saved successfully")
+                print("NOTE: Metadata saved successfully")
 
     except Exception as e:
-        log(f"ERROR: Issue with downloading metadata")
+        print(f"ERROR: Issue with downloading metadata")
         meta = None
 
     return driver, meta
@@ -432,10 +433,9 @@ def download_labelset(driver, source_id, source_dir):
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
-        log(f"ERROR: {e} or you do not have permission to access it")
-        sys.exit(1)
+        raise Exception(f"ERROR: {e} or you do not have permission to access it")
 
-    log(f"\nNOTE: Downloading labelset for {source_id}")
+    print(f"\nNOTE: Downloading labelset for {source_id}")
 
     try:
         # Find the "Export Label to CSV" button
@@ -455,12 +455,12 @@ def download_labelset(driver, source_id, source_dir):
         if os.path.exists(f"{source_dir}labelset.csv"):
             path = f"{source_dir}{source_id}_labelset.csv"
             shutil.move(f"{source_dir}labelset.csv", path)
-            log("NOTE: Labelset saved successfully")
+            print("NOTE: Labelset saved successfully")
 
         labelset = pd.read_csv(path)
 
     except Exception as e:
-        log(f"ERROR: Issue with downloading labelset")
+        print(f"ERROR: Issue with downloading labelset")
         labelset = None
 
     return driver, labelset
@@ -502,7 +502,7 @@ def download_images(dataframe, source_dir):
     dataframe.to_csv(csv_file)
     # Check if the CSV file was saved before trying to download
     if os.path.exists(csv_file):
-        log(f"NOTE: Saved image dataframe as CSV file")
+        print(f"NOTE: Saved image dataframe as CSV file")
     else:
         raise Exception("ERROR: Unable to save image CSV file")
 
@@ -510,38 +510,35 @@ def download_images(dataframe, source_dir):
     image_dir = f"{source_dir}\\images\\"
     os.makedirs(image_dir, exist_ok=True)
 
-    log(f"\nNOTE: Downloading {len(dataframe)} images")
+    print(f"\nNOTE: Downloading {len(dataframe)} images")
 
     # To hold the expired images
     expired_images = []
 
-    with tqdm(total=len(dataframe)) as pbar:
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+    with concurrent.futures.ThreadPoolExecutor() as executor:
 
-            results = []
+        results = []
 
-            for index, row in dataframe.iterrows():
-                # Get the image name and URL from the dataframe
-                name = row['Name']
-                url = row['Image URL']
-                path = image_dir + name
-                # Add the download task to the executor
-                results.append(executor.submit(download_image, url, path))
+        for index, row in dataframe.iterrows():
+            # Get the image name and URL from the dataframe
+            name = row['Name']
+            url = row['Image URL']
+            path = image_dir + name
+            # Add the download task to the executor
+            results.append(executor.submit(download_image, url, path))
 
-            # Wait for all tasks to complete and collect the results
-            for result in concurrent.futures.as_completed(results):
-                # Get the downloaded image path
-                downloaded_image_path, downloaded = result.result()
-                # Get the image name from the downloaded image path
-                basename = os.path.basename(downloaded_image_path)
-                if not downloaded:
-                    expired_images.append(basename)
-                # Update the progress bar
-                pbar.update(1)
+        # Wait for all tasks to complete and collect the results
+        for idx, result in progress_printer(enumerate(concurrent.futures.as_completed(results))):
+            # Get the downloaded image path
+            downloaded_image_path, downloaded = result.result()
+            # Get the image name from the downloaded image path
+            basename = os.path.basename(downloaded_image_path)
+            if not downloaded:
+                expired_images.append(basename)
 
     if expired_images:
-        log(f"NOTE: {len(expired_images)} images had expired before being downloaded")
-        log(f"NOTE: Saving list of expired images to {source_dir} expired_images.csv")
+        print(f"NOTE: {len(expired_images)} images had expired before being downloaded")
+        print(f"NOTE: Saving list of expired images to {source_dir} expired_images.csv")
         expired_images = pd.DataFrame(expired_images, columns=['image_path'])
         expired_images.to_csv(f"{source_dir}{source_id}_expired_images.csv")
 
@@ -568,7 +565,7 @@ def get_image_url(session, image_page_url):
         return image_url
 
     except Exception as e:
-        log(f"ERROR: Unable to get image URL from image page: {e}")
+        print(f"ERROR: Unable to get image URL from image page: {e}")
         return None
 
 
@@ -579,13 +576,17 @@ def get_image_urls(driver, image_page_urls):
     the image URLs, because it is thread-safe, unlike Selenium.
     """
 
-    log("NOTE: Retrieving image URLs")
+    print("NOTE: Retrieving image URLs")
 
     # List to hold all the image URLs
     image_urls = []
 
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
+    try:
+        # Send a GET request to the login page to retrieve the login form
+        response = requests.get(LOGIN_URL, timeout=30)
+
+    except Exception as e:
+        raise Exception(f"ERROR: CoralNet timed out after 30 seconds.\n{e}")
 
     # Pass along the cookies
     cookies = response.cookies
@@ -616,26 +617,22 @@ def get_image_urls(driver, image_page_urls):
     # Use session.post() to submit the login form
     session.post(LOGIN_URL, data=data, headers=headers, cookies=cookies)
 
-    with tqdm(total=len(image_page_urls)) as pbar:
-        with ThreadPoolExecutor() as executor:
-            # Submit the image_url retrieval tasks to the thread pool
-            future_to_url = {executor.submit(get_image_url, session, url):
-                                 url for url in image_page_urls}
+    with ThreadPoolExecutor() as executor:
+        # Submit the image_url retrieval tasks to the thread pool
+        future_to_url = {executor.submit(get_image_url, session, url):
+                             url for url in image_page_urls}
 
-            # Retrieve the completed results as they become available
-            for future in concurrent.futures.as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    image_url = future.result()
-                    if image_url:
-                        image_urls.append(image_url)
-                except Exception as e:
-                    log(f"ERROR: issue retrieving image URL for {url}\n{e}")
-                finally:
-                    pbar.update(1)
-                    pbar.refresh()
+        # Retrieve the completed results as they become available
+        for idx, future in progress_printer(enumerate(concurrent.futures.as_completed(future_to_url))):
+            url = future_to_url[future]
+            try:
+                image_url = future.result()
+                if image_url:
+                    image_urls.append(image_url)
+            except Exception as e:
+                print(f"ERROR: issue retrieving image URL for {url}\n{e}")
 
-    log(f"NOTE: Retrieved {len(image_urls)} image URLs for {len(image_page_urls)} images")
+    print(f"NOTE: Retrieved {len(image_urls)} image URLs for {len(image_page_urls)} images")
 
     return driver, image_urls
 
@@ -658,12 +655,11 @@ def get_images(driver, source_id, prefix="", image_list=None):
             raise Exception(status.text.split('.')[0])
 
     except Exception as e:
-        log(f"ERROR: {e} or you do not have permission to access it")
-        sys.exit(1)
+        raise Exception(f"ERROR: {e} or you do not have permission to access it")
 
     # If provided, will limit the search space on CoralNet
     if prefix != "":
-        log(f"NOTE: Filtering search space using '{prefix}'")
+        print(f"NOTE: Filtering search space using '{prefix}'")
         input_element = driver.find_element(By.CSS_SELECTOR, "#id_image_name")
         input_element.clear()
         input_element.send_keys(prefix)
@@ -672,7 +668,7 @@ def get_images(driver, source_id, prefix="", image_list=None):
         submit_button = driver.find_element(By.CSS_SELECTOR, ".submit_button_wrapper_center input[type='submit']")
         submit_button.click()
 
-    log(f"\nNOTE: Crawling all pages for source {source_id}")
+    print(f"\nNOTE: Crawling all pages for source {source_id}")
 
     # Create lists to store the URLs and titles
     image_page_urls = []
@@ -682,48 +678,47 @@ def get_images(driver, source_id, prefix="", image_list=None):
         # Find the element with the page number
         page_element = driver.find_element(By.CSS_SELECTOR, 'div.line')
         num_pages = int(page_element.text.split(" ")[-1]) // 20 + 1
+        page_num = 0
 
-        with tqdm(total=num_pages) as pbar:
+        while True:
 
-            while True:
+            # Find all the image elements
+            url_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
+            name_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
 
-                # Find all the image elements
-                url_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
-                name_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
+            # Iterate over the image elements
+            for url_element, name_element in list(zip(url_elements, name_elements)):
+                # Extract the href attribute (URL)
+                image_page_url = url_element.get_attribute('href')
+                image_page_urls.append(image_page_url)
 
-                # Iterate over the image elements
-                for url_element, name_element in list(zip(url_elements, name_elements)):
-                    # Extract the href attribute (URL)
-                    image_page_url = url_element.get_attribute('href')
-                    image_page_urls.append(image_page_url)
+                # Extract the title attribute (image name)
+                image_name = name_element.get_attribute('title').split(" - ")[0]
+                image_names.append(image_name)
 
-                    # Extract the title attribute (image name)
-                    image_name = name_element.get_attribute('title').split(" - ")[0]
-                    image_names.append(image_name)
+            path = 'input[title="Next page"]'
+            next_button = driver.find_elements(By.CSS_SELECTOR, path)
 
-                path = 'input[title="Next page"]'
-                next_button = driver.find_elements(By.CSS_SELECTOR, path)
-
-                # Exit early if user only wants specific images, and they are found
-                if image_list:
-                    if all(image in image_names for image in image_list):
-                        log("\nNOTE: All desired images found; exiting early")
-                        break
-
-                if next_button:
-                    next_button[0].click()
-                    pbar.update(1)
-                    pbar.refresh()
-
-                else:
-                    log("\nNOTE: Finished crawling all pages")
+            # Exit early if user only wants specific images, and they are found
+            if image_list:
+                if all(image in image_names for image in image_list):
+                    print("\nNOTE: All desired images found; exiting early")
                     break
 
-            images = pd.DataFrame({'Image Page': image_page_urls,
-                                   'Name': image_names})
+            if next_button:
+                next_button[0].click()
+                page_num += 1
+                print_progress(page_num, num_pages)
+
+            else:
+                print("\nNOTE: Finished crawling all pages")
+                break
+
+        images = pd.DataFrame({'Image Page': image_page_urls,
+                               'Name': image_names})
 
     except Exception as e:
-        log(f"ERROR: Issue with crawling pages")
+        print(f"ERROR: Issue with crawling pages")
         images = None
 
     return driver, images
@@ -740,8 +735,12 @@ def download_annotations(driver, source_id, source_dir):
     # The URL of the source page
     source_url = CORALNET_URL + f"/source/{source_id}/browse/images/"
 
-    # Send a GET request to the login page to retrieve the login form
-    response = requests.get(LOGIN_URL)
+    try:
+        # Send a GET request to the login page to retrieve the login form
+        response = requests.get(LOGIN_URL, timeout=30)
+
+    except Exception as e:
+        raise Exception(f"ERROR: CoralNet timed out after 30 seconds.\n{e}")
 
     # Pass along the cookies
     cookies = response.cookies
@@ -785,15 +784,12 @@ def download_annotations(driver, source_id, source_dir):
             # Pass along the cookies
             cookies = response.cookies
 
-            # Get the status of the source
-            status = response.text.split(".")[0]
-
             # Check the response to see if the source exists and the user has access to it
-            if "Page could not be found" in status or "don't have permission" in status:
-                raise Exception(f"ERROR: {status} or you do not have permission to access it")
+            if response.status_code == 404:
+                raise Exception(f"ERROR: Page could not be found or you do not have permission to access it")
 
             # Download the annotations
-            log(f"\nNOTE: Downloading annotations for source {source_id}")
+            print(f"NOTE: Downloading annotations for source {source_id}")
 
             # Parse the HTML response using BeautifulSoup
             soup = BeautifulSoup(response.text, "html.parser")
@@ -832,13 +828,13 @@ def download_annotations(driver, source_id, source_dir):
                 if not os.path.exists(f"{source_dir}{source_id}_annotations.csv"):
                     raise Exception("ERROR: Issue with saving annotations")
                 else:
-                    log("NOTE: Annotations saved successfully")
+                    print("NOTE: Annotations saved successfully")
 
             else:
                 raise Exception("ERROR: Could not submit form, likely due to a timeout")
 
         except Exception as e:
-            log(f"ERROR: Issue with downloading annotations")
+            print(f"ERROR: Unable to get annotations from source {source_id}\n{e}\n")
             annotations = None
 
     return driver, annotations
@@ -852,9 +848,9 @@ def download_data(driver, source_id, output_dir):
     data for multiple sources concurrently.
     """
 
-    log("\n###############################################")
-    log(f"Downloading Source {source_id}")
-    log("###############################################\n")
+    print("\n###############################################")
+    print(f"Downloading Source {source_id}")
+    print("###############################################\n")
 
     # The directory to store the output
     source_dir = f"{os.path.abspath(output_dir)}\\{str(source_id)}\\"
@@ -880,7 +876,7 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have a trained model")
 
     except Exception as e:
-        log(f"ERROR: Unable to get model metadata from source {source_id}\n{e}")
+        print(f"ERROR: Unable to get model metadata from source {source_id}\n{e}\n")
         meta = None
 
     try:
@@ -891,7 +887,7 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have a labelset")
 
     except Exception as e:
-        log(f"ERROR: Unable to get labelset from source {source_id}\n{e}")
+        print(f"ERROR: Unable to get labelset from source {source_id}\n{e}\n")
         labelset = None
 
     try:
@@ -911,7 +907,7 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have any images")
 
     except Exception as e:
-        log(f"ERROR: Unable to get images from source {source_id}\n{e}")
+        print(f"ERROR: Unable to get images from source {source_id}\n{e}\n")
         images = None
 
     try:
@@ -922,16 +918,21 @@ def download_data(driver, source_id, output_dir):
             raise Exception(f"WARNING: Source {source_id} may not have any annotations")
 
     except Exception as e:
-        log(f"ERROR: Unable to get annotations from source {source_id}\n{e}")
-        log("NOTE: If there are annotations, you may need to increase the wait time variable")
+        print(f"ERROR: Unable to get annotations from source {source_id}\n{e}\n")
         annotations = None
 
     return driver, meta, labelset, images, annotations
 
 
 def download(args):
-    """Download function that takes in input from argparse (cmd, or gui),
-        and initiates the downloading"""
+    """
+    Download function that takes in input from argparse (cmd, or gui),
+    and initiates the downloading
+    """
+
+    print("\n###############################################")
+    print("Download")
+    print("###############################################\n")
 
     # -------------------------------------------------------------------------
     # Authenticate the user
@@ -943,7 +944,7 @@ def download(args):
         # Ensure the user provided a username and password.
         authenticate(username, password)
     except Exception as e:
-        log(f"ERROR: Could not download data.\n{e}")
+        print(f"ERROR: Could not download data.\n{e}")
         return
 
     # Output directory
@@ -982,15 +983,8 @@ def download(args):
     try:
         for idx, source_id in enumerate(args.source_ids):
 
-            # Skip
-            if not source_id:
-                continue
-
             # Download all data from source
             driver, m, l, i, a = download_data(driver, source_id, output_dir)
-
-            # Gooey
-            print_progress(idx+1, len(args.source_ids))
 
     except Exception as e:
         raise Exception(f"ERROR: Could not download data\n{e}")
@@ -1055,11 +1049,11 @@ def main():
     try:
         # Call the download function
         download(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

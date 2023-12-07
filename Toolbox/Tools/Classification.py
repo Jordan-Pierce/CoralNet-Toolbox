@@ -1,48 +1,281 @@
 import os
 import sys
 import json
-import time
 import glob
-import argparse
+import time
+import shutil
+import inspect
 import warnings
+import argparse
 import traceback
 import subprocess
+from tqdm import tqdm
 
+import cv2
 import math
 import numpy as np
 import pandas as pd
+from PIL import Image
 import matplotlib.pyplot as plt
 
-import tensorflow as tf
-
-keras = tf.keras
-from keras import backend as K
-from keras.models import Sequential
-from keras import optimizers
-from keras.layers import Dense, Activation, Dropout
-from keras.preprocessing.image import ImageDataGenerator
-
-from keras.callbacks import TensorBoard
-from keras.callbacks import EarlyStopping
-from keras.callbacks import ModelCheckpoint
-from keras.callbacks import ReduceLROnPlateau
-
-from plot_keras_history import plot_history
-from sklearn.metrics import roc_curve, auc
-from sklearn.metrics import classification_report
-from sklearn.preprocessing import label_binarize
-from sklearn.metrics import ConfusionMatrixDisplay
-from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 
-from imgaug import augmenters as iaa
+import torch
+import torchvision
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset as BaseDataset
+from torch.utils.tensorboard import SummaryWriter
+from torcheval.metrics import functional as torch_metrics
 
-from Common import log
+import segmentation_models_pytorch as smp
+from segmentation_models_pytorch.utils.meter import AverageValueMeter
+
+import albumentations as albu
+
 from Common import get_now
 
-warnings.filterwarnings("ignore")
+torch.cuda.empty_cache()
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings('ignore')
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# Classes
+# ------------------------------------------------------------------------------------------------------------------
+class Epoch:
+    def __init__(self, model, loss, metrics, stage_name, device="cpu", verbose=True):
+        self.model = model
+        self.loss = loss
+        self.metrics = metrics
+        self.stage_name = stage_name
+        self.verbose = verbose
+        self.device = device
+
+        self._to_device()
+
+    def _to_device(self):
+        self.model.to(self.device)
+        self.loss.to(self.device)
+        for metric in self.metrics:
+            metric.to(self.device)
+
+    def _format_logs(self, logs):
+        str_logs = ["{} - {:.4}".format(k, v) for k, v in logs.items()]
+        s = ", ".join(str_logs)
+        return s
+
+    def batch_update(self, x, y):
+        raise NotImplementedError
+
+    def on_epoch_start(self):
+        pass
+
+    def run(self, dataloader):
+
+        self.on_epoch_start()
+
+        logs = {}
+        loss_meter = AverageValueMeter()
+        metrics_meters = {metric.__name__: AverageValueMeter() for metric in self.metrics}
+
+        with tqdm(
+                dataloader,
+                desc=self.stage_name,
+                file=sys.stdout,
+                disable=not self.verbose,
+        ) as iterator:
+            for x, y, _, in iterator:
+                # Pass forward
+                x, y = x.to(self.device), y.to(self.device)
+                loss, y_pred = self.batch_update(x, y)
+
+                # Update loss logs
+                loss_value = loss.cpu().detach().numpy()
+                loss_meter.add(loss_value)
+                loss_logs = {self.loss._get_name(): loss_meter.mean}
+                logs.update(loss_logs)
+
+                # Reshape the prediction and ground-truth
+                num_classes = y_pred.shape[1]
+                y_pred = torch.argmax(y_pred, axis=1)
+                y = torch.argmax(y, axis=1)
+
+                # Update metrics logs
+                for metric_fn in self.metrics:
+                    metric_values = metric_fn(y_pred, y, average=None, num_classes=num_classes)
+                    metrics_meters[metric_fn.__name__].add(torch.mean(metric_values))
+
+                metrics_logs = {k: v.mean for k, v in metrics_meters.items()}
+                logs.update(metrics_logs)
+
+                if self.verbose:
+                    s = self._format_logs(logs)
+                    iterator.set_postfix_str(s)
+
+        return logs
+
+
+class TrainEpoch(Epoch):
+    def __init__(self, model, loss, metrics, optimizer, device="cpu", verbose=True):
+        super().__init__(
+            model=model,
+            loss=loss,
+            metrics=metrics,
+            stage_name="train",
+            device=device,
+            verbose=verbose,
+        )
+        self.optimizer = optimizer
+
+    def on_epoch_start(self):
+        self.model.train()
+
+    def batch_update(self, x, y):
+        self.optimizer.zero_grad()
+        prediction = self.model.forward(x)
+        loss = self.loss(prediction, y)
+        loss.backward()
+        self.optimizer.step()
+        return loss, prediction
+
+
+class ValidEpoch(Epoch):
+    def __init__(self, model, loss, metrics, device="cpu", verbose=True):
+        super().__init__(
+            model=model,
+            loss=loss,
+            metrics=metrics,
+            stage_name="valid",
+            device=device,
+            verbose=verbose,
+        )
+
+    def on_epoch_start(self):
+        self.model.eval()
+
+    def batch_update(self, x, y):
+        with torch.no_grad():
+            prediction = self.model.forward(x)
+            loss = self.loss(prediction, y)
+        return loss, prediction
+
+
+class PytorchMetric(torch.nn.Module):
+    """
+
+    """
+
+    def __init__(self, func):
+        super(PytorchMetric, self).__init__()
+        self.func = func  # The custom function to be wrapped
+
+    def forward(self, *args, **kwargs):
+        # Check if a device is specified in the keyword arguments
+        device = kwargs.get('device', 'cpu')
+
+        # Move any input tensors to the specified device
+        args = [arg.to(device) if torch.is_tensor(arg) else arg for arg in args]
+
+        # Execute the custom function on the specified device
+        result = self.func(*args)
+
+        return result
+
+    @property
+    def __name__(self):
+        return self.func.__name__
+
+
+class Dataset(BaseDataset):
+    """
+
+    """
+
+    def __init__(
+            self,
+            dataframe,
+            class_map,
+            augmentation=None,
+            preprocessing=None,
+    ):
+        assert 'Name' in dataframe.columns, print(f"ERROR: 'Name' not found in Patches file")
+        assert 'Path' in dataframe.columns, print(f"ERROR: 'Path' not found in Patches file")
+        assert 'Label' in dataframe.columns, print(f"ERROR: 'Label' not found in Patches file")
+
+        self.ids = dataframe['Name'].to_list()
+        self.patches = dataframe['Path'].to_list()
+        self.labels = dataframe['Label'].to_list()
+        self.class_map = class_map
+        self.augmentation = augmentation
+        self.preprocessing = preprocessing
+
+    def __getitem__(self, i):
+
+        # read data
+        image = cv2.imread(self.patches[i])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        label = self.labels[i]
+
+        # apply augmentations
+        if self.augmentation:
+            image = self.augmentation(image=image)['image']
+
+        # apply preprocessing
+        if self.preprocessing:
+            image = self.preprocessing(image=image)['image']
+
+        # Convert the image
+        image = torch.from_numpy(image)
+        # Convert the label
+        label = torch.tensor([self.class_map[label]])
+        label = F.one_hot(label.view(-1), len(self.class_map.keys()))
+        label = label.squeeze().to(torch.float)
+
+        return image, label, self.patches[i]
+
+    def __len__(self):
+        return len(self.ids)
+
+
+class CustomModel(torch.nn.Module):
+    def __init__(self, encoder_name, weights, num_classes, dropout_rate):
+        super(CustomModel, self).__init__()
+
+        # Name
+        self.name = encoder_name
+
+        # Pre-trained encoder
+        self.encoder = smp.encoders.get_encoder(name=encoder_name,
+                                                weights=weights)
+
+        # Fully connected layer for classification
+        self.fc = torch.nn.Linear(self.encoder.out_channels[-1],
+                                  num_classes)
+
+        # Dropout layer
+        self.dropout = torch.nn.Dropout(dropout_rate)
+
+    # Add a method to get the name attribute
+    def get_name(self):
+        return self.name
+
+    def forward(self, x):
+        # Forward pass through the encoder
+        x = self.encoder(x)
+        x = x[-1]
+        # Global average pooling
+        x = F.adaptive_avg_pool2d(x, (1, 1))
+        x = x.view(x.size(0), -1)
+        # Dropout layer
+        x = self.dropout(x)
+        # Fully connected layer for classification
+        x = self.fc(x)
+        # Softmax activation
+        x = F.softmax(x, dim=1)
+
+        return x
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -50,31 +283,30 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # ------------------------------------------------------------------------------------------------------------------
 def get_classifier_encoders():
     """
-    Lists all the models available for gooey
+    Lists all the models available
     """
-    encoders_options = []
+    encoder_options = []
+
     try:
-        import tensorflow.keras.applications as models
-        options = [_ for _ in dir(models) if callable(getattr(models, _))]
-        options = [_ for _ in options if 'include_preprocessing' in getattr(models, _).__code__.co_varnames]
-        options = [_ for _ in options if "EfficientNet" in _]
-        encoders_options = options
+        options = smp.encoders.get_encoder_names()
+        encoder_options = options
 
     except Exception as e:
         # Fail silently
         pass
 
-    return encoders_options
+    return encoder_options
 
 
 def get_classifier_losses():
     """
-    Lists all the losses available for gooey
+    Lists all the losses available
     """
     loss_options = []
     try:
-        import tensorflow.keras.losses as losses
-        options = [_ for _ in dir(losses) if callable(getattr(losses, _)) and "_" in _]
+        import torch.nn as nn
+        options = [_ for _ in dir(nn) if callable(getattr(nn, _))]
+        options = [_ for _ in options if 'Loss' in getattr(nn, _).__name__]
         loss_options = options
 
     except Exception as e:
@@ -84,12 +316,121 @@ def get_classifier_losses():
     return loss_options
 
 
+def get_classifier_metrics():
+    """
+    Lists all the metrics available
+    """
+    metric_options = ['binary_accuracy',
+                      'binary_f1_score',
+                      'binary_precision',
+                      'binary_recall',
+                      'multiclass_accuracy',
+                      'multiclass_f1_score',
+                      'multiclass_precision',
+                      'multiclass_recall']
+
+    return metric_options
+
+
+def get_classifier_optimizers():
+    """
+
+    """
+    optimizer_options = []
+
+    try:
+        options = [attr for attr in dir(torch.optim) if callable(getattr(torch.optim, attr))]
+        optimizer_options = options
+
+    except Exception as e:
+        # Fail silently
+        pass
+
+    return optimizer_options
+
+
+def get_training_augmentation(height=224, width=224):
+    """
+
+    """
+    train_transform = [
+
+        albu.HorizontalFlip(p=0.5),
+        albu.Resize(height=height, width=width),
+        albu.PadIfNeeded(min_height=height, min_width=width, always_apply=True, border_mode=0, value=0),
+
+        albu.GaussNoise(p=0.2),
+        albu.PixelDropout(p=1.0, dropout_prob=0.1),
+
+        albu.OneOf(
+            [
+                albu.CLAHE(p=1),
+                albu.RandomBrightness(p=1),
+                albu.RandomGamma(p=1),
+            ],
+            p=0.9,
+        ),
+
+        albu.OneOf(
+            [
+                albu.Sharpen(p=1),
+                albu.Blur(blur_limit=3, p=1),
+                albu.MotionBlur(blur_limit=3, p=1),
+            ],
+            p=0.9,
+        ),
+
+        albu.OneOf(
+            [
+                albu.RandomContrast(p=1),
+                albu.HueSaturationValue(p=1),
+            ],
+            p=0.9,
+        ),
+
+    ]
+
+    return albu.Compose(train_transform)
+
+
+def get_validation_augmentation(height=224, width=224):
+    """
+
+    """
+    test_transform = [
+        albu.Resize(height=height, width=width),
+        albu.PadIfNeeded(min_height=height, min_width=width, always_apply=True, border_mode=0, value=0),
+    ]
+    return albu.Compose(test_transform)
+
+
+def to_tensor(x, **kwargs):
+    if len(x.shape) == 2:
+        return x
+    return x.transpose(2, 0, 1).astype('float32')
+
+
+def get_preprocessing(preprocessing_fn):
+    """
+
+    """
+
+    _transform = [
+        albu.Lambda(image=preprocessing_fn),
+        albu.Lambda(image=to_tensor, mask=to_tensor),
+    ]
+    return albu.Compose(_transform)
+
+
 def compute_class_weights(df, mu=0.15):
     """
     Compute class weights for the given dataframe.
     """
     # Compute the value counts for each class
-    value_counts = df['Label'].value_counts().to_dict()
+    class_categories = sorted(df['Label'].unique())
+    class_values = [df['Label'].value_counts()[c] for c in class_categories]
+    value_counts = dict(zip(class_categories, class_values))
+
     total = sum(value_counts.values())
     keys = value_counts.keys()
 
@@ -104,46 +445,49 @@ def compute_class_weights(df, mu=0.15):
     return class_weight
 
 
-def recall(y_true, y_pred):
+def plot_samples(model, data_loader, num_samples=100):
     """
-    Compute the recall metric.
+
     """
-    # Compute the true positives
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    # Compute the possible positives
-    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
-    # Compute the recall
-    r = true_positives / (possible_positives + K.epsilon())
+    model.eval()
 
-    return r
+    # Get validation samples
+    samples = iter(data_loader)
+    images, labels, paths = next(samples)
 
+    # Move data to the same device as the model
+    device = next(model.parameters()).device
+    images = images.to(device)
 
-def precision(y_true, y_pred):
-    """
-    Compute the precision metric.
-    """
-    # Compute the true positives
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    # Compute the predicted positives
-    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
-    # Compute the precision
-    p = true_positives / (predicted_positives + K.epsilon())
+    with torch.no_grad():
+        preds = model(images)
 
-    return p
+    labels = np.argmax(labels.cpu().numpy(), axis=1)
+    preds = np.argmax(preds.cpu().numpy(), axis=1)
 
+    class_names = list(data_loader.dataset.class_map.keys())
 
-def f1_score(y_true, y_pred):
-    """
-    Compute the F1-score metric.
-    """
-    # Compute precision and recall using the previously defined functions
-    p = precision(y_true, y_pred)
-    r = recall(y_true, y_pred)
+    # Create a grid for plotting the images
+    rows = int(np.ceil(num_samples / 10))
+    fig, axes = plt.subplots(rows, 10, figsize=(20, 2 * rows))
 
-    # Compute the F1-score
-    f1 = 2 * (p * r) / (p + r + K.epsilon())
+    for i in range(num_samples):
+        ax = axes[i // 10, i % 10] if num_samples > 10 else axes[i]
 
-    return f1
+        actual_label = class_names[labels[i]]
+        predicted_label = class_names[preds[i]]
+
+        # Set title color based on prediction correctness
+        title_color = 'green' if labels[i] == preds[i] else 'red'
+
+        ax.imshow(plt.imread(paths[i]))
+        ax.set_title(f'Actual: {actual_label}\n'
+                     f'Prediction: {predicted_label}', fontsize=8, color=title_color)
+        ax.axis('off')
+
+    plt.tight_layout()
+
+    return fig
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -155,21 +499,82 @@ def classification(args):
 
     """
 
-    log("\n###############################################")
-    log(f"Classification")
-    log("###############################################\n")
+    print("\n###############################################")
+    print(f"Classification")
+    print("###############################################\n")
 
-    # Check that the user has GPU available
-    if tf.config.list_physical_devices('GPU'):
-        log("NOTE: Found GPU")
-        gpus = tf.config.list_physical_devices(device_type='GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-    else:
-        log("WARNING: No GPU found; defaulting to CPU")
+    # Check for CUDA
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+
+    # Whether to run on GPU or CPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Check input data
+    # ------------------------------------------------------------------------------------------------------------------
+
+    # If the user provides multiple patch dataframes
+    patches_df = pd.DataFrame()
+
+    for patches_path in args.patches:
+        if os.path.exists(patches_path):
+            # Patch dataframe
+            patches = pd.read_csv(patches_path, index_col=0)
+            patches = patches.dropna()
+            patches_df = pd.concat((patches_df, patches))
+        else:
+            raise Exception(f"ERROR: Patches dataframe {patches_path} does not exist")
+
+    class_names = sorted(patches_df['Label'].unique())
+    num_classes = len(class_names)
+    class_map = {f"{class_names[_]}": _ for _ in range(num_classes)}
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Building Model
+    # ------------------------------------------------------------------------------------------------------------------
+    print(f"\n#########################################\n"
+          f"Building Model\n"
+          f"#########################################\n")
+
+    try:
+        encoder_weights = 'imagenet'
+
+        if args.encoder_name not in get_classifier_encoders():
+            raise Exception(f"ERROR: Encoder must be one of {get_classifier_encoders()}")
+
+        # Building model using user's input
+        model = CustomModel(encoder_name=args.encoder_name,
+                            weights=encoder_weights,
+                            num_classes=num_classes,
+                            dropout_rate=args.dropout_rate)
+
+        # Freezing percentage of the encoder
+        num_params = len(list(model.encoder.parameters()))
+        freeze_params = int(num_params * args.freeze_encoder)
+
+        # Give users the ability to freeze N percent of the encoder
+        print(f"NOTE: Freezing {args.freeze_encoder}% of encoder weights")
+        for idx, param in enumerate(model.encoder.parameters()):
+            if idx < freeze_params:
+                param.requires_grad = False
+
+        preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
+
+        print(f"NOTE: Using {args.encoder_name} encoder")
+
+    except Exception as e:
+        print(f"ERROR: Could not build model\n{e}")
+        sys.exit(1)
 
     # ---------------------------------------------------------------------------------------
     # Source directory setup
+    # ---------------------------------------------------------------------------------------
+    print("\n###############################################")
+    print("Logging")
+    print("###############################################\n")
+
     output_dir = f"{args.output_dir}\\"
 
     # Run Name
@@ -179,34 +584,46 @@ def classification(args):
     run_dir = f"{output_dir}classification\\{run}\\"
     weights_dir = run_dir + "weights\\"
     logs_dir = run_dir + "logs\\"
+    tensorboard_dir = logs_dir + "tensorboard\\"
 
     # Make the directories
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(weights_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
+    os.makedirs(tensorboard_dir, exist_ok=True)
 
-    log(f"NOTE: Model Run - {run}")
-    log(f"NOTE: Model Directory - {run_dir}")
-    log(f"NOTE: Log Directory - {logs_dir}")
+    with open(f'{run_dir}Class_Map.json', 'w') as json_file:
+        json.dump(class_map, json_file, indent=3)
 
-    # ---------------------------------------------------------------------------------------
-    # Data setup
-    log(f"\n#########################################\n"
-        f"Creating Datasets\n"
-        f"#########################################\n")
+    print(f"NOTE: Model Run - {run}")
+    print(f"NOTE: Model Directory - {run_dir}")
+    print(f"NOTE: Log Directory - {logs_dir}")
+    print(f"NOTE: Tensorboard Directory - {tensorboard_dir}")
 
-    # If the user provides multiple patch dataframes
-    patches_df = pd.DataFrame()
+    # Create a SummaryWriter for logging to tensorboard
+    train_writer = SummaryWriter(log_dir=tensorboard_dir + "train")
+    valid_writer = SummaryWriter(log_dir=tensorboard_dir + "valid")
+    test_writer = SummaryWriter(log_dir=tensorboard_dir + "test")
 
-    for patches in args.patches:
-        if os.path.exists(patches):
-            # Patch dataframe
-            patches = pd.read_csv(patches, index_col=0)
-            patches = patches.dropna()
-            patches_df = pd.concat((patches_df, patches))
-        else:
-            raise Exception(f"ERROR: Patches dataframe {patches} does not exist")
+    # Open tensorboard
+    if args.tensorboard:
+        print(f"\n#########################################\n"
+              f"Tensorboard\n"
+              f"#########################################\n")
 
+        # Create a subprocess that opens tensorboard
+        tensorboard_process = subprocess.Popen(['tensorboard', '--logdir', tensorboard_dir],
+                                               stdout=subprocess.PIPE,
+                                               stderr=subprocess.PIPE)
+
+        print("NOTE: View Tensorboard at 'http://localhost:6006'")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Loading data, creating datasets
+    # ------------------------------------------------------------------------------------------------------------------
+    print("\n###############################################")
+    print("Creating Datasets")
+    print("###############################################\n")
     # Names of all images; sets to be split based on images
     image_names = patches_df['Image Name'].unique()
 
@@ -227,7 +644,7 @@ def classification(args):
     # If there isn't one class sample in each data sets
     # Keras will throw an error; hacky way of fixing this.
     if not (train_classes == valid_classes == test_classes):
-        log("NOTE: Sampling one of each class category")
+        print("NOTE: Sampling one of each class category")
         # Holds one sample of each class category
         sample = pd.DataFrame()
         # Gets one sample from patches_df
@@ -249,14 +666,14 @@ def classification(args):
     test_df.to_csv(f"{logs_dir}Testing_Set.csv", index=False)
 
     # The number of class categories
-    class_names = train_df['Label'].unique().tolist()
-    num_classes = len(class_names)
-    log(f"NOTE: Number of classes in training set is {len(train_df['Label'].unique())}")
-    log(f"NOTE: Number of classes in validation set is {len(valid_df['Label'].unique())}")
-    log(f"NOTE: Number of classes in testing set is {len(test_df['Label'].unique())}")
+    print(f"NOTE: Number of classes in training set is {len(train_df['Label'].unique())}")
+    print(f"NOTE: Number of classes in validation set is {len(valid_df['Label'].unique())}")
+    print(f"NOTE: Number of classes in testing set is {len(test_df['Label'].unique())}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Data Exploration
+    # ------------------------------------------------------------------------------------------------------------------
+
     plt.figure(figsize=(10, 5))
 
     # Set the same y-axis limits for all subplots
@@ -286,448 +703,359 @@ def classification(args):
     plt.close()
 
     if os.path.exists(logs_dir + "DatasetSplit.png"):
-        log(f"NOTE: Datasplit Figure saved in {logs_dir}")
+        print(f"NOTE: Datasplit Figure saved in {logs_dir}")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Dataset creation
+    # ------------------------------------------------------------------------------------------------------------------
+
+    # Whether to include training augmentation
+    if args.augment_data:
+        training_augmentation = get_training_augmentation()
+    else:
+        training_augmentation = get_validation_augmentation()
+
+    train_dataset = Dataset(
+        train_df,
+        augmentation=training_augmentation,
+        preprocessing=get_preprocessing(preprocessing_fn),
+        class_map=class_map,
+    )
+
+    valid_dataset = Dataset(
+        valid_df,
+        augmentation=get_validation_augmentation(),
+        preprocessing=get_preprocessing(preprocessing_fn),
+        class_map=class_map,
+    )
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Show sample of training data
+    # ------------------------------------------------------------------------------------------------------------------
+    print(f"\n#########################################\n"
+          f"Viewing Training Samples\n"
+          f"#########################################\n")
+
+    # Create a sample version dataset
+    sample_dataset = Dataset(train_df,
+                             augmentation=training_augmentation,
+                             class_map=class_map)
+
+    # Loop through a few samples
+    for i in range(5):
+        # Get a random sample from dataset
+        image, label, _ = sample_dataset[np.random.randint(0, len(train_df))]
+        image = image.numpy()
+        label = np.argmax(label.numpy())
+        # Visualize and save to logs dir
+        save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
+        plt.figure()
+        plt.imshow(image)
+        plt.title(f"{class_names[label]}")
+        plt.savefig(save_path)
+        plt.tight_layout()
+        plt.close()
+
+        # Write to tensorboard
+        train_writer.add_image(f'Training_Samples', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Start of parameter setting
-    log(f"\n#########################################\n"
-        f"Setting Parameters\n"
-        f"#########################################\n")
+    # ------------------------------------------------------------------------------------------------------------
+    print(f"\n#########################################\n"
+          f"Setting Parameters\n"
+          f"#########################################\n")
 
     # Calculate weights
     if args.weighted_loss:
-        log(f"NOTE: Calculating weights for weighted loss function")
+        print(f"NOTE: Calculating weights for weighted loss function")
         class_weight = compute_class_weights(train_df)
+        print(f"NOTE: {class_weight}")
     else:
         class_weight = {c: 1.0 for c in range(num_classes)}
 
-    # Reformat for model.fit()
-    class_weight = {i: list(class_weight.values())[i] for i in range(len(list(class_weight.values())))}
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # Data Augmentation
-    dropout_rate = args.dropout_rate
-
-    # For the validation and testing sets
-    augs_for_valid = iaa.Sequential([iaa.Resize(224, interpolation='linear')])
-
-    # For the training set, if selected
-    if args.augment_data:
-        log(f"NOTE: Augmenting Training Dataset")
-        augs_for_train = iaa.Sequential([
-            iaa.Resize(224, interpolation='linear'),
-            iaa.Fliplr(0.5),
-            iaa.Flipud(0.5),
-            iaa.Rot90([1, 2, 3, 4], True),
-            iaa.Sometimes(.3, iaa.Affine(scale=(.95, 1.05))),
-        ])
-    else:
-        augs_for_train = augs_for_valid
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # Training Parameters
-    num_epochs = args.num_epochs
-
-    # Batch size is dependent on the amount of memory available on your machine
-    batch_size = args.batch_size
-
-    # Defines the length of an epoch, all images are used
-    steps_per_epoch_train = len(train_df) / batch_size
-    steps_per_epoch_valid = len(valid_df) / batch_size
-
-    # Learning rate
-    lr = args.learning_rate
-
-    # Training images are augmented, and then normalized
-    train_augmentor = ImageDataGenerator(preprocessing_function=augs_for_train.augment_image)
-
-    # Reading from dataframe
-    train_generator = train_augmentor.flow_from_dataframe(dataframe=train_df,
-                                                          directory=None,
-                                                          x_col='Path',
-                                                          y_col='Label',
-                                                          target_size=(224, 224),
-                                                          color_mode="rgb",
-                                                          class_mode='categorical',
-                                                          batch_size=batch_size,
-                                                          shuffle=True,
-                                                          seed=42)
-
-    # Only normalize images, no augmentation
-    validate_augmentor = ImageDataGenerator(preprocessing_function=augs_for_valid.augment_image)
-
-    # Reading from dataframe
-    validation_generator = validate_augmentor.flow_from_dataframe(dataframe=valid_df,
-                                                                  directory=None,
-                                                                  x_col='Path',
-                                                                  y_col='Label',
-                                                                  target_size=(224, 224),
-                                                                  color_mode="rgb",
-                                                                  class_mode='categorical',
-                                                                  batch_size=batch_size,
-                                                                  shuffle=True,
-                                                                  seed=42)
-
-    # Count the occurrences of each label
-    label_counts = test_df['Label'].value_counts()
-
-    # Sort the DataFrame based on label counts in descending order
-    test_df = test_df.sort_values(by='Label', key=lambda x: x.map(label_counts), ascending=False)
-
-    # Create the generator
-    test_augmentor = ImageDataGenerator(preprocessing_function=augs_for_valid.augment_image)
-
-    # Reading from dataframe
-    test_generator = test_augmentor.flow_from_dataframe(dataframe=test_df,
-                                                        x_col='Path',
-                                                        y_col='Label',
-                                                        target_size=(224, 224),
-                                                        color_mode="rgb",
-                                                        class_mode='categorical',
-                                                        batch_size=batch_size,
-                                                        shuffle=False,
-                                                        seed=42)
-
-    # Save the class categories as a JSON file
-    class_indices = test_generator.class_indices
-    class_categories = {v: k for k, v in class_indices.items()}
-    with open(f'{run_dir}Class_Map.json', 'w') as json_file:
-        json.dump(class_categories, json_file, indent=3)
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # Building Model
-    log(f"\n#########################################\n"
-        f"Building Model\n"
-        f"#########################################\n")
+    # Reformat for training
+    class_weight = torch.tensor(list(class_weight.values()))
 
     try:
+        # Get the loss function
+        assert args.loss_function in get_classifier_losses()
 
-        if args.encoder_name not in get_classifier_encoders():
-            raise Exception(f"ERROR: Encoder must be one of {get_classifier_encoders()}")
+        # Get the loss function
+        loss_function = getattr(torch.nn, args.loss_function)().to(device)
 
-        convnet = getattr(keras.applications, args.encoder_name)(
-            include_top=False,
-            include_preprocessing=True,
-            weights='imagenet',
-            input_shape=(224, 224, 3),
-            pooling='max',
-            classes=num_classes,
-            classifier_activation='softmax',
-        )
+        # Get the parameters of the DiceLoss class using inspect.signature
+        params = inspect.signature(loss_function.__init__).parameters
+
+        # Check if the 'classes' or 'ignore_index' parameters exist
+        if 'weight' in params and args.weighted_loss:
+            loss_function.weight = class_weight
+
+        print(f"NOTE: Using loss function {args.loss_function}")
 
     except Exception as e:
-        log(f"ERROR: Issue with building model\n{e}")
+        print(f"ERROR: Could not get loss function {args.loss_function}")
+        print(f"NOTE: Choose one of the following: {get_classifier_losses()}")
         sys.exit(1)
 
-    # Here we create the entire model, with the convnet previously defined
-    # as the encoder. Our entire model is simple, consisting of the convnet,
-    # a dropout layer for regularization, and a fully-connected layer with
-    # softmax activation for classification.
-    model = Sequential([
-        convnet,
-        Dropout(dropout_rate),
-        Dense(num_classes),
-        Activation('softmax')
-    ])
+    try:
+        # Get the optimizer
+        assert args.optimizer in get_classifier_optimizers()
+        optimizer = getattr(torch.optim, args.optimizer)(model.parameters(), args.learning_rate)
 
-    # Display model to user
-    graph = model.summary()
-    log(f"\n{graph}\n")
+        print(f"NOTE: Using optimizer function {args.optimizer}")
 
-    # ------------------------------------------------------------------------------------------------------------------
-    # Callbacks
-    callbacks = [
-        ReduceLROnPlateau(monitor='val_loss',
-                          factor=.65,
-                          patience=3,
-                          verbose=1),
+    except Exception as e:
+        print(f"ERROR: Could not get optimizer {args.optimizer}")
+        print(f"NOTE: Choose one of the following: {get_classifier_optimizers()}")
+        sys.exit(1)
 
-        ModelCheckpoint(filepath=weights_dir + "model-{epoch:03d}-{acc:03f}-{val_acc:03f}.h5",
-                        monitor='val_loss',
-                        save_weights_only=False,
-                        save_best_only=True,
-                        verbose=1),
+    try:
+        # Get the metrics
+        if not any(m in get_classifier_metrics() for m in args.metrics):
+            args.metrics = get_classifier_metrics()
 
-        EarlyStopping(monitor="val_loss",
-                      min_delta=0,
-                      patience=10,
-                      verbose=1,
-                      mode="auto",
-                      baseline=None,
-                      restore_best_weights=True),
-    ]
+        if len(class_names) == 2:
+            metrics = [m for m in args.metrics if "binary" in m]
+        elif len(class_names) > 2:
+            metrics = [m for m in args.metrics if "multiclass" in m]
+        else:
+            raise Exception("ERROR: There is only one class present in dataset, cannot train model")
 
-    # ------------------------------------------------------------------------------------------------------------------
-    # Compile model
-    model.compile(loss=args.loss_function,
-                  optimizer=optimizers.Adam(learning_rate=lr),
-                  metrics=['acc', precision, recall, f1_score])
+        print(f"NOTE: Using metrics {metrics}")
+        metrics = [getattr(torch_metrics, m) for m in metrics]
 
-    # ------------------------------------------------------------------------------------------------------------------
-    # Display Tensorboard
-    if args.tensorboard:
-        try:
-            log(f"\n#########################################\n"
-                f"Tensorboard\n"
-                f"#########################################\n")
+        # Convert for CUDA
+        metrics = [PytorchMetric(m) for m in metrics]
 
-            # Add callback
-            callbacks.append(TensorBoard(log_dir=logs_dir, histogram_freq=0))
-
-            # Call Tensorboard using the environment's python exe
-            tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
-            process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
-
-            # Let it load
-            time.sleep(15)
-
-        except Exception as e:
-            log(f"WARNING: Could not open TensorBoard; check that it is installed\n{e}")
+    except Exception as e:
+        print(f"ERROR: Could not get metric(s): {args.metrics}")
+        print(f"NOTE: Choose one or more of the following: {get_classifier_metrics()}")
+        sys.exit(1)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Train Model
-
+    # ------------------------------------------------------------------------------------------------------------------
     try:
 
-        log(f"\n#########################################\n"
-            f"Training\n"
-            f"#########################################\n")
+        print(f"\n#########################################\n"
+              f"Training\n"
+              f"#########################################\n")
 
-        log("NOTE: Starting Training")
-        history = model.fit(train_generator,
-                            steps_per_epoch=steps_per_epoch_train,
-                            epochs=num_epochs,
-                            validation_data=validation_generator,
-                            validation_steps=steps_per_epoch_valid,
-                            callbacks=callbacks,
-                            verbose=0,
-                            class_weight=class_weight)
+        print("NOTE: Starting Training")
+        train_epoch = TrainEpoch(
+            model,
+            loss=loss_function,
+            metrics=metrics,
+            optimizer=optimizer,
+            device=device,
+            verbose=True,
+        )
+
+        valid_epoch = ValidEpoch(
+            model,
+            loss=loss_function,
+            metrics=metrics,
+            device=device,
+            verbose=True,
+        )
+
+        best_score = float('inf')
+        best_epoch = 0
+        since_best = 0
+        since_drop = 0
+
+        # Training loop
+        for e_idx in range(1, args.num_epochs + 1):
+
+            print(f"\nEpoch: {e_idx} / {args.num_epochs}")
+            # Go through an epoch for train, valid
+            train_logs = train_epoch.run(train_loader)
+            valid_logs = valid_epoch.run(valid_loader)
+
+            # Log training metrics
+            for key, value in train_logs.items():
+                train_writer.add_scalar(key, value, global_step=e_idx)
+
+            # Log validation metrics
+            for key, value in valid_logs.items():
+                valid_writer.add_scalar(key, value, global_step=e_idx)
+
+            # Plot validation samples
+            save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
+            figure = plot_samples(model, valid_loader)
+            figure.savefig(save_path)
+
+            # Log the visualization to TensorBoard
+            figure = np.array(Image.open(save_path))
+            valid_writer.add_image(f'Valid_Results', figure, dataformats="HWC", global_step=e_idx)
+
+            # Get the loss values
+            train_loss = [v for k, v in train_logs.items() if 'loss' in k.lower()][0]
+            valid_loss = [v for k, v in valid_logs.items() if 'loss' in k.lower()][0]
+
+            if valid_loss < best_score:
+                # Update best
+                best_score = valid_loss
+                best_epoch = e_idx
+                since_best = 0
+                print(f"NOTE: Current best epoch {e_idx}")
+
+                # Save the model
+                prefix = f'{weights_dir}model-{str(e_idx)}-'
+                suffix = f'{str(np.around(train_loss, 4))}-{str(np.around(valid_loss, 4))}'
+                path = prefix + suffix
+                torch.save(model, f'{path}.pth')
+                print(f'NOTE: Model saved to {path}')
+            else:
+                # Increment the counters
+                since_best += 1
+                since_drop += 1
+                print(f"NOTE: Model did not improve after epoch {e_idx}")
+
+            # Overfitting indication
+            if train_loss < valid_loss:
+                print(f"NOTE: Overfitting occurred in epoch {e_idx}")
+
+            # Check if it's time to decrease the learning rate
+            if (since_best >= 5 or train_loss <= valid_loss) and since_drop >= 5:
+                since_drop = 0
+                new_lr = optimizer.param_groups[0]['lr'] * 0.75
+                optimizer.param_groups[0]['lr'] = new_lr
+                print(f"NOTE: Decreased learning rate to {new_lr} after epoch {e_idx}")
+
+            # Exit early if progress stops
+            if since_best >= 10 and train_loss < valid_loss and since_drop >= 5:
+                print("NOTE: Model training plateaued; exiting training loop")
+                break
+
+    except KeyboardInterrupt:
+        print("NOTE: Exiting training loop")
 
     except Exception as e:
-        log(f"ERROR: There was an issue with training!\n"
-            f"Read the 'Error.txt file' in the Logs Directory")
+        print(f"ERROR: There was an issue with training!\n{e}")
+
+        if 'CUDA out of memory' in str(e):
+            print(f"WARNING: Not enough GPU memory for the provided parameters")
 
         # Write the error to text file
+        print(f"NOTE: Please see {logs_dir}Error.txt")
         with open(f"{logs_dir}Error.txt", 'a') as file:
-            file.write(f"Caught exception: {str(e)}\n")
-
-        if args.tensorboard:
-            # Close Tensorboard
-            process.terminate()
+            file.write(f"Caught exception: {str(traceback.print_exc())}\n")
 
         # Exit early
         sys.exit(1)
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Plot and save results
-    plot_history(history, single_graphs=True, path=f"{logs_dir}");
-    log(f"NOTE: Training History Figure saved in {logs_dir}")
-
+    # Load best model
     # ------------------------------------------------------------------------------------------------------------------
-    # Test Dataset
-    log(f"\n#########################################\n"
-        f"Validating with Test Dataset\n"
-        f"#########################################\n")
-
-    # Get the best weights
-    weights = sorted(glob.glob(weights_dir + "*.h5"), key=os.path.getmtime)
-    best_weights = weights[-1]
+    weights = sorted(glob.glob(weights_dir + "*.pth"))
+    best_weights = [w for w in weights if f'model-{str(best_epoch)}' in w][0]
 
     # Load into the model
-    model.load_weights(best_weights)
-    log(f"NOTE: Loaded best weights {best_weights}")
+    model = torch.load(best_weights)
+    print(f"NOTE: Loaded best weights {best_weights}")
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Make predictions on test set
-    probabilities = model.predict_generator(test_generator, verbose=0)
-
-    # Collapse the probability distribution to the most likely category
-    predictions = np.argmax(probabilities, axis=1)
-
-    # ------------------------------------------------------------------------------------------------------------------
-    # Create classification report
-    report = classification_report(test_generator.classes,
-                                   predictions,
-                                   target_names=test_generator.class_indices.keys())
-
-    # Save the report to a file
-    with open(f"{logs_dir}Classification_Report.txt", "w") as file:
-        file.write(report)
-    log(f"NOTE: Classification Report saved in {logs_dir}")
-
-    # --- Confusion Matrix
-    # Calculate the overall accuracy
-    overall_accuracy = accuracy_score(test_generator.classes, predictions)
-    # Calculate the number of samples
-    num_samples = len(test_generator.classes)
-    # Convert the accuracy and number of samples to strings
-    accuracy_str = f"{overall_accuracy:.2f}"
-    num_samples_str = str(num_samples)
-
-    # Calculate the confusion matrix and normalize it
-    cm = confusion_matrix(test_generator.classes, predictions)
-    cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-    cm_normalized = np.round(cm_normalized, decimals=2)
-
-    # Get the sum of each row (number of samples per class)
-    row_sums = cm.sum(axis=1)
-
-    # Sort the confusion matrix and row sums in descending order
-    sort_indices = np.argsort(row_sums)[::-1]
-    cm_sorted = cm_normalized[sort_indices][:, sort_indices]
-    class_labels_sorted = np.array(list(test_generator.class_indices.keys()))[sort_indices]
-
-    # Create the display
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm_sorted, display_labels=class_labels_sorted)
-    # Set the figure size
-    fig, ax = plt.subplots(figsize=(50, 50))
-    ax.set_title(f"Confusion Matrix\nOverall Accuracy: {accuracy_str}, Samples: {num_samples_str}")
-    # Plot the confusion matrix
-    disp.plot(ax=ax, cmap=plt.cm.Blues, values_format='g')
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
-    plt.savefig(f"{logs_dir}Confusion_Matrix.png")
-    plt.close()
-
-    log(f"NOTE: Confusion Matrix saved in {logs_dir}")
-
-    # --- ROC
-    # Convert the true labels to binary format
-    binary_true_labels = label_binarize(test_generator.classes, classes=np.arange(num_classes))
-
-    # Create a dict for the legend
-    class_indices = {int(v): k for k, v in test_generator.class_indices.items()}
-
-    # Compute the false positive rate (FPR), true positive rate (TPR), and AUC for each class
-    fpr = dict()
-    tpr = dict()
-    roc_auc = dict()
-
-    for i in range(num_classes):
-        fpr[i], tpr[i], _ = roc_curve(binary_true_labels[:, i], probabilities[:, i])
-        roc_auc[i] = auc(fpr[i], tpr[i])
-
-    # Plot the ROC curves for each class
-    plt.figure(figsize=(10, 10))
-    for i in range(num_classes):
-        roc_val = np.around(roc_auc[i], 2)
-        plt.plot(fpr[i], tpr[i], lw=2, label=f'{class_indices[i]} AUC = {roc_val}')
-
-    # Plot the random guessing line
-    plt.plot([0, 1], [0, 1], color='black', lw=1, linestyle='--')
-
-    # Set plot properties
-    plt.xlim([0, 1])
-    plt.ylim([0, 1])
-    plt.xlabel('False Positive Rate (FPR)')
-    plt.ylabel('True Positive Rate (TPR)')
-    plt.title('Receiver Operating Characteristic (ROC) Curves')
-    plt.legend(loc='lower right', title='Classes')
-    plt.savefig(logs_dir + "ROC_Curves.png")
-    plt.close()
-
-    log(f"NOTE: ROC Figure saved in {logs_dir}")
-
-    # --- Threshold
-    # Higher values represent more sure/confident predictions
-    # .1 unsure -> .5 pretty sure -> .9 very sure
-
-    # Creating a graph of the threshold values and the accuracy
-    threshold_values = np.arange(0.0, 1.0, 0.05)
-    class_ACC = []
-    sure_percentage = []
-
-    # Looping through the threshold values and calculating the accuracy and percentage
-    for threshold in threshold_values:
-        # Creating a list to store the sure index
-        sure_index = []
-        # Looping through all predictions and calculating the sure predictions
-        for i in range(0, len(probabilities)):
-            # If the difference between the most probable class and the second most probable class
-            # is greater than the threshold, add it to the sure index
-            if (sorted(probabilities[i])[-1]) - (sorted(probabilities[i])[-2]) > threshold:
-                sure_index.append(i)
-
-        # Calculating the accuracy for the threshold value
-        sure_test_y = np.take(test_generator.classes, sure_index, axis=0)
-        sure_pred_y = np.take(predictions, sure_index)
-        sure_percentage.append(len(sure_index) / len(probabilities))
-        class_ACC.append(accuracy_score(sure_test_y, sure_pred_y))
-
-    # Plotting the results
-    plt.figure(figsize=(10, 5))
-    plt.plot(threshold_values, class_ACC)
-    plt.plot(threshold_values, sure_percentage, color='gray', linestyle='--')
-    plt.xlabel('Threshold Values')
-    plt.xlim([0, 1])
-    plt.ylim([0, 1])
-    plt.xticks(ticks=np.arange(0, 1.05, 0.1))
-    plt.ylabel('Classification Accuracy / Sure Percentage')
-    plt.title('Identifying the ideal threshold value')
-    plt.legend(['Classification Accuracy', 'Sure Percentage'])
-    plt.savefig(logs_dir + "AccuracyThreshold.png")
-    plt.close()
-
-    log(f"NOTE: Threshold Figure saved in {logs_dir}")
-
-    # ------------------------------------------------------------------------------------------------------------------
-    log(f"NOTE: Creating prediction grid")
-    test_generator = test_augmentor.flow_from_dataframe(dataframe=test_df,
-                                                        x_col='Path',
-                                                        y_col='Label',
-                                                        target_size=(224, 224),
-                                                        color_mode="rgb",
-                                                        class_mode='categorical',
-                                                        batch_size=batch_size,
-                                                        shuffle=True,
-                                                        seed=42)
-
-    # Output a grid (5 x 5) of samples with their ground truth and predictions
-    grid_size = (10, 10)
-    num_samples_to_display = grid_size[0] * grid_size[1]
-
-    # Make the figure bigger
-    fig = plt.figure(figsize=(50, 50))
-
-    test_indices = test_generator.class_indices
-    test_names = {v: k for k, v in test_indices.items()}
-
-    # Make Predictions and Display as a Grid
-    for i in range(num_samples_to_display):
-        if i % batch_size == 0:
-            batch = test_generator.next()
-            images = batch[0].astype(np.uint8)
-            ground_truths = batch[1]
-            predictions = model.predict(images)
-
-        true_class_idx = np.argmax(ground_truths[i % batch_size])
-        predicted_class_idx = np.argmax(predictions[i % batch_size])
-        true_class_name = test_names[true_class_idx]
-        predicted_class_name = test_names[predicted_class_idx]
-
-        plt.subplot(grid_size[0], grid_size[1], i + 1)
-        plt.imshow(images[i % batch_size])
-        plt.title(f"Ground Truth: {true_class_name}"
-                  f"\nPrediction: {predicted_class_name}")
-        plt.axis('off')
-
-    # Show the grid of samples
-    plt.tight_layout()
-    plt.savefig(f"{logs_dir}PredictedGrid.png")
-    plt.close()
-
-    log(f"NOTE: PredictionGrid Figure saved in {logs_dir}")
-
+    # Evaluate model on test set
     # ------------------------------------------------------------------------------------------------------------------
 
-    # ------------------------------------------------------------------------------------------------------------------
-    # Save the best model
-    model.save(f"{run_dir}Best_Model_and_Weights.h5")
-    log(f"NOTE: Best Model and Weights saved in {run_dir}")
+    # Create test dataset
+    test_dataset = Dataset(
+        test_df,
+        augmentation=get_validation_augmentation(),
+        preprocessing=get_preprocessing(preprocessing_fn),
+        class_map=class_map,
+    )
 
+    # Create test dataloader
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+
+    # Evaluate on the test set
+    test_epoch = ValidEpoch(
+        model=model,
+        loss=loss_function,
+        metrics=metrics,
+        device=device,
+    )
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Calculate metrics
+    # ------------------------------------------------------------------------------------------------------------------
+    print(f"\n#########################################\n"
+          f"Calculating Metrics\n"
+          f"#########################################\n")
+
+    try:
+        # Empty cache from training
+        torch.cuda.empty_cache()
+
+        # Score on test set
+        test_logs = test_epoch.run(test_loader)
+
+        # Log test metrics
+        for key, value in test_logs.items():
+            test_writer.add_scalar(key, value, global_step=best_epoch)
+
+    except Exception as e:
+        print(f"ERROR: Could not calculate metrics")
+
+        if 'CUDA out of memory' in str(e):
+            print(f"WARNING: Not enough GPU memory for the provided parameters")
+
+        # Write the error to text file
+        print(f"NOTE: Please see {logs_dir}Error.txt")
+        with open(f"{logs_dir}Error.txt", 'a') as file:
+            file.write(f"Caught exception: {str(e)}\n")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Visualize results
+    # ------------------------------------------------------------------------------------------------------------------
+
+    try:
+        # Empty cache from testing
+        torch.cuda.empty_cache()
+
+        # Visualize the colorized results locally
+        save_path = f'{tensorboard_dir}test\\TestResults.png'
+        figure = plot_samples(model, test_loader)
+        figure.savefig(save_path)
+
+        # Log the visualization to TensorBoard
+        figure = np.array(Image.open(save_path))
+        test_writer.add_image(f'Test_Results', figure, dataformats="HWC", global_step=i)
+
+    except Exception as e:
+        print(f"ERROR: Could not make predictions")
+
+        if 'CUDA out of memory' in str(e):
+            print(f"WARNING: Not enough GPU memory for the provided parameters")
+
+        # Write the error to text file
+        print(f"NOTE: Please see {logs_dir}Error.txt")
+        with open(f"{logs_dir}Error.txt", 'a') as file:
+            file.write(f"Caught exception: {str(e)}\n")
+
+    print(f"NOTE: Saving best weights in {run_dir}")
+    shutil.copyfile(best_weights, f"{run_dir}Best_Model_and_Weights.pth")
+
+    # Close tensorboard writers
+    for writer in [train_writer, valid_writer, test_writer]:
+        writer.close()
+
+    # Close tensorboard
     if args.tensorboard:
-        # Close Tensorboard
-        process.terminate()
+        print("NOTE: Closing Tensorboard in 60 seconds")
+        time.sleep(60)
+        tensorboard_process.terminate()
 
+
+# -----------------------------------------------------------------------------
+# Main Function
+# -----------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description='Train an Image Classifier')
@@ -735,14 +1063,26 @@ def main():
     parser.add_argument('--patches', required=True, nargs="+",
                         help='The path to the patch labels csv file output the Patches tool')
 
-    parser.add_argument('--encoder_name', type=str, default='EfficientNetV2B0',
+    parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
-    parser.add_argument('--loss_function', type=str, default='categorical_crossentropy',
+    parser.add_argument('--freeze_encoder', type=float,
+                        help='Freeze N% of the encoder [0 - 1]')
+
+    parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
                         help='The loss function to use to train the model')
 
     parser.add_argument('--weighted_loss', type=bool, default=True,
                         help='Use a weighted loss function; good for imbalanced datasets')
+
+    parser.add_argument('--metrics', nargs="+", default=[],
+                        help='The metrics used to evaluate the model (default is all applicable)')
+
+    parser.add_argument('--optimizer', default="Adam",
+                        help='Optimizer for training the model')
+
+    parser.add_argument('--learning_rate', type=float, default=0.0005,
+                        help='Initial learning rate')
 
     parser.add_argument('--augment_data', action='store_true',
                         help='Apply affine augmentations to training data')
@@ -750,13 +1090,10 @@ def main():
     parser.add_argument('--dropout_rate', type=float, default=0.5,
                         help='Amount of dropout in model (augmentation)')
 
-    parser.add_argument('--num_epochs', type=int, default=25,
+    parser.add_argument('--num_epochs', type=int, default=5,
                         help='Starting learning rate')
 
     parser.add_argument('--batch_size', type=int, default=128,
-                        help='Starting learning rate')
-
-    parser.add_argument('--learning_rate', type=float, default=0.0005,
                         help='Starting learning rate')
 
     parser.add_argument('--tensorboard', action='store_true',
@@ -769,11 +1106,11 @@ def main():
 
     try:
         classification(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == '__main__':

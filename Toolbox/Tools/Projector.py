@@ -10,19 +10,18 @@ import pandas as pd
 from PIL import Image
 from skimage.io import imread
 
-import tensorflow as tf
 from tensorboard.plugins import projector as P
 
-keras = tf.keras
-from keras.models import load_model
+import torch
+import torchvision
+import torch.nn.functional as F
 
-from Common import log
+import segmentation_models_pytorch as smp
+
 from Common import get_now
-from Common import print_progress
+from Common import progress_printer
 
-from Classification import precision
-from Classification import recall
-from Classification import f1_score
+from Classification import get_validation_augmentation
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -40,7 +39,7 @@ def load_patches(paths):
     for path in paths:
 
         if not os.path.exists(path):
-            log(f"WARNING: {path} does not exist, skipping.")
+            print(f"WARNING: {path} does not exist, skipping.")
 
         # Read patch and add to list
         patches.append(imread(path))
@@ -65,6 +64,8 @@ def create_sprite_image(patches, output_path):
         size=(sprite_width * grid, sprite_height * grid),
         color=(0, 0, 0))
 
+    print("NOTE: Creating sprites")
+
     for i in range(len(patches)):
         row = i // grid
         col = i % grid
@@ -83,6 +84,8 @@ def write_embeddings(logs_dir, patches, labels, features):
     """
 
     """
+    print("NOTE: Setting up projector")
+
     metadata_file = f"{logs_dir}\\metadata.csv"
     tensor_file = f"{logs_dir}\\features.tsv"
     sprite_file = f"{logs_dir}\\sprite.jpg"
@@ -94,7 +97,7 @@ def write_embeddings(logs_dir, patches, labels, features):
 
     # Write the configs
     with open(os.path.join(logs_dir, tensor_file), "w") as f:
-        for tensor in features:
+        for _, tensor in progress_printer(enumerate(features)):
             f.write("{}\n".format("\t".join(str(x) for x in tensor)))
 
     # Convert list of np arrays to list of Images
@@ -119,16 +122,18 @@ def activate_tensorboard(logs_dir):
 
     """
     # Activate tensorboard
-    log("NOTE: Activating Tensorboard...")
+    print("NOTE: Activating Tensorboard...")
     tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
     process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
+    process.wait()
+    print("NOTE: View TensorBoard 2.10.1 at http://localhost:6006/")
 
     try:
         while True:
             continue
 
     except Exception:
-        log("NOTE: Deactivating Tensorboard...")
+        print("NOTE: Deactivating Tensorboard...")
 
     finally:
         process.terminate()
@@ -139,30 +144,30 @@ def projector(args):
 
     """
 
-    log("\n###############################################")
-    log("Projector")
-    log("###############################################\n")
+    print("\n###############################################")
+    print("Projector")
+    print("###############################################\n")
 
-    # Check that the user has GPU available
-    if tf.config.list_physical_devices('GPU'):
-        log("NOTE: Found GPU")
-        gpus = tf.config.list_physical_devices(device_type='GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-    else:
-        log("WARNING: No GPU found; defaulting to CPU")
+    # Check for CUDA
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
+
+    # Whether to run on GPU or CPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # ---------------------------------------------------------------------------------------
     # If there's an existing project
     if args.project_folder:
         try:
             if os.path.exists(args.project_folder):
-                log("NOTE: Opening existing project")
+                print("NOTE: Opening existing project")
                 activate_tensorboard(args.project_folder)
             else:
-                log("ERROR: Project file provided does not exist, check provided input")
-            raise Exception
+                raise Exception
+
         except Exception as e:
-            sys.exit(1)
+            raise Exception("ERROR: Project file provided does not exist, check provided input")
 
     # Source directory setup
     logs_dir = f"{args.output_dir}\\projector\\{get_now()}"
@@ -175,53 +180,64 @@ def projector(args):
         patches_df = patches_df.dropna()
         patches_df.replace({'NotCoral': 'Substrate', 'DVR': 'Background', 'SclBar': 'Color Palette'}, inplace=True)
         # Get the image base names
-        assert "Path" in patches_df.columns, log(f"ERROR: 'Path' not in provided csv")
-        assert "Name" in patches_df.columns, log("ERROR: 'Image Name' not in provided csv")
+        assert "Path" in patches_df.columns, print(f"ERROR: 'Path' not in provided csv")
+        assert "Name" in patches_df.columns, print("ERROR: 'Image Name' not in provided csv")
         image_names = patches_df['Image Name'].unique().tolist()
     else:
         raise Exception(f"ERROR: Patches dataframe {args.patches} does not exist")
-    pass
 
     # Model Weights
     if os.path.exists(args.model):
         try:
-            # Load the model with custom metrics
-            custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
-            model = load_model(args.model, custom_objects=custom_objects)
-            feature_extractor = model.layers[0]
-            log(f"NOTE: Loaded model {args.model}")
+            # Load into the model
+            model = torch.load(args.model)
+            model_name = model.name
+            print(f"NOTE: Loaded weights {model.name}")
+
+            # Get the preprocessing function that was used during training
+            preprocessing_fn = smp.encoders.get_preprocessing_fn(model_name, 'imagenet')
+
+            # Convert patches to PyTorch tensor with validation augmentation and preprocessing
+            validation_augmentation = get_validation_augmentation(height=224, width=224)
+
+            # Set the model to evaluation mode
+            model.eval()
 
         except Exception as e:
-            log(f"ERROR: There was an issue loading the model\n{e}")
-            sys.exit(1)
+            raise Exception(f"ERROR: There was an issue loading the model\n{e}")
     else:
-        log("ERROR: Model provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Model provided doesn't exist.")
 
     # Loop through each of the images, extract features from associated patches
     patches_sorted = []
     labels_sorted = []
     features_sorted = []
 
-    log("NOTE: Creating feature embeddings")
+    print("NOTE: Creating feature embeddings")
 
-    for i_idx, image_name in enumerate(image_names):
+    for i_idx, image_name in progress_printer(enumerate(image_names)):
         # Patches for current image
         current_patches = patches_df[patches_df['Image Name'] == image_name]
         # Get the patch labels
         labels = current_patches['Label'].values.tolist()
         # Get the patch arrays
-        patches = load_patches(current_patches['Path'].values.tolist())
-        # Get the features for patches
-        features = feature_extractor.predict(np.stack(patches), verbose=0)
+        patches = np.stack(load_patches(current_patches['Path'].values.tolist()))
+        # Convert to tensors
+        patches_tensor = [torch.Tensor(preprocessing_fn(validation_augmentation(image=p)['image'])) for p in patches]
+        patches_tensor = torch.stack(patches_tensor).permute(0, 3, 1, 2)
+        patches_tensor = patches_tensor.to(device)
+
+        # Extract features from the encoder, reshape
+        with torch.no_grad():
+            features = model.encoder(patches_tensor)[-1]
+            features = F.adaptive_avg_pool2d(features, (1, 1))
+            features = features.view(features.size(0), -1)
+            features = features.cpu().numpy()
 
         # Store the path to patches, labels, and features
         patches_sorted.extend(patches)
         labels_sorted.extend(labels)
         features_sorted.extend(features)
-
-        # Gooey
-        print_progress(i_idx + 1, len(image_names))
 
     # Write the embeddings to the logs dir
     write_embeddings(logs_dir, patches_sorted, labels_sorted, features_sorted)
@@ -257,11 +273,11 @@ def main():
 
     try:
         projector(args)
-        log("Done.\n")
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":

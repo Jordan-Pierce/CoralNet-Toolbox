@@ -10,20 +10,18 @@ import numpy as np
 import pandas as pd
 from skimage.io import imread
 
-import tensorflow as tf
+import torch
+import torchvision
 
-keras = tf.keras
-from keras.models import load_model
+import segmentation_models_pytorch as smp
 
-from Common import log
 from Common import get_now
 from Common import IMG_FORMATS
-from Common import print_progress
+from Common import progress_printer
 
 from Patches import crop_patch
-from Classification import precision
-from Classification import recall
-from Classification import f1_score
+
+from Classification import get_validation_augmentation
 
 
 warnings.filterwarnings("ignore")
@@ -34,31 +32,21 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
 
-def get_class_map(path):
+def classification_inference(args):
     """
 
     """
-    with open(path, 'r') as json_file:
-        class_mapping_dict = json.load(json_file)
+    print("\n###############################################")
+    print("Classification Inference")
+    print("###############################################\n")
 
-    return class_mapping_dict
+    # Check for CUDA
+    print(f"NOTE: PyTorch version - {torch.__version__}")
+    print(f"NOTE: Torchvision version - {torchvision.__version__}")
+    print(f"NOTE: CUDA is available - {torch.cuda.is_available()}")
 
-
-def image_inference(args):
-    """
-
-    """
-    log("\n###############################################")
-    log("Inference")
-    log("###############################################\n")
-
-    # Check that the user has GPU available
-    if tf.config.list_physical_devices('GPU'):
-        log("NOTE: Found GPU")
-        gpus = tf.config.list_physical_devices(device_type='GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-    else:
-        log("WARNING: No GPU found; defaulting to CPU")
+    # Whether to run on GPU or CPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Points Dataframe
     if os.path.exists(args.points):
@@ -66,21 +54,20 @@ def image_inference(args):
         annotation_file = args.points
         points = pd.read_csv(annotation_file)
         # Check that the needed columns are in the dataframe
-        assert "Row" in points.columns, log(f"ERROR: 'Row' not in provided csv")
-        assert "Column" in points.columns, log(f"ERROR: 'Column' not in provided csv")
-        assert "Name" in points.columns, log(f"ERROR: 'Name' not in provided csv")
+        assert "Row" in points.columns, print(f"ERROR: 'Row' not in provided csv")
+        assert "Column" in points.columns, print(f"ERROR: 'Column' not in provided csv")
+        assert "Name" in points.columns, print(f"ERROR: 'Name' not in provided csv")
         # Redundant, just in case user passes the file path instead of the file name
         points['Name'] = [os.path.basename(n) for n in points['Name'].values]
         # Get the names of all the images
         image_names = np.unique(points['Name'].to_numpy())
         image_names = [os.path.basename(n) for n in image_names]
         if image_names:
-            log(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
+            print(f"NOTE: Found a total of {len(points)} sampled points for {len(points['Name'].unique())} images")
         else:
             raise Exception(f"ERROR: Issue with 'Name' column; check input provided")
     else:
-        log("ERROR: Points provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Points provided doesn't exist.")
 
     # Image files
     if os.path.exists(args.images):
@@ -94,32 +81,44 @@ def image_inference(args):
         if not image_files:
             raise Exception(f"ERROR: No images were found in the directory provided; please check input.")
         else:
-            log(f"NOTE: Found {len(image_files)} images in directory provided")
+            print(f"NOTE: Found {len(image_files)} images in directory provided")
     else:
-        log("ERROR: Directory provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Directory provided doesn't exist.")
 
     # Model Weights
     if os.path.exists(args.model):
         try:
-            # Load the model with custom metrics
-            custom_objects = {'precision': precision, 'recall': recall, 'f1_score': f1_score}
-            model = load_model(args.model, custom_objects=custom_objects)
-            log(f"NOTE: Loaded model {args.model}")
+
+            # Load into the model
+            model = torch.load(args.model)
+            model_name = model.name
+            print(f"NOTE: Loaded weights {model.name}")
+
+            # Get the preprocessing function that was used during training
+            preprocessing_fn = smp.encoders.get_preprocessing_fn(model_name, 'imagenet')
+
+            # Convert patches to PyTorch tensor with validation augmentation and preprocessing
+            validation_augmentation = get_validation_augmentation(height=224, width=224)
+
+            # Set the model to evaluation mode
+            model.eval()
 
         except Exception as e:
-            log(f"ERROR: There was an issue loading the model\n{e}")
-            sys.exit(1)
+            raise Exception(f"ERROR: There was an issue loading the model\n{e}")
+
     else:
-        log("ERROR: Model provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Model provided doesn't exist.")
 
     # Class map
     if os.path.exists(args.class_map):
-        class_map = get_class_map(args.class_map)
+        with open(args.class_map, 'r') as json_file:
+            class_mapping_dict = json.load(json_file)
+
+        class_map = list(class_mapping_dict.keys())
+        num_classes = len(class_map)
+
     else:
-        log(f"ERROR: Class Map file provided doesn't exist.")
-        sys.exit()
+        raise Exception(f"ERROR: Class Map file provided doesn't exist.")
 
     # Output
     output_dir = f"{args.output_dir}\\predictions\\"
@@ -131,7 +130,7 @@ def image_inference(args):
     # ----------------------------------------------------------------
 
     # Loop through each of the images
-    for n_idx, image_file in enumerate(image_files):
+    for n_idx, image_file in progress_printer(enumerate(image_files)):
 
         # Get the image name
         image_name = os.path.basename(image_file)
@@ -147,14 +146,14 @@ def image_inference(args):
         patches = []
 
         # Create patches for this image
-        log(f"NOTE: Cropping patches ({patch_size} x {patch_size}) for {image_name}")
+        print(f"\nNOTE: Cropping patches ({patch_size} x {patch_size}) for {image_name}")
 
         # Get the current image points
         image_points = points[points['Name'] == image_name]
 
         # Make sure it's not empty for some reason
         if image_points.empty:
-            log(f"ERROR: No image points found for {image_name}")
+            print(f"ERROR: No image points found for {image_name}")
             continue
 
         for i, r in image_points.iterrows():
@@ -162,16 +161,24 @@ def image_inference(args):
 
         # Convert to numpy array
         patches = np.stack(patches)
+        patches = [torch.Tensor(preprocessing_fn(validation_augmentation(image=patch)['image'])) for patch in patches]
+        patches_tensor = torch.stack(patches).permute(0, 3, 1, 2)
+        patches_tensor = patches_tensor.to(device)
 
         # ----------------------------------------------------------------
         # Inference
         # ----------------------------------------------------------------
 
         # Model to make predictions
-        log(f"NOTE: Making predictions on patches for {image_name}")
-        probabilities = model.predict(patches, verbose=0)
+        print(f"NOTE: Making predictions on patches for {image_name}")
+        with torch.no_grad():
+            probabilities = model(patches_tensor)
+
+        # Convert PyTorch tensor to numpy array
+        probabilities = probabilities.cpu().numpy()
+        # Get predicted class indices
         predictions = np.argmax(probabilities, axis=1)
-        class_predictions = np.array([class_map[str(v)] for v in predictions]).astype(str)
+        class_predictions = np.array([class_map[v] for v in predictions]).astype(str)
 
         # Make a copy
         output = image_points.copy()
@@ -179,12 +186,9 @@ def image_inference(args):
         N = probabilities.shape[1]
         sorted_prob_indices = np.argsort(probabilities, axis=1)[:, ::-1]
         top_N_confidences = probabilities[np.arange(probabilities.shape[0])[:, np.newaxis], sorted_prob_indices[:, :N]]
-        top_N_suggestions = np.array(
-            [[class_map[str(idx)] for idx in indices] for indices in sorted_prob_indices[:, :N]])
+        top_N_suggestions = np.array([[class_map[i] for i in indices] for indices in sorted_prob_indices[:, :N]])
 
         # CoralNet format only goes to the first 5 choices
-        num_classes = model.layers[-1].output_shape[-1]
-
         if num_classes > 5:
             num_classes = 5
 
@@ -199,9 +203,7 @@ def image_inference(args):
 
         # Save each image predictions
         output.to_csv(output_path)
-        log(f"NOTE: Predictions saved to {output_path}")
-
-        print_progress(n_idx, len(image_names))
+        print(f"NOTE: Predictions saved to {output_path}")
 
 
 # -----------------------------------------------------------------------------
@@ -222,7 +224,7 @@ def main():
                         help="Path to the points file containing 'Name', 'Row', and 'Column' information.")
 
     parser.add_argument("--model", type=str, required=True,
-                        help="Path to Best Model and Weights File (.h5)")
+                        help="Path to Best Model and Weights File (.pth)")
 
     parser.add_argument("--class_map", type=str, required=True,
                         help="Path to the model's Class Map JSON file")
@@ -236,12 +238,12 @@ def main():
     args = parser.parse_args()
 
     try:
-        image_inference(args)
-        log("Done.\n")
+        classification_inference(args)
+        print("Done.\n")
 
     except Exception as e:
-        log(f"ERROR: {e}")
-        log(traceback.format_exc())
+        print(f"ERROR: {e}")
+        print(traceback.format_exc())
 
 
 if __name__ == "__main__":
