@@ -193,7 +193,7 @@ def create_dataframe(image_name, x, y, class_predictions, output_dir):
     # Output to disk
     output_dir = f"{output_dir}/demo"
     os.makedirs(output_dir, exist_ok=True)
-    df.to_csv(f"{output_dir}/{os.path.basename(image_name)}_{len(data)}_classification.csv")
+    df.to_csv(f"{output_dir}/{image_name.split('.')[0]}_{len(data)}_classification.csv")
 
     return df
 

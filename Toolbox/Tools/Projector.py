@@ -10,6 +10,7 @@ import pandas as pd
 from PIL import Image
 from skimage.io import imread
 
+from tensorboard import program
 from tensorboard.plugins import projector as P
 
 import torch
@@ -123,10 +124,11 @@ def activate_tensorboard(logs_dir):
     """
     # Activate tensorboard
     print("NOTE: Activating Tensorboard...")
-    tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
-    process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
-    process.wait()
-    print("NOTE: View TensorBoard 2.10.1 at http://localhost:6006/")
+    tb = program.TensorBoard()
+    tb.configure(argv=[None, '--logdir', logs_dir])
+    url = tb.launch()
+
+    print(f"NOTE: View Tensorboard at {url}")
 
     try:
         while True:
@@ -134,9 +136,6 @@ def activate_tensorboard(logs_dir):
 
     except Exception:
         print("NOTE: Deactivating Tensorboard...")
-
-    finally:
-        process.terminate()
 
 
 def projector(args):

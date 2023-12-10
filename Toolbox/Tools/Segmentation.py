@@ -8,7 +8,6 @@ import inspect
 import warnings
 import argparse
 import traceback
-import subprocess
 from tqdm import tqdm
 
 import cv2
@@ -27,6 +26,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
+
+from tensorboard import program
 
 import albumentations as albu
 
@@ -624,12 +625,11 @@ def segmentation(args):
               f"Tensorboard\n"
               f"#########################################\n")
 
-        # Create a subprocess that opens tensorboard
-        tensorboard_process = subprocess.Popen(['tensorboard', '--logdir', tensorboard_dir],
-                                               stdout=subprocess.PIPE,
-                                               stderr=subprocess.PIPE)
+        tb = program.TensorBoard()
+        tb.configure(argv=[None, '--logdir', tensorboard_dir])
+        url = tb.launch()
 
-        print("NOTE: View Tensorboard at 'http://localhost:6006'")
+        print(f"NOTE: View Tensorboard at {url}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
@@ -995,7 +995,6 @@ def segmentation(args):
     if args.tensorboard:
         print("NOTE: Closing Tensorboard in 60 seconds")
         time.sleep(60)
-        tensorboard_process.terminate()
 
 
 # -----------------------------------------------------------------------------

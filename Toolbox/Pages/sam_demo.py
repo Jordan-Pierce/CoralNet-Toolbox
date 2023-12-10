@@ -114,6 +114,10 @@ def create_annotations(image, class_map, semantic_mask, instance_masks):
         # Get the current class
         class_id = class_ids[idx]
         class_name = class_names[idx]
+
+        if class_name == "Unlabeled":
+            continue
+
         class_mask = (semantic_mask == class_id).copy()
 
         # Add to annotations
@@ -257,7 +261,7 @@ def create_interface():
                 semantic_annotation = gr.AnnotatedImage(label="Prediction")
 
             with gr.Tab("Instance Output"):
-                instance_annotation = gr.AnnotatedImage(label="Prediction")
+                instance_annotation = gr.AnnotatedImage(label="Prediction", visible=False)
 
         with gr.Row():
             # Run button (callback)

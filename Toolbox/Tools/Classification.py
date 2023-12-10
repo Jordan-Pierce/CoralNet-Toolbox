@@ -8,7 +8,6 @@ import inspect
 import warnings
 import argparse
 import traceback
-import subprocess
 from tqdm import tqdm
 
 import cv2
@@ -30,6 +29,8 @@ from torcheval.metrics import functional as torch_metrics
 
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
+
+from tensorboard import program
 
 import albumentations as albu
 
@@ -445,7 +446,7 @@ def compute_class_weights(df, mu=0.15):
     return class_weight
 
 
-def plot_samples(model, data_loader, num_samples=100):
+def plot_samples(model, data_loader):
     """
 
     """
@@ -454,6 +455,7 @@ def plot_samples(model, data_loader, num_samples=100):
     # Get validation samples
     samples = iter(data_loader)
     images, labels, paths = next(samples)
+    num_samples = len(images)
 
     # Move data to the same device as the model
     device = next(model.parameters()).device
@@ -467,12 +469,15 @@ def plot_samples(model, data_loader, num_samples=100):
 
     class_names = list(data_loader.dataset.class_map.keys())
 
+    # Calculate the number of rows and columns
+    rows = int(np.ceil(np.sqrt(num_samples)))
+    cols = int(np.ceil(num_samples / rows))
+
     # Create a grid for plotting the images
-    rows = int(np.ceil(num_samples / 10))
-    fig, axes = plt.subplots(rows, 10, figsize=(20, 2 * rows))
+    fig, axes = plt.subplots(rows, cols, figsize=(2 * cols, 2 * rows))
 
     for i in range(num_samples):
-        ax = axes[i // 10, i % 10] if num_samples > 10 else axes[i]
+        ax = axes[i // cols, i % cols] if num_samples > cols else axes[i]
 
         actual_label = class_names[labels[i]]
         predicted_label = class_names[preds[i]]
@@ -550,6 +555,18 @@ def classification(args):
                             num_classes=num_classes,
                             dropout_rate=args.dropout_rate)
 
+        print(f"NOTE: Using {args.encoder_name} encoder")
+
+        # Get the weights of the encoder if provided
+        if os.path.exists(args.pre_trained_path):
+            pre_trained_model = torch.load(args.pre_trained_path, map_location='cpu')
+
+            if pre_trained_model.name != model.name:
+                print(f"WARNING: Pre-trained encoder does not match architecture selected; skipping")
+            else:
+                model.encoder.load_state_dict(pre_trained_model.encoder.state_dict(), strict=True)
+                print(f"NOTE: Loaded weights from {pre_trained_model.name}")
+
         # Freezing percentage of the encoder
         num_params = len(list(model.encoder.parameters()))
         freeze_params = int(num_params * args.freeze_encoder)
@@ -561,8 +578,6 @@ def classification(args):
                 param.requires_grad = False
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
-
-        print(f"NOTE: Using {args.encoder_name} encoder")
 
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
@@ -611,12 +626,11 @@ def classification(args):
               f"Tensorboard\n"
               f"#########################################\n")
 
-        # Create a subprocess that opens tensorboard
-        tensorboard_process = subprocess.Popen(['tensorboard', '--logdir', tensorboard_dir],
-                                               stdout=subprocess.PIPE,
-                                               stderr=subprocess.PIPE)
+        tb = program.TensorBoard()
+        tb.configure(argv=[None, '--logdir', tensorboard_dir])
+        url = tb.launch()
 
-        print("NOTE: View Tensorboard at 'http://localhost:6006'")
+        print(f"NOTE: View Tensorboard at {url}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
@@ -746,21 +760,31 @@ def classification(args):
 
     # Loop through a few samples
     for i in range(5):
-        # Get a random sample from dataset
-        image, label, _ = sample_dataset[np.random.randint(0, len(train_df))]
-        image = image.numpy()
-        label = np.argmax(label.numpy())
-        # Visualize and save to logs dir
-        save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
-        plt.figure()
-        plt.imshow(image)
-        plt.title(f"{class_names[label]}")
-        plt.savefig(save_path)
-        plt.tight_layout()
-        plt.close()
 
-        # Write to tensorboard
-        train_writer.add_image(f'Training_Samples', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+        try:
+            # Get a random sample from dataset
+            image, label, _ = sample_dataset[np.random.randint(0, len(train_df))]
+            image = image.numpy()
+            label = np.argmax(label.numpy())
+            # Visualize and save to logs dir
+            save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
+            plt.figure()
+            plt.imshow(image)
+            plt.title(f"{class_names[label]}")
+            plt.savefig(save_path)
+            plt.tight_layout()
+            plt.close()
+
+            # Write to tensorboard
+            train_writer.add_image(f'Training_Samples',
+                                   np.array(Image.open(save_path)),
+                                   dataformats="HWC",
+                                   global_step=i)
+
+            print(f"NOTE: Logged training sample to {save_path}")
+
+        except:
+            pass
 
     # ------------------------------------------------------------------------------------------------------------------
     # Start of parameter setting
@@ -947,7 +971,7 @@ def classification(args):
             file.write(f"Caught exception: {str(traceback.print_exc())}\n")
 
         # Exit early
-        sys.exit(1)
+        raise Exception(e)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Load best model
@@ -1050,7 +1074,6 @@ def classification(args):
     if args.tensorboard:
         print("NOTE: Closing Tensorboard in 60 seconds")
         time.sleep(60)
-        tensorboard_process.terminate()
 
 
 # -----------------------------------------------------------------------------
@@ -1062,6 +1085,9 @@ def main():
 
     parser.add_argument('--patches', required=True, nargs="+",
                         help='The path to the patch labels csv file output the Patches tool')
+
+    parser.add_argument('--pre_trained_path', type=str, default=None,
+                        help='Path to pre-trained model of the same architecture')
 
     parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')

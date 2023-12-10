@@ -15,8 +15,9 @@ EXIT_APP = False
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(patches, encoder_name, freeze_encoder, loss_function, weighted_loss, metrics, optimizer,
-                    learning_rate, augment_data, dropout_rate, num_epochs, batch_size, tensorboard, output_dir):
+def module_callback(patches, pre_trained_path, encoder_name, freeze_encoder, loss_function, weighted_loss, metrics,
+                    optimizer, learning_rate, augment_data, dropout_rate, num_epochs, batch_size, tensorboard,
+                    output_dir):
     """
 
     """
@@ -28,6 +29,7 @@ def module_callback(patches, encoder_name, freeze_encoder, loss_function, weight
 
     args = argparse.Namespace(
         patches=patches,
+        pre_trained_path=pre_trained_path,
         encoder_name=encoder_name,
         freeze_encoder=freeze_encoder,
         loss_function=loss_function,
@@ -95,6 +97,10 @@ def create_interface():
         file_button = gr.Button("Browse Files")
         file_button.click(choose_files, outputs=patches, show_progress="hidden")
 
+        pre_trained_path = gr.Textbox(label="Selected Pre-trained Encoder File")
+        file_button = gr.Button("Browse Files")
+        file_button.click(choose_files, outputs=pre_trained_path, show_progress="hidden")
+
         with gr.Group("Training Parameters"):
             #
             with gr.Row():
@@ -124,7 +130,7 @@ def create_interface():
                 augment_data = gr.Dropdown(label="Augment Data", multiselect=False, allow_custom_value=False,
                                            choices=[True, False])
 
-                dropout_rate = gr.Slider(0, label="Dropout Rate", minimum=0, maximum=1, step=0.1)
+                dropout_rate = gr.Slider(label="Dropout Rate", minimum=0, maximum=1, step=0.1)
 
             with gr.Row():
                 num_epochs = gr.Number(25, label="Number of Epochs", precision=0)
@@ -143,6 +149,7 @@ def create_interface():
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
                                    [patches,
+                                    pre_trained_path,
                                     encoder_name,
                                     freeze_encoder,
                                     loss_function,
