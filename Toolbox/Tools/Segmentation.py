@@ -509,14 +509,29 @@ def segmentation(args):
             activation='softmax2d',
         )
 
-        if args.freeze_encoder:
-            print(f"NOTE: Freezing encoder weights")
-            for param in model.encoder.parameters():
+        print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
+
+        # Get the weights of the encoder if provided
+        if os.path.exists(args.pre_trained_path):
+            pre_trained_model = torch.load(args.pre_trained_path, map_location='cpu')
+
+            if pre_trained_model.name != model.name.split("-")[1]:
+                print(f"WARNING: Pre-trained encoder does not match architecture selected; skipping")
+            else:
+                model.encoder.load_state_dict(pre_trained_model.encoder.state_dict(), strict=True)
+                print(f"NOTE: Loaded pre-trained weights from {pre_trained_model.name}")
+
+        # Freezing percentage of the encoder
+        num_params = len(list(model.encoder.parameters()))
+        freeze_params = int(num_params * args.freeze_encoder)
+
+        # Give users the ability to freeze N percent of the encoder
+        print(f"NOTE: Freezing {args.freeze_encoder}% of encoder weights")
+        for idx, param in enumerate(model.encoder.parameters()):
+            if idx < freeze_params:
                 param.requires_grad = False
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
-
-        print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
 
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
@@ -1010,6 +1025,9 @@ def main():
     parser.add_argument('--color_map', type=str,
                         help='Path to Color Map JSON file')
 
+    parser.add_argument('--pre_trained_path', type=str, default=None,
+                        help='Path to pre-trained model of the same architecture')
+
     parser.add_argument('--encoder_name', type=str, default='mit_b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
@@ -1022,8 +1040,8 @@ def main():
     parser.add_argument('--loss_function', type=str, default='JaccardLoss',
                         help='The loss function to use to train the model')
 
-    parser.add_argument('--freeze_encoder', action='store_true',
-                        help='Only train the decoder weights during training')
+    parser.add_argument('--freeze_encoder', type=float,
+                        help='Freeze N% of the encoder [0 - 1]')
 
     parser.add_argument('--optimizer', type=str, default='Adam',
                         help='The optimizer to use to train the model')

@@ -16,8 +16,9 @@ EXIT_APP = False
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(masks, color_map, encoder_name, decoder_name, metrics, loss_function, freeze_encoder, optimizer,
-                    learning_rate, augment_data, num_epochs, batch_size, tensorboard, output_dir):
+def module_callback(masks, color_map, pre_trained_path, encoder_name, decoder_name, metrics, loss_function,
+                    freeze_encoder, optimizer, learning_rate, augment_data, num_epochs, batch_size, tensorboard,
+                    output_dir):
     """
 
     """
@@ -27,6 +28,7 @@ def module_callback(masks, color_map, encoder_name, decoder_name, metrics, loss_
     args = argparse.Namespace(
         masks=masks,
         color_map=color_map,
+        pre_trained_path=pre_trained_path,
         encoder_name=encoder_name,
         decoder_name=decoder_name,
         metrics=metrics,
@@ -97,12 +99,15 @@ def create_interface():
         files_button = gr.Button("Browse Files")
         files_button.click(choose_file, outputs=color_map, show_progress="hidden")
 
+        pre_trained_path = gr.Textbox(label="Selected Pre-trained Encoder File")
+        file_button = gr.Button("Browse Files")
+        file_button.click(choose_files, outputs=pre_trained_path, show_progress="hidden")
+
         with gr.Row():
             encoder_name = gr.Dropdown(label="Encoder", multiselect=False, allow_custom_value=False,
                                        choices=get_segmentation_encoders())
 
-            freeze_encoder = gr.Dropdown(label="Freeze Encoder", multiselect=False, allow_custom_value=False,
-                                         choices=[True, False])
+            freeze_encoder = gr.Slider(0.0, label="Freeze Encoder", minimum=0.0, maximum=1.0, step=0.01)
 
             decoder_name = gr.Dropdown(label="Decoder", multiselect=False, allow_custom_value=False,
                                        choices=get_segmentation_decoders())
@@ -143,6 +148,7 @@ def create_interface():
             run = run_button.click(module_callback,
                                    [masks,
                                     color_map,
+                                    pre_trained_path,
                                     encoder_name,
                                     decoder_name,
                                     metrics,

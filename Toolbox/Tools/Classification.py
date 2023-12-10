@@ -565,7 +565,7 @@ def classification(args):
                 print(f"WARNING: Pre-trained encoder does not match architecture selected; skipping")
             else:
                 model.encoder.load_state_dict(pre_trained_model.encoder.state_dict(), strict=True)
-                print(f"NOTE: Loaded weights from {pre_trained_model.name}")
+                print(f"NOTE: Loaded pre-trained weights from {pre_trained_model.name}")
 
         # Freezing percentage of the encoder
         num_params = len(list(model.encoder.parameters()))
