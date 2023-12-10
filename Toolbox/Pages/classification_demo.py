@@ -2,6 +2,7 @@ import gradio as gr
 
 import json
 import numpy as np
+import pandas as pd
 
 import torch
 import segmentation_models_pytorch as smp
@@ -88,7 +89,7 @@ def prepare_data(image, patch_size, sample_method, num_points):
     return x, y, patches
 
 
-def inference(patches, class_map):
+def inference(patches, class_map, batch_size):
     """
 
     """
@@ -106,18 +107,38 @@ def inference(patches, class_map):
     # Convert patches to PyTorch tensor with validation augmentation and preprocessing
     validation_augmentation = get_validation_augmentation(height=224, width=224)
 
-    patches = [torch.Tensor(preprocessing_fn(validation_augmentation(image=patch)['image'])) for patch in patches]
-    patches_tensor = torch.stack(patches).permute(0, 3, 1, 2)
-    patches_tensor = patches_tensor.to(device)
+    # Initialize lists to store results
+    all_probabilities = []
+    all_class_predictions = []
 
-    with torch.no_grad():
-        probabilities = MODEL(patches_tensor)
+    # Loop through patches in batches
+    for i in range(0, len(patches), batch_size):
+        # Get the current batch
+        batch_patches = patches[i:i+batch_size]
 
-    # Convert PyTorch tensor to numpy array
-    probabilities = probabilities.cpu().numpy()
-    # Get predicted class indices
-    predictions = np.argmax(probabilities, axis=1)
-    class_predictions = np.array([class_map[v] for v in predictions]).astype(str)
+        # Process and  convert batch patches to PyTorch tensor
+        batch_patches = [preprocessing_fn(validation_augmentation(image=p)['image']) for p in batch_patches]
+        batch_tensors = [torch.Tensor(p) for p in batch_patches]
+        batch_tensor = torch.stack(batch_tensors).permute(0, 3, 1, 2)
+        batch_tensor = batch_tensor.to(device)
+
+        with torch.no_grad():
+            probabilities = MODEL(batch_tensor)
+
+        # Convert PyTorch tensor to numpy array
+        probabilities = probabilities.cpu().numpy()
+
+        # Get predicted class indices
+        predictions = np.argmax(probabilities, axis=1)
+        class_predictions = np.array([class_map[v] for v in predictions]).astype(str)
+
+        # Append results to lists
+        all_probabilities.append(probabilities)
+        all_class_predictions.append(class_predictions)
+
+    # Concatenate results from all batches
+    probabilities = np.concatenate(all_probabilities, axis=0)
+    class_predictions = np.concatenate(all_class_predictions, axis=0)
 
     return probabilities, class_predictions
 
@@ -127,7 +148,7 @@ def create_annotations(image, x, y, class_predictions):
 
     """
     # Buffer around predicted points
-    radii = 10
+    radii = 15
 
     # Create a dictionary to store masks for each class
     class_masks = {label: np.zeros_like(image[:, :, 0]) for label in set(class_predictions)}
@@ -153,7 +174,7 @@ def create_annotations(image, x, y, class_predictions):
     return image, annotations
 
 
-def pipeline(model_path, class_map_path, image, sample_method, num_points, patch_size):
+def pipeline(model_path, class_map_path, image, sample_method, num_points, patch_size, batch_size):
     """
 
     """
@@ -173,12 +194,16 @@ def pipeline(model_path, class_map_path, image, sample_method, num_points, patch
     try:
         # Perform inference
         gr.Info("Making predictions")
-        probabilities, class_predictions = inference(patches, class_map)
+        probabilities, class_predictions = inference(patches, class_map, batch_size)
 
         # Create the annotated image
         annotated_image = create_annotations(image, x, y, class_predictions)
 
-        return annotated_image
+        # Create the dataframe
+        df = pd.DataFrame(list(zip(x, y, class_predictions)),
+                          columns=['Row', 'Column', 'Label'])
+
+        return annotated_image, df
 
     except:
         gr.Warning("GPU out of memory, try reducing patches and points")
@@ -210,7 +235,7 @@ def create_interface():
         gr.Markdown("# Demo 🧙")
 
         with gr.Group("Model"):
-            #
+            # Input Model
             model_path = gr.Textbox(label="Selected Model File")
             file_button = gr.Button("Browse Files")
             file_button.click(choose_file, outputs=model_path, show_progress="hidden")
@@ -220,7 +245,7 @@ def create_interface():
             file_button.click(choose_file, outputs=class_map_path, show_progress="hidden")
 
         with gr.Row():
-            #
+            # Parameters
             sample_method = gr.Dropdown(label="Sample Method", multiselect=False,
                                         choices=['Uniform', 'Random', 'Stratified'])
 
@@ -228,10 +253,18 @@ def create_interface():
 
             patch_size = gr.Number(112, label="Patch Size", precision=0)
 
+            batch_size = gr.Number(512, label="Batch Size", precision=0)
+
         with gr.Row():
-            #
+            # Input Image
             image = gr.Image(label="Input Image", type='numpy')
-            pred = gr.AnnotatedImage(label="Prediction")
+
+            # Output annotation, dataframe
+            with gr.Tab("Output Image"):
+                pred = gr.AnnotatedImage(label="Prediction")
+
+            with gr.Tab("Output Dataframe"):
+                df = gr.DataFrame(label="Prediction")
 
         with gr.Row():
             # Run button (callback)
@@ -242,8 +275,9 @@ def create_interface():
                               image,
                               sample_method,
                               num_points,
-                              patch_size],
-                             pred)
+                              patch_size,
+                              batch_size],
+                             [pred, df])
 
             stop_button = gr.Button(value="Exit")
             stop = stop_button.click(exit_interface)
