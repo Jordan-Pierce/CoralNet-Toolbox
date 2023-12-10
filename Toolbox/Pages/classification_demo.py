@@ -1,8 +1,11 @@
+import os.path
+
 import gradio as gr
 
 import json
 import numpy as np
 import pandas as pd
+from skimage.io import imread
 
 import torch
 import segmentation_models_pytorch as smp
@@ -174,7 +177,28 @@ def create_annotations(image, x, y, class_predictions):
     return image, annotations
 
 
-def pipeline(model_path, class_map_path, image, sample_method, num_points, patch_size, batch_size):
+def create_dataframe(image_name, x, y, class_predictions, output_dir):
+    """
+
+    """
+    # Image name
+    image_names = [image_name] * len(class_predictions)
+
+    # Data
+    data = list(zip(image_names, y, x, class_predictions))
+
+    # Dataframe
+    df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label'])
+
+    # Output to disk
+    output_dir = f"{output_dir}/demo"
+    os.makedirs(output_dir, exist_ok=True)
+    df.to_csv(f"{output_dir}/{os.path.basename(image_name)}_{len(data)}_classification.csv")
+
+    return df
+
+
+def pipeline(model_path, class_map_path, image_path, sample_method, num_points, patch_size, batch_size, output_dir):
     """
 
     """
@@ -187,6 +211,13 @@ def pipeline(model_path, class_map_path, image, sample_method, num_points, patch
     # Open the class_map file
     class_map = get_class_map(class_map_path)
 
+    # Read the image
+    if os.path.exists(image_path):
+        image_name = os.path.basename(image_path)
+        image = imread(image_path)
+    else:
+        raise Exception("Image path provided does not exist")
+
     # Get the data samples
     gr.Info("Preparing samples")
     x, y, patches = prepare_data(image, patch_size, sample_method, num_points)
@@ -197,13 +228,13 @@ def pipeline(model_path, class_map_path, image, sample_method, num_points, patch
         probabilities, class_predictions = inference(patches, class_map, batch_size)
 
         # Create the annotated image
+        gr.Info("Creating visualization")
         annotated_image = create_annotations(image, x, y, class_predictions)
 
         # Create the dataframe
-        df = pd.DataFrame(list(zip(x, y, class_predictions)),
-                          columns=['Row', 'Column', 'Label'])
+        df = create_dataframe(image_name, x, y, class_predictions, output_dir)
 
-        return annotated_image, df
+        return image, annotated_image, df
 
     except:
         gr.Warning("GPU out of memory, try reducing patches and points")
@@ -234,6 +265,11 @@ def create_interface():
         # Title
         gr.Markdown("# Demo 🧙")
 
+        # Browse button
+        output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
+        dir_button = gr.Button("Browse Directory")
+        dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
+
         with gr.Group("Model"):
             # Input Model
             model_path = gr.Textbox(label="Selected Model File")
@@ -255,13 +291,18 @@ def create_interface():
 
             batch_size = gr.Number(512, label="Batch Size", precision=0)
 
+        # Input Image path
+        image_path = gr.Textbox(label="Selected Image File")
+        files_button = gr.Button("Browse Files")
+        files_button.click(choose_file, outputs=image_path, show_progress="hidden")
+
         with gr.Row():
             # Input Image
-            image = gr.Image(label="Input Image", type='numpy')
+            image = gr.Image(label="Input Image", type='numpy', interactive=False)
 
             # Output annotation, dataframe
             with gr.Tab("Output Image"):
-                pred = gr.AnnotatedImage(label="Prediction")
+                annotated_image = gr.AnnotatedImage(label="Prediction")
 
             with gr.Tab("Output Dataframe"):
                 df = gr.DataFrame(label="Prediction")
@@ -270,14 +311,19 @@ def create_interface():
             # Run button (callback)
             run_button = gr.Button("Run")
             run_button.click(pipeline,
+                             # Inputs
                              [model_path,
                               class_map_path,
-                              image,
+                              image_path,
                               sample_method,
                               num_points,
                               patch_size,
-                              batch_size],
-                             [pred, df])
+                              batch_size,
+                              output_dir],
+                             # Outputs
+                             [image,
+                              annotated_image,
+                              df])
 
             stop_button = gr.Button(value="Exit")
             stop = stop_button.click(exit_interface)

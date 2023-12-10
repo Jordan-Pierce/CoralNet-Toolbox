@@ -126,6 +126,7 @@ install_requires = [
 
 # Metashape; OS dependent wheel
 if osused == 'Windows':
+    install_requires.append('gooey')
     install_requires.append('./Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl')
 else:
     install_requires.append('./Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-abi3-linux_x86_64.whl')

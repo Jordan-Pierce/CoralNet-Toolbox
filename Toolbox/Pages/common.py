@@ -9,6 +9,7 @@ import traceback
 from tkinter import Tk, filedialog
 
 from Toolbox.Tools.Common import DATA_DIR
+from Toolbox.Tools.Common import CACHE_DIR
 from Toolbox.Tools.Common import PATCH_EXTRACTOR
 from Toolbox.Tools.Common import FUNC_GROUPS_LIST
 
