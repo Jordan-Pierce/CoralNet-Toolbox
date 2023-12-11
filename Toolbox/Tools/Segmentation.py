@@ -8,7 +8,6 @@ import inspect
 import warnings
 import argparse
 import traceback
-import subprocess
 from tqdm import tqdm
 
 import cv2
@@ -27,6 +26,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
+
+from tensorboard import program
 
 import albumentations as albu
 
@@ -161,13 +162,13 @@ class ValidEpoch(Epoch):
         return loss, prediction
 
 
-class PytorchMetric(torch.nn.Module):
+class TorchMetic(torch.nn.Module):
     """
 
     """
 
     def __init__(self, func):
-        super(PytorchMetric, self).__init__()
+        super(TorchMetic, self).__init__()
         self.func = func  # The custom function to be wrapped
 
     def forward(self, *args, **kwargs):
@@ -508,15 +509,41 @@ def segmentation(args):
             activation='softmax2d',
         )
 
+<<<<<<< HEAD
+        print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
+
+        # Get the weights of the encoder if provided
+        if os.path.exists(args.pre_trained_path):
+            pre_trained_model = torch.load(args.pre_trained_path, map_location='cpu')
+
+            if pre_trained_model.name != model.name.split("-")[1]:
+                print(f"WARNING: Pre-trained encoder does not match architecture selected; skipping")
+            else:
+                model.encoder.load_state_dict(pre_trained_model.encoder.state_dict(), strict=True)
+                print(f"NOTE: Loaded pre-trained weights from {pre_trained_model.name}")
+
+        # Freezing percentage of the encoder
+        num_params = len(list(model.encoder.parameters()))
+        freeze_params = int(num_params * args.freeze_encoder)
+
+        # Give users the ability to freeze N percent of the encoder
+        print(f"NOTE: Freezing {args.freeze_encoder}% of encoder weights")
+        for idx, param in enumerate(model.encoder.parameters()):
+            if idx < freeze_params:
+=======
         if args.freeze_encoder:
             print(f"NOTE: Freezing encoder weights")
             for param in model.encoder.parameters():
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
                 param.requires_grad = False
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
+<<<<<<< HEAD
+=======
         print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
 
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
         sys.exit(1)
@@ -572,7 +599,7 @@ def segmentation(args):
         if not metrics:
             metrics.append(smp.metrics.iou_score)
 
-        metrics = [PytorchMetric(m) for m in metrics]
+        metrics = [TorchMetic(m) for m in metrics]
 
         print(f"NOTE: Using metrics {args.metrics}")
 
@@ -624,12 +651,15 @@ def segmentation(args):
               f"Tensorboard\n"
               f"#########################################\n")
 
-        # Create a subprocess that opens tensorboard
-        tensorboard_process = subprocess.Popen(['tensorboard', '--logdir', tensorboard_dir],
-                                               stdout=subprocess.PIPE,
-                                               stderr=subprocess.PIPE)
+        tb = program.TensorBoard()
+        tb.configure(argv=[None, '--logdir', tensorboard_dir])
+        url = tb.launch()
 
+<<<<<<< HEAD
+        print(f"NOTE: View Tensorboard at {url}")
+=======
         print("NOTE: View Tensorboard at 'http://localhost:6006'")
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
@@ -995,7 +1025,6 @@ def segmentation(args):
     if args.tensorboard:
         print("NOTE: Closing Tensorboard in 60 seconds")
         time.sleep(60)
-        tensorboard_process.terminate()
 
 
 # -----------------------------------------------------------------------------
@@ -1011,6 +1040,9 @@ def main():
     parser.add_argument('--color_map', type=str,
                         help='Path to Color Map JSON file')
 
+    parser.add_argument('--pre_trained_path', type=str, default=None,
+                        help='Path to pre-trained model of the same architecture')
+
     parser.add_argument('--encoder_name', type=str, default='mit_b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
@@ -1023,8 +1055,8 @@ def main():
     parser.add_argument('--loss_function', type=str, default='JaccardLoss',
                         help='The loss function to use to train the model')
 
-    parser.add_argument('--freeze_encoder', action='store_true',
-                        help='Only train the decoder weights during training')
+    parser.add_argument('--freeze_encoder', type=float, default=0.0,
+                        help='Freeze N% of the encoder [0 - 1]')
 
     parser.add_argument('--optimizer', type=str, default='Adam',
                         help='The optimizer to use to train the model')

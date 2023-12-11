@@ -10,8 +10,8 @@ import urllib.request
 # ----------------------------------------------
 osused = platform.system()
 
-if osused != 'Windows':
-    raise Exception("This install script is only for Windows")
+if osused not in ['Windows', 'Linux']:
+    raise Exception("This install script is only for Windows or Linux")
 
 # ----------------------------------------------
 # Conda
@@ -21,7 +21,7 @@ console_output = subprocess.getstatusoutput('conda --version')
 
 # Returned 1; conda not installed
 if console_output[0]:
-    raise Exception("This install script is only for Windows with Conda already installed")
+    raise Exception("This install script is only for machines with Conda already installed")
 
 conda_exe = shutil.which('conda')
 
@@ -53,6 +53,13 @@ if osused == 'Windows':
 # ----------------------------------------------
 try:
     # Command for installing cuda nvcc
+    conda_command = [conda_exe, "install", "-c", f"nvidia/label/cuda-11.8.0", "cuda-nvcc", "-y"]
+
+    # Run the conda command
+    print("NOTE: Installing CUDA NVCC 11.8")
+    subprocess.run(conda_command, check=True)
+
+    # Command for installing cuda nvcc
     conda_command = [conda_exe, "install", "-c", f"nvidia/label/cuda-11.8.0", "cuda-toolkit", "-y"]
 
     # Run the conda command
@@ -61,17 +68,6 @@ try:
 
 except Exception as e:
     print("ERROR: Could not install CUDA Toolkit")
-    sys.exit(1)
-
-# ----------------------------------------------
-# Tensorflow & Keras
-# ----------------------------------------------
-try:
-    print("NOTE: Installing Tensorflow 2.10.1")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", 'tensorflow==2.10.1'])
-
-except Exception as e:
-    print("ERROR: Could not install Tensorflow")
     sys.exit(1)
 
 # ----------------------------------------------
@@ -113,7 +109,6 @@ install_requires = [
     'opencv_python',
     'scikit_image',
     'albumentations',
-    'imgaug',
     'plyfile',
 
     'Requests',
@@ -122,15 +117,19 @@ install_requires = [
     'selenium',
     'webdriver_manager',
 
-    'plot_keras_history',
+    'simclr',
+    'torcheval',
     'segment_anything',
     'segmentation_models_pytorch',
 
-    './Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl',
-
-    'gooey',
-    'tqdm'
+    'gradio',
 ]
+
+# Metashape; OS dependent wheel
+if osused == 'Windows':
+    install_requires.append('./Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl')
+else:
+    install_requires.append('./Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-abi3-linux_x86_64.whl')
 
 # Installing all the other packages
 for package in install_requires:
@@ -151,7 +150,7 @@ print('Downloading networks...')
 THIS_DIRECTORY = os.path.abspath(__file__)
 
 # Make the Data directory
-SAM_DIR = f"{os.path.dirname(THIS_DIRECTORY)}\\Data\\Cache\\SAM_Weights"
+SAM_DIR = f"{os.path.dirname(THIS_DIRECTORY)}/Data/Cache/SAM_Weights"
 os.makedirs(SAM_DIR, exist_ok=True)
 
 # ---------------
@@ -163,7 +162,7 @@ net_file_names = ["sam_vit_b_01ec64.pth",
                   "sam_vit_h_4b8939.pth"]
 
 for net_name in net_file_names:
-    path_dextr = f"{SAM_DIR}\\{net_name}"
+    path_dextr = f"{SAM_DIR}/{net_name}"
     if not os.path.exists(path_dextr):
         try:
             url_dextr = base_url + net_name

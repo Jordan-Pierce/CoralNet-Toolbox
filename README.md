@@ -27,6 +27,10 @@ a GUI; these scripts currently include the following:
 - `Download`: Download all data associated with a source
 - `Upload`: Upload images, annotations, and labelsets to a source
 - `Labelset`: Create a custom labelset on CoralNet
+- `Classification Pretrain`: Pretrain an encoder on unlabeled data before training with labeled data
+- `Classification`: Create your own patch-based image classifier, locally
+- `Classification Inf.`: Perform inference using a locally trained classification model
+- `Classification Demo`: Demo your trained model locally
 - `Annotate`: Create your own patches from annotations, locally
 - `Visualize`: Visualize points/patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
@@ -35,8 +39,10 @@ a GUI; these scripts currently include the following:
 - `Classification Inf.`: Perform inference using a locally trained classification model
 - `Projector`: Display model predictions in feature space using Tensorboard
 - `SAM`: Create segmentation masks for each image using labeled points and SAM
+- `SAM Demo`: Demo SAM models on your data to create segmentation masks
 - `Segmentation`: Create your own semantic segmentation model, locally
 - `Segmentation Inf.`: Perform inference using a locally trained segmentation model
+- `Segmentation Demo`: Demo your trained model locally
 - `SfM`: Use Metashape to create 3D models (sure, why not)
 - `Segmentation3D`: Use masks and SfM to create classified 3D models
 
@@ -73,7 +79,7 @@ conda activate coralnet_toolbox
 python install.py
 
 # Run the toolbox script
-python Toolbox\toolbox.py
+python toolbox.py
 ```
 
 Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
