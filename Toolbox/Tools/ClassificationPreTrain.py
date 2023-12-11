@@ -71,6 +71,7 @@ class Dataset(BaseDataset):
             dataframe,
             transform=None,
             preprocessing=None,
+            device=None,
     ):
         assert 'Name' in dataframe.columns, print(f"ERROR: 'Name' not found in Patches file")
         assert 'Path' in dataframe.columns, print(f"ERROR: 'Path' not found in Patches file")
@@ -80,6 +81,8 @@ class Dataset(BaseDataset):
 
         self.transform = transform
         self.preprocessing = preprocessing
+
+        self.device = device
 
     def __getitem__(self, i):
         # read data
@@ -311,6 +314,7 @@ def classification_pretrain(args):
         train_df,
         transform=TransformsSimCLR(224),
         preprocessing=None,  # get_preprocessing(preprocessing_fn),
+        device=device,
     )
 
     # Dataloader

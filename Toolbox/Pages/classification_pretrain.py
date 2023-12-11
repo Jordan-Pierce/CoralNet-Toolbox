@@ -100,7 +100,7 @@ def create_interface():
                 projection_dim = gr.Number(64, label="Projection Dimensions", precision=0)
 
                 optimizer = gr.Dropdown(label="Optimizer", multiselect=False, allow_custom_value=False,
-                                        choices=['Adam', 'LARS'])
+                                        choices=['Adam'])
 
             with gr.Row():
                 num_epochs = gr.Number(25, label="Number of Epochs", precision=0)
