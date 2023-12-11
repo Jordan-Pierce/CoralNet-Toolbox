@@ -509,6 +509,7 @@ def segmentation(args):
             activation='softmax2d',
         )
 
+<<<<<<< HEAD
         print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
 
         # Get the weights of the encoder if provided
@@ -529,10 +530,20 @@ def segmentation(args):
         print(f"NOTE: Freezing {args.freeze_encoder}% of encoder weights")
         for idx, param in enumerate(model.encoder.parameters()):
             if idx < freeze_params:
+=======
+        if args.freeze_encoder:
+            print(f"NOTE: Freezing encoder weights")
+            for param in model.encoder.parameters():
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
                 param.requires_grad = False
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
+<<<<<<< HEAD
+=======
+        print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
+
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
         sys.exit(1)
@@ -644,7 +655,11 @@ def segmentation(args):
         tb.configure(argv=[None, '--logdir', tensorboard_dir])
         url = tb.launch()
 
+<<<<<<< HEAD
         print(f"NOTE: View Tensorboard at {url}")
+=======
+        print("NOTE: View Tensorboard at 'http://localhost:6006'")
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets

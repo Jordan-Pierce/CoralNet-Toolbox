@@ -8,6 +8,10 @@ import inspect
 import warnings
 import argparse
 import traceback
+<<<<<<< HEAD
+=======
+import subprocess
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 from tqdm import tqdm
 
 import cv2
@@ -31,8 +35,11 @@ import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
 
 import albumentations as albu
+<<<<<<< HEAD
 
 from tensorboard import program
+=======
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
 from Common import get_now
 
@@ -162,13 +169,21 @@ class ValidEpoch(Epoch):
         return loss, prediction
 
 
+<<<<<<< HEAD
 class TorchMetric(torch.nn.Module):
+=======
+class PytorchMetric(torch.nn.Module):
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
     """
 
     """
 
     def __init__(self, func):
+<<<<<<< HEAD
         super(TorchMetric, self).__init__()
+=======
+        super(PytorchMetric, self).__init__()
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
         self.func = func  # The custom function to be wrapped
 
     def forward(self, *args, **kwargs):
@@ -406,9 +421,12 @@ def get_validation_augmentation(height=224, width=224):
 
 
 def to_tensor(x, **kwargs):
+<<<<<<< HEAD
     """
 
     """
+=======
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
     if len(x.shape) == 2:
         return x
     return x.transpose(2, 0, 1).astype('float32')
@@ -449,7 +467,11 @@ def compute_class_weights(df, mu=0.15):
     return class_weight
 
 
+<<<<<<< HEAD
 def plot_samples(model, data_loader):
+=======
+def plot_samples(model, data_loader, num_samples=100):
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
     """
 
     """
@@ -458,7 +480,10 @@ def plot_samples(model, data_loader):
     # Get validation samples
     samples = iter(data_loader)
     images, labels, paths = next(samples)
+<<<<<<< HEAD
     num_samples = len(images)
+=======
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
     # Move data to the same device as the model
     device = next(model.parameters()).device
@@ -472,6 +497,7 @@ def plot_samples(model, data_loader):
 
     class_names = list(data_loader.dataset.class_map.keys())
 
+<<<<<<< HEAD
     # Calculate the number of rows and columns
     rows = int(np.ceil(np.sqrt(num_samples)))
     cols = int(np.ceil(num_samples / rows))
@@ -482,6 +508,15 @@ def plot_samples(model, data_loader):
     for i in range(num_samples):
         ax = axes[i // cols, i % cols] if num_samples > cols else axes[i]
 
+=======
+    # Create a grid for plotting the images
+    rows = int(np.ceil(num_samples / 10))
+    fig, axes = plt.subplots(rows, 10, figsize=(20, 2 * rows))
+
+    for i in range(num_samples):
+        ax = axes[i // 10, i % 10] if num_samples > 10 else axes[i]
+
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
         actual_label = class_names[labels[i]]
         predicted_label = class_names[preds[i]]
 
@@ -558,6 +593,7 @@ def classification(args):
                             num_classes=num_classes,
                             dropout_rate=args.dropout_rate)
 
+<<<<<<< HEAD
         print(f"NOTE: Using {args.encoder_name} encoder")
 
         # Get the weights of the encoder if provided
@@ -570,6 +606,8 @@ def classification(args):
                 model.encoder.load_state_dict(pre_trained_model.encoder.state_dict(), strict=True)
                 print(f"NOTE: Loaded pre-trained weights from {pre_trained_model.name}")
 
+=======
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
         # Freezing percentage of the encoder
         num_params = len(list(model.encoder.parameters()))
         freeze_params = int(num_params * args.freeze_encoder)
@@ -582,6 +620,11 @@ def classification(args):
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
+<<<<<<< HEAD
+=======
+        print(f"NOTE: Using {args.encoder_name} encoder")
+
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
         sys.exit(1)
@@ -629,11 +672,20 @@ def classification(args):
               f"Tensorboard\n"
               f"#########################################\n")
 
+<<<<<<< HEAD
         tb = program.TensorBoard()
         tb.configure(argv=[None, '--logdir', tensorboard_dir])
         url = tb.launch()
 
         print(f"NOTE: View Tensorboard at {url}")
+=======
+        # Create a subprocess that opens tensorboard
+        tensorboard_process = subprocess.Popen(['tensorboard', '--logdir', tensorboard_dir],
+                                               stdout=subprocess.PIPE,
+                                               stderr=subprocess.PIPE)
+
+        print("NOTE: View Tensorboard at 'http://localhost:6006'")
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
@@ -763,6 +815,7 @@ def classification(args):
 
     # Loop through a few samples
     for i in range(5):
+<<<<<<< HEAD
 
         try:
             # Get a random sample from dataset
@@ -788,6 +841,23 @@ def classification(args):
 
         except:
             pass
+=======
+        # Get a random sample from dataset
+        image, label, _ = sample_dataset[np.random.randint(0, len(train_df))]
+        image = image.numpy()
+        label = np.argmax(label.numpy())
+        # Visualize and save to logs dir
+        save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
+        plt.figure()
+        plt.imshow(image)
+        plt.title(f"{class_names[label]}")
+        plt.savefig(save_path)
+        plt.tight_layout()
+        plt.close()
+
+        # Write to tensorboard
+        train_writer.add_image(f'Training_Samples', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
     # ------------------------------------------------------------------------------------------------------------------
     # Start of parameter setting
@@ -856,7 +926,11 @@ def classification(args):
         metrics = [getattr(torch_metrics, m) for m in metrics]
 
         # Convert for CUDA
+<<<<<<< HEAD
         metrics = [TorchMetric(m) for m in metrics]
+=======
+        metrics = [PytorchMetric(m) for m in metrics]
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
     except Exception as e:
         print(f"ERROR: Could not get metric(s): {args.metrics}")
@@ -970,6 +1044,7 @@ def classification(args):
 
         # Write the error to text file
         print(f"NOTE: Please see {logs_dir}Error.txt")
+<<<<<<< HEAD
         with open(f"{logs_dir}Error.txt", 'a') as file:
             file.write(f"Caught exception: {str(traceback.print_exc())}\n")
 
@@ -1046,6 +1121,84 @@ def classification(args):
         # Empty cache from testing
         torch.cuda.empty_cache()
 
+=======
+        with open(f"{logs_dir}Error.txt", 'a') as file:
+            file.write(f"Caught exception: {str(traceback.print_exc())}\n")
+
+        # Exit early
+        sys.exit(1)
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Load best model
+    # ------------------------------------------------------------------------------------------------------------------
+    weights = sorted(glob.glob(weights_dir + "*.pth"))
+    best_weights = [w for w in weights if f'model-{str(best_epoch)}' in w][0]
+
+    # Load into the model
+    model = torch.load(best_weights)
+    print(f"NOTE: Loaded best weights {best_weights}")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Evaluate model on test set
+    # ------------------------------------------------------------------------------------------------------------------
+
+    # Create test dataset
+    test_dataset = Dataset(
+        test_df,
+        augmentation=get_validation_augmentation(),
+        preprocessing=get_preprocessing(preprocessing_fn),
+        class_map=class_map,
+    )
+
+    # Create test dataloader
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+
+    # Evaluate on the test set
+    test_epoch = ValidEpoch(
+        model=model,
+        loss=loss_function,
+        metrics=metrics,
+        device=device,
+    )
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Calculate metrics
+    # ------------------------------------------------------------------------------------------------------------------
+    print(f"\n#########################################\n"
+          f"Calculating Metrics\n"
+          f"#########################################\n")
+
+    try:
+        # Empty cache from training
+        torch.cuda.empty_cache()
+
+        # Score on test set
+        test_logs = test_epoch.run(test_loader)
+
+        # Log test metrics
+        for key, value in test_logs.items():
+            test_writer.add_scalar(key, value, global_step=best_epoch)
+
+    except Exception as e:
+        print(f"ERROR: Could not calculate metrics")
+
+        if 'CUDA out of memory' in str(e):
+            print(f"WARNING: Not enough GPU memory for the provided parameters")
+
+        # Write the error to text file
+        print(f"NOTE: Please see {logs_dir}Error.txt")
+        with open(f"{logs_dir}Error.txt", 'a') as file:
+            file.write(f"Caught exception: {str(e)}\n")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Visualize results
+    # ------------------------------------------------------------------------------------------------------------------
+
+    try:
+        # Empty cache from testing
+        torch.cuda.empty_cache()
+
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
         # Visualize the colorized results locally
         save_path = f'{tensorboard_dir}test\\TestResults.png'
         figure = plot_samples(model, test_loader)
@@ -1077,6 +1230,10 @@ def classification(args):
     if args.tensorboard:
         print("NOTE: Closing Tensorboard in 60 seconds")
         time.sleep(60)
+<<<<<<< HEAD
+=======
+        tensorboard_process.terminate()
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
 
 
 # -----------------------------------------------------------------------------
@@ -1089,6 +1246,7 @@ def main():
     parser.add_argument('--patches', required=True, nargs="+",
                         help='The path to the patch labels csv file output the Patches tool')
 
+<<<<<<< HEAD
     parser.add_argument('--pre_trained_path', type=str, default=None,
                         help='Path to pre-trained model of the same architecture')
 
@@ -1096,6 +1254,12 @@ def main():
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
     parser.add_argument('--freeze_encoder', type=float, default=0.0,
+=======
+    parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
+                        help='The convolutional encoder to fine-tune; pretrained on Imagenet')
+
+    parser.add_argument('--freeze_encoder', type=float,
+>>>>>>> d55c314d44ecd8ee07e527058fed04a34dcd621b
                         help='Freeze N% of the encoder [0 - 1]')
 
     parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
