@@ -117,6 +117,7 @@ install_requires = [
     'selenium',
     'webdriver_manager',
 
+    'simclr',
     'torcheval',
     'segment_anything',
     'segmentation_models_pytorch',

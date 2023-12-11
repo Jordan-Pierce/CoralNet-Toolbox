@@ -162,13 +162,13 @@ class ValidEpoch(Epoch):
         return loss, prediction
 
 
-class PytorchMetric(torch.nn.Module):
+class TorchMetic(torch.nn.Module):
     """
 
     """
 
     def __init__(self, func):
-        super(PytorchMetric, self).__init__()
+        super(TorchMetic, self).__init__()
         self.func = func  # The custom function to be wrapped
 
     def forward(self, *args, **kwargs):
@@ -588,7 +588,7 @@ def segmentation(args):
         if not metrics:
             metrics.append(smp.metrics.iou_score)
 
-        metrics = [PytorchMetric(m) for m in metrics]
+        metrics = [TorchMetic(m) for m in metrics]
 
         print(f"NOTE: Using metrics {args.metrics}")
 
@@ -1040,7 +1040,7 @@ def main():
     parser.add_argument('--loss_function', type=str, default='JaccardLoss',
                         help='The loss function to use to train the model')
 
-    parser.add_argument('--freeze_encoder', type=float,
+    parser.add_argument('--freeze_encoder', type=float, default=0.0,
                         help='Freeze N% of the encoder [0 - 1]')
 
     parser.add_argument('--optimizer', type=str, default='Adam',

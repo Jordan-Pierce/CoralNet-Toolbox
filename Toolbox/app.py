@@ -91,6 +91,14 @@ def annotate_page():
     subprocess.run(["python", f"{PAGES_DIR}\\annotate.py"])
 
 
+def classification_pretrain_page():
+    """
+
+    """
+    gr.Info("Opening Classification Pre-Train tool...")
+    subprocess.run(["python", f"{PAGES_DIR}\\classification_pretrain.py"])
+
+
 def classification_page():
     """
 
@@ -99,20 +107,20 @@ def classification_page():
     subprocess.run(["python", f"{PAGES_DIR}\\classification.py"])
 
 
-def classification_inference_page():
-    """
-
-    """
-    gr.Info("Opening Classification Inference tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\classification_inference.py"])
-
-
 def classification_demo_page():
     """
 
     """
     gr.Info("Opening Classification Demo tool...")
     subprocess.run(["python", f"{PAGES_DIR}\\classification_demo.py"])
+
+
+def classification_inference_page():
+    """
+
+    """
+    gr.Info("Opening Classification Inference tool...")
+    subprocess.run(["python", f"{PAGES_DIR}\\classification_inference.py"])
 
 
 def sam_page():
@@ -238,15 +246,19 @@ def create_interface():
         gr.Markdown("## Image Classification Tools 🛠️ <p style='font-size:14px'>"
                     "\nUse these tool to train an image classifier</p>")
         with gr.Row():
+
+            pretrain_button = gr.Button("Pre-Train 👩‍🏫")
+            pretrain_process = pretrain_button.click(classification_pretrain_page)
+
             classification_button = gr.Button("Train 👨‍💻")
             classification_process = classification_button.click(classification_page)
-
-            classification_inference_button = gr.Button("Predict 🤖️")
-            classification_inference_process = classification_inference_button.click(classification_inference_page)
 
         with gr.Row():
             classification_demo_button = gr.Button("Demo 🧙")
             classification_demo_process = classification_demo_button.click(classification_demo_page)
+
+            classification_inference_button = gr.Button("Predict 🤖️")
+            classification_inference_process = classification_inference_button.click(classification_inference_page)
 
         gr.Markdown("## Segment Anything Model 🛠️ <p style='font-size:14px'>"
                     "\nUse these tools to automatically create segmented images</p>")

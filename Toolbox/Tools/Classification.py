@@ -30,9 +30,9 @@ from torcheval.metrics import functional as torch_metrics
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.utils.meter import AverageValueMeter
 
-from tensorboard import program
-
 import albumentations as albu
+
+from tensorboard import program
 
 from Common import get_now
 
@@ -162,13 +162,13 @@ class ValidEpoch(Epoch):
         return loss, prediction
 
 
-class PytorchMetric(torch.nn.Module):
+class TorchMetric(torch.nn.Module):
     """
 
     """
 
     def __init__(self, func):
-        super(PytorchMetric, self).__init__()
+        super(TorchMetric, self).__init__()
         self.func = func  # The custom function to be wrapped
 
     def forward(self, *args, **kwargs):
@@ -406,6 +406,9 @@ def get_validation_augmentation(height=224, width=224):
 
 
 def to_tensor(x, **kwargs):
+    """
+
+    """
     if len(x.shape) == 2:
         return x
     return x.transpose(2, 0, 1).astype('float32')
@@ -853,7 +856,7 @@ def classification(args):
         metrics = [getattr(torch_metrics, m) for m in metrics]
 
         # Convert for CUDA
-        metrics = [PytorchMetric(m) for m in metrics]
+        metrics = [TorchMetric(m) for m in metrics]
 
     except Exception as e:
         print(f"ERROR: Could not get metric(s): {args.metrics}")
@@ -1092,7 +1095,7 @@ def main():
     parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')
 
-    parser.add_argument('--freeze_encoder', type=float,
+    parser.add_argument('--freeze_encoder', type=float, default=0.0,
                         help='Freeze N% of the encoder [0 - 1]')
 
     parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
