@@ -1,36 +1,37 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.ClassificationInference import classification_inference
+from Tools.SfM import sfm
 
 EXIT_APP = False
+log_file = "sfm.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(images, points, model, class_map, patch_size, output_dir):
+def module_callback(metashape_license, input_dir, output_dir, project_file, quality, target_percentage):
     """
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
 
     args = argparse.Namespace(
-        images=images,
-        points=points,
-        model=model,
-        class_map=class_map,
-        patch_size=patch_size,
+        metashape_license=metashape_license,
+        input_dir=input_dir,
         output_dir=output_dir,
+        project_file=project_file,
+        quality=quality,
+        target_percentage=target_percentage,
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        classification_inference(args)
+        sfm(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -59,49 +60,54 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
-    with gr.Blocks(title="Predict 🤖️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="SfM (Metashape) 🧊", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# Predict 🤖️")
+        gr.Markdown("# SfM (Metashape) 🧊")
 
-        with gr.Group("Data"):
-            #
-            images = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
+        metashape_license = gr.Textbox(os.getenv('METASHAPE_LICENSE'),
+                                       label="Metashape License", type='password')
+
+        with gr.Tab(label="New Project"):
+
+            # Browse button
+            input_dir = gr.Textbox(label="Selected Image Directory")
             dir_button = gr.Button("Browse Directory")
-            dir_button.click(choose_directory, outputs=images, show_progress="hidden")
+            dir_button.click(choose_directory, outputs=input_dir, show_progress="hidden")
 
-            points = gr.Textbox(label="Selected Points File")
+            output_dir = gr.Textbox(label="Selected Output Directory")
+            dir_button = gr.Button("Browse Directory")
+            dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
+
+        with gr.Tab(label="Existing Project"):
+
+            project_file = gr.Textbox(label="Selected Project File")
             file_button = gr.Button("Browse Files")
-            file_button.click(choose_file, outputs=points, show_progress="hidden")
+            file_button.click(choose_file, outputs=project_file, show_progress="hidden")
 
-            patch_size = gr.Number(112, label="Patch Size", precision=0)
+        with gr.Row():
 
-        with gr.Group("Model"):
-            #
-            model = gr.Textbox(label="Selected Model File")
-            file_button = gr.Button("Browse Files")
-            file_button.click(choose_file, outputs=model, show_progress="hidden")
+            quality = gr.Dropdown(label="Reconstruction Quality",
+                                        choices=['Lowest', 'Low', 'Medium', 'High', 'Highest'],
+                                        multiselect=False)
 
-            class_map = gr.Textbox(label="Selected Class Map File")
-            file_button = gr.Button("Browse Files")
-            file_button.click(choose_file, outputs=class_map, show_progress="hidden")
+            target_percentage = gr.Slider(label="Gradual Selection Percentage", interactive=True,
+                                          minimum=0, maximum=100, step=5)
 
         # Browse button
-        output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
-        dir_button = gr.Button("Browse Directory")
-        dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
 
         with gr.Row():
             # Run button (callback)
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
-                                   [images,
-                                    points,
-                                    model,
-                                    class_map,
-                                    patch_size,
-                                    output_dir])
+                                   [metashape_license,
+                                    input_dir,
+                                    output_dir,
+                                    project_file,
+                                    quality,
+                                    target_percentage])
 
             stop_button = gr.Button(value="Stop")
             stop = stop_button.click(exit_interface)
@@ -109,7 +115,7 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
@@ -130,4 +136,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

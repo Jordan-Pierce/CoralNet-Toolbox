@@ -1,39 +1,35 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.Upload import upload
+from Tools.Points import points
 
 EXIT_APP = False
+log_file = "points.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(username, password, source_id, images, prefix, annotations, labelset, headless, output_dir):
+def module_callback(images, sample_method, num_points, output_dir):
     """
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
 
     args = argparse.Namespace(
-        username=username,
-        password=password,
-        source_id=source_id,
         images=images,
-        prefix=prefix,
-        annotations=annotations,
-        labelset=labelset,
-        headless=headless,
-        output_dir=output_dir
+        sample_method=sample_method,
+        num_points=num_points,
+        output_dir=output_dir,
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        upload(args)
+        points(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -62,33 +58,24 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
-    with gr.Blocks(title="Upload ⬆️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="Points 🏓", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# Upload ⬆️")
-
-        with gr.Row():
-            username = gr.Textbox(os.getenv('CORALNET_USERNAME'), label="Username", type='email')
-            password = gr.Textbox(os.getenv('CORALNET_PASSWORD'), label="Password", type='password')
-
-        with gr.Row():
-            source_id = gr.Number(label="Source ID", precision=0)
-            prefix = gr.Textbox(label="Image Name Prefix")
-            headless = gr.Checkbox(label="Run Browser in Headless Mode", value=True)
+        gr.Markdown("# Points 🏓")
 
         # Browse button
         images = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
         dir_button = gr.Button("Browse Directory")
         dir_button.click(choose_directory, outputs=images, show_progress="hidden")
 
-        annotations = gr.Textbox(label="Selected Annotation File")
-        file_button = gr.Button("Browse Files")
-        file_button.click(choose_file, outputs=annotations, show_progress="hidden")
+        with gr.Row():
+            sample_method = gr.Dropdown(label="Sample Method",
+                                        choices=['Uniform', 'Random', 'Stratified'],
+                                        multiselect=False)
 
-        labelset = gr.Textbox(label="Selected Labelset File")
-        file_button = gr.Button("Browse Files")
-        file_button.click(choose_file, outputs=labelset, show_progress="hidden")
+            num_points = gr.Number(label="Number of Points", precision=0)
 
         # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
@@ -99,14 +86,9 @@ def create_interface():
             # Run button (callback)
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
-                                   [username,
-                                    password,
-                                    source_id,
-                                    images,
-                                    prefix,
-                                    annotations,
-                                    labelset,
-                                    headless,
+                                   [images,
+                                    sample_method,
+                                    num_points,
                                     output_dir])
 
             stop_button = gr.Button(value="Stop")
@@ -115,7 +97,7 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
@@ -136,5 +118,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
-
+    Logger(log_file).reset_logs()

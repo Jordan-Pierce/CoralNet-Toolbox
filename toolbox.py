@@ -1,19 +1,15 @@
 import gradio as gr
 
-gr.Progress(track_tqdm=True)
-
-import os
-import sys
 import time
 import subprocess
 
-from Toolbox.Pages.common import js
-from Toolbox.Pages.common import Logger
-from Toolbox.Pages.common import get_port
-from Toolbox.Pages.common import LOG_PATH
-from Toolbox.Pages.common import PAGES_DIR
+from Toolbox.common import js
+from Toolbox.common import Logger
+from Toolbox.common import get_port
+from Toolbox.common import TOOLBOX_DIR
 
 EXIT_APP = False
+log_file = "toolbox.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -24,7 +20,7 @@ def api_page():
 
     """
     gr.Info("Opening API tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\api.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\api.py"])
 
 
 def download_page():
@@ -32,7 +28,7 @@ def download_page():
 
     """
     gr.Info("Opening Download tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\download.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\download.py"])
 
 
 def labelset_page():
@@ -40,7 +36,7 @@ def labelset_page():
 
     """
     gr.Info("Opening Labelset tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\labelset.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\labelset.py"])
 
 
 def upload_page():
@@ -48,7 +44,7 @@ def upload_page():
 
     """
     gr.Info("Opening Upload tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\upload.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\upload.py"])
 
 
 def points_page():
@@ -56,7 +52,7 @@ def points_page():
 
     """
     gr.Info("Opening Points tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\points.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\points.py"])
 
 
 def patches_page():
@@ -64,7 +60,7 @@ def patches_page():
 
     """
     gr.Info("Opening Patches tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\patches.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\patches.py"])
 
 
 def projector_page():
@@ -72,7 +68,7 @@ def projector_page():
 
     """
     gr.Info("Opening Projector tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\projector.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\projector.py"])
 
 
 def visualize_page():
@@ -80,7 +76,7 @@ def visualize_page():
 
     """
     gr.Info("Opening Visualize tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\visualize.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\visualize.py"])
 
 
 def annotate_page():
@@ -88,7 +84,7 @@ def annotate_page():
 
     """
     gr.Info("Opening Annotate tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\annotate.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\annotate.py"])
 
 
 def classification_pretrain_page():
@@ -96,7 +92,7 @@ def classification_pretrain_page():
 
     """
     gr.Info("Opening Classification Pre-Train tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\classification_pretrain.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\classification_pretrain.py"])
 
 
 def classification_page():
@@ -104,7 +100,7 @@ def classification_page():
 
     """
     gr.Info("Opening Classification tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\classification.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\classification.py"])
 
 
 def classification_demo_page():
@@ -112,7 +108,7 @@ def classification_demo_page():
 
     """
     gr.Info("Opening Classification Demo tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\classification_demo.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\classification_demo.py"])
 
 
 def classification_inference_page():
@@ -120,7 +116,7 @@ def classification_inference_page():
 
     """
     gr.Info("Opening Classification Inference tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\classification_inference.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\classification_inference.py"])
 
 
 def sam_page():
@@ -128,7 +124,7 @@ def sam_page():
 
     """
     gr.Info("Opening SAM tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\sam.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\sam.py"])
 
 
 def sam_demo_page():
@@ -136,7 +132,7 @@ def sam_demo_page():
 
     """
     gr.Info("Opening SAM Demo tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\sam_demo.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\sam_demo.py"])
 
 
 def segmentation_page():
@@ -144,7 +140,7 @@ def segmentation_page():
 
     """
     gr.Info("Opening Segmentation tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\segmentation.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\segmentation.py"])
 
 
 def segmentation_inference_page():
@@ -152,7 +148,7 @@ def segmentation_inference_page():
 
     """
     gr.Info("Opening Segmentation Inference tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\segmentation_inference.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\segmentation_inference.py"])
 
 
 def segmentation_demo_page():
@@ -160,7 +156,7 @@ def segmentation_demo_page():
 
     """
     gr.Info("Opening Segmentation Demo tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\segmentation_demo.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\segmentation_demo.py"])
 
 
 def sfm_page():
@@ -168,7 +164,7 @@ def sfm_page():
 
     """
     gr.Info("Opening SfM tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\sfm.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\sfm.py"])
 
 
 def segmentation_3d_page():
@@ -176,7 +172,7 @@ def segmentation_3d_page():
 
     """
     gr.Info("Opening Segmentation 3D tool...")
-    subprocess.run(["python", f"{PAGES_DIR}\\segmentation_3d.py"])
+    subprocess.run(["python", f"{TOOLBOX_DIR}\\segmentation_3d.py"])
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -237,11 +233,11 @@ def create_interface():
             projector_button = gr.Button("Projector 📽️")
             projector_process = projector_button.click(projector_page)
 
-            visualize_button = gr.Button("Visualize 👓️")
-            visualize_process = visualize_button.click(visualize_page)
+            annotate_button = gr.Button("Annotate 🧮")
+            annotate_process = annotate_button.click(annotate_page)
 
-        annotate_button = gr.Button("Annotate 🧮")
-        annotate_process = annotate_button.click(annotate_page)
+        visualize_button = gr.Button("Visualize 👓️", visible=False)
+        visualize_process = visualize_button.click(visualize_page)
 
         gr.Markdown("## Image Classification Tools 🛠️ <p style='font-size:14px'>"
                     "\nUse these tool to train an image classifier</p>")
@@ -317,4 +313,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

@@ -7,13 +7,14 @@ import numpy as np
 import torch
 import segmentation_models_pytorch as smp
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.Segmentation import get_validation_augmentation
+from Tools.Segmentation import get_validation_augmentation
 
 
 MODEL = None
 EXIT_APP = False
+log_file = "segmentation_demo.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -171,7 +172,8 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
     with gr.Blocks(title="Demo 🧙", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
@@ -223,4 +225,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

@@ -8,21 +8,22 @@ import argparse
 import traceback
 from tkinter import Tk, filedialog
 
-from Toolbox.Tools.Common import DATA_DIR
-from Toolbox.Tools.Common import CACHE_DIR
-from Toolbox.Tools.Common import PATCH_EXTRACTOR
-from Toolbox.Tools.Common import FUNC_GROUPS_LIST
+from Tools.Common import DATA_DIR
+from Tools.Common import CACHE_DIR
+from Tools.Common import PATCH_EXTRACTOR
+from Tools.Common import FUNC_GROUPS_LIST
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Get the Pages directory
-PAGES_DIR = os.path.dirname(os.path.abspath(__file__))
+# Get the Toolbox directory
+TOOLBOX_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # For all the logging
-LOG_PATH = f"{DATA_DIR}\\Cache\\logs.log"
+LOG_DIR = f"{DATA_DIR}\\Logs\\"
+os.makedirs(LOG_DIR, exist_ok=True)
 
 js = """function () {
   gradioURL = window.location.href
@@ -58,41 +59,13 @@ def get_port():
 # ----------------------------------------------------------------------------------------------------------------------
 # Logger
 # ----------------------------------------------------------------------------------------------------------------------
-def read_logs():
-    sys.stdout.flush()
 
-    # Read the entire content of the log file
-    with open(LOG_PATH, "r") as f:
-        log_content = f.readlines()
-
-    # Filter out lines containing null characters
-    log_content = [line for line in log_content if '\x00' not in line]
-
-    # Define the regex pattern for the progress bar
-    progress_pattern = re.compile(r'\[.*\] \d+\.\d+%')
-
-    # Find lines matching the progress bar pattern
-    progress_lines = [line for line in log_content if progress_pattern.search(line) and " - Completed!\n" not in line]
-
-    # If there are multiple progress bars, keep only the last one in recent_lines
-    if progress_lines:
-        valid_content = [line for line in log_content if line not in progress_lines]
-        if log_content[-1] == progress_lines[-1]:
-            valid_content.append(progress_lines[-1].strip("\n"))
-    else:
-        valid_content = log_content
-
-    # Get the latest 30 lines
-    recent_lines = valid_content[-30:]
-
-    # Return the joined recent lines
-    return ''.join(recent_lines)
 
 
 class Logger:
     def __init__(self, filename):
 
-        self.filename = filename
+        self.filename = f"{LOG_DIR}{filename}"
         self.terminal = sys.stdout
         self.reset_logs()
         self.log = open(self.filename, "w")
@@ -112,6 +85,37 @@ class Logger:
     def reset_logs(self):
         with open(self.filename, 'w') as file:
             file.truncate(0)
+
+    def read_logs(self):
+        sys.stdout.flush()
+
+        # Read the entire content of the log file
+        with open(self.filename, "r") as f:
+            log_content = f.readlines()
+
+        # Filter out lines containing null characters
+        log_content = [line for line in log_content if '\x00' not in line]
+
+        # Define the regex pattern for the progress bar
+        progress_pattern = re.compile(r'\[.*\] \d+\.\d+%')
+
+        # Find lines matching the progress bar pattern
+        progress_lines = [line for line in log_content if
+                          progress_pattern.search(line) and " - Completed!\n" not in line]
+
+        # If there are multiple progress bars, keep only the last one in recent_lines
+        if progress_lines:
+            valid_content = [line for line in log_content if line not in progress_lines]
+            if log_content[-1] == progress_lines[-1]:
+                valid_content.append(progress_lines[-1].strip("\n"))
+        else:
+            valid_content = log_content
+
+        # Get the latest 30 lines
+        recent_lines = valid_content[-30:]
+
+        # Return the joined recent lines
+        return ''.join(recent_lines)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

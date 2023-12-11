@@ -1,11 +1,12 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.Classification import get_classifier_encoders
-from Toolbox.Tools.ClassificationPreTrain import classification_pretrain
+from Tools.Classification import get_classifier_encoders
+from Tools.ClassificationPreTrain import classification_pretrain
 
 EXIT_APP = False
+log_file = "classification_pretrain.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -18,7 +19,7 @@ def module_callback(patches, encoder_name, freeze_encoder, projection_dim, optim
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
 
     # Custom pre-processing
     patches = patches.split(" ")
@@ -76,7 +77,8 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
     with gr.Blocks(title="Pre-Train 👩‍🏫", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
@@ -96,7 +98,6 @@ def create_interface():
                 freeze_encoder = gr.Slider(0.0, label="Freeze Encoder", minimum=0.0, maximum=1.0, step=0.01)
 
             with gr.Row():
-
                 projection_dim = gr.Number(64, label="Projection Dimensions", precision=0)
 
                 optimizer = gr.Dropdown(label="Optimizer", multiselect=False, allow_custom_value=False,
@@ -134,7 +135,7 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add to console in page
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
 
         with gr.Accordion("TensorBoard"):
             # Display Tensorboard in page
@@ -161,4 +162,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

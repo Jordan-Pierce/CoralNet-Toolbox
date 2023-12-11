@@ -1,34 +1,37 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.SegmentationInference import segmentation_inference
+from Tools.ClassificationInference import classification_inference
 
 EXIT_APP = False
+log_file = "classification_inference.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(images, model, color_map, output_dir):
+def module_callback(images, points, model, class_map, patch_size, output_dir):
     """
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
 
     args = argparse.Namespace(
         images=images,
+        points=points,
         model=model,
-        color_map=color_map,
+        class_map=class_map,
+        patch_size=patch_size,
         output_dir=output_dir,
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        segmentation_inference(args)
+        classification_inference(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -57,25 +60,36 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
     with gr.Blocks(title="Predict 🤖️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
         gr.Markdown("# Predict 🤖️")
 
+        with gr.Group("Data"):
+            #
+            images = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
+            dir_button = gr.Button("Browse Directory")
+            dir_button.click(choose_directory, outputs=images, show_progress="hidden")
+
+            points = gr.Textbox(label="Selected Points File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=points, show_progress="hidden")
+
+            patch_size = gr.Number(112, label="Patch Size", precision=0)
+
+        with gr.Group("Model"):
+            #
+            model = gr.Textbox(label="Selected Model File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=model, show_progress="hidden")
+
+            class_map = gr.Textbox(label="Selected Class Map File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=class_map, show_progress="hidden")
+
         # Browse button
-        images = gr.Textbox(label="Selected Images Directory")
-        files_button = gr.Button("Browse Directory")
-        files_button.click(choose_directory, outputs=images, show_progress="hidden")
-
-        model = gr.Textbox(label="Selected Model File")
-        files_button = gr.Button("Browse Files")
-        files_button.click(choose_file, outputs=model, show_progress="hidden")
-
-        color_map = gr.Textbox(label="Selected Color Map File")
-        files_button = gr.Button("Browse Files")
-        files_button.click(choose_file, outputs=color_map, show_progress="hidden")
-
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
         dir_button = gr.Button("Browse Directory")
         dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
@@ -85,8 +99,10 @@ def create_interface():
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
                                    [images,
+                                    points,
                                     model,
-                                    color_map,
+                                    class_map,
+                                    patch_size,
                                     output_dir])
 
             stop_button = gr.Button(value="Stop")
@@ -95,7 +111,7 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
@@ -116,4 +132,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

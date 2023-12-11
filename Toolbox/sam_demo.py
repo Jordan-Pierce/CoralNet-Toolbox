@@ -2,7 +2,6 @@ import os.path
 
 import gradio as gr
 
-import json
 import numpy as np
 import pandas as pd
 from skimage.io import imread
@@ -10,15 +9,16 @@ from skimage.transform import resize
 
 import torch
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.SAM import get_sam_predictor
-from Toolbox.Tools.SAM import get_exclusive_mask
-from Toolbox.Tools.SAM import resize_image_aspect_ratio
-from Toolbox.Tools.SAM import find_most_common_label_in_area
+from Tools.SAM import get_sam_predictor
+from Tools.SAM import get_exclusive_mask
+from Tools.SAM import resize_image_aspect_ratio
+from Tools.SAM import find_most_common_label_in_area
 
 MODEL = None
 EXIT_APP = False
+log_file = "sam_demo.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -216,7 +216,8 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
     with gr.Blocks(title="Demo 🧙", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
@@ -302,4 +303,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

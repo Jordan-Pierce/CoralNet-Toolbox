@@ -1,36 +1,35 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.SfM import sfm
+from Tools.Projector import projector
 
 EXIT_APP = False
+log_file = "projector.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(metashape_license, input_dir, output_dir, project_file, quality, target_percentage):
+def module_callback(model, patches, output_dir, project_folder):
     """
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
 
     args = argparse.Namespace(
-        metashape_license=metashape_license,
-        input_dir=input_dir,
+        model=model,
+        patches=patches,
         output_dir=output_dir,
-        project_file=project_file,
-        quality=quality,
-        target_percentage=target_percentage,
+        project_folder=project_folder,
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        sfm(args)
+        projector(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -38,6 +37,15 @@ def module_callback(metashape_license, input_dir, output_dir, project_file, qual
         print(f"ERROR: {e}\n{traceback.format_exc()}")
 
     sys.stdout = console
+
+
+def tensorboard_iframe():
+    """
+
+    """
+    url = 'http://localhost:6006/#projector'
+    iframe = """<iframe src="{}" style="width:100%; height:1000px;"></iframe>""".format(url)
+    return iframe
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -59,53 +67,43 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
-    with gr.Blocks(title="SfM (Metashape) 🧊", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="Projector 📽️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# SfM (Metashape) 🧊")
+        gr.Markdown("# Projector 📽️")
 
-        metashape_license = gr.Textbox(os.getenv('METASHAPE_LICENSE'),
-                                       label="Metashape License", type='password')
+        with gr.Tab("New Project"):
 
-        with gr.Tab(label="New Project"):
+            model = gr.Textbox(label="Selected Model File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=model, show_progress="hidden")
+
+            patches = gr.Textbox(label="Selected Patches File")
+            file_button = gr.Button("Browse Files")
+            file_button.click(choose_file, outputs=patches, show_progress="hidden")
 
             # Browse button
-            input_dir = gr.Textbox(label="Selected Image Directory")
-            dir_button = gr.Button("Browse Directory")
-            dir_button.click(choose_directory, outputs=input_dir, show_progress="hidden")
-
-            output_dir = gr.Textbox(label="Selected Output Directory")
+            output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
             dir_button = gr.Button("Browse Directory")
             dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
 
-        with gr.Tab(label="Existing Project"):
+        with gr.Tab("Existing Project"):
 
-            project_file = gr.Textbox(label="Selected Project File")
-            file_button = gr.Button("Browse Files")
-            file_button.click(choose_file, outputs=project_file, show_progress="hidden")
-
-        with gr.Row():
-
-            quality = gr.Dropdown(label="Reconstruction Quality",
-                                        choices=['Lowest', 'Low', 'Medium', 'High', 'Highest'],
-                                        multiselect=False)
-
-            target_percentage = gr.Slider(label="Gradual Selection Percentage", interactive=True,
-                                          minimum=0, maximum=100, step=5)
-
-        # Browse button
+            # Browse button
+            project_folder = gr.Textbox(label="Existing Project Directory")
+            dir_button = gr.Button("Browse Directory")
+            dir_button.click(choose_directory, outputs=project_folder, show_progress="hidden")
 
         with gr.Row():
             # Run button (callback)
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
-                                   [metashape_license,
-                                    input_dir,
+                                   [model,
+                                    patches,
                                     output_dir,
-                                    project_file,
-                                    quality,
-                                    target_percentage])
+                                    project_folder])
 
             stop_button = gr.Button(value="Stop")
             stop = stop_button.click(exit_interface)
@@ -113,7 +111,13 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
+
+        with gr.Accordion("TensorBoard"):
+            # Display Tensorboard in page
+            tensorboard_button = gr.Button("Show TensorBoard")
+            iframe = gr.HTML(every=0.1)
+            tensorboard_button.click(fn=tensorboard_iframe, outputs=iframe, every=0.1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
@@ -134,5 +138,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
-
+    Logger(log_file).reset_logs()

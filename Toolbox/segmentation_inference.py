@@ -1,39 +1,35 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.SAM import sam
+from Tools.SegmentationInference import segmentation_inference
 
 EXIT_APP = False
+log_file = "segmentation_inference.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(images, annotations, label_col, confidence, model_type, points_per_side, points_per_batch,
-                    output_dir):
+def module_callback(images, model, color_map, output_dir):
     """
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
 
     args = argparse.Namespace(
         images=images,
-        annotations=annotations,
-        label_col=label_col,
-        confidence=confidence,
-        model_type=model_type,
-        points_per_side=points_per_side,
-        points_per_batch=points_per_batch,
+        model=model,
+        color_map=color_map,
         output_dir=output_dir,
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        sam(args)
+        segmentation_inference(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -62,43 +58,26 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
-    with gr.Blocks(title="SAM 🧠", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="Predict 🤖️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# SAM 🧠")
+        gr.Markdown("# Predict 🤖️")
 
         # Browse button
-        images = gr.Textbox(f"{DATA_DIR}", label="Selected Image Directory")
-        dir_button = gr.Button("Browse Directory")
-        dir_button.click(choose_directory, outputs=images, show_progress="hidden")
+        images = gr.Textbox(label="Selected Images Directory")
+        files_button = gr.Button("Browse Directory")
+        files_button.click(choose_directory, outputs=images, show_progress="hidden")
 
-        annotations = gr.Textbox(label="Selected Annotation File")
+        model = gr.Textbox(label="Selected Model File")
         files_button = gr.Button("Browse Files")
-        files_button.click(choose_file, outputs=annotations, show_progress="hidden")
+        files_button.click(choose_file, outputs=model, show_progress="hidden")
 
-        with gr.Row():
+        color_map = gr.Textbox(label="Selected Color Map File")
+        files_button = gr.Button("Browse Files")
+        files_button.click(choose_file, outputs=color_map, show_progress="hidden")
 
-            label_col = gr.Dropdown(label="Label Name Field", multiselect=False, allow_custom_value=True,
-                                    choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
-
-            confidence = gr.Slider(label="Point Confidence Filter",
-                                   minimum=0, maximum=100, step=1)
-
-        with gr.Group("SAM Model"):
-            with gr.Row():
-
-                model_type = gr.Dropdown(label="SAM Model Weights",
-                                         choices=['vit_b', 'vit_l', 'vit_h'],
-                                         multiselect=False, allow_custom_value=False)
-
-                points_per_side = gr.Number(64, label="Number of Points (Squared)",
-                                            precision=0)
-
-                points_per_batch = gr.Number(128, label="Points per Batch (GPU dependent)",
-                                             precision=0)
-
-        # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
         dir_button = gr.Button("Browse Directory")
         dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
@@ -108,12 +87,8 @@ def create_interface():
             run_button = gr.Button("Run")
             run = run_button.click(module_callback,
                                    [images,
-                                    annotations,
-                                    label_col,
-                                    confidence,
-                                    model_type,
-                                    points_per_side,
-                                    points_per_batch,
+                                    model,
+                                    color_map,
                                     output_dir])
 
             stop_button = gr.Button(value="Stop")
@@ -122,7 +97,7 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
@@ -143,4 +118,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

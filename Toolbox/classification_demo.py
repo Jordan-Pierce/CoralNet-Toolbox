@@ -10,14 +10,15 @@ from skimage.io import imread
 import torch
 import segmentation_models_pytorch as smp
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.Points import get_points
-from Toolbox.Tools.Patches import crop_patch
-from Toolbox.Tools.Classification import get_validation_augmentation
+from Tools.Points import get_points
+from Tools.Patches import crop_patch
+from Tools.Classification import get_validation_augmentation
 
 MODEL = None
 EXIT_APP = False
+log_file = "classification_demo.py"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -259,7 +260,8 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
     with gr.Blocks(title="Demo 🧙", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
@@ -347,4 +349,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

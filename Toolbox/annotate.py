@@ -1,10 +1,11 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.Annotate import annotate
+from Tools.Annotate import annotate
 
 EXIT_APP = False
+log_file = "annotate.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -16,7 +17,7 @@ def module_callback(patch_extractor_path, image_dir):
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
 
     args = argparse.Namespace(
         patch_extractor_path=patch_extractor_path,
@@ -55,7 +56,8 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
     with gr.Blocks(title="Annotate 🧮", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
@@ -84,7 +86,7 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
@@ -105,4 +107,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
+    Logger(log_file).reset_logs()

@@ -1,37 +1,43 @@
 import gradio as gr
 
-from Toolbox.Pages.common import *
+from common import *
 
-from Toolbox.Tools.API import api
+from Tools.Download import download
+from Tools.Download import get_updated_labelset_list
 
 EXIT_APP = False
+log_file = "download.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(username, password, source_id_1, source_id_2, points, prefix, output_dir):
+def module_callback(username, password, source_ids, source_df, labelset_df, sources_with, output_dir, headless):
     """
 
     """
     console = sys.stdout
-    sys.stdout = Logger(LOG_PATH)
+    sys.stdout = Logger(log_file)
+
+    # Custom pre-processing
+    source_ids = [str(id.strip()) for id in source_ids.split(" ") if id.strip()]
 
     args = argparse.Namespace(
         username=username,
         password=password,
-        source_id_1=source_id_1,
-        source_id_2=source_id_2,
-        points=points,
-        prefix=prefix,
+        source_ids=source_ids,
+        source_df=source_df,
+        labelset_df=labelset_df,
+        sources_with=sources_with,
         output_dir=output_dir,
+        headless=headless
     )
 
     try:
         # Call the function
         gr.Info("Starting process...")
-        api(args)
+        download(args)
         print("\nDone.")
         gr.Info("Completed process!")
     except Exception as e:
@@ -60,26 +66,31 @@ def create_interface():
     """
 
     """
-    Logger(LOG_PATH).reset_logs()
+    logger = Logger(log_file)
+    logger.reset_logs()
 
-    with gr.Blocks(title="CoralNet API 🕹️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
+    with gr.Blocks(title="CoralNet Download ⬇️", analytics_enabled=False, theme=gr.themes.Soft(), js=js) as interface:
         # Title
-        gr.Markdown("# CoralNet API 🕹️")
+        gr.Markdown("# CoralNet Downloader ⬇️")
 
         # Input Parameters
-        with gr.Row():
-            username = gr.Textbox(os.getenv('CORALNET_USERNAME'), label="Username", type='email')
-            password = gr.Textbox(os.getenv('CORALNET_PASSWORD'), label="Password", type='password')
+        with gr.Tab("Download Source Data"):
+            with gr.Row():
+                username = gr.Textbox(os.getenv('CORALNET_USERNAME'), label="Username", type='email')
+                password = gr.Textbox(os.getenv('CORALNET_PASSWORD'), label="Password", type='password')
 
-        with gr.Row():
-            source_id_1 = gr.Textbox("", label="Source ID (for images)")
-            source_id_2 = gr.Textbox("", label="Source ID (for model)")
-            prefix = gr.Textbox("", label="Image Name Prefix")
+            with gr.Row():
+                source_ids = gr.Textbox("", label="Source IDs (space-separated)")
+                headless = gr.Checkbox(label="Run Browser in Headless Mode", value=True)
 
-        # Files button
-        points = gr.Textbox("", label="Selected Points File")
-        files_button = gr.Button("Browse Files")
-        files_button.click(choose_files, outputs=points, show_progress="hidden")
+        with gr.Tab("Download CoralNet Dataframes"):
+            with gr.Row():
+                source_df = gr.Checkbox(label="Download Source DataFrame")
+                labelset_df = gr.Checkbox(label="Download Labelset DataFrame")
+
+            sources_with = gr.Dropdown(label="Sources with Labelsets",
+                                       choices=get_updated_labelset_list(),
+                                       multiselect=True)
 
         # Browse button
         output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
@@ -92,11 +103,12 @@ def create_interface():
             run = run_button.click(module_callback,
                                    [username,
                                     password,
-                                    source_id_1,
-                                    source_id_2,
-                                    points,
-                                    prefix,
-                                    output_dir])
+                                    source_ids,
+                                    source_df,
+                                    labelset_df,
+                                    sources_with,
+                                    output_dir,
+                                    headless])
 
             stop_button = gr.Button(value="Stop")
             stop = stop_button.click(exit_interface)
@@ -104,7 +116,7 @@ def create_interface():
         with gr.Accordion("Console Logs"):
             # Add logs
             logs = gr.Code(label="", language="shell", interactive=False, container=True, lines=30)
-            interface.load(read_logs, None, logs, every=1)
+            interface.load(logger.read_logs, None, logs, every=1)
 
     interface.launch(prevent_thread_lock=True, server_port=get_port(), inbrowser=True, show_error=True)
 
@@ -125,7 +137,4 @@ except:
     pass
 
 finally:
-    Logger(LOG_PATH).reset_logs()
-
-
-
+    Logger(log_file).reset_logs()
