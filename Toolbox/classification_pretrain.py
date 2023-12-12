@@ -3,6 +3,7 @@ import gradio as gr
 from common import *
 
 from Tools.Classification import get_classifier_encoders
+from Tools.Classification import get_classifier_optimizers
 from Tools.ClassificationPreTrain import classification_pretrain
 
 EXIT_APP = False
@@ -13,8 +14,8 @@ log_file = "classification_pretrain.log"
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(patches, encoder_name, freeze_encoder, projection_dim, optimizer, num_epochs, batch_size,
-                    tensorboard, output_dir):
+def module_callback(patches, encoder_name, freeze_encoder, projection_dim, optimizer, learning_rate, num_epochs,
+                    batch_size, tensorboard, output_dir):
     """
 
     """
@@ -30,6 +31,7 @@ def module_callback(patches, encoder_name, freeze_encoder, projection_dim, optim
         freeze_encoder=freeze_encoder,
         projection_dim=projection_dim,
         optimizer=optimizer,
+        learning_rate=learning_rate,
         num_epochs=num_epochs,
         batch_size=batch_size,
         tensorboard=tensorboard,
@@ -97,11 +99,14 @@ def create_interface():
 
                 freeze_encoder = gr.Slider(0.0, label="Freeze Encoder", minimum=0.0, maximum=1.0, step=0.01)
 
-            with gr.Row():
                 projection_dim = gr.Number(64, label="Projection Dimensions", precision=0)
 
+            with gr.Row():
+
                 optimizer = gr.Dropdown(label="Optimizer", multiselect=False, allow_custom_value=False,
-                                        choices=['Adam'])
+                                        choices=get_classifier_optimizers())
+
+                learning_rate = gr.Number(0.001, label="Learning Rate")
 
             with gr.Row():
                 num_epochs = gr.Number(25, label="Number of Epochs", precision=0)
@@ -124,6 +129,7 @@ def create_interface():
                                     freeze_encoder,
                                     projection_dim,
                                     optimizer,
+                                    learning_rate,
                                     num_epochs,
                                     batch_size,
                                     tensorboard,

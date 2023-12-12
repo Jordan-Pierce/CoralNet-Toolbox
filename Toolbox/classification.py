@@ -99,7 +99,7 @@ def create_interface():
         file_button = gr.Button("Browse Files")
         file_button.click(choose_files, outputs=patches, show_progress="hidden")
 
-        pre_trained_path = gr.Textbox(label="Selected Pre-trained Encoder File")
+        pre_trained_path = gr.Textbox(label="Selected Pre-trained Encoder File (Optional)")
         file_button = gr.Button("Browse Files")
         file_button.click(choose_files, outputs=pre_trained_path, show_progress="hidden")
 

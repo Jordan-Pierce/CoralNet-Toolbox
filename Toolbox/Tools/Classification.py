@@ -8,7 +8,6 @@ import inspect
 import warnings
 import argparse
 import traceback
-import subprocess
 from tqdm import tqdm
 
 import cv2
@@ -461,6 +460,9 @@ def plot_samples(model, data_loader):
     images, labels, paths = next(samples)
     num_samples = len(images)
 
+    # Set the num samples to 100 (10 x 10) if more
+    num_samples = num_samples if num_samples <= 100 else 100
+
     # Move data to the same device as the model
     device = next(model.parameters()).device
     images = images.to(device)
@@ -555,12 +557,13 @@ def classification(args):
           f"#########################################\n")
 
     try:
-        encoder_weights = 'imagenet'
-
+        # Make sure it's a valid choice
         if args.encoder_name not in get_classifier_encoders():
             raise Exception(f"ERROR: Encoder must be one of {get_classifier_encoders()}")
 
         # Building model using user's input
+        encoder_weights = 'imagenet'
+
         model = CustomModel(encoder_name=args.encoder_name,
                             weights=encoder_weights,
                             num_classes=num_classes,
@@ -568,15 +571,23 @@ def classification(args):
 
         print(f"NOTE: Using {args.encoder_name} encoder")
 
-        # Get the weights of the encoder if provided
+        # Get the weights of the pre-trained encoder, if provided
         if os.path.exists(args.pre_trained_path):
             pre_trained_model = torch.load(args.pre_trained_path, map_location='cpu')
 
-            if pre_trained_model.name != model.name:
-                print(f"WARNING: Pre-trained encoder does not match architecture selected; skipping")
-            else:
-                model.encoder.load_state_dict(pre_trained_model.encoder.state_dict(), strict=True)
-                print(f"NOTE: Loaded pre-trained weights from {pre_trained_model.name}")
+            try:
+                # Getting the encoder name (preprocessing), and encoder state
+                encoder_name = pre_trained_model.name
+                state_dict = pre_trained_model.encoder.state_dict()
+            except:
+                encoder_name = pre_trained_model.encoder.name
+                state_dict = pre_trained_model.encoder.encoder.state_dict()
+
+            model.encoder.load_state_dict(state_dict, strict=True)
+            print(f"NOTE: Loaded pre-trained weights from {encoder_name}")
+
+        else:
+            print("WARNING: Path to pre-trained encoder does not exist, skipping")
 
         # Freezing percentage of the encoder
         num_params = len(list(model.encoder.parameters()))
@@ -589,8 +600,6 @@ def classification(args):
                 param.requires_grad = False
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
-
-        print(f"NOTE: Using {args.encoder_name} encoder")
 
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
@@ -669,7 +678,7 @@ def classification(args):
     test_classes = len(set(test_df['Label'].unique()))
 
     # If there isn't one class sample in each data sets
-    # Keras will throw an error; hacky way of fixing this.
+    # will throw an error; hacky way of fixing this.
     if not (train_classes == valid_classes == test_classes):
         print("NOTE: Sampling one of each class category")
         # Holds one sample of each class category
@@ -1054,7 +1063,6 @@ def classification(args):
             test_writer.add_scalar(key, value, global_step=best_epoch)
 
     except Exception as e:
-        print(f"ERROR: Could not calculate metrics")
 
         if 'CUDA out of memory' in str(e):
             print(f"WARNING: Not enough GPU memory for the provided parameters")
@@ -1062,7 +1070,10 @@ def classification(args):
         # Write the error to text file
         print(f"NOTE: Please see {logs_dir}Error.txt")
         with open(f"{logs_dir}Error.txt", 'a') as file:
-            file.write(f"Caught exception: {str(e)}\n")
+            file.write(f"Caught exception: {str(traceback.print_exc())}\n")
+
+        # Exit early
+        raise Exception(f"ERROR: There was an issue with training!\n{e}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Visualize results
