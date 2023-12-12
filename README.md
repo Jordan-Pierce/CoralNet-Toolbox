@@ -55,11 +55,6 @@ a GUI; these scripts currently include the following:
 - `Analysis`: Calculate CPCe statistics from locally trained model's predictions
 - `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 
-#### Update (12/2023):
-
-A new GUI using `gradio` is current in the works, which will provide a more user-friendly interface, as well as the 
-ability to run remotely within a cloud resource. Stay tuned.
-
 #### **How to use**
 To use these tools, you should have access to the CoralNet platform. Once you have an account, 
 you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
