@@ -123,9 +123,9 @@ def write_embeddings(logs_dir, patches, labels, features):
     """
     print("NOTE: Setting up projector")
 
-    metadata_file = f"{logs_dir}\\metadata.csv"
-    tensor_file = f"{logs_dir}\\features.tsv"
-    sprite_file = f"{logs_dir}\\sprite.jpg"
+    metadata_file = f"{logs_dir}/metadata.csv"
+    tensor_file = f"{logs_dir}/features.tsv"
+    sprite_file = f"{logs_dir}/sprite.jpg"
 
     # Write the metadata
     with open(os.path.join(logs_dir, metadata_file), "w") as f:
@@ -204,7 +204,7 @@ def projector(args):
             raise Exception("ERROR: Project file provided does not exist, check provided input")
 
     # Source directory setup
-    logs_dir = f"{args.output_dir}\\projector\\{get_now()}"
+    logs_dir = f"{args.output_dir}/projector/{get_now()}"
     os.makedirs(logs_dir)
 
     # Get the patches

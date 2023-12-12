@@ -15,21 +15,21 @@ PROJECT_DIR = os.path.dirname(ROOT)
 sys.path.append(PROJECT_DIR)
 
 # Make the Data directory
-DATA_DIR = f"{os.path.dirname(PROJECT_DIR)}\\Data"
+DATA_DIR = f"{os.path.dirname(PROJECT_DIR)}/Data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Make the Cache directory
-CACHE_DIR = f"{DATA_DIR}\\Cache"
+CACHE_DIR = f"{DATA_DIR}/Cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Patch extractor path
-PATCH_EXTRACTOR = f'{PROJECT_DIR}\\Tools\\Patch_Extractor\\CNNDataExtractor.exe'
+PATCH_EXTRACTOR = f'{PROJECT_DIR}/Tools/Patch_Extractor/CNNDataExtractor.exe'
 
 # MIR specific, mapping path
-MIR_MAPPING = f'{DATA_DIR}\\Mission_Iconic_Reefs\\MIR_VPI_CoralNet_Mapping.csv'
+MIR_MAPPING = f'{DATA_DIR}/Mission_Iconic_Reefs/MIR_VPI_CoralNet_Mapping.csv'
 
 # Coralnet labelset file for dropdown menu in gooey
-CORALNET_LABELSET_FILE = f"{CACHE_DIR}\\CoralNet_Labelset_List.csv"
+CORALNET_LABELSET_FILE = f"{CACHE_DIR}/CoralNet_Labelset_List.csv"
 
 # Constant for the CoralNet url
 CORALNET_URL = "https://coralnet.ucsd.edu"

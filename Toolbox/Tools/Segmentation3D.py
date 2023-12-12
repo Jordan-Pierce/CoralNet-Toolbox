@@ -103,7 +103,7 @@ def segmentation3d_workflow(args):
     # Existing project file
     if os.path.exists(args.project_file):
         project_file = args.project_file
-        project_dir = f"{os.path.dirname(project_file)}\\"
+        project_dir = f"{os.path.dirname(project_file)}/"
     else:
         raise Exception(f"ERROR: Project file provided doesn't exist; check input provided")
 

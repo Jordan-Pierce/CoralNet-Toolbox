@@ -612,16 +612,16 @@ def classification(args):
     print("Logging")
     print("###############################################\n")
 
-    output_dir = f"{args.output_dir}\\"
+    output_dir = f"{args.output_dir}/"
 
     # Run Name
     run = f"{get_now()}_{args.encoder_name}"
 
     # We'll also create folders in this source to hold results of the model
-    run_dir = f"{output_dir}classification\\{run}\\"
-    weights_dir = run_dir + "weights\\"
-    logs_dir = run_dir + "logs\\"
-    tensorboard_dir = logs_dir + "tensorboard\\"
+    run_dir = f"{output_dir}classification/{run}/"
+    weights_dir = run_dir + "weights/"
+    logs_dir = run_dir + "logs/"
+    tensorboard_dir = logs_dir + "tensorboard/"
 
     # Make the directories
     os.makedirs(run_dir, exist_ok=True)
@@ -789,7 +789,7 @@ def classification(args):
             image = image.numpy()
             label = np.argmax(label.numpy())
             # Visualize and save to logs dir
-            save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
+            save_path = f'{tensorboard_dir}train/TrainingSample_{i}.png'
             plt.figure()
             plt.imshow(image)
             plt.title(f"{class_names[label]}")
@@ -813,7 +813,7 @@ def classification(args):
         image = image.numpy()
         label = np.argmax(label.numpy())
         # Visualize and save to logs dir
-        save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
+        save_path = f'{tensorboard_dir}train/TrainingSample_{i}.png'
         plt.figure()
         plt.imshow(image)
         plt.title(f"{class_names[label]}")
@@ -947,7 +947,7 @@ def classification(args):
                 valid_writer.add_scalar(key, value, global_step=e_idx)
 
             # Plot validation samples
-            save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
+            save_path = f'{tensorboard_dir}valid/ValidResult_{e_idx}.png'
             figure = plot_samples(model, valid_loader)
             figure.savefig(save_path)
 
@@ -1161,7 +1161,7 @@ def classification(args):
         torch.cuda.empty_cache()
 
         # Visualize the colorized results locally
-        save_path = f'{tensorboard_dir}test\\TestResults.png'
+        save_path = f'{tensorboard_dir}test/TestResults.png'
         figure = plot_samples(model, test_loader)
         figure.savefig(save_path)
 

@@ -48,13 +48,13 @@ def sfm_workflow(args):
     if args.project_file:
         if os.path.exists(args.project_file):
             project_file = args.project_file
-            project_dir = f"{os.path.dirname(project_file)}\\"
+            project_dir = f"{os.path.dirname(project_file)}/"
         else:
             raise Exception
 
     elif os.path.exists(args.output_dir):
-        output_dir = f"{args.output_dir}\\sfm\\"
-        project_dir = f"{output_dir}{get_now()}\\"
+        output_dir = f"{args.output_dir}/sfm/"
+        project_dir = f"{output_dir}{get_now()}/"
         os.makedirs(project_dir, exist_ok=True)
         project_file = f"{project_dir}project.psx"
     else:

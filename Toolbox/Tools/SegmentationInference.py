@@ -151,11 +151,11 @@ def segmentation_inference(args):
         raise Exception(f"ERROR: Model path provided does not exists; check input provided")
 
     # Setting output directories
-    output_dir = f"{args.output_dir}\\masks\\Segmentation_{get_now()}\\"
-    seg_dir = f"{output_dir}\\semantic\\"
-    mask_dir = f"{output_dir}\\mask\\"
-    color_dir = f"{output_dir}\\color\\"
-    overlay_dir = f"{output_dir}\\overlay\\"
+    output_dir = f"{args.output_dir}/masks/Segmentation_{get_now()}/"
+    seg_dir = f"{output_dir}/semantic/"
+    mask_dir = f"{output_dir}/mask/"
+    color_dir = f"{output_dir}/color/"
+    overlay_dir = f"{output_dir}/overlay/"
 
     # Output dataframe
     output_mask_csv = f"{output_dir}masks.csv"

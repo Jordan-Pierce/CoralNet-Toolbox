@@ -86,7 +86,7 @@ def points(args):
         sys.exit(1)
 
     # Create output
-    output_dir = f"{args.output_dir}\\points\\"
+    output_dir = f"{args.output_dir}/points/"
     output_file = f"{output_dir}{get_now()}_points.csv"
     os.makedirs(output_dir, exist_ok=True)
 

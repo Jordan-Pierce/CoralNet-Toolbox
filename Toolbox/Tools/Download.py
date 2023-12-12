@@ -129,9 +129,9 @@ def download_coralnet_sources(driver, output_dir):
 
         # Create a dataframe
         sources = pd.DataFrame(sources)
-        sources.to_csv(f"{output_dir}\\CoralNet_Source_ID_Dataframe.csv")
+        sources.to_csv(f"{output_dir}/CoralNet_Source_ID_Dataframe.csv")
 
-        if os.path.exists(f"{output_dir}\\CoralNet_Source_ID_Dataframe.csv"):
+        if os.path.exists(f"{output_dir}/CoralNet_Source_ID_Dataframe.csv"):
             print("NOTE: CoralNet Source Dataframe saved successfully")
         else:
             raise Exception("ERROR: Could not download Source ID Dataframe; "
@@ -220,9 +220,9 @@ def download_coralnet_labelsets(driver, output_dir):
                                                'Has Calcification Rates'])
 
         # Save locally
-        labelset.to_csv(f"{output_dir}\\CoralNet_Labelset_Dataframe.csv")
+        labelset.to_csv(f"{output_dir}/CoralNet_Labelset_Dataframe.csv")
 
-        if os.path.exists(f"{output_dir}\\CoralNet_Labelset_Dataframe.csv"):
+        if os.path.exists(f"{output_dir}/CoralNet_Labelset_Dataframe.csv"):
             print("NOTE: Labelset Dataframe saved successfully")
         else:
             raise Exception("ERROR: Could not download Labelset Dataframe; "
@@ -299,7 +299,7 @@ def get_sources_with(driver, choices, output_dir):
         # If the list of source ids is not empty, save locally
         if source_list:
             # Set the output file to be saved in cache directory
-            output_file = f"{output_dir}\\Sources_With_Dataframe.csv"
+            output_file = f"{output_dir}/Sources_With_Dataframe.csv"
 
             # Convert to dataframe
             source_list = pd.DataFrame(source_list, columns=['Source ID',
@@ -496,7 +496,7 @@ def download_images(dataframe, source_dir):
     """
 
     # Extract source id from path
-    source_id = os.path.dirname(source_dir).split("\\")[-1]
+    source_id = os.path.dirname(source_dir).split("/")[-1]
     # Save the dataframe of images locally
     csv_file = f"{source_dir}{source_id}_images.csv"
     dataframe.to_csv(csv_file)
@@ -507,7 +507,7 @@ def download_images(dataframe, source_dir):
         raise Exception("ERROR: Unable to save image CSV file")
 
     # Create the image directory if it doesn't exist (it should)
-    image_dir = f"{source_dir}\\images\\"
+    image_dir = f"{source_dir}/images/"
     os.makedirs(image_dir, exist_ok=True)
 
     print(f"\nNOTE: Downloading {len(dataframe)} images")
@@ -853,8 +853,8 @@ def download_data(driver, source_id, output_dir):
     print("###############################################\n")
 
     # The directory to store the output
-    source_dir = f"{os.path.abspath(output_dir)}\\{str(source_id)}\\"
-    image_dir = f"{source_dir}images\\"
+    source_dir = f"{os.path.abspath(output_dir)}/{str(source_id)}/"
+    image_dir = f"{source_dir}images/"
 
     # Creating the directories
     os.makedirs(source_dir, exist_ok=True)

@@ -120,7 +120,7 @@ def classification_inference(args):
         raise Exception(f"ERROR: Class Map file provided doesn't exist.")
 
     # Output
-    output_dir = f"{args.output_dir}\\predictions\\"
+    output_dir = f"{args.output_dir}/predictions/"
     output_path = f"{output_dir}classifier_{get_now()}_predictions.csv"
     os.makedirs(output_dir, exist_ok=True)
 

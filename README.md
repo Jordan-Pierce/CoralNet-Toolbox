@@ -65,7 +65,7 @@ To use these tools, you should have access to the CoralNet platform. Once you ha
 you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
 various other tasks locally.
 
-To install on `Windows`, use the `install.py` script within an `Anaconda` environment:
+To install on `Windows` or `Linux`, use the `install.py` script within an `Anaconda` environment:
 ```python
 # cmd
 
@@ -84,6 +84,7 @@ python toolbox.py
 
 Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
 - `Windows 10`
+- `Ubunut`
 - `Python 3.8`
 - `Torch 2.0.0 + CUDA 11.8`
 - `Metashape Professional 2.0.X`

@@ -62,7 +62,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, poin
     sam_url = "https://dl.fbaipublicfiles.com/segment_anything/"
 
     # The path containing the weights
-    sam_root = f"{CACHE_DIR}\\SAM_Weights"
+    sam_root = f"{CACHE_DIR}/SAM_Weights"
     os.makedirs(sam_root, exist_ok=True)
 
     # Mapping between the model type, and the checkpoint file name
@@ -75,7 +75,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, poin
         sys.exit(1)
 
     # Checkpoint path to model
-    path = f"{sam_root}\\{sam_dict[model_type]}"
+    path = f"{sam_root}/{sam_dict[model_type]}"
 
     # Check to see if the weights of the model type were already downloaded
     if not os.path.exists(path):
@@ -290,11 +290,11 @@ def sam(args):
         sys.exit(1)
 
     # Setting output directories
-    output_dir = f"{args.output_dir}\\masks\\SAM_{get_now()}\\"
-    seg_dir = f"{output_dir}\\semantic\\"
-    mask_dir = f"{output_dir}\\mask\\"
-    color_dir = f"{output_dir}\\color\\"
-    overlay_dir = f"{output_dir}\\overlay\\"
+    output_dir = f"{args.output_dir}/masks/SAM_{get_now()}/"
+    seg_dir = f"{output_dir}/semantic/"
+    mask_dir = f"{output_dir}/mask/"
+    color_dir = f"{output_dir}/color/"
+    overlay_dir = f"{output_dir}/overlay/"
 
     output_mask_csv = f"{output_dir}masks.csv"
     output_color_json = f"{output_dir}Color_Map.json"

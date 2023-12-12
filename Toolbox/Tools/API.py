@@ -326,7 +326,7 @@ def api(args):
     model_url = CORALNET_URL + f"/api/classifier/{model_id}/deploy/"
 
     # Set the data root directory (parent to source dir)
-    output_dir = f"{os.path.abspath(args.output_dir)}\\predictions\\"
+    output_dir = f"{os.path.abspath(args.output_dir)}/predictions/"
     os.makedirs(output_dir, exist_ok=True)
 
     # Final CSV containing predictions

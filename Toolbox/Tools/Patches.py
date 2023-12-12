@@ -151,7 +151,7 @@ def patches(args):
         sys.exit(1)
 
     # Create output
-    output_dir = f"{args.output_dir}\\patches\\{get_now()}\\"
+    output_dir = f"{args.output_dir}/patches/{get_now()}/"
     output_path = f"{output_dir}patches.csv"
     os.makedirs(output_dir, exist_ok=True)
 

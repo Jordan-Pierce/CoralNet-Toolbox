@@ -238,16 +238,16 @@ def classification_pretrain(args):
     print("Logging")
     print("###############################################\n")
 
-    output_dir = f"{args.output_dir}\\"
+    output_dir = f"{args.output_dir}/"
 
     # Run Name
     run = f"{get_now()}_{args.encoder_name}"
 
     # We'll also create folders in this source to hold results of the model
-    run_dir = f"{output_dir}pretrain\\{run}\\"
-    weights_dir = run_dir + "weights\\"
-    logs_dir = run_dir + "logs\\"
-    tensorboard_dir = logs_dir + "tensorboard\\"
+    run_dir = f"{output_dir}pretrain/{run}/"
+    weights_dir = run_dir + "weights/"
+    logs_dir = run_dir + "logs/"
+    tensorboard_dir = logs_dir + "tensorboard/"
 
     # Make the directories
     os.makedirs(run_dir, exist_ok=True)

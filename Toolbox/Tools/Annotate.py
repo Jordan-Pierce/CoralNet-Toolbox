@@ -99,7 +99,7 @@ def annotate(args):
         sys.exit(1)
 
     # Set the paths for output
-    output_dir = f"{os.path.dirname(image_dir)}\\annotations\\"
+    output_dir = f"{os.path.dirname(image_dir)}/annotations/"
     output_path = f"{output_dir}{get_now()}_annotations.csv"
     os.makedirs(output_dir, exist_ok=True)
     # Create a directory for temp patches

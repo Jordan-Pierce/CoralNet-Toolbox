@@ -22,7 +22,7 @@ from Tools.Common import FUNC_GROUPS_LIST
 TOOLBOX_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # For all the logging
-LOG_DIR = f"{DATA_DIR}\\Logs\\"
+LOG_DIR = f"{DATA_DIR}/Logs/"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 js = """function () {

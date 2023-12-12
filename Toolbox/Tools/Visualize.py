@@ -206,7 +206,7 @@ def visualize(args):
     annotations = args.annotations
     label_column = args.label_column
 
-    output_dir = f"{args.output_dir}\\visualize\\"
+    output_dir = f"{args.output_dir}/visualize/"
     os.makedirs(output_dir, exist_ok=True)
 
     if not os.path.exists(annotations):

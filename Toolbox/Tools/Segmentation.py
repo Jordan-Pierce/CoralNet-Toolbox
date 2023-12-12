@@ -611,16 +611,16 @@ def segmentation(args):
     print("\n###############################################")
     print("Logging")
     print("###############################################\n")
-    output_dir = f"{args.output_dir}\\"
+    output_dir = f"{args.output_dir}/"
 
     # Run Name
     run = f"{get_now()}_{args.decoder_name}_{args.encoder_name}"
 
     # We'll also create folders in this source to hold results of the model
-    run_dir = f"{output_dir}segmentation\\{run}\\"
-    weights_dir = run_dir + "weights\\"
-    logs_dir = run_dir + "logs\\"
-    tensorboard_dir = logs_dir + "tensorboard\\"
+    run_dir = f"{output_dir}segmentation/{run}/"
+    weights_dir = run_dir + "weights/"
+    logs_dir = run_dir + "logs/"
+    tensorboard_dir = logs_dir + "tensorboard/"
 
     # Make the directories
     os.makedirs(run_dir, exist_ok=True)
@@ -744,7 +744,7 @@ def segmentation(args):
             # Get a random sample from dataset
             image, mask = sample_dataset[np.random.randint(0, len(train_df))]
             # Visualize and save to logs dir
-            save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
+            save_path = f'{tensorboard_dir}train/TrainingSample_{i}.png'
             visualize(save_path=save_path,
                       save_figure=True,
                       image=image,
@@ -819,7 +819,7 @@ def segmentation(args):
 
             try:
                 # Visualize the colorized results locally
-                save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
+                save_path = f'{tensorboard_dir}valid/ValidResult_{e_idx}.png'
                 visualize(save_path=save_path,
                           save_figure=True,
                           image=image_vis,
@@ -990,7 +990,7 @@ def segmentation(args):
 
             try:
                 # Visualize the colorized results locally
-                save_path = f'{tensorboard_dir}test\\TestResult_{i}.png'
+                save_path = f'{tensorboard_dir}test/TestResult_{i}.png'
 
                 visualize(save_path=save_path,
                           save_figure=True,
