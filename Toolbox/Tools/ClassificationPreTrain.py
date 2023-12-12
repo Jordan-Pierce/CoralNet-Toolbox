@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 import segmentation_models_pytorch as smp
 
 from simclr import SimCLR
-from simclr.modules import NT_Xent, LARS
+from simclr.modules import NT_Xent
 from simclr.modules.transformations import TransformsSimCLR
 
 import albumentations as albu
@@ -25,6 +25,7 @@ import albumentations as albu
 from tensorboard import program
 
 from Common import get_now
+from Classification import get_classifier_optimizers
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -89,15 +90,27 @@ class Dataset(BaseDataset):
         image = cv2.imread(self.patches[i])
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # apply preprocessing
-        if self.preprocessing:
-            image = self.preprocessing(image=image)['image']
-
         # apply transform
         image = Image.fromarray(image)
-        sample = self.transform(image)
+        x_i, x_j = self.transform(image)
 
-        return sample
+        # apply preprocessing
+        if self.preprocessing:
+            # Rescale to [0, 255]
+            x_i_rescaled = (x_i * 255).to(torch.uint8)
+            x_j_rescaled = (x_j * 255).to(torch.uint8)
+
+            # Transpose dimensions to match the desired shape (224, 224, 3)
+            x_i_rescaled = x_i_rescaled.permute(1, 2, 0)
+            x_j_rescaled = x_j_rescaled.permute(1, 2, 0)
+
+            x_i = self.preprocessing(x_i_rescaled).permute(2, 0, 1).float()
+            x_j = self.preprocessing(x_j_rescaled).permute(2, 0, 1).float()
+
+        if self.device != 'cpu':
+            x_i, x_j = x_i.to(self.device), x_j.to(self.device)
+
+        return x_i, x_j
 
     def __len__(self):
         return len(self.ids)
@@ -107,54 +120,12 @@ class Dataset(BaseDataset):
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
 
-def get_preprocessing(preprocessing_fn):
-    """
-
-    """
-
-    _transform = [
-        albu.Lambda(image=preprocessing_fn),
-    ]
-    return albu.Compose(_transform)
-
-
 def save_model(model, epoch, weights_dir):
     """
 
     """
     output_path = f"{weights_dir}checkpoint_{epoch}.pth"
     torch.save(model, output_path)
-
-
-def load_optimizer(args, model):
-    """
-
-    """
-
-    scheduler = None
-
-    if args.optimizer == "Adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
-
-    elif args.optimizer == "LARS":
-        # optimized using LARS with linear learning rate scaling
-        # (i.e. LearningRate = 0.3 × BatchSize/256) and weight decay of 10−6.
-        learning_rate = 0.3 * args.batch_size / 256
-        optimizer = LARS(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=args.weight_decay,
-            exclude_from_weight_decay=["batch_normalization", "bias"],
-        )
-
-        # "decay the learning rate with the cosine decay schedule without restarts"
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, args.num_epochs, eta_min=0, last_epoch=-1
-        )
-    else:
-        raise NotImplementedError
-
-    return optimizer, scheduler
 
 
 def train_epoch(args, train_loader, model, criterion, optimizer, writer):
@@ -218,6 +189,9 @@ def classification_pretrain(args):
         model = CustomModel(encoder_name=args.encoder_name, weights=encoder_weights)
         print(f"NOTE: Using {args.encoder_name} encoder")
 
+        # Processing function for encoder
+        preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
+
         # Freezing percentage of the encoder
         num_params = len(list(model.encoder.parameters()))
         freeze_params = int(num_params * args.freeze_encoder)
@@ -234,17 +208,28 @@ def classification_pretrain(args):
         model = model.to(device)
 
     except Exception as e:
-        print(f"ERROR: Could not build model\n{e}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not build model\n{e}")
 
-    # Optimizer / loss
-    args.weight_decay = 1.0e-6
-    args.temperature = 0.5
-    optimizer, scheduler = load_optimizer(args, model)
-    criterion = NT_Xent(args.batch_size, args.temperature, 1)
+    try:
 
-    # Processing function for encoder
-    preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
+        # Optimizer / loss
+        args.temperature = 0.5
+
+        # Get the optimizer
+        assert args.optimizer in get_classifier_optimizers()
+        optimizer = getattr(torch.optim, args.optimizer)(model.parameters(), args.learning_rate)
+
+        print(f"NOTE: Using optimizer function {args.optimizer}")
+
+        # Scheduler
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, args.num_epochs, eta_min=0, last_epoch=-1
+        )
+
+        criterion = NT_Xent(args.batch_size, args.temperature, 1)
+
+    except Exception as e:
+        raise Exception(f"ERROR: Could not load optimizer\n{e}")
 
     # ---------------------------------------------------------------------------------------
     # Source directory setup
@@ -313,7 +298,7 @@ def classification_pretrain(args):
     train_dataset = Dataset(
         train_df,
         transform=TransformsSimCLR(224),
-        preprocessing=None,  # get_preprocessing(preprocessing_fn),
+        preprocessing=preprocessing_fn,
         device=device,
     )
 
@@ -384,7 +369,10 @@ def main():
                         help='Projection head dimensionality into latent space')
 
     parser.add_argument('--optimizer', default="Adam",
-                        help='Optimizer for training the model [Adam, LARS]')
+                        help='Optimizer for training the model')
+
+    parser.add_argument('--learning_rate', type=float, default=0.0005,
+                        help='Initial learning rate')
 
     parser.add_argument('--num_epochs', type=int, default=100,
                         help='Starting learning rate')

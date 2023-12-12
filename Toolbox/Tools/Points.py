@@ -24,7 +24,7 @@ def get_points(min_width, min_height, max_width, max_height, sample_method='Rand
     x = []
     y = []
 
-    # Generate Uniform Samples
+    # Generate Uniform Samples # TODO This throws an error
     if sample_method == 'Uniform':
         x_coords = np.linspace(min_width, max_width - 1, int(np.sqrt(num_points))).astype(int)
         y_coords = np.linspace(min_height, max_height - 1, int(np.sqrt(num_points))).astype(int)
@@ -107,7 +107,7 @@ def points(args):
 
         x, y = get_points(min_width, min_height, max_width, max_height, sample_method, num_points)
 
-        for _ in range(num_points):
+        for _ in range(len(list(zip(x, y)))):
 
             samples.append({'Name': image_name,
                             'Row': int(y[_]),

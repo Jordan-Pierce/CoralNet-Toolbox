@@ -493,8 +493,7 @@ def segmentation(args):
           f"#########################################\n")
 
     try:
-        encoder_weights = 'imagenet'
-
+        # Make sure it's a valid choice
         if args.encoder_name not in get_segmentation_encoders():
             raise Exception(f"ERROR: Encoder must be one of {get_segmentation_encoders()}")
 
@@ -502,6 +501,8 @@ def segmentation(args):
             raise Exception(f"ERROR: Decoder must be one of {get_segmentation_decoders()}")
 
         # Building model using user's input
+        encoder_weights = 'imagenet'
+
         model = getattr(smp, args.decoder_name)(
             encoder_name=args.encoder_name,
             encoder_weights=encoder_weights,
@@ -511,15 +512,23 @@ def segmentation(args):
 
         print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
 
-        # Get the weights of the encoder if provided
+        # Get the weights of the pre-trained encoder, if provided
         if os.path.exists(args.pre_trained_path):
             pre_trained_model = torch.load(args.pre_trained_path, map_location='cpu')
 
-            if pre_trained_model.name != model.name.split("-")[1]:
-                print(f"WARNING: Pre-trained encoder does not match architecture selected; skipping")
-            else:
-                model.encoder.load_state_dict(pre_trained_model.encoder.state_dict(), strict=True)
-                print(f"NOTE: Loaded pre-trained weights from {pre_trained_model.name}")
+            try:
+                # Getting the encoder name (preprocessing), and encoder state
+                encoder_name = pre_trained_model.name
+                state_dict = pre_trained_model.encoder.state_dict()
+            except:
+                encoder_name = pre_trained_model.encoder.name
+                state_dict = pre_trained_model.encoder.encoder.state_dict()
+
+            model.encoder.load_state_dict(state_dict, strict=True)
+            print(f"NOTE: Loaded pre-trained weights from {encoder_name}")
+
+        else:
+            print("WARNING: Path to pre-trained encoder does not exist, skipping")
 
         # Freezing percentage of the encoder
         num_params = len(list(model.encoder.parameters()))
@@ -533,8 +542,6 @@ def segmentation(args):
 
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
-        print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
-
     except Exception as e:
         print(f"ERROR: Could not build model\n{e}")
         sys.exit(1)
@@ -543,10 +550,8 @@ def segmentation(args):
         # Get the loss function
         assert args.loss_function in get_segmentation_losses()
 
-        # Get the mode
+        # Specify the mode
         mode = 'binary' if len(class_ids) == 2 else 'multiclass'
-
-        # Get the loss function
         loss_function = getattr(smp.losses, args.loss_function)(mode=mode).to(device)
         loss_function.__name__ = loss_function._get_name()
 
@@ -575,7 +580,6 @@ def segmentation(args):
         # Get the optimizer
         assert args.optimizer in get_segmentation_optimizers()
         optimizer = getattr(torch.optim, args.optimizer)(model.parameters(), args.learning_rate)
-
         print(f"NOTE: Using optimizer {args.optimizer}")
 
     except Exception as e:
@@ -584,14 +588,16 @@ def segmentation(args):
         sys.exit(1)
 
     try:
+        # Get the metrics
         assert any(m in get_segmentation_metrics() for m in args.metrics)
         metrics = [getattr(smp.metrics, m) for m in args.metrics]
 
+        # Include at least one metric regardless
         if not metrics:
             metrics.append(smp.metrics.iou_score)
 
+        # Convert to torch metric so can be used on CUDA
         metrics = [TorchMetic(m) for m in metrics]
-
         print(f"NOTE: Using metrics {args.metrics}")
 
     except Exception as e:
@@ -733,18 +739,22 @@ def segmentation(args):
 
     # Loop through a few samples
     for i in range(5):
-        # Get a random sample from dataset
-        image, mask = sample_dataset[np.random.randint(0, len(train_df))]
-        # Visualize and save to logs dir
-        save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
-        visualize(save_path=save_path,
-                  save_figure=True,
-                  image=image,
-                  mask=colorize_mask(mask, class_ids, class_colors))
 
-        # Write to tensorboard
-        train_writer.add_image(f'Training_Samples', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+        try:
+            # Get a random sample from dataset
+            image, mask = sample_dataset[np.random.randint(0, len(train_df))]
+            # Visualize and save to logs dir
+            save_path = f'{tensorboard_dir}train\\TrainingSample_{i}.png'
+            visualize(save_path=save_path,
+                      save_figure=True,
+                      image=image,
+                      mask=colorize_mask(mask, class_ids, class_colors))
 
+            # Write to tensorboard
+            train_writer.add_image(f'Training_Samples', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+
+        except:
+            pass
     # ------------------------------------------------------------------------------------------------------------------
     # Train Model
     # ------------------------------------------------------------------------------------------------------------------
@@ -807,17 +817,21 @@ def segmentation(args):
             pr_mask = (pr_mask.squeeze().cpu().numpy().round())
             pr_mask = np.argmax(pr_mask, axis=0)
 
-            # Visualize the colorized results locally
-            save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
-            visualize(save_path=save_path,
-                      save_figure=True,
-                      image=image_vis,
-                      ground_truth_mask=colorize_mask(gt_mask, class_ids, class_colors),
-                      predicted_mask=colorize_mask(pr_mask, class_ids, class_colors))
+            try:
+                # Visualize the colorized results locally
+                save_path = f'{tensorboard_dir}valid\\ValidResult_{e_idx}.png'
+                visualize(save_path=save_path,
+                          save_figure=True,
+                          image=image_vis,
+                          ground_truth_mask=colorize_mask(gt_mask, class_ids, class_colors),
+                          predicted_mask=colorize_mask(pr_mask, class_ids, class_colors))
 
-            # Log the visualization to TensorBoard
-            figure = np.array(Image.open(save_path))
-            valid_writer.add_image(f'Valid_Results', figure, dataformats="HWC", global_step=e_idx)
+                # Log the visualization to TensorBoard
+                figure = np.array(Image.open(save_path))
+                valid_writer.add_image(f'Valid_Results', figure, dataformats="HWC", global_step=e_idx)
+
+            except:
+                pass
 
             # Get the loss values
             train_loss = [v for k, v in train_logs.items() if 'loss' in k.lower()][0]
@@ -863,8 +877,6 @@ def segmentation(args):
 
     except Exception as e:
 
-        print(f"ERROR: There was an issue with training!\n{e}")
-
         if 'CUDA out of memory' in str(e):
             print(f"WARNING: Not enough GPU memory for the provided parameters")
 
@@ -874,7 +886,7 @@ def segmentation(args):
             file.write(f"Caught exception: {str(traceback.print_exc())}\n")
 
         # Exit early
-        sys.exit(1)
+        raise Exception(f"ERROR: There was an issue with training!\n{e}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Load best model
@@ -976,18 +988,21 @@ def segmentation(args):
             pr_mask = cv2.resize(pr_mask, (original_width, original_height), interpolation=cv2.INTER_NEAREST)
             pr_mask = colorize_mask(pr_mask, class_ids, class_colors)
 
-            # Visualize the colorized results locally
-            save_path = f'{tensorboard_dir}test\\TestResult_{i}.png'
+            try:
+                # Visualize the colorized results locally
+                save_path = f'{tensorboard_dir}test\\TestResult_{i}.png'
 
-            visualize(save_path=save_path,
-                      save_figure=True,
-                      image=image_vis,
-                      ground_truth_mask=gt_mask,
-                      predicted_mask=pr_mask)
+                visualize(save_path=save_path,
+                          save_figure=True,
+                          image=image_vis,
+                          ground_truth_mask=gt_mask,
+                          predicted_mask=pr_mask)
 
-            # Log the visualization to TensorBoard
-            test_writer.add_image(f'Test_Results', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+                # Log the visualization to TensorBoard
+                test_writer.add_image(f'Test_Results', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
 
+            except:
+                pass
     except Exception as e:
 
         # Catch the error

@@ -22,10 +22,46 @@ import segmentation_models_pytorch as smp
 from Common import get_now
 from Common import progress_printer
 
+from Classification import get_classifier_encoders
 from Classification import get_validation_augmentation
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# Classes
+# ------------------------------------------------------------------------------------------------------------------
+
+class CustomModel(torch.nn.Module):
+    def __init__(self, encoder_name, weights):
+        super(CustomModel, self).__init__()
+
+        # Name
+        self.name = encoder_name
+
+        # Pre-trained encoder
+        self.encoder = smp.encoders.get_encoder(name=encoder_name,
+                                                weights=weights)
+
+        # Fully connected layer for classification
+        self.fc = torch.nn.Linear(self.encoder.out_channels[-1], 100)
+
+    # Add a method to get the name attribute
+    def get_name(self):
+        return self.name
+
+    def forward(self, x):
+        # Forward pass through the encoder
+        x = self.encoder(x)
+        x = x[-1]
+        # Global average pooling
+        x = F.adaptive_avg_pool2d(x, (1, 1))
+        x = x.view(x.size(0), -1)
+        # Fully connected layer for classification
+        x = self.fc(x)
+        # Softmax activation
+        x = F.softmax(x, dim=1)
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -127,12 +163,7 @@ def activate_tensorboard(logs_dir):
     tb = program.TensorBoard()
     tb.configure(argv=[None, '--logdir', logs_dir])
     url = tb.launch()
-
-    print(f"NOTE: View Tensorboard at {url}")
-    tensorboard_exe = os.path.join(os.path.dirname(sys.executable), 'Scripts', 'tensorboard')
-    process = subprocess.Popen([tensorboard_exe, "--logdir", logs_dir])
-    process.wait()
-    print("NOTE: View TensorBoard 2.10.1 at http://localhost:6006/")
+    print(f"NOTE: View TensorBoard 2.10.1 at {url}")
 
     try:
         while True:
@@ -140,9 +171,6 @@ def activate_tensorboard(logs_dir):
 
     except Exception:
         print("NOTE: Deactivating Tensorboard...")
-
-    finally:
-        process.terminate()
 
 
 def projector(args):
@@ -194,23 +222,36 @@ def projector(args):
 
     # Model Weights
     if os.path.exists(args.model):
-        try:
-            # Load into the model
-            model = torch.load(args.model)
-            model_name = model.name
-            print(f"NOTE: Loaded weights {model.name}")
 
-            # Get the preprocessing function that was used during training
-            preprocessing_fn = smp.encoders.get_preprocessing_fn(model_name, 'imagenet')
+        try:
+            # Loading the actual model / weights
+            pre_trained_model = torch.load(args.model, map_location='cpu')
+
+            try:
+                # Getting the encoder name (preprocessing), and encoder state
+                encoder_name = pre_trained_model.name
+                state_dict = pre_trained_model.encoder.state_dict()
+            except:
+                encoder_name = pre_trained_model.encoder.name
+                state_dict = pre_trained_model.encoder.encoder.state_dict()
+
+            # Building model for projector
+            encoder_weights = 'imagenet'
+            model = CustomModel(encoder_name=encoder_name,
+                                weights=encoder_weights)
+
+            # Loading the state from provided model
+            model.encoder.load_state_dict(state_dict, strict=True)
+            print(f"NOTE: Loaded pre-trained weights from {encoder_name}")
 
             # Convert patches to PyTorch tensor with validation augmentation and preprocessing
             validation_augmentation = get_validation_augmentation(height=224, width=224)
+            preprocessing_fn = smp.encoders.get_preprocessing_fn(encoder_name, encoder_weights)
 
-            # Set the model to evaluation mode
-            model.eval()
+            model.to(device)
 
         except Exception as e:
-            raise Exception(f"ERROR: There was an issue loading the model\n{e}")
+            raise Exception(f"ERROR: Could not build model\n{e}")
     else:
         raise Exception("ERROR: Model provided doesn't exist.")
 
@@ -228,8 +269,14 @@ def projector(args):
         labels = current_patches['Label'].values.tolist()
         # Get the patch arrays
         patches = np.stack(load_patches(current_patches['Path'].values.tolist()))
+
+        # Augment
+        patches_tensor = [validation_augmentation(image=p)['image'] for p in patches]
+        # Pre-process
+        patches_tensor = [preprocessing_fn(p) for p in patches_tensor]
+
         # Convert to tensors
-        patches_tensor = [torch.Tensor(preprocessing_fn(validation_augmentation(image=p)['image'])) for p in patches]
+        patches_tensor = [torch.Tensor(p) for p in patches_tensor]
         patches_tensor = torch.stack(patches_tensor).permute(0, 3, 1, 2)
         patches_tensor = patches_tensor.to(device)
 
