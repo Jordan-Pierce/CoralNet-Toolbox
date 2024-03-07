@@ -35,8 +35,6 @@ a GUI; these scripts currently include the following:
 - `Visualize`: Visualize points/patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
-- `Classification`: Create your own patch-based image classifier, locally
-- `Classification Inf.`: Perform inference using a locally trained classification model
 - `Projector`: Display model predictions in feature space using Tensorboard
 - `SAM`: Create segmentation masks for each image using labeled points and SAM
 - `SAM Demo`: Demo SAM models on your data to create segmentation masks
@@ -79,7 +77,7 @@ python toolbox.py
 
 Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
 - `Windows 10`
-- `Ubunut`
+- `Ubuntu`
 - `Python 3.8`
 - `Torch 2.0.0 + CUDA 11.8`
 - `Metashape Professional 2.0.X`
