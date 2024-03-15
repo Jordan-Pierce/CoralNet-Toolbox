@@ -471,7 +471,7 @@ def submit_jobs(driver, source_id_1, source_id_2, prefix, images_w_points, point
     print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
     final_predictions.to_csv(predictions_path)
 
-    return final_predictions, predictions_path
+    return driver, gfinal_predictions, predictions_path
 
 
 def api(args):
@@ -541,13 +541,13 @@ def api(args):
     driver, _ = login(driver)
 
     # Submit the jobs
-    final_predictions, predictions_path = submit_jobs(driver,
-                                                      args.source_id_1,
-                                                      args.source_id_2,
-                                                      args.prefix,
-                                                      images_w_points,
-                                                      points,
-                                                      args.output_dir)
+    driver, final_predictions, predictions_path = submit_jobs(driver,
+                                                              args.source_id_1,
+                                                              args.source_id_2,
+                                                              args.prefix,
+                                                              images_w_points,
+                                                              points,
+                                                              args.output_dir)
     # Close the browser
     driver.close()
 
