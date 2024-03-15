@@ -548,6 +548,8 @@ def api(args):
                                                       images_w_points,
                                                       points,
                                                       args.output_dir)
+    # Close the browser
+    driver.close()
 
 
 # -----------------------------------------------------------------------------
