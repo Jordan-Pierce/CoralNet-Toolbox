@@ -12,7 +12,6 @@ import math
 import pandas as pd
 
 from Common import get_now
-from Common import progress_printer
 
 from Browser import login
 from Browser import get_token
@@ -125,6 +124,7 @@ def get_expiration(url):
             raise ValueError(f"ERROR: Could not find expiration timestamp in \n{url}")
 
     except Exception as e:
+        time_remaining = 0
         print(f"{e}")
 
     return time_remaining
@@ -200,7 +200,7 @@ def convert_to_csv(status, image_names):
     # A list to store all the model predictions (dictionaries)
     model_predictions_list = []
 
-    for (data, image_name) in progress_printer(zip(status['data'], image_names)):
+    for data, image_name in zip(status['data'], image_names):
         if 'points' in data['attributes']:
             for point in data['attributes']['points']:
                 p = dict()
@@ -223,79 +223,19 @@ def convert_to_csv(status, image_names):
     return model_predictions
 
 
-def api(args):
+def submit_jobs(driver, source_id_1, source_id_2, prefix, images_w_points, points, output_dir):
     """
 
     """
-    print("\n###############################################")
-    print(f"API")
-    print("###############################################")
-
-    # -------------------------------------------------------------------------
-    # Check the data
-    # -------------------------------------------------------------------------
-    try:
-
-        # Check to see if the csv file exists
-        assert os.path.exists(args.points)
-
-        # Determine if it's a single file or a folder
-        if os.path.isfile(args.points):
-            # If a file, just read it in
-            points = pd.read_csv(args.points, index_col=0)
-        elif os.path.isdir(args.points):
-            # If a folder, read in all csv files, concatenate them together
-            csv_files = glob.glob(args.points + "/*.csv")
-            points = pd.DataFrame()
-            for csv_file in csv_files:
-                points = pd.concat([points, pd.read_csv(csv_file, index_col=0)])
-        else:
-            raise Exception(f"ERROR: {args.points} is invalid.")
-
-        # Check to see if the csv file has the expected columns
-        assert 'Name' in points.columns
-        assert 'Row' in points.columns
-        assert 'Column' in points.columns
-        assert len(points) > 0
-
-        images_w_points = points['Name'].to_list()
-
-    except Exception as e:
-        raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
-
-    # -------------------------------------------------------------------------
-    # Authenticate the user
-    # -------------------------------------------------------------------------
-    try:
-        # Username, Password
-        username = args.username
-        password = args.password
-        authenticate(username, password)
-        coralnet_token, headers = get_token(username, password)
-    except Exception as e:
-        raise Exception(f"ERROR: {e}")
-
-    # -------------------------------------------------------------------------
-    # Get the browser
-    # -------------------------------------------------------------------------
-    driver = check_for_browsers(headless=True)
-    # Store the credentials in the driver
-    driver.capabilities['credentials'] = {
-        'username': username,
-        'password': password
-    }
-    # Login to Tools
-    driver, _ = login(driver)
-
-    # -------------------------------------------------------------------------
+    # -----------------------------
     # Get Source information
-    # -------------------------------------------------------------------------
+    # -----------------------------
     try:
-        source_id = args.source_id_1
+        source_id = source_id_1
         driver, meta, source_images = get_source_meta(driver,
-                                                      args.source_id_1,
-                                                      args.source_id_2,
-                                                      args.prefix,
+                                                      source_id_1,
+                                                      source_id_2,
+                                                      prefix,
                                                       images_w_points)
 
         if meta is None:
@@ -326,7 +266,7 @@ def api(args):
     model_url = CORALNET_URL + f"/api/classifier/{model_id}/deploy/"
 
     # Set the data root directory (parent to source dir)
-    output_dir = f"{os.path.abspath(args.output_dir)}/predictions/"
+    output_dir = f"{os.path.abspath(output_dir)}/predictions/"
     os.makedirs(output_dir, exist_ok=True)
 
     # Final CSV containing predictions
@@ -425,7 +365,7 @@ def api(args):
 
             # Use the payload to construct the job
             job = {
-                "headers": headers,
+                "headers": driver.capabilities['credentials']['headers'],
                 "model_url": model_url,
                 "image_names": image_names,
                 "data": json.dumps(payload, indent=4),
@@ -478,7 +418,7 @@ def api(args):
             for i, (job, names) in enumerate(list(zip(active_jobs, active_imgs))):
 
                 # Check the status of the current job
-                current_status, message, wait = check_job_status(job, coralnet_token)
+                current_status, message, wait = check_job_status(job, driver.capabilities['credentials']['token'])
 
                 # Print the message
                 print(f"{message}")
@@ -531,10 +471,83 @@ def api(args):
     print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
     final_predictions.to_csv(predictions_path)
 
-    # Store in args, return
-    args.predictions = predictions_path
+    return final_predictions, predictions_path
 
-    return args
+
+def api(args):
+    """
+
+    """
+    print("\n###############################################")
+    print(f"API")
+    print("###############################################")
+
+    # -------------------------------------------------------------------------
+    # Check the data
+    # -------------------------------------------------------------------------
+    try:
+
+        # Check to see if the csv file exists
+        assert os.path.exists(args.points)
+
+        # Determine if it's a single file or a folder
+        if os.path.isfile(args.points):
+            # If a file, just read it in
+            points = pd.read_csv(args.points, index_col=0)
+        elif os.path.isdir(args.points):
+            # If a folder, read in all csv files, concatenate them together
+            csv_files = glob.glob(args.points + "/*.csv")
+            points = pd.DataFrame()
+            for csv_file in csv_files:
+                points = pd.concat([points, pd.read_csv(csv_file, index_col=0)])
+        else:
+            raise Exception(f"ERROR: {args.points} is invalid.")
+
+        # Check to see if the csv file has the expected columns
+        assert 'Name' in points.columns
+        assert 'Row' in points.columns
+        assert 'Column' in points.columns
+        assert len(points) > 0
+
+        images_w_points = points['Name'].to_list()
+
+    except Exception as e:
+        raise Exception(f"ERROR: File(s) provided do not match expected format!\n{e}")
+
+    # -------------------------------------------------------------------------
+    # Authenticate the user
+    # -------------------------------------------------------------------------
+    try:
+        # Username, Password
+        username = args.username
+        password = args.password
+        authenticate(username, password)
+        coralnet_token, headers = get_token(username, password)
+    except Exception as e:
+        raise Exception(f"ERROR: {e}")
+
+    # -------------------------------------------------------------------------
+    # Get the browser
+    # -------------------------------------------------------------------------
+    driver = check_for_browsers(headless=True)
+    # Store the credentials in the driver
+    driver.capabilities['credentials'] = {
+        'username': username,
+        'password': password,
+        'headers': headers,
+        'token': coralnet_token
+    }
+    # Login to Tools
+    driver, _ = login(driver)
+
+    # Submit the jobs
+    final_predictions, predictions_path = submit_jobs(driver,
+                                                      args.source_id_1,
+                                                      args.source_id_2,
+                                                      args.prefix,
+                                                      images_w_points,
+                                                      points,
+                                                      args.output_dir)
 
 
 # -----------------------------------------------------------------------------

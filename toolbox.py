@@ -208,8 +208,9 @@ def create_interface():
         gr.Markdown("## CoralNet Tools 🛠️ <p style='font-size:14px'>"
                     "\nUse these tool to interact with CoralNet</p>")
         with gr.Row():
-            api_button = gr.Button("API 🕹️")
-            api_process = api_button.click(api_page)
+
+            upload_button = gr.Button("Upload ⬆", visible=True)
+            upload_process = upload_button.click(upload_page)
 
             download_button = gr.Button("Download ⬇")
             download_process = download_button.click(download_page)
@@ -218,8 +219,8 @@ def create_interface():
             labelset_button = gr.Button("Labelset 📝", visible=False)
             labelset_process = labelset_button.click(labelset_page)
 
-            upload_button = gr.Button("Upload ⬆", visible=False)
-            upload_process = upload_button.click(upload_page)
+            api_button = gr.Button("API 🕹️")
+            api_process = api_button.click(api_page)
 
         gr.Markdown("## Annotation Tools 🛠️ <p style='font-size:14px'>"
                     "\nUse these tool to create and visualize label data</p>")

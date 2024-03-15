@@ -12,7 +12,7 @@ log_file = "upload.log"
 # Module
 # ----------------------------------------------------------------------------------------------------------------------
 
-def module_callback(username, password, source_id, images, prefix, annotations, labelset, headless, output_dir):
+def module_callback(username, password, source_id, images, prefix, annotations, labelset, headless):
     """
 
     """
@@ -27,8 +27,7 @@ def module_callback(username, password, source_id, images, prefix, annotations, 
         prefix=prefix,
         annotations=annotations,
         labelset=labelset,
-        headless=headless,
-        output_dir=output_dir
+        headless=headless
     )
 
     try:
@@ -92,11 +91,6 @@ def create_interface():
         file_button = gr.Button("Browse Files")
         file_button.click(choose_file, outputs=labelset, show_progress="hidden")
 
-        # Browse button
-        output_dir = gr.Textbox(f"{DATA_DIR}", label="Selected Output Directory")
-        dir_button = gr.Button("Browse Directory")
-        dir_button.click(choose_directory, outputs=output_dir, show_progress="hidden")
-
         with gr.Row():
             # Run button (callback)
             run_button = gr.Button("Run")
@@ -108,8 +102,7 @@ def create_interface():
                                     prefix,
                                     annotations,
                                     labelset,
-                                    headless,
-                                    output_dir])
+                                    headless])
 
             stop_button = gr.Button(value="Stop")
             stop = stop_button.click(exit_interface)
