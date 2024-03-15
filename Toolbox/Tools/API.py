@@ -471,7 +471,7 @@ def submit_jobs(driver, source_id_1, source_id_2, prefix, images_w_points, point
     print(f"NOTE: CoralNet predictions saved to {os.path.basename(predictions_path)}")
     final_predictions.to_csv(predictions_path)
 
-    return driver, gfinal_predictions, predictions_path
+    return driver, final_predictions, predictions_path
 
 
 def api(args):
