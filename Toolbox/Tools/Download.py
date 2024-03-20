@@ -92,14 +92,13 @@ def download_coralnet_sources(driver, output_dir=None):
     # Variable to hold the list of sources
     sources = None
 
-    # Go to the images page
-    driver.get(CORALNET_SOURCE_URL)
-
     print("NOTE: Downloading CoralNet Source Dataframe")
 
     try:
+        # Send a GET request to the URL
+        response = requests.get(CORALNET_SOURCE_URL)
         # Parse the HTML response using BeautifulSoup
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        soup = BeautifulSoup(response.content, 'html.parser')
 
         # Find all the instances of sources
         links = soup.find_all('ul', class_='object_list')[0].find_all("li")
