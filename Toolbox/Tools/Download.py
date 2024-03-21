@@ -459,7 +459,7 @@ def download_labelset(driver, source_id, source_dir=None):
         short_codes = []
 
         # Loop through each row in the table
-        for row in table.find_all('tr'):
+        for idx, row in progress_printer(enumerate(table.find_all('tr'))):
             # Skip the header row
             if not row.find('th'):
                 # Extract label ID from href attribute of the anchor tag
