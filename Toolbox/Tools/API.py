@@ -412,8 +412,6 @@ def submit_jobs(driver, source_id_1, source_id_2, prefix, images_w_points, point
 
             # Sleep before checking status again
             print(f"\nNOTE: Checking status again at {in_N_seconds(patience)}")
-            # Show URL to jobs page so user can see
-            print(f"NOTE: See {CORALNET_URL}/source/{source_id_1}/jobs/")
             time.sleep(patience)
 
             # Loop through the active jobs
