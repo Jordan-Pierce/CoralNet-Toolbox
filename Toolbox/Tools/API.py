@@ -459,9 +459,6 @@ def submit_jobs(driver, source_id_1, source_id_2, prefix, images_w_points, point
             print("\nNOTE: All images have been processed; exiting loop.\n")
             finished = True
 
-    # Close the driver
-    driver.close()
-
     # Sort predictions to match original points file, keep original columns
     print("NOTE: Sorting predictions to align with original file provided")
     final_predictions = pd.concat(coralnet_predictions)
