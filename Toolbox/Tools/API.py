@@ -201,6 +201,7 @@ def convert_to_csv(status, image_names):
     model_predictions_list = []
 
     for data, image_name in zip(status['data'], image_names):
+        # Extract the point information if it was returned
         if 'points' in data['attributes']:
             for point in data['attributes']['points']:
                 p = dict()
@@ -213,6 +214,10 @@ def convert_to_csv(status, image_names):
                     p['Machine suggestion ' + str(index + 1)] = classification['label_code']
 
                 model_predictions_list.append(p)
+
+        # If there aren't points, there was an error: print it
+        elif 'errors' in data['attributes']:
+            print(f"ERROR: {data['attributes']['errors'][0]}")
 
     # Create a single DataFrame from the list of dictionaries
     model_predictions = pd.DataFrame(model_predictions_list)
