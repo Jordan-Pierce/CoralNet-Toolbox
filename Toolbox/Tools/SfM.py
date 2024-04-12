@@ -58,8 +58,7 @@ def sfm_workflow(args):
         os.makedirs(project_dir, exist_ok=True)
         project_file = f"{project_dir}project.psx"
     else:
-        print(f"ERROR: Must provide either existing project file or output directory")
-        sys.exit(1)
+        raise Exception(f"ERROR: Must provide either existing project file or output directory")
 
     # Create filenames for data outputs
     output_dem = project_dir + "DEM.tif"
@@ -71,8 +70,7 @@ def sfm_workflow(args):
 
     # Quality checking
     if args.quality.lower() not in ["lowest", "low", "medium", "high", "highest"]:
-        print(f"ERROR: Quality must be low, medium, or high")
-        sys.exit(1)
+        raise Exception(f"ERROR: Quality must be low, medium, or high")
 
     # ------------------------------------------------------------------------------------
     # Workflow
@@ -108,16 +106,14 @@ def sfm_workflow(args):
         if os.path.exists(args.input_dir):
             input_dir = args.input_dir
         else:
-            print("ERROR: Input directory provided doesn't exist; please check input")
-            sys.exit(1)
+            raise Exception("ERROR: Input directory provided doesn't exist; please check input")
 
         # Call the "find_files" function to get a list of photo file paths
         # with specified extensions from the image folder.
         photos = find_files(input_dir, [".jpg", ".jpeg", ".tiff", ".tif", ".png"])
 
         if not photos:
-            print(f"ERROR: Image directory provided does not contain any usable images; please check input")
-            sys.exit(1)
+            raise Exception(f"ERROR: Image directory provided does not contain any usable images; please check input")
 
         print("\n###############################################")
         print("Adding photos")
@@ -167,8 +163,7 @@ def sfm_workflow(args):
         if 0 <= args.target_percentage <= 99:
             target_percentage = args.target_percentage
         else:
-            print(f"ERROR: Target Percentage provided not in range [0, 99]; check input provided")
-            sys.exit(1)
+            raise Exception(f"ERROR: Target Percentage provided not in range [0, 99]; check input provided")
 
         # Obtain the tie points from the chunk
         points = chunk.tie_points.points

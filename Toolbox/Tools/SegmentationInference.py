@@ -119,8 +119,7 @@ def segmentation_inference(args):
         # Create a dataframe
         test_df = pd.DataFrame(list(zip(image_names, image_paths)), columns=['Name', 'Image Path'])
     else:
-        print("ERROR: Directory provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Directory provided doesn't exist.")
 
     # Color mapping file
     if os.path.exists(args.color_map):
@@ -133,8 +132,7 @@ def segmentation_inference(args):
         class_colors = [color_map[c]['color'] for c in class_names]
 
     else:
-        print(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
-        sys.exit(1)
+        raise Exception(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
 
     # Model weights, load it up
     if os.path.exists(args.model):

@@ -1,5 +1,4 @@
 import os
-import sys
 import argparse
 import traceback
 
@@ -19,8 +18,6 @@ import segmentation_models_pytorch as smp
 from simclr import SimCLR
 from simclr.modules import NT_Xent
 from simclr.modules.transformations import TransformsSimCLR
-
-import albumentations as albu
 
 from tensorboard import program
 

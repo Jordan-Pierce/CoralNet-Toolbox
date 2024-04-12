@@ -71,8 +71,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, poin
                 "vit_h": "sam_vit_h_4b8939.pth"}
 
     if model_type not in list(sam_dict.keys()):
-        print(f"ERROR: Invalid model type provided; choices are:\n{list(sam_dict.keys())}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Invalid model type provided; choices are:\n{list(sam_dict.keys())}")
 
     # Checkpoint path to model
     path = f"{sam_root}/{sam_dict[model_type]}"
@@ -221,8 +220,7 @@ def sam(args):
     confidence = float(args.confidence / 100)
 
     if not 0 <= confidence <= 1.0:
-        print(f"ERROR: Confidence value must be between [0 - 100]")
-        sys.exit(1)
+        raise Exception(f"ERROR: Confidence value must be between [0 - 100]")
 
     # Predictions Dataframe
     if os.path.exists(args.annotations):
@@ -234,8 +232,7 @@ def sam(args):
             label_col = args.label_col
             print(f"NOTE: Using labels from the column '{label_col}'")
         else:
-            print(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}")
-            sys.exit(1)
+            raise Exception(f"ERROR: Column {args.label_col} doesn't exist in {args.annotations}")
 
         # Filter based on confidence scores of the label colum;
         # if they use 'Label' deal with it
@@ -258,8 +255,7 @@ def sam(args):
         label_colors = {l: color_map[i] / 255.0 for i, l in enumerate(unique_labels)}
 
     else:
-        print("ERROR: Points file provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Points file provided doesn't exist.")
 
     # Image files
     if os.path.exists(args.images):
@@ -272,8 +268,7 @@ def sam(args):
         else:
             print(f"NOTE: Found {len(images)} images in directory provided")
     else:
-        print("ERROR: Image directory provided doesn't exist.")
-        sys.exit(1)
+        raise Exception("ERROR: Image directory provided doesn't exist.")
 
     # Model Weights
     try:
@@ -286,8 +281,7 @@ def sam(args):
         print(f"NOTE: Loaded model {args.model_type}")
 
     except Exception as e:
-        print(f"ERROR: There was an issue loading the model\n{e}")
-        sys.exit(1)
+        raise Exception(f"ERROR: There was an issue loading the model\n{e}")
 
     # Setting output directories
     output_dir = f"{args.output_dir}/masks/SAM_{get_now()}/"

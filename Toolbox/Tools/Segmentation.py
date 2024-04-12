@@ -475,15 +475,13 @@ def segmentation(args):
         class_colors = [color_map[c]['color'] for c in class_names]
 
     else:
-        print(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
-        sys.exit(1)
+        raise Exception(f"ERROR: Color Mapping JSON file provided doesn't exist; check input provided")
 
     # Data
     if os.path.exists(args.masks):
         dataframe = pd.read_csv(args.masks)
     else:
-        print(f"ERROR: Mask file provided does not exist; please check input")
-        sys.exit(1)
+        raise Exception(f"ERROR: Mask file provided does not exist; please check input")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Model building, parameters
@@ -543,8 +541,7 @@ def segmentation(args):
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
     except Exception as e:
-        print(f"ERROR: Could not build model\n{e}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not build model\n{e}")
 
     try:
         # Get the loss function
@@ -572,9 +569,8 @@ def segmentation(args):
         print(f"NOTE: Using loss function {args.loss_function}")
 
     except Exception as e:
-        print(f"ERROR: Could not get loss function {args.loss_function}")
-        print(f"NOTE: Choose one of the following: {get_segmentation_losses()}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not get loss function {args.loss_function}\n"
+                        f"NOTE: Choose one of the following: {get_segmentation_losses()}")
 
     try:
         # Get the optimizer
@@ -583,9 +579,8 @@ def segmentation(args):
         print(f"NOTE: Using optimizer {args.optimizer}")
 
     except Exception as e:
-        print(f"ERROR: Could not get optimizer {args.optimizer}")
-        print(f"NOTE: Choose one of the following: {get_segmentation_optimizers()}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not get optimizer {args.optimizer}\n"
+                        f"NOTE: Choose one of the following: {get_segmentation_optimizers()}")
 
     try:
         # Get the metrics
@@ -601,9 +596,8 @@ def segmentation(args):
         print(f"NOTE: Using metrics {args.metrics}")
 
     except Exception as e:
-        print(f"ERROR: Could not get metric(s): {args.metrics}")
-        print(f"NOTE: Choose one or more of the following: {get_segmentation_metrics()}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not get metric(s): {args.metrics}\n"
+                        f"NOTE: Choose one or more of the following: {get_segmentation_metrics()}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Source directory setup

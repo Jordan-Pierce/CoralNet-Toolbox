@@ -124,8 +124,7 @@ def check_for_browsers(headless):
     except Exception as e:
         print(f"WARNING: Google Chrome could not be used\n{e}")
 
-    print("ERROR: Issue with getting browser. Exiting")
-    sys.exit(1)
+    raise Exception("ERROR: Issue with getting browser. Exiting")
 
 
 def login(driver):
@@ -201,8 +200,7 @@ def check_permissions(driver):
             raise Exception(f"ERROR: Unable to access page information")
 
     except Exception as e:
-        print(f"ERROR: {e} Exiting.")
-        sys.exit(1)
+        raise Exception(f"ERROR: {e} Exiting.")
 
     return driver, status
 

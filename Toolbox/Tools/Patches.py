@@ -135,8 +135,7 @@ def patches(args):
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
     else:
-        print(f"ERROR: Image directory provided doesn't exist; please check input")
-        sys.exit(1)
+        raise Exception(f"ERROR: Image directory provided doesn't exist; please check input")
 
     if os.path.exists(args.annotation_file):
         annotation_file = args.annotation_file
@@ -147,8 +146,7 @@ def patches(args):
         assert args.label_column in annotation_df.columns, print(f"ERROR: '{args.label_column}' not in provided csv")
         assert args.image_column in annotation_df.columns, print(f"ERROR: {args.image_column} not in provided csv")
     else:
-        print(f"ERROR: Annotation file provided does not exist; please check input")
-        sys.exit(1)
+        raise Exception(f"ERROR: Annotation file provided does not exist; please check input")
 
     # Create output
     output_dir = f"{args.output_dir}/patches/{get_now()}/"

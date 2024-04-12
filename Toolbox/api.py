@@ -5,7 +5,7 @@ from common import *
 from Tools.API import api
 
 EXIT_APP = False
-log_file = "annotate.log"
+log_file = "api.log"
 
 
 # ----------------------------------------------------------------------------------------------------------------------

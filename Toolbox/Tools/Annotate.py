@@ -88,15 +88,13 @@ def annotate(args):
     if os.path.exists(args.image_dir):
         image_dir = args.image_dir
     else:
-        print(f"ERROR: Image directory provided doesn't exist; please check input")
-        sys.exit(1)
+        raise Exception(f"ERROR: Image directory provided doesn't exist; please check input")
 
     # Set exe
     if os.path.exists(args.patch_extractor_path):
         exe_path = args.patch_extractor_path
     else:
-        print(f"ERROR: Path to Patch Extractor doesn't exist; please check input")
-        sys.exit(1)
+        raise Exception(f"ERROR: Path to Patch Extractor doesn't exist; please check input")
 
     # Set the paths for output
     output_dir = f"{os.path.dirname(image_dir)}/annotations/"
@@ -198,8 +196,7 @@ def annotate(args):
             print(f"\nNOTE: Annotations saved in {output_path}")
 
         else:
-            print(f"ERROR: Could not save annotations; leaving tmp files where they are.")
-            sys.exit(1)
+            raise Exception(f"ERROR: Could not save annotations; leaving tmp files where they are.")
 
         # Clean up
         if os.path.exists(tmp_dir) and os.path.isdir(tmp_dir):

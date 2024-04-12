@@ -1,9 +1,7 @@
 import os
-import sys
 import argparse
 import warnings
 import traceback
-import subprocess
 
 import numpy as np
 import pandas as pd
@@ -22,7 +20,6 @@ import segmentation_models_pytorch as smp
 from Common import get_now
 from Common import progress_printer
 
-from Classification import get_classifier_encoders
 from Classification import get_validation_augmentation
 
 warnings.filterwarnings("ignore")

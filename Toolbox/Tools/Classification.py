@@ -602,8 +602,7 @@ def classification(args):
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
     except Exception as e:
-        print(f"ERROR: Could not build model\n{e}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not build model\n{e}")
 
     # ---------------------------------------------------------------------------------------
     # Source directory setup
@@ -859,9 +858,8 @@ def classification(args):
         print(f"NOTE: Using loss function {args.loss_function}")
 
     except Exception as e:
-        print(f"ERROR: Could not get loss function {args.loss_function}")
-        print(f"NOTE: Choose one of the following: {get_classifier_losses()}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not get loss function {args.loss_function}\n"
+                        f"NOTE: Choose one of the following: {get_classifier_losses()}")
 
     try:
         # Get the optimizer
@@ -871,9 +869,8 @@ def classification(args):
         print(f"NOTE: Using optimizer function {args.optimizer}")
 
     except Exception as e:
-        print(f"ERROR: Could not get optimizer {args.optimizer}")
-        print(f"NOTE: Choose one of the following: {get_classifier_optimizers()}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not get optimizer {args.optimizer}\n"
+                        f"NOTE: Choose one of the following: {get_classifier_optimizers()}")
 
     try:
         # Get the metrics
@@ -894,9 +891,8 @@ def classification(args):
         metrics = [TorchMetric(m) for m in metrics]
 
     except Exception as e:
-        print(f"ERROR: Could not get metric(s): {args.metrics}")
-        print(f"NOTE: Choose one or more of the following: {get_classifier_metrics()}")
-        sys.exit(1)
+        raise Exception(f"ERROR: Could not get metric(s): {args.metrics}\n"
+                        f"NOTE: Choose one or more of the following: {get_classifier_metrics()}")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Train Model
