@@ -30,23 +30,23 @@ a GUI; these scripts currently include the following:
 - `Classification Pretrain`: Pretrain an encoder on unlabeled data before training with labeled data
 - `Classification`: Create your own patch-based image classifier, locally
 - `Classification Inf.`: Perform inference using a locally trained classification model
-- `Classification Demo`: Demo your trained model locally
+- `Classification Demo`: Demo your trained model locally (only in `app.py`)
 - `Annotate`: Create your own patches from annotations, locally
 - `Visualize`: Visualize points/patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 - `Projector`: Display model predictions in feature space using Tensorboard
 - `SAM`: Create segmentation masks for each image using labeled points and SAM
-- `SAM Demo`: Demo SAM models on your data to create segmentation masks
+- `SAM Demo`: Demo SAM models on your data to create segmentation masks (only in `app.py`)
 - `Segmentation`: Create your own semantic segmentation model, locally
 - `Segmentation Inf.`: Perform inference using a locally trained segmentation model
-- `Segmentation Demo`: Demo your trained model locally
+- `Segmentation Demo`: Demo your trained model locally (only in `app.py`)
 - `SfM`: Use Metashape to create 3D models (sure, why not)
 - `Segmentation3D`: Use masks and SfM to create classified 3D models
 
 
 <p align="center">
-  <img src="Figures/toolbox_gui.PNG" alt="CoralNet-Toolbox-Features">
+  <img src="Figures/toolbox_gooey.PNG" alt="CoralNet-Toolbox-Features">
 </p>
 
 #### **Future Features**

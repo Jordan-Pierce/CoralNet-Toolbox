@@ -190,6 +190,9 @@ def classification_pretrain(args):
         preprocessing_fn = smp.encoders.get_preprocessing_fn(args.encoder_name, encoder_weights)
 
         # Freezing percentage of the encoder
+        if type(args.freeze_encoder) == int:
+            args.freeze_encoder = args.freeze_encoder / 100
+
         num_params = len(list(model.encoder.parameters()))
         freeze_params = int(num_params * args.freeze_encoder)
 

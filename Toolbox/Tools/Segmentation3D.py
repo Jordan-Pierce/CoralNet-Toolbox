@@ -19,7 +19,8 @@ from Common import progress_printer
 compatible_major_version = "2.0"
 found_major_version = ".".join(Metashape.app.version.split('.')[:2])
 if found_major_version != compatible_major_version:
-    raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version, compatible_major_version))
+    raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version,
+                                                                      compatible_major_version))
 
 
 # -----------------------------------------------------------------------------------------------------------
@@ -429,6 +430,10 @@ def segmentation3d(args):
     except Exception as e:
         print(f"{e}\nERROR: Could not finish workflow!")
         print(traceback.format_exc())
+
+    finally:
+        # Deactivate the license
+        Metashape.License().deactivate()
 
 
 # -----------------------------------------------------------------------------

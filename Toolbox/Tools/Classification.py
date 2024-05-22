@@ -256,6 +256,9 @@ class CustomModel(torch.nn.Module):
                                   num_classes)
 
         # Dropout layer
+        if type(dropout_rate) == int:
+            dropout_rate = dropout_rate / 100
+
         self.dropout = torch.nn.Dropout(dropout_rate)
 
     # Add a method to get the name attribute
@@ -590,6 +593,9 @@ def classification(args):
             print("WARNING: Path to pre-trained encoder does not exist, skipping")
 
         # Freezing percentage of the encoder
+        if type(args.freeze_encoder) == int:
+                args.freeze_encoder = args.freeze_encoder / 100
+
         num_params = len(list(model.encoder.parameters()))
         freeze_params = int(num_params * args.freeze_encoder)
 
@@ -1201,11 +1207,6 @@ def main():
 
     parser.add_argument('--pre_trained_path', type=str, default=None,
                         help='Path to pre-trained model of the same architecture')
-
-    parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
-                        help='The convolutional encoder to fine-tune; pretrained on Imagenet')
-
-    parser.add_argument('--freeze_encoder', type=float, default=0.0)
 
     parser.add_argument('--encoder_name', type=str, default='efficientnet-b0',
                         help='The convolutional encoder to fine-tune; pretrained on Imagenet')

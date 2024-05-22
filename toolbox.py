@@ -12,27 +12,31 @@ from Toolbox.Tools.Annotate import annotate
 from Toolbox.Tools.Patches import patches
 from Toolbox.Tools.Visualize import visualize
 from Toolbox.Tools.Points import points
+from Toolbox.Tools.Projector import projector
 
 from Toolbox.Tools.Classification import classification
-from Toolbox.Tools.ClassificationInference import classification_inference
 from Toolbox.Tools.Segmentation import segmentation
+from Toolbox.Tools.ClassificationInference import classification_inference
+from Toolbox.Tools.ClassificationPreTrain import classification_pretrain
+from Toolbox.Tools.SegmentationInference import segmentation_inference
 
+from Toolbox.Tools.SAM import sam
 from Toolbox.Tools.SfM import sfm
 from Toolbox.Tools.Segmentation3D import segmentation3d
 
 # For Gooey dropdown
 from Toolbox.Tools.Download import get_updated_labelset_list
 from Toolbox.Tools.Classification import get_classifier_losses
+from Toolbox.Tools.Classification import get_classifier_metrics
 from Toolbox.Tools.Classification import get_classifier_encoders
+from Toolbox.Tools.Classification import get_classifier_optimizers
 from Toolbox.Tools.Segmentation import get_segmentation_losses
 from Toolbox.Tools.Segmentation import get_segmentation_metrics
 from Toolbox.Tools.Segmentation import get_segmentation_encoders
 from Toolbox.Tools.Segmentation import get_segmentation_decoders
 from Toolbox.Tools.Segmentation import get_segmentation_optimizers
 
-# from Toolbox.Tools.Common import log
 from Toolbox.Tools.Common import DATA_DIR
-from Toolbox.Tools.Common import MIR_MAPPING
 from Toolbox.Tools.Common import PATCH_EXTRACTOR
 from Toolbox.Tools.Common import FUNC_GROUPS_LIST
 
@@ -73,7 +77,8 @@ def main():
                                                        'more CSV file(s) containing the names of images to '
                                                        'perform predictions on. Images must already exist in '
                                                        'the Source, and CSV file(s) must contain the following '
-                                                       'fields: Name, Row, Column.')
+                                                       'fields: Name, Row, Column.',
+                                                       gooey_options={'show_border': True})
 
     api_parser_panel_1.add_argument('--username', type=str,
                                     metavar="Username",
@@ -112,7 +117,8 @@ def main():
 
     api_parser_panel_1.add_argument('--prefix', required=False, default="",
                                     metavar='Image Name Prefix',
-                                    help='A prefix to add to each image basename')
+                                    help='A prefix that all images of interest have in common to '
+                                         'narrow the search space, else leave blank')
 
     api_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
@@ -129,7 +135,8 @@ def main():
     download_parser_panel_1 = download_parser.add_argument_group('Download By Source ID',
                                                                  'Specify each Source to download by providing the '
                                                                  'associated ID; for multiple sources, add a space '
-                                                                 'between each.')
+                                                                 'between each.',
+                                                                 gooey_options={'show_border': True})
 
     download_parser_panel_1.add_argument('--username', type=str,
                                          metavar="Username",
@@ -172,7 +179,8 @@ def main():
     download_parser_panel_2 = download_parser.add_argument_group('Download CoralNet Dataframes',
                                                                  'In addition to downloading Source data, dataframes '
                                                                  'containing information on all public Sources and '
-                                                                 'Labelsets can also be downloaded.')
+                                                                 'Labelsets can also be downloaded.',
+                                                                 gooey_options={'show_border': True})
 
     download_parser_panel_2.add_argument('--source_df', action="store_true",
                                          metavar="Download Source Dataframe",
@@ -200,7 +208,8 @@ def main():
                                                                  'description, and a representative image of your new '
                                                                  'labelset. The labelset will be created for the '
                                                                  'source provided the ID, but will be available '
-                                                                 'globally.')
+                                                                 'globally.',
+                                                                 gooey_options={'show_border': True})
 
     labelset_parser_panel_1.add_argument('--username', type=str,
                                          metavar="Username",
@@ -264,7 +273,8 @@ def main():
     upload_parser_panel_1 = upload_parser.add_argument_group('Upload By Source ID',
                                                              'Upload data to a Source by providing the ID. Data that '
                                                              'can be uploaded includes images, labelsets, and '
-                                                             'annotations.')
+                                                             'annotations.',
+                                                             gooey_options={'show_border': True})
 
     upload_parser_panel_1.add_argument('--username', type=str,
                                        metavar="Username",
@@ -298,7 +308,7 @@ def main():
 
     upload_parser_panel_1.add_argument('--prefix', required=False, default="",
                                        metavar='Image Name Prefix',
-                                       help='A prefix to add to each image basename')
+                                       help='A prefix to add to each image basename.')
 
     upload_parser_panel_1.add_argument('--labelset', required=False, type=str, default="",
                                        metavar="Labelset File",
@@ -319,96 +329,6 @@ def main():
                                        widget='BlockCheckbox')
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Viscore
-    # ------------------------------------------------------------------------------------------------------------------
-    viscore_parser = subs.add_parser('Viscore')
-
-    # Panel 1 - Convert Viscore label file to CoralNet
-    viscore_parser_panel_1 = viscore_parser.add_argument_group('Viscore to CoralNet',
-                                                               'Provide the Annotation file exported from Viscore, '
-                                                               'the Mapping file, and the Source ID. '
-                                                               'Choose the Action.')
-
-    viscore_parser_panel_1.add_argument('--username', type=str,
-                                        metavar="Username",
-                                        default=os.getenv('CORALNET_USERNAME'),
-                                        help='Username for CoralNet account.')
-
-    viscore_parser_panel_1.add_argument('--password', type=str,
-                                        metavar="Password",
-                                        default=os.getenv('CORALNET_PASSWORD'),
-                                        help='Password for CoralNet account.',
-                                        widget="PasswordField")
-
-    viscore_parser_panel_1.add_argument('--remember_username', action="store_false",
-                                        metavar="Remember Username",
-                                        help='Store Username as an Environmental Variable.',
-                                        widget="BlockCheckbox")
-
-    viscore_parser_panel_1.add_argument('--remember_password', action="store_false",
-                                        metavar="Remember Password",
-                                        help='Store Password as an Environmental Variable.',
-                                        widget="BlockCheckbox")
-
-    viscore_parser_panel_1.add_argument('--action', type=str, required=True, default='Upload',
-                                        metavar="Action",
-                                        help='Upload data, or use the API for inference.',
-                                        widget='Dropdown', choices=['Upload', 'API'], )
-
-    viscore_parser_panel_1.add_argument('--source_id', type=str, default='4346',
-                                        metavar="Source ID",
-                                        help='The ID of the CoralNet source.')
-
-    viscore_parser_panel_1.add_argument('--prefix', required=False, default="",
-                                        metavar='Layer Name',
-                                        help='The name of the Viscore layer.')
-
-    viscore_parser_panel_1.add_argument('--images', required=False, default="",
-                                        metavar='Image Directory',
-                                        help='Directory containing images to upload.',
-                                        widget="DirChooser")
-
-    viscore_parser_panel_1.add_argument('--viscore_labels', required=False, type=str,
-                                        metavar="Viscore Annotation File",
-                                        help='A path to the original Annotation file exported from Viscore.',
-                                        widget="FileChooser")
-
-    viscore_parser_panel_1.add_argument('--mapping_path', required=False, type=str,
-                                        metavar="Mapping File",
-                                        help='A path to the mapping csv file.',
-                                        default=MIR_MAPPING,
-                                        widget="FileChooser")
-
-    viscore_parser_panel_1.add_argument('--rand_sub_ceil', type=float, required=False, default=1.0,
-                                        metavar="Random Sample",
-                                        help='Value used to randomly sample the number of reprojected dots [0 - 1].')
-
-    viscore_parser_panel_1.add_argument('--reprojection_error', type=float, required=False, default=0.01,
-                                        metavar="Reprojection Error Threshold",
-                                        help='Value used to filter dots based on their reprojection error.')
-
-    viscore_parser_panel_1.add_argument('--view_index', type=int, required=False, default=9001,
-                                        metavar="VPI View Index",
-                                        help='Value used to filter views based on their VPI View Index.')
-
-    viscore_parser_panel_1.add_argument('--view_count', type=int, required=False, default=9001,
-                                        metavar="VPI View Count",
-                                        help='Value used to filter views based on the total number of VPI image views.')
-
-    viscore_parser_panel_1.add_argument('--headless', action="store_true",
-                                        default=False,
-                                        metavar="Run in Background",
-                                        help='Run browser in headless mode',
-                                        widget='BlockCheckbox')
-
-    viscore_parser_panel_1.add_argument('--output_dir', required=False,
-                                        metavar='Output Directory',
-                                        default=None,
-                                        help='Root directory where converted Annotation file will be saved; '
-                                             'defaults to the same directory as Viscore Annotation file.',
-                                        widget="DirChooser")
-
-    # ------------------------------------------------------------------------------------------------------------------
     # Annotate
     # ------------------------------------------------------------------------------------------------------------------
     annotate_parser = subs.add_parser('Annotate')
@@ -417,7 +337,8 @@ def main():
     annotate_parser_panel_1 = annotate_parser.add_argument_group('Annotate',
                                                                  'Extract patches manually, which can be used as '
                                                                  'annotations in CoralNet, or used to train a model '
-                                                                 'locally.')
+                                                                 'locally.',
+                                                                 gooey_options={'show_border': True})
 
     annotate_parser_panel_1.add_argument('--patch_extractor_path', required=True, type=str,
                                          metavar="Patch Extractor Path",
@@ -438,7 +359,8 @@ def main():
     # Panel 1
     patches_parser_panel_1 = patches_parser.add_argument_group('Crop Patches',
                                                                'Use the following to convert CoralNet formatted '
-                                                               'annotation files into patches for training.')
+                                                               'annotation files into patches for training.',
+                                                               gooey_options={'show_border': True})
 
     patches_parser_panel_1.add_argument('--image_dir', required=False,
                                         metavar='Image Directory',
@@ -454,9 +376,15 @@ def main():
                                         metavar="Image Column",
                                         help="The column specifying the image basename")
 
+    patches_parser_panel_1.add_argument("--label_column", type=str, default="Label",
+                                        metavar="Label Column",
+                                        help="The column specifying the Label column",
+                                        widget='Dropdown',
+                                        choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
+
     patches_parser_panel_1.add_argument("--patch_size", type=int, default=112,
-                                        metavar="Patch Size",
-                                        help="The size of each patch extracted")
+                                        metavar="Patch Extent",
+                                        help="The extent of each patch extracted")
 
     patches_parser_panel_1.add_argument('--output_dir', required=True,
                                         metavar='Output Directory',
@@ -472,7 +400,8 @@ def main():
     # Panel 1
     visualize_parser_panel_1 = visualize_parser.add_argument_group('Visualize',
                                                                    'View annotations superimposed on each image; toggle'
-                                                                   'annotations to be seen as points or squares.')
+                                                                   'annotations to be seen as points or squares.',
+                                                                   gooey_options={'show_border': True})
 
     visualize_parser_panel_1.add_argument('--image_dir', required=True,
                                           metavar='Image Directory',
@@ -497,72 +426,40 @@ def main():
                                           widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Classifier
+    # Projector
     # ------------------------------------------------------------------------------------------------------------------
-    classifier_parser = subs.add_parser('Classifier')
+    projector_parser = subs.add_parser('Projector')
 
     # Panel 1
-    classifier_parser_panel_1 = classifier_parser.add_argument_group('Patch-Based Classifier',
-                                                                     'Use the following to train your own patch-based '
-                                                                     'image classifier.')
+    projector_parser_panel_1 = projector_parser.add_argument_group('Projector',
+                                                                   'Display patch data in feature space using '
+                                                                   'Tensorboard. Requires a trained model, and a patch '
+                                                                   'file.',
+                                                                   gooey_options={'show_border': True})
 
-    classifier_parser_panel_1.add_argument('--patches', required=True, nargs="+",
-                                           metavar="Patch Data",
-                                           help='Patches dataframe file(s)',
-                                           widget="MultiFileChooser")
+    projector_parser_panel_1.add_argument("--model", type=str,
+                                          metavar="Model Path",
+                                          help="Path to Best Model and Weights File (.h5)",
+                                          widget="FileChooser")
 
-    classifier_parser_panel_1.add_argument('--output_dir', required=True,
-                                           metavar='Output Directory',
-                                           default=DATA_DIR,
-                                           help='Root directory where output will be saved',
-                                           widget="DirChooser")
+    projector_parser_panel_1.add_argument('--patches', type=str,
+                                          metavar="Patch Data",
+                                          help='Patches dataframe file',
+                                          widget="FileChooser")
 
-    # Panel 2
-    classifier_parser_panel_2 = classifier_parser.add_argument_group('Parameters',
-                                                                     'Choose the parameters for training the model')
+    projector_parser_panel_1.add_argument('--output_dir', required=True,
+                                          metavar='Output Directory',
+                                          default=DATA_DIR,
+                                          help='Root directory where output will be saved',
+                                          widget="DirChooser")
 
-    classifier_parser_panel_2.add_argument('--encoder_name', type=str, required=True,
-                                           metavar="Pretrained Encoder",
-                                           help='Encoder, pre-trained on ImageNet dataset',
-                                           widget='Dropdown', choices=get_classifier_encoders())
+    projector_parser_panel_2 = projector_parser.add_argument_group('Existing Project',
+                                                                   gooey_options={'show_border': True})
 
-    classifier_parser_panel_2.add_argument('--loss_function', type=str, required=True,
-                                           metavar="Loss Function",
-                                           help='Loss function for training model',
-                                           widget='Dropdown', choices=get_classifier_losses())
-
-    classifier_parser_panel_2.add_argument('--weighted_loss', default=True,
-                                           metavar="Weighted Loss Function",
-                                           help='Recommended; useful if class categories are imbalanced',
-                                           action="store_true",
-                                           widget='BlockCheckbox')
-
-    classifier_parser_panel_2.add_argument('--augment_data',
-                                           metavar="Augment Data",
-                                           help='Recommended; useful if class categories are imbalanced',
-                                           action="store_true",
-                                           widget='BlockCheckbox')
-
-    classifier_parser_panel_2.add_argument('--dropout_rate', type=float, default=0.5,
-                                           metavar="Drop Out",
-                                           help='Recommended; useful if class categories are imbalanced')
-
-    classifier_parser_panel_2.add_argument('--num_epochs', type=int, default=25,
-                                           metavar="Number of Epochs",
-                                           help='The number of iterations the model is given the training dataset')
-
-    classifier_parser_panel_2.add_argument('--batch_size', type=int, default=128,
-                                           metavar="Batch Size",
-                                           help='The number of samples per batch; GPU dependent')
-
-    classifier_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0005,
-                                           metavar="Learning Rate",
-                                           help='The floating point value used to incrementally adjust model weights')
-
-    classifier_parser_panel_2.add_argument('--tensorboard', action='store_true',
-                                           metavar="Tensorboard",
-                                           help='Open Tensorboard for viewing model training in real-time',
-                                           widget='BlockCheckbox')
+    projector_parser_panel_2.add_argument('--project_folder', type=str, default="",
+                                          metavar="Project Folder",
+                                          help='Path to existing projector project folder.',
+                                          widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Points
@@ -574,7 +471,8 @@ def main():
                                                              'Sample points for each image; points can be used '
                                                              'with the API or Inference tools. Methods include '
                                                              'uniform, random, and stratified-random. Samples are '
-                                                             'saved in the Output Directory as a dataframe.')
+                                                             'saved in the Output Directory as a dataframe.',
+                                                             gooey_options={'show_border': True})
 
     points_parser_panel_1.add_argument('--images', required=True, type=str,
                                        metavar="Image Directory",
@@ -597,89 +495,256 @@ def main():
                                        help='The number of points to sample from each image')
 
     # ------------------------------------------------------------------------------------------------------------------
-    # Inference
+    # Classification Pretrain
     # ------------------------------------------------------------------------------------------------------------------
-    inference_parser = subs.add_parser('Inference')
+    classification_pre_parser = subs.add_parser('ClassificationPretrain')
 
     # Panel 1
-    inference_parser_panel_1 = inference_parser.add_argument_group('Inference',
-                                                                   'Use a locally trained model to make predictions on '
-                                                                   'sampled points.')
+    classification_pre_parser_panel_1 = classification_pre_parser.add_argument_group('Classification Pretrain',
+                                                                                     'Use the following to pretrain '
+                                                                                     'your own CNN encoder; useful for '
+                                                                                     'classification and semantic '
+                                                                                     'segmentation models.',
+                                                                                     gooey_options={
+                                                                                         'show_border': True})
 
-    inference_parser_panel_1.add_argument('--images', required=True,
-                                          metavar="Image Directory",
-                                          help='Directory containing images to make predictions on',
-                                          widget="DirChooser")
+    classification_pre_parser_panel_1.add_argument('--patches', required=True, nargs="+",
+                                                   metavar="Patch Data",
+                                                   help='Patches dataframe file(s)',
+                                                   widget="MultiFileChooser")
 
-    inference_parser_panel_1.add_argument('--points', required=True,
-                                          metavar="Points File",
-                                          help='A file containing sampled points',
-                                          widget="FileChooser")
+    classification_pre_parser_panel_1.add_argument('--output_dir', required=True,
+                                                   metavar='Output Directory',
+                                                   default=DATA_DIR,
+                                                   help='Root directory where output will be saved',
+                                                   widget="DirChooser")
 
-    inference_parser_panel_1.add_argument('--model', required=True,
-                                          metavar="Model Path",
-                                          help='The path to locally trained model (.h5)',
-                                          widget="FileChooser")
+    # Panel 2
+    classification_pre_parser_panel_2 = classification_pre_parser.add_argument_group('Parameters',
+                                                                                     'Choose the parameters for model '
+                                                                                     'training',
+                                                                                     gooey_options={
+                                                                                         'show_border': True})
 
-    inference_parser_panel_1.add_argument('--class_map', required=True,
-                                          metavar="Class Map File",
-                                          help='The class mapping JSON file',
-                                          widget="FileChooser")
+    classification_pre_parser_panel_2.add_argument('--encoder_name', type=str, required=True,
+                                                   metavar="Pretrained Encoder",
+                                                   help='Encoder, pre-trained on ImageNet dataset',
+                                                   widget='Dropdown', choices=get_classifier_encoders())
 
-    inference_parser_panel_1.add_argument("--patch_size", type=int, default=112,
-                                          metavar="Patch Size",
-                                          help="The size of each patch extracted")
+    classification_pre_parser_panel_2.add_argument('--freeze_encoder', type=int,
+                                                   metavar="Freeze Encoder",
+                                                   help='Freeze encoder by N%',
+                                                   widget='Slider',
+                                                   gooey_options={'min': 0, 'max': 100, 'increment': 1})
 
-    inference_parser_panel_1.add_argument('--output_dir', required=True,
-                                          metavar='Output Directory',
-                                          default=DATA_DIR,
-                                          help='Root directory where output will be saved',
-                                          widget="DirChooser")
+    classification_pre_parser_panel_2.add_argument('--projection_dim', type=int, default=64,
+                                                   metavar="Projection Dimensions",
+                                                   help='Projection head dimensionality into latent space')
+
+    classification_pre_parser_panel_2.add_argument('--optimizer', type=str, required=True,
+                                                   metavar="Optimizer",
+                                                   help='Optimizer used for training model',
+                                                   widget='Dropdown', choices=get_classifier_optimizers())
+
+    classification_pre_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0005,
+                                                   metavar="Learning Rate",
+                                                   help='The value used to incrementally adjust model weights')
+
+    classification_pre_parser_panel_2.add_argument('--num_epochs', type=int, default=25,
+                                                   metavar="Number of Epochs",
+                                                   help='The number of iterations the model trains for')
+
+    classification_pre_parser_panel_2.add_argument('--batch_size', type=int, default=128,
+                                                   metavar="Batch Size",
+                                                   help='The number of samples per batch; GPU dependent')
+
+    classification_pre_parser_panel_2.add_argument('--tensorboard', action='store_true',
+                                                   metavar="Tensorboard",
+                                                   help='Open Tensorboard for viewing model training in real-time',
+                                                   widget='BlockCheckbox')
 
     # ------------------------------------------------------------------------------------------------------------------
-    # MSS w/ SAM
+    # Classification
     # ------------------------------------------------------------------------------------------------------------------
-    mss_parser = subs.add_parser('MSS')
+    classification_parser = subs.add_parser('Classification')
 
     # Panel 1
-    mss_parser_panel_1 = mss_parser.add_argument_group('MSS',
+    classification_parser_panel_1 = classification_parser.add_argument_group('Image Classification',
+                                                                             'Use the following to train your own '
+                                                                             'patch-based image classifier.',
+                                                                             gooey_options={'show_border': True})
+
+    classification_parser_panel_1.add_argument('--patches', required=True, nargs="+",
+                                               metavar="Patch Data",
+                                               help='Patches dataframe file(s)',
+                                               widget="MultiFileChooser")
+
+    classification_parser_panel_1.add_argument('--pre_trained_path', required=False,
+                                               metavar="Pretrained Path",
+                                               help='Path to pre-trained model',
+                                               widget="FileChooser")
+
+    classification_parser_panel_1.add_argument('--output_dir', required=True,
+                                               metavar='Output Directory',
+                                               default=DATA_DIR,
+                                               help='Root directory where output will be saved',
+                                               widget="DirChooser")
+
+    # Panel 2
+    classification_parser_panel_2 = classification_parser.add_argument_group('Parameters',
+                                                                             'Choose the parameters for model training',
+                                                                             gooey_options={'show_border': True})
+
+    classification_parser_panel_2.add_argument('--encoder_name', type=str, required=True,
+                                               metavar="Pretrained Encoder",
+                                               help='Encoder, pre-trained on ImageNet dataset',
+                                               widget='Dropdown', choices=get_classifier_encoders())
+
+    classification_parser_panel_2.add_argument('--freeze_encoder', type=int,
+                                               metavar="Freeze Encoder",
+                                               help='Freeze encoder by N%',
+                                               widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
+
+    classification_parser_panel_2.add_argument('--optimizer', type=str, required=True,
+                                               metavar="Optimizer",
+                                               help='Optimizer used for training model',
+                                               widget='Dropdown', choices=get_classifier_optimizers())
+
+    classification_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0005,
+                                               metavar="Learning Rate",
+                                               help='The value used to incrementally adjust model weights')
+
+    classification_parser_panel_2.add_argument('--metrics', type=str, required=True, nargs="+",
+                                               metavar="Metrics",
+                                               help='Metrics used to evaluate the model',
+                                               widget='Listbox', choices=get_classifier_metrics())
+
+    classification_parser_panel_2.add_argument('--loss_function', type=str, required=True,
+                                               metavar="Loss Function",
+                                               help='Loss function for training model',
+                                               widget='Dropdown', choices=get_classifier_losses())
+
+    classification_parser_panel_2.add_argument('--weighted_loss', default=True,
+                                               metavar="Weighted Loss Function",
+                                               help='Recommended; useful if class categories are imbalanced',
+                                               action="store_true",
+                                               widget='BlockCheckbox')
+
+    classification_parser_panel_2.add_argument('--augment_data',
+                                               metavar="Augment Data",
+                                               help='Recommended; useful if class categories are imbalanced',
+                                               action="store_true",
+                                               widget='BlockCheckbox')
+
+    classification_parser_panel_2.add_argument('--dropout_rate', type=int,
+                                               metavar="Dropout Rate",
+                                               help="Random dropout rate as a form of data augmentation",
+                                               widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
+
+    classification_parser_panel_2.add_argument('--num_epochs', type=int, default=25,
+                                               metavar="Number of Epochs",
+                                               help='The number of iterations the model trains for')
+
+    classification_parser_panel_2.add_argument('--batch_size', type=int, default=128,
+                                               metavar="Batch Size",
+                                               help='The number of samples per batch; GPU dependent')
+
+    classification_parser_panel_2.add_argument('--tensorboard', action='store_true',
+                                               metavar="Tensorboard",
+                                               help='Open Tensorboard for viewing model training in real-time',
+                                               widget='BlockCheckbox')
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Classification Inference
+    # ------------------------------------------------------------------------------------------------------------------
+    classification_inf_parser = subs.add_parser('ClassificationInference')
+
+    # Panel 1
+    classification_inf_parser_panel_1 = classification_inf_parser.add_argument_group('Classification Inference',
+                                                                                     'Use a locally trained image '
+                                                                                     'classification model'
+                                                                                     'to make predictions on sampled '
+                                                                                     'points.',
+                                                                                     gooey_options={
+                                                                                         'show_border': True})
+
+    classification_inf_parser_panel_1.add_argument('--images', required=True,
+                                                   metavar="Image Directory",
+                                                   help='Directory containing images to make predictions on',
+                                                   widget="DirChooser")
+
+    classification_inf_parser_panel_1.add_argument('--points', required=True,
+                                                   metavar="Points File",
+                                                   help='A file containing sampled points',
+                                                   widget="FileChooser")
+
+    classification_inf_parser_panel_1.add_argument('--model', required=True,
+                                                   metavar="Model Path",
+                                                   help='The path to locally trained model (.h5)',
+                                                   widget="FileChooser")
+
+    classification_inf_parser_panel_1.add_argument('--class_map', required=True,
+                                                   metavar="Class Map File",
+                                                   help='The class mapping JSON file',
+                                                   widget="FileChooser")
+
+    classification_inf_parser_panel_1.add_argument("--patch_size", type=int, default=112,
+                                                   metavar="Patch Size",
+                                                   help="The size of each patch extracted")
+
+    classification_inf_parser_panel_1.add_argument('--output_dir', required=True,
+                                                   metavar='Output Directory',
+                                                   default=DATA_DIR,
+                                                   help='Root directory where output will be saved',
+                                                   widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Semantic Segmentation w/ SAM
+    # ------------------------------------------------------------------------------------------------------------------
+    sam_parser = subs.add_parser('SAM')
+
+    # Panel 1
+    sam_parser_panel_1 = sam_parser.add_argument_group('Segment Anything Model (SAM)',
                                                        'Use the Segment Anything Model (SAM) to create '
-                                                       'segmentation masks given labeled points.')
+                                                       'segmentation masks given labeled points.',
+                                                       gooey_options={'show_border': True})
 
-    mss_parser_panel_1.add_argument('--images', required=True,
+    sam_parser_panel_1.add_argument('--images', required=True,
                                     metavar="Image Directory",
                                     help='Directory containing images to make predictions on',
                                     widget="DirChooser")
 
-    mss_parser_panel_1.add_argument('--annotations', required=True,
+    sam_parser_panel_1.add_argument('--annotations', required=True,
                                     metavar="Annotations File",
                                     help='A file containing points with labels',
                                     widget="FileChooser")
 
-    mss_parser_panel_1.add_argument("--label_col", type=str, default='Label',
+    sam_parser_panel_1.add_argument("--label_col", type=str, default='Label',
                                     metavar='Label Column',
                                     help="The column in annotations with labels to use "
-                                         "('Label', 'Machine suggestion N, etc).",
+                                         "('Label', 'Machine suggestion N, etc.)",
                                     widget='Dropdown',
                                     choices=['Label'] + [f'Machine suggestion {n + 1}' for n in range(5)])
 
-    mss_parser_panel_1.add_argument("--confidence", type=int, default=75,
+    sam_parser_panel_1.add_argument("--confidence", type=int, default=75,
                                     metavar="Confidence Threshold",
                                     help="Confidence threshold value to filter (percentage)",
                                     widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
 
-    mss_parser_panel_1.add_argument('--model_type', type=str, required=True,
+    sam_parser_panel_1.add_argument('--model_type', type=str, required=True,
                                     metavar="Model Version",
                                     help='Version of SAM model to use',
                                     widget='Dropdown', choices=['vit_b', 'vit_l', 'vit_h'])
 
-    mss_parser_panel_1.add_argument('--plot', default=False,
-                                    metavar="Plot Masks",
-                                    help='Saves colorized figures of masks in subdirectory',
-                                    action="store_true",
-                                    widget='BlockCheckbox')
+    sam_parser_panel_1.add_argument("--points_per_side", type=int, default=64,
+                                    metavar='Points Per Side',
+                                    help="The number of points to sample from image (power of two)")
 
-    mss_parser_panel_1.add_argument('--output_dir', required=True,
+    sam_parser_panel_1.add_argument("--points_per_batch", type=int, default=64,
+                                    metavar='Points Per Batch',
+                                    help="The number of points per batch (power of two)")
+
+    sam_parser_panel_1.add_argument('--output_dir', required=True,
                                     metavar='Output Directory',
                                     default=DATA_DIR,
                                     help='Root directory where output will be saved',
@@ -688,82 +753,118 @@ def main():
     # ------------------------------------------------------------------------------------------------------------------
     # Segmentation
     # ------------------------------------------------------------------------------------------------------------------
-    seg_parser = subs.add_parser('Seg')
+    segmentation_parser = subs.add_parser('Segmentation')
 
     # Panel 1
-    seg_parser_panel_1 = seg_parser.add_argument_group('Seg',
-                                                       'Use Pytorch to train a deep learning semantic segmentation '
-                                                       'algorithm; provide custom masks, or those made by SAM')
+    segmentation_parser_panel_1 = segmentation_parser.add_argument_group('Semantic Segmentation',
+                                                                         'Use Pytorch to train a deep learning '
+                                                                         'semantic segmentation algorithm; provide '
+                                                                         'custom masks, or those made by SAM',
+                                                                         gooey_options={'show_border': True})
 
-    seg_parser_panel_1.add_argument('--masks', type=str, required=True,
-                                    metavar="Masks File",
-                                    help='The path to the masks csv file',
-                                    widget='FileChooser')
+    segmentation_parser_panel_1.add_argument('--masks', type=str, required=True,
+                                             metavar="Masks File",
+                                             help='The path to the masks csv file',
+                                             widget='FileChooser')
 
-    seg_parser_panel_1.add_argument('--color_map', type=str, required=True,
-                                    metavar='Color Map File',
-                                    help='Path to Color Map JSON file',
-                                    widget='FileChooser')
+    segmentation_parser_panel_1.add_argument('--color_map', type=str, required=True,
+                                             metavar='Color Map File',
+                                             help='Path to Color Map JSON file',
+                                             widget='FileChooser')
 
     # Panel 2
-    seg_parser_panel_2 = seg_parser.add_argument_group('Parameters',
-                                                       'Choose the parameters for training the model')
+    segmentation_parser_panel_2 = segmentation_parser.add_argument_group('Parameters',
+                                                                         'Choose the parameters for training the model',
+                                                                         gooey_options={'show_border': True})
 
-    seg_parser_panel_2.add_argument('--encoder_name', type=str, default='mit_b0',
-                                    metavar="Encoder",
-                                    help='The convolutional encoder, pre-trained on ImageNet dataset',
-                                    widget="Dropdown", choices=get_segmentation_encoders())
+    segmentation_parser_panel_2.add_argument('--encoder_name', type=str, default='mit_b0',
+                                             metavar="Encoder",
+                                             help='The convolutional encoder, pre-trained on ImageNet dataset',
+                                             widget="Dropdown", choices=get_segmentation_encoders())
 
-    seg_parser_panel_2.add_argument('--decoder_name', type=str, default='Unet',
-                                    metavar='Decoder',
-                                    help='The convolutional decoder',
-                                    widget="Dropdown", choices=get_segmentation_decoders())
+    segmentation_parser_panel_2.add_argument('--decoder_name', type=str, default='Unet',
+                                             metavar='Decoder',
+                                             help='The convolutional decoder',
+                                             widget="Dropdown", choices=get_segmentation_decoders())
 
-    seg_parser_panel_2.add_argument('--metrics', type=str, nargs='+', default=get_segmentation_metrics(),
-                                    metavar='Metrics',
-                                    help='The metric(s) to evaluate the model',
-                                    widget='Listbox', choices=get_segmentation_metrics())
+    segmentation_parser_panel_2.add_argument('--metrics', type=str, nargs='+', default=get_segmentation_metrics(),
+                                             metavar='Metrics',
+                                             help='The metric(s) to evaluate the model',
+                                             widget='Listbox', choices=get_segmentation_metrics())
 
-    seg_parser_panel_2.add_argument('--loss_function', type=str, default='JaccardLoss',
-                                    metavar='Loss Function',
-                                    help='The loss function to use to train the model',
-                                    widget="Dropdown", choices=get_segmentation_losses())
+    segmentation_parser_panel_2.add_argument('--loss_function', type=str, default='JaccardLoss',
+                                             metavar='Loss Function',
+                                             help='The loss function to use to train the model',
+                                             widget="Dropdown", choices=get_segmentation_losses())
 
-    seg_parser_panel_2.add_argument('--freeze_encoder', action='store_true',
-                                    metavar='Freeze Encoder',
-                                    help='Only train the decoder weights during training',
-                                    widget='BlockCheckbox')
+    segmentation_parser_panel_2.add_argument('--freeze_encoder', type=int,
+                                             metavar="Freeze Encoder",
+                                             help='Freeze encoder by N%',
+                                             widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
 
-    seg_parser_panel_2.add_argument('--optimizer', type=str, default='Adam',
-                                    metavar='Optimizer',
-                                    help='The optimizer to use to train the model',
-                                    widget="Dropdown", choices=get_segmentation_optimizers())
+    segmentation_parser_panel_2.add_argument('--optimizer', type=str, default='Adam',
+                                             metavar='Optimizer',
+                                             help='The optimizer to use to train the model',
+                                             widget="Dropdown", choices=get_segmentation_optimizers())
 
-    seg_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0001,
-                                    metavar='Learning Rate',
-                                    help='Starting learning rate')
+    segmentation_parser_panel_2.add_argument('--learning_rate', type=float, default=0.0001,
+                                             metavar='Learning Rate',
+                                             help='Starting learning rate')
 
-    seg_parser_panel_2.add_argument('--augment_data', action='store_true',
-                                    metavar='Augment Data',
-                                    help='Apply affine augmentations to training data',
-                                    widget='BlockCheckbox')
+    segmentation_parser_panel_2.add_argument('--augment_data', action='store_true',
+                                             metavar='Augment Data',
+                                             help='Apply affine augmentations to training data',
+                                             widget='BlockCheckbox')
 
-    seg_parser_panel_2.add_argument('--num_epochs', type=int, default=15,
-                                    help='Starting learning rate')
+    segmentation_parser_panel_2.add_argument('--num_epochs', type=int, default=15,
+                                             help='The number of iterations the model trains for')
 
-    seg_parser_panel_2.add_argument('--batch_size', type=int, default=2,
-                                    metavar='Batch Size',
-                                    help='Number of samples per batch during training')
+    segmentation_parser_panel_2.add_argument('--batch_size', type=int, default=2,
+                                             metavar='Batch Size',
+                                             help='Number of samples per batch during training')
 
-    seg_parser_panel_2.add_argument('--tensorboard', action='store_true',
-                                    metavar='Tensorboard',
-                                    help='Display training on Tensorboard',
-                                    widget='BlockCheckbox')
+    segmentation_parser_panel_2.add_argument('--tensorboard', action='store_true',
+                                             metavar='Tensorboard',
+                                             help='Display training on Tensorboard',
+                                             widget='BlockCheckbox')
 
-    seg_parser_panel_2.add_argument('--output_dir', type=str, required=True,
-                                    metavar='Output Directory',
-                                    help='Directory to store results',
-                                    widget='DirChooser')
+    segmentation_parser_panel_2.add_argument('--output_dir', type=str, required=True,
+                                             metavar='Output Directory',
+                                             help='Directory to store results',
+                                             widget='DirChooser')
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Segmentation Inference
+    # ------------------------------------------------------------------------------------------------------------------
+    segmentation_inf_parser = subs.add_parser('SegmentationInference')
+
+    # Panel 1
+    segmentation_inf_parser_panel_1 = segmentation_inf_parser.add_argument_group('Segmentation Inference',
+                                                                                 'Use a trained semantic segmentation '
+                                                                                 'model to perform inference on new '
+                                                                                 'images',
+                                                                                 gooey_options={'show_border': True})
+
+    segmentation_inf_parser_panel_1.add_argument('--images', required=True,
+                                                 metavar="Image Directory",
+                                                 help='Directory containing images to make predictions on',
+                                                 widget="DirChooser")
+
+    segmentation_inf_parser_panel_1.add_argument('--model', required=True,
+                                                 metavar="Model Path",
+                                                 help='The path to locally trained model (.pth)',
+                                                 widget="FileChooser")
+
+    segmentation_inf_parser_panel_1.add_argument('--color_map', required=True,
+                                                 metavar="Color Map File",
+                                                 help='The Color Mapping JSON file',
+                                                 widget="FileChooser")
+
+    segmentation_inf_parser_panel_1.add_argument('--output_dir', required=True,
+                                                 metavar='Output Directory',
+                                                 default=DATA_DIR,
+                                                 help='Root directory where output will be saved',
+                                                 widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # SfM
@@ -771,9 +872,10 @@ def main():
     sfm_parser = subs.add_parser('SfM')
 
     # Panel 1
-    sfm_parser_panel_1 = sfm_parser.add_argument_group('SfM',
+    sfm_parser_panel_1 = sfm_parser.add_argument_group('Structure from Motion',
                                                        'Use Metashape (2.0.X) API to perform Structure from Motion on '
-                                                       'images of a scene.')
+                                                       'images of a scene.',
+                                                       gooey_options={'show_border': True})
 
     sfm_parser_panel_1.add_argument('--metashape_license', type=str,
                                     metavar="Metashape License (Pro)",
@@ -810,7 +912,8 @@ def main():
     # Panel 2
     sfm_parser_panel_2 = sfm_parser.add_argument_group('Existing Project',
                                                        'Provide an existing project directory to pick up where the '
-                                                       'program left off instead of re-running from scratch.')
+                                                       'program left off instead of re-running from scratch.',
+                                                       gooey_options={'show_border': True})
 
     sfm_parser_panel_2.add_argument('--project_file', type=str, required=False,
                                     metavar="Project File",
@@ -818,43 +921,15 @@ def main():
                                     widget='FileChooser')
 
     # ------------------------------------------------------------------------------------------------------------------
-    # TagLab w/ SAM
-    # ------------------------------------------------------------------------------------------------------------------
-    taglab_parser = subs.add_parser('TagLab')
-
-    # Panel 1
-    taglab_parser_panel_1 = taglab_parser.add_argument_group('TagLab',
-                                                             'Use an orthomosaic made from Metashape w/ SAM to create '
-                                                             'a pre-segmented version for use in TagLab')
-
-    taglab_parser_panel_1.add_argument("--orthomosaic", type=str, required=True,
-                                       metavar="Orthomosaic",
-                                       help="Path to orthomosaic or image",
-                                       widget='FileChooser')
-
-    taglab_parser_panel_1.add_argument('--model_type', type=str, required=True, default='vit_b',
-                                       metavar="Model Version",
-                                       help='Version of SAM model to use',
-                                       widget='Dropdown', choices=['vit_b', 'vit_l', 'vit_h'])
-
-    taglab_parser_panel_1.add_argument("--points_per_side", type=int, default=64,
-                                       metavar="Number of Points",
-                                       help="The number of points to sample from image")
-
-    taglab_parser_panel_1.add_argument('--output_dir', type=str, required=True,
-                                       metavar='Output Directory',
-                                       help='Directory to store results',
-                                       widget='DirChooser')
-
-    # ------------------------------------------------------------------------------------------------------------------
     # Seg3D
     # ------------------------------------------------------------------------------------------------------------------
-    seg3d_parser = subs.add_parser('Seg3d')
+    seg3d_parser = subs.add_parser('Segmentation3D')
 
     # Panel 1
-    seg3d_parser_panel_1 = seg3d_parser.add_argument_group('Seg3D',
-                                                           'Use masks made by SAM with Metashape (2.0.X) API to create '
-                                                           'classified versions of dense point clouds and meshes')
+    seg3d_parser_panel_1 = seg3d_parser.add_argument_group('Semantic Segmentation 3D',
+                                                           'Use segmentation masks with Metashape (2.0.X) to create '
+                                                           'classified versions of dense point clouds and meshes',
+                                                           gooey_options={'show_border': True})
 
     seg3d_parser_panel_1.add_argument('--metashape_license', type=str,
                                       metavar="Metashape License (Pro)",
@@ -872,29 +947,27 @@ def main():
                                       help='Path to existing Metashape project file (.psx)',
                                       widget="FileChooser")
 
-    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
-                                      metavar="Chunk Index",
-                                      help='Chunk index to classify; 0-based indexing')
-
-    seg3d_parser_panel_1.add_argument('--masks_dir', type=str, required=True,
-                                      metavar="Masks Directory",
-                                      help='Directory containing colored masks for images',
-                                      widget='DirChooser')
+    seg3d_parser_panel_1.add_argument('--masks_file', type=str, required=True,
+                                      metavar='Masks File',
+                                      help='Masks file containing paths for color masks of images',
+                                      widget='FileChooser')
 
     seg3d_parser_panel_1.add_argument('--color_map', type=str, required=True,
                                       metavar="Color Map File",
                                       help='Path to Color Map JSON file',
                                       widget="FileChooser")
 
-    seg3d_parser_panel_1.add_argument('--classify_mesh', action="store_true",
-                                      metavar="Classify Mesh",
-                                      help='Classify mesh using dense point cloud',
-                                      widget="BlockCheckbox")
+    seg3d_parser_panel_1.add_argument('--mask_column', type=str, default='Color Path',
+                                      metavar="Mask Column",
+                                      help='Column name of masks to use for classification')
 
-    seg3d_parser_panel_1.add_argument('--classify_ortho', action="store_true",
-                                      metavar="Classify Orthomosaic",
-                                      help='Classify orthomosaic using mesh',
-                                      widget="BlockCheckbox")
+    seg3d_parser_panel_1.add_argument('--include_binary_masks', action='store_true',
+                                      metavar='Include Binary Masks',
+                                      help='Include the use of binary masks as well as colored masks')
+
+    seg3d_parser_panel_1.add_argument('--chunk_index', type=int, default=0,
+                                      metavar="Chunk Index",
+                                      help='Chunk index to classify; 0-based indexing')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Parser
@@ -935,25 +1008,37 @@ def main():
     if args.command == 'Visualize':
         visualize(args)
 
-    if args.command == 'Classifier':
-        classification(args)
+    if args.command == 'Projector':
+        projector(args)
 
     if args.command == 'Points':
         points(args)
 
-    if args.command == 'Inference':
+    if args.command == 'Classification':
+        classification(args)
+
+    if args.command == 'ClassificationPretrain':
+        classification_pretrain(args)
+
+    if args.command == 'ClassificationInference':
         classification_inference(args)
 
-    if args.command == 'Seg':
+    if args.command == 'SAM':
+        sam(args)
+
+    if args.command == 'Segmentation':
         segmentation(args)
+
+    if args.command == 'SegmentationInference':
+        segmentation_inference(args)
 
     if args.command == 'SfM':
         sfm(args)
 
-    if args.command == 'Seg3D':
+    if args.command == 'Segmentation3D':
         segmentation3d(args)
 
-    # log('Done.')
+    print('Done.')
 
 
 if __name__ == '__main__':
