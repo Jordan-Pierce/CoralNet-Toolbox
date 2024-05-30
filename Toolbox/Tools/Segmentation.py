@@ -511,7 +511,7 @@ def segmentation(args):
         print(f"NOTE: Using {args.encoder_name} encoder with a {args.decoder_name} decoder")
 
         # Get the weights of the pre-trained encoder, if provided
-        if os.path.exists(args.pre_trained_path):
+        if args.pre_trained_path:
             pre_trained_model = torch.load(args.pre_trained_path, map_location='cpu')
 
             try:
@@ -745,7 +745,10 @@ def segmentation(args):
                       mask=colorize_mask(mask, class_ids, class_colors))
 
             # Write to tensorboard
-            train_writer.add_image(f'Training_Samples', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+            train_writer.add_image(f'Training_Samples',
+                                   np.array(Image.open(save_path)),
+                                   dataformats="HWC",
+                                   global_step=i)
 
         except:
             pass
@@ -993,7 +996,10 @@ def segmentation(args):
                           predicted_mask=pr_mask)
 
                 # Log the visualization to TensorBoard
-                test_writer.add_image(f'Test_Results', np.array(Image.open(save_path)), dataformats="HWC", global_step=i)
+                test_writer.add_image(f'Test_Results',
+                                      np.array(Image.open(save_path)),
+                                      dataformats="HWC",
+                                      global_step=i)
 
             except:
                 pass
