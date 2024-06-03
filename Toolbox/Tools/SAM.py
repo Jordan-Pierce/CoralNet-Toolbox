@@ -1,5 +1,4 @@
 import os
-import sys
 import glob
 import json
 import warnings
@@ -93,7 +92,7 @@ def get_sam_predictor(model_type="vit_l", device='cpu', points_per_side=64, poin
     return sam_predictor
 
 
-def resize_image_aspect_ratio(image, max_width=1280):
+def resize_image_aspect_ratio(image, max_width=1024):
     """
 
     """
@@ -105,6 +104,7 @@ def resize_image_aspect_ratio(image, max_width=1280):
 
     # Resize the image using the calculated dimensions
     resized_image = cv2.resize(image, (max_width, new_height), interpolation=cv2.INTER_AREA)
+    resized_image = resized_image[:, :, 0:3]
 
     # Save the resized image
     return resized_image
@@ -321,7 +321,7 @@ def sam(args):
             continue
 
         # Read the image, get dimensions
-        image = imread(image_path)
+        image = imread(image_path)[:, :, 0:3]
         original_height, original_width = image.shape[0:2]
 
         # Resize the image to max width
@@ -368,21 +368,21 @@ def sam(args):
 
         # Save the semantic mask
         final_mask = final_mask.astype(np.uint8)
-        semantic_path = f"{seg_dir}{name.split('.')[0]}.png"
+        semantic_path = f"{seg_dir}{name.split('.')[0]}.jpg"
         imsave(fname=semantic_path, arr=final_mask)
         print(f"NOTE: Saved semantic mask to {semantic_path}")
 
         # Create traditional masks (0 background, 255 object)
         mask = np.zeros(shape=(original_height, original_width, 3), dtype=np.uint8)
         mask[final_mask != 0, :] = [255, 255, 255]
-        mask_path = f"{mask_dir}{name.split('.')[0]}.png"
+        mask_path = f"{mask_dir}{name.split('.')[0]}.jpg"
         imsave(fname=mask_path, arr=mask.astype(bool))
         print(f"NOTE: Saved mask to {mask_path}")
 
         # Get the final colored mask, change no data to black
         final_color = colorize_mask(final_mask, class_map, label_colors)
         final_color[final_mask == 0, :] = [0, 0, 0]
-        color_path = f"{color_dir}{name.split('.')[0]}.png"
+        color_path = f"{color_dir}{name.split('.')[0]}.jpg"
         imsave(fname=color_path, arr=final_color.astype(np.uint8))
         print(f"NOTE: Saved color mask to {color_path}")
 
@@ -390,7 +390,7 @@ def sam(args):
         # on top of the original image, with 50% transparency, while
         # maintaining the original resolution
         final_overlay = cv2.addWeighted(image, 0.5, final_color, 0.5, 0)
-        overlay_path = f"{overlay_dir}{name.split('.')[0]}.png"
+        overlay_path = f"{overlay_dir}{name.split('.')[0]}.jpg"
         imsave(fname=overlay_path, arr=final_overlay.astype(np.uint8))
         print(f"NOTE: Saved overlay to {overlay_path}")
 

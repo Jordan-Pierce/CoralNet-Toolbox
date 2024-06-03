@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 import argparse
 import traceback
@@ -15,7 +14,8 @@ from Common import print_progress
 compatible_major_version = "2.0"
 found_major_version = ".".join(Metashape.app.version.split('.')[:2])
 if found_major_version != compatible_major_version:
-    raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version, compatible_major_version))
+    raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version,
+                                                                      compatible_major_version))
 
 
 # -----------------------------------------------------------------------------------------------------------
@@ -393,6 +393,8 @@ def sfm(args):
     """
 
     """
+    import Metashape
+
     # Get the License from the user
     if args.metashape_license is not None:
         metashape_license = args.metashape_license
@@ -411,6 +413,10 @@ def sfm(args):
     except Exception as e:
         print(f"{e}\nERROR: Could not finish workflow!")
         print(traceback.print_exc())
+
+    finally:
+        # Deactivate the license
+        Metashape.License().deactivate()
 
 
 # -----------------------------------------------------------------------------

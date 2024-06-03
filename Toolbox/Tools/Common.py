@@ -25,9 +25,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # Patch extractor path
 PATCH_EXTRACTOR = f'{PROJECT_DIR}/Tools/Patch_Extractor/CNNDataExtractor.exe'
 
-# MIR specific, mapping path
-MIR_MAPPING = f'{DATA_DIR}/Mission_Iconic_Reefs/MIR_VPI_CoralNet_Mapping.csv'
-
 # Coralnet labelset file for dropdown menu in gooey
 CORALNET_LABELSET_FILE = f"{CACHE_DIR}/CoralNet_Labelset_List.csv"
 
