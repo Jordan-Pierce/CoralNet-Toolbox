@@ -15,6 +15,7 @@ selenium==4.15.2
 webdriver_manager
 simclr==1.0.2
 torcheval==0.0.7
+tensorboard==2.12.3
 segment-anything==1.0
 segmentation-models-pytorch==0.3.3
 gooey==1.0.8.1
