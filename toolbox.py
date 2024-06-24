@@ -49,6 +49,7 @@ from Toolbox.Tools.Common import FUNC_GROUPS_LIST
        program_name="CoralNet Toolbox",
        default_size=(900, 600),  # width, height
        console=True,
+       richtext_controls=True,
        shutdown_signal=signal.CTRL_C_EVENT,
        progress_regex=r"^progress: (?P<current>\d+)/(?P<total>\d+)$",
        progress_expr="current / total * 100",
