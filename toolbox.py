@@ -690,8 +690,8 @@ def main():
                                                    widget="FileChooser")
 
     classification_inf_parser_panel_1.add_argument("--patch_size", type=int, default=112,
-                                                   metavar="Patch Size",
-                                                   help="The size of each patch extracted")
+                                                   metavar="Patch Extent",
+                                                   help="The extent of each patch extracted")
 
     classification_inf_parser_panel_1.add_argument('--output_dir', required=True,
                                                    metavar='Output Directory',
