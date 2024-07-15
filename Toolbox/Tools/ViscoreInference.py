@@ -246,7 +246,7 @@ def viscore_inference(args):
             mode_class = dot_df['Machine suggestion 1'].mode().item()
             mode_conf = dot_df[dot_df['Machine suggestion 1'] == mode_class]['Machine confidence 1'].mean()
 
-            if not mode_class not in qclasses_dict:
+            if not mode_class in qclasses_dict:
                 raise Exception(f"Mode class {mode_class} not found in QClasses")
 
             if int(mode_conf * 100) < args.conf:
