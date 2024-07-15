@@ -14,11 +14,12 @@ from Toolbox.Tools.Visualize import visualize
 from Toolbox.Tools.Points import points
 from Toolbox.Tools.Projector import projector
 
+from Toolbox.Tools.ClassificationPreTrain import classification_pretrain
 from Toolbox.Tools.Classification import classification
 from Toolbox.Tools.Segmentation import segmentation
 from Toolbox.Tools.ClassificationInference import classification_inference
-from Toolbox.Tools.ClassificationPreTrain import classification_pretrain
 from Toolbox.Tools.SegmentationInference import segmentation_inference
+from Toolbox.Tools.ViscoreInference import viscore_inference
 
 from Toolbox.Tools.SAM import sam
 from Toolbox.Tools.SfM import sfm
@@ -440,7 +441,7 @@ def main():
 
     projector_parser_panel_1.add_argument("--model", type=str,
                                           metavar="Model Path",
-                                          help="Path to Best Model and Weights File (.h5)",
+                                          help="Path to Best Model and Weights File (.pth)",
                                           widget="FileChooser")
 
     projector_parser_panel_1.add_argument('--patches', type=str,
@@ -681,7 +682,7 @@ def main():
 
     classification_inf_parser_panel_1.add_argument('--model', required=True,
                                                    metavar="Model Path",
-                                                   help='The path to locally trained model (.h5)',
+                                                   help='The path to locally trained model (.pth)',
                                                    widget="FileChooser")
 
     classification_inf_parser_panel_1.add_argument('--class_map', required=True,
@@ -698,6 +699,71 @@ def main():
                                                    default=DATA_DIR,
                                                    help='Root directory where output will be saved',
                                                    widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Viscore Inference
+    # ------------------------------------------------------------------------------------------------------------------
+    viscore_inf_parser = subs.add_parser('ViscoreInference')
+
+    # Panel 1
+    viscore_inf_parser_panel_1 = viscore_inf_parser.add_argument_group('Viscore Inference',
+                                                                       'Use a locally trained image '
+                                                                       'classification model to make '
+                                                                       'predictions points from Viscore. '
+                                                                       'Results are the mode of all views for a '
+                                                                       'point.',
+                                                                       gooey_options={
+                                                                           'show_border': True})
+
+    viscore_inf_parser_panel_1.add_argument('--images', required=True,
+                                            metavar="Image Directory",
+                                            help='Directory containing images to make predictions on',
+                                            widget="DirChooser")
+
+    viscore_inf_parser_panel_1.add_argument('--points', required=True,
+                                            metavar="Points File",
+                                            help='CoralNet-formatted points file for the plot',
+                                            widget="FileChooser")
+
+    viscore_inf_parser_panel_1.add_argument('--user_json', required=True,
+                                            metavar="User JSON File",
+                                            help='An empty User JSON file for the plot',
+                                            widget="FileChooser")
+
+    viscore_inf_parser_panel_1.add_argument('--qclasses_json', required=True,
+                                            metavar="QClasses JSON File",
+                                            help='A QClasses JSON file for the plot',
+                                            widget="FileChooser")
+
+    viscore_inf_parser_panel_1.add_argument('--output_dir', required=True,
+                                            metavar='Output Directory',
+                                            default=DATA_DIR,
+                                            help='Root directory where output will be saved',
+                                            widget="DirChooser")
+
+    # Panel 2
+    viscore_inf_parser_panel_2 = viscore_inf_parser.add_argument_group('Inference parameters',
+                                                                       gooey_options={
+                                                                           'show_border': True})
+
+    viscore_inf_parser_panel_2.add_argument('--model', required=True,
+                                            metavar="Model Path",
+                                            help='The path to locally trained model (.pth)',
+                                            widget="FileChooser")
+
+    viscore_inf_parser_panel_2.add_argument('--class_map', required=True,
+                                            metavar="Class Map File",
+                                            help='The class mapping JSON file',
+                                            widget="FileChooser")
+
+    viscore_inf_parser_panel_2.add_argument("--conf", type=int, default=50,
+                                            metavar="Confidence",
+                                            help="Confidence threshold value (filter)",
+                                            widget='Slider', gooey_options={'min': 0, 'max': 100, 'increment': 1})
+
+    viscore_inf_parser_panel_2.add_argument("--patch_size", type=int, default=112,
+                                            metavar="Patch Extent",
+                                            help="The extent of each patch extracted")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Semantic Segmentation w/ SAM
@@ -1023,6 +1089,9 @@ def main():
 
     if args.command == 'ClassificationInference':
         classification_inference(args)
+
+    if args.command == 'ViscoreInference':
+        viscore_inference(args)
 
     if args.command == 'SAM':
         sam(args)
