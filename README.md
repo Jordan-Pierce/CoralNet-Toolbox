@@ -30,6 +30,7 @@ a GUI; these scripts currently include the following:
 - `Classification Pretrain`: Pretrain an encoder on unlabeled data before training with labeled data
 - `Classification`: Create your own patch-based image classifier, locally
 - `Classification Inf.`: Perform inference using a locally trained classification model
+- `Viscore Inf.`: Perform inference using a locally trained model on Viscore VPI points
 - `Annotate`: Create your own patches from annotations, locally
 - `Visualize`: Visualize points/patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
