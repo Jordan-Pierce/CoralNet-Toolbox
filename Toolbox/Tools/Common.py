@@ -132,7 +132,7 @@ def console_user(error_msg):
     """
     url = "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
 
-    print(f"\n\n\nUh oh! It looks like some went wrong!")
+    print(f"\n\n\nUh oh! It looks like something went wrong!")
     print(f"{'∨' * 60}")
     print(f"\n{error_msg}\n")
     print(f"{'^' * 60}")
