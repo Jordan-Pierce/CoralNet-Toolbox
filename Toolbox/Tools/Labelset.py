@@ -7,6 +7,7 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+from Common import console_user
 from Common import IMG_FORMATS
 from Common import CORALNET_URL
 from Common import FUNC_GROUPS_LIST
@@ -299,8 +300,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from matplotlib.widgets import Button
 from matplotlib.widgets import TextBox
 from matplotlib.patches import Rectangle
 
+from Common import console_user
 from Common import IMG_FORMATS
 
 # Set plot backend
@@ -266,5 +267,4 @@ if __name__ == "__main__":
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")

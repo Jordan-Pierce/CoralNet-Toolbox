@@ -12,6 +12,7 @@ import math
 import pandas as pd
 
 from Common import get_now
+from Common import console_user
 
 from Browser import login
 from Browser import get_token
@@ -210,7 +211,13 @@ def convert_to_csv(status, image_names):
                 p['Column'] = point['column']
 
                 for index, classification in enumerate(point['classifications']):
-                    p['Machine confidence ' + str(index + 1)] = classification['score']
+
+                    classification_score = classification['score']
+
+                    if classification_score <= 1 and type(classification_score) == float:
+                        classification_score = int(classification_score * 100)
+
+                    p['Machine confidence ' + str(index + 1)] = classification_score
                     p['Machine suggestion ' + str(index + 1)] = classification['label_code']
 
                 model_predictions_list.append(p)
@@ -602,8 +609,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

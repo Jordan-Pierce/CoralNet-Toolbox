@@ -71,6 +71,8 @@ IMG_FORMATS = ["jpg", "jpeg", "png", "bmp"]
 def get_now():
     """
     Returns a timestamp; used for file and folder names
+
+    :return:
     """
     # Get the current datetime
     now = datetime.datetime.now()
@@ -82,6 +84,8 @@ def get_now():
 def progress_printer(iterable):
     """
 
+    :param iterable:
+    :return:
     """
     if isinstance(iterable, enumerate):
         iterable = list(iterable)
@@ -97,10 +101,10 @@ def print_progress(prg, prg_total=100, bar_length=50):
     """
     Print a custom progress bar.
 
-    Parameters:
-    - prg (int): Current progress value.
-    - prg_total (int): Total progress value; default is 100
-    - bar_length (int): Length of the progress bar.
+    :param prg:
+    :param prg_total:
+    :param bar_length:
+    :return:
     """
     progress = prg / prg_total
 
@@ -118,3 +122,19 @@ def print_progress(prg, prg_total=100, bar_length=50):
 
     # Print the progress bar
     print("\r[{}] {:.2%}".format(progress_bar, progress), end=end_char, flush=True)
+
+
+def console_user(error_msg):
+    """
+
+    :param error_msg:
+    :return:
+    """
+    url = "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
+
+    print(f"\n\n\nUh oh! It looks like some went wrong!")
+    print(f"{'∨' * 60}")
+    print(f"\n{error_msg}\n")
+    print(f"{'^' * 60}")
+    print(f"Please, create a ticket and copy this error so we can get this fixed:")
+    print(f"{url}")

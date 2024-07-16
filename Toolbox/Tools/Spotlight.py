@@ -22,6 +22,8 @@ from Classification import CustomModel
 from Classification import get_classifier_encoders
 from Classification import get_validation_augmentation
 
+from Common import console_user
+
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -255,7 +257,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

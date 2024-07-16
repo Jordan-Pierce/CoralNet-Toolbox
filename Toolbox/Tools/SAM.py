@@ -20,6 +20,7 @@ from segment_anything import sam_model_registry
 from segment_anything import SamAutomaticMaskGenerator
 
 from Common import get_now
+from Common import console_user
 from Common import CACHE_DIR
 from Common import IMG_FORMATS
 from Common import progress_printer
@@ -469,8 +470,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from skimage.io import imsave
 from skimage.transform import resize
 
 from Common import get_now
+from Common import console_user
 
 warnings.filterwarnings("ignore")
 

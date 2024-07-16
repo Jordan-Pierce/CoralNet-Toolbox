@@ -12,6 +12,7 @@ import Metashape
 from plyfile import PlyData
 from scipy.spatial.distance import cdist
 
+from Common import console_user
 from Common import print_progress
 from Common import progress_printer
 
@@ -477,8 +478,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == '__main__':

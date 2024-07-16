@@ -7,6 +7,7 @@ import numpy as np
 
 import Metashape
 
+from Common import console_user
 from Common import get_now
 from Common import print_progress
 

@@ -22,6 +22,8 @@ from simclr.modules.transformations import TransformsSimCLR
 from tensorboard import program
 
 from Common import get_now
+from Common import console_user
+
 from Classification import get_classifier_optimizers
 
 
@@ -393,8 +395,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == '__main__':

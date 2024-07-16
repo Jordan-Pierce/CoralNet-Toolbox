@@ -16,6 +16,7 @@ import segmentation_models_pytorch as smp
 
 from Common import get_now
 from Common import IMG_FORMATS
+from Common import console_user
 from Common import progress_printer
 
 from Patches import crop_patch
@@ -318,7 +319,7 @@ def main():
 
     except Exception as e:
         print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

@@ -15,13 +15,13 @@ import torchvision
 import segmentation_models_pytorch as smp
 
 from Common import get_now
+from Common import console_user
 from Common import IMG_FORMATS
 from Common import progress_printer
 
 from Patches import crop_patch
 
 from Classification import get_validation_augmentation
-
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -241,8 +241,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

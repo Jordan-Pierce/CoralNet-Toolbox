@@ -32,6 +32,7 @@ from tensorboard import program
 import albumentations as albu
 
 from Common import get_now
+from Common import console_user
 
 torch.cuda.empty_cache()
 
@@ -1089,8 +1090,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == '__main__':
