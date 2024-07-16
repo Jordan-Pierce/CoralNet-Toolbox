@@ -36,6 +36,7 @@ a GUI; these scripts currently include the following:
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 - `Projector`: Display model predictions in feature space using Tensorboard
+- `Spotlight`: Display model predictions in feature space using [Spotlight]()
 - `SAM`: Create segmentation masks for each image using labeled points and SAM
 - `Segmentation`: Create your own semantic segmentation model, locally
 - `Segmentation Inf.`: Perform inference using a locally trained segmentation model

@@ -13,6 +13,7 @@ from Toolbox.Tools.Patches import patches
 from Toolbox.Tools.Visualize import visualize
 from Toolbox.Tools.Points import points
 from Toolbox.Tools.Projector import projector
+from Toolbox.Tools.Spotlight import spotlight
 
 from Toolbox.Tools.ClassificationPreTrain import classification_pretrain
 from Toolbox.Tools.Classification import classification
@@ -462,6 +463,40 @@ def main():
                                           metavar="Project Folder",
                                           help='Path to existing projector project folder.',
                                           widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Spotlight
+    # ------------------------------------------------------------------------------------------------------------------
+    spotlight_parser = subs.add_parser('Spotlight')
+
+    # Panel 1
+    spotlight_parser_panel_1 = spotlight_parser.add_argument_group('Spotlight',
+                                                                   'Display patch data in feature space using '
+                                                                   'Spotlight. Requires a patch file; choose either a '
+                                                                   'pre-trained model (.pth) OR an encoder.',
+                                                                   gooey_options={'show_border': True})
+
+    spotlight_parser_panel_1.add_argument('--encoder_name', type=str, required=True,
+                                          metavar="Pretrained Encoder",
+                                          help='Encoder, pre-trained on ImageNet dataset',
+                                          widget='Dropdown', choices=get_classifier_encoders())
+
+    spotlight_parser_panel_1.add_argument('--pre_trained_path', required=False,
+                                          metavar="Pretrained Path",
+                                          help='Path to pre-trained model',
+                                          widget="FileChooser")
+
+    spotlight_parser_panel_1.add_argument('--patches', type=str,
+                                          metavar="Patch Data",
+                                          help='Patches dataframe file',
+                                          widget="FileChooser")
+
+    spotlight_parser_panel_1.add_argument('--frac', type=int,
+                                          metavar='Percentage',
+                                          default=50,
+                                          help='Percentage of samples to use.',
+                                          widget='Slider',
+                                          gooey_options={'min': 0, 'max': 100, 'increment': 1})
 
     # ------------------------------------------------------------------------------------------------------------------
     # Points
@@ -1077,6 +1112,9 @@ def main():
 
     if args.command == 'Projector':
         projector(args)
+
+    if args.command == 'Spotlight':
+        spotlight(args)
 
     if args.command == 'Points':
         points(args)

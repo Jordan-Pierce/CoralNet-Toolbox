@@ -209,7 +209,6 @@ def projector(args):
         # Patch dataframe
         patches_df = pd.read_csv(args.patches, index_col=0)
         patches_df = patches_df.dropna()
-        patches_df.replace({'NotCoral': 'Substrate', 'DVR': 'Background', 'SclBar': 'Color Palette'}, inplace=True)
         # Get the image base names
         assert "Path" in patches_df.columns, print(f"ERROR: 'Path' not in provided csv")
         assert "Name" in patches_df.columns, print("ERROR: 'Image Name' not in provided csv")
@@ -305,7 +304,7 @@ def main():
 
     """
 
-    parser = argparse.ArgumentParser(description="Projector")
+    parser = argparse.ArgumentParser(description="Spotlight")
 
     parser.add_argument("--model", type=str,
                         help="Path to Best Model and Weights File (.h5)")
