@@ -314,11 +314,11 @@ def main():
     args = parser.parse_args()
 
     try:
+
         viscore_inference(args)
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
         console_user(f"{e}\n{traceback.format_exc()}")
 
 

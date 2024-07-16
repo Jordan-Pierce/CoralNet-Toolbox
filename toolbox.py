@@ -1,5 +1,6 @@
 import os
 import signal
+import traceback
 
 from gooey import Gooey, GooeyParser
 
@@ -38,6 +39,7 @@ from Toolbox.Tools.Segmentation import get_segmentation_encoders
 from Toolbox.Tools.Segmentation import get_segmentation_decoders
 from Toolbox.Tools.Segmentation import get_segmentation_optimizers
 
+from Toolbox.Tools.Common import console_user
 from Toolbox.Tools.Common import DATA_DIR
 from Toolbox.Tools.Common import PATCH_EXTRACTOR
 from Toolbox.Tools.Common import FUNC_GROUPS_LIST
@@ -1088,65 +1090,69 @@ def main():
         if not args.remember_license:
             os.environ['METASHAPE_LICENSE'] = args.metashape_license
 
-    # Execute command
-    if args.command == 'API':
-        api(args)
+    try:
+        # Execute command
+        if args.command == 'API':
+            api(args)
 
-    if args.command == 'Download':
-        download(args)
+        if args.command == 'Download':
+            download(args)
 
-    if args.command == 'Labelset':
-        labelset(args)
+        if args.command == 'Labelset':
+            labelset(args)
 
-    if args.command == 'Upload':
-        upload(args)
+        if args.command == 'Upload':
+            upload(args)
 
-    if args.command == 'Annotate':
-        annotate(args)
+        if args.command == 'Annotate':
+            annotate(args)
 
-    if args.command == 'Patches':
-        patches(args)
+        if args.command == 'Patches':
+            patches(args)
 
-    if args.command == 'Visualize':
-        visualize(args)
+        if args.command == 'Visualize':
+            visualize(args)
 
-    if args.command == 'Projector':
-        projector(args)
+        if args.command == 'Projector':
+            projector(args)
 
-    if args.command == 'Spotlight':
-        spotlight(args)
+        if args.command == 'Spotlight':
+            spotlight(args)
 
-    if args.command == 'Points':
-        points(args)
+        if args.command == 'Points':
+            points(args)
 
-    if args.command == 'Classification':
-        classification(args)
+        if args.command == 'Classification':
+            classification(args)
 
-    if args.command == 'ClassificationPretrain':
-        classification_pretrain(args)
+        if args.command == 'ClassificationPretrain':
+            classification_pretrain(args)
 
-    if args.command == 'ClassificationInference':
-        classification_inference(args)
+        if args.command == 'ClassificationInference':
+            classification_inference(args)
 
-    if args.command == 'ViscoreInference':
-        viscore_inference(args)
+        if args.command == 'ViscoreInference':
+            viscore_inference(args)
 
-    if args.command == 'SAM':
-        sam(args)
+        if args.command == 'SAM':
+            sam(args)
 
-    if args.command == 'Segmentation':
-        segmentation(args)
+        if args.command == 'Segmentation':
+            segmentation(args)
 
-    if args.command == 'SegmentationInference':
-        segmentation_inference(args)
+        if args.command == 'SegmentationInference':
+            segmentation_inference(args)
 
-    if args.command == 'SfM':
-        sfm(args)
+        if args.command == 'SfM':
+            sfm(args)
 
-    if args.command == 'Segmentation3D':
-        segmentation3d(args)
+        if args.command == 'Segmentation3D':
+            segmentation3d(args)
 
-    print('Done.')
+        print('Done.')
+
+    except Exception as e:
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == '__main__':
