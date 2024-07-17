@@ -78,15 +78,22 @@ def calc_bboxes(df):
     bboxes = []
 
     for i, r in df.iterrows():
-        patch_w, patch_h = Image.open(r['Path']).size
-        image_w, image_h = Image.open(r['Image Path']).size
 
-        xmin = (r['Column'] - patch_w / 2) / image_w
-        ymin = (r['Row'] - patch_h / 2) / image_h
-        xmax = (r['Column'] + patch_w / 2) / image_w
-        ymax = (r['Row'] + patch_h / 2) / image_h
+        bbox = None
 
-        bbox = [xmin, ymin, xmax, ymax]
+        try:
+            patch_w, patch_h = Image.open(r['Path']).size
+            image_w, image_h = Image.open(r['Image Path']).size
+
+            xmin = (r['Column'] - patch_w / 2) / image_w
+            ymin = (r['Row'] - patch_h / 2) / image_h
+            xmax = (r['Column'] + patch_w / 2) / image_w
+            ymax = (r['Row'] + patch_h / 2) / image_h
+
+            bbox = [xmin, ymin, xmax, ymax]
+        except Exception as e:
+            pass
+
         bboxes.append(bbox)
 
     df['Box'] = bboxes
@@ -118,14 +125,15 @@ def load_patches(paths):
     return patches
 
 
-def get_feature_embeddings(patches_df, model, preprocessing_fn, validation_augmentation, device='cuda'):
+def get_feature_embeddings(patches_df, model, preprocessing_fn, augmentation, batch_size, device='cuda'):
     """
     Extract feature embeddings for image patches using the provided model.
 
     :param patches_df: DataFrame containing patch information (Name, Path, Label)
     :param model: The model used for feature extraction
     :param preprocessing_fn: Function to preprocess the images
-    :param validation_augmentation: Augmentation function for validation
+    :param augmentation: Augmentation function for validation
+    :param batch_size: Number of samples to pass in a single batch
     :param device: Device to run the model on (default: 'cuda')
     :return: DataFrame with added feature embeddings
     """
@@ -140,7 +148,7 @@ def get_feature_embeddings(patches_df, model, preprocessing_fn, validation_augme
     # Function to process a batch of patches
     def process_batch(batch_paths):
         patches = load_patches(batch_paths)
-        patches_tensor = [validation_augmentation(image=p)['image'] for p in patches]
+        patches_tensor = [augmentation(image=p)['image'] for p in patches]
         patches_tensor = [preprocessing_fn(p) for p in patches_tensor]
         patches_tensor = torch.stack([torch.Tensor(p) for p in patches_tensor]).permute(0, 3, 1, 2)
         patches_tensor = patches_tensor.to(device)
@@ -152,7 +160,6 @@ def get_feature_embeddings(patches_df, model, preprocessing_fn, validation_augme
             return features.cpu().numpy()
 
     # Process patches in batches
-    batch_size = 256
     feature_list = []
 
     for i in tqdm(range(0, len(df), batch_size), desc="Extracting features"):
@@ -188,6 +195,7 @@ def spotlight(args):
 
         # Ensure frac is [0-1]
         frac = args.frac if type(args.frac) == float else args.frac / 100
+        batch_size = int(args.batch_size)
 
         # Patch dataframe
         patches_df = pd.read_csv(args.patches, index_col=0).sample(frac=frac)
@@ -210,10 +218,10 @@ def spotlight(args):
         raise Exception("ERROR: Provide pre-trained model path (.pth) or encoder name")
 
     model, preprocessing_fn = load_model(model_path)
-    validation_augmentation = get_validation_augmentation(height=224, width=224)
+    augmentation = get_validation_augmentation(height=224, width=224)
 
     # Get the feature embeddings for all patches in the data frame
-    patches_df['Embeddings'] = get_feature_embeddings(patches_df, model, preprocessing_fn, validation_augmentation)
+    patches_df['Embeddings'] = get_feature_embeddings(patches_df, model, preprocessing_fn, augmentation, batch_size)
 
     # Setup spotlight
     patch_lense = lenses.image("Path")
@@ -245,6 +253,9 @@ def main():
 
     parser.add_argument('--patches', type=str,
                         help='The path to the patch labels csv file output the Patches tool')
+
+    parser.add_argument('--batch_size', type=int, default=256,
+                        help='The number of patches to process in a batch')
 
     parser.add_argument('--frac', type=float, default=0.1,
                         help='The fraction of patches to use in spotlight')

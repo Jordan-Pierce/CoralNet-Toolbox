@@ -472,28 +472,36 @@ def main():
     spotlight_parser = subs.add_parser('Spotlight')
 
     # Panel 1
-    spotlight_parser_panel_1 = spotlight_parser.add_argument_group('Spotlight',
-                                                                   'Display patch data in feature space using '
-                                                                   'Spotlight. Requires a patch file; choose either a '
-                                                                   'pre-trained model (.pth) OR an encoder.',
+    spotlight_parser_panel_1 = spotlight_parser.add_argument_group('Model',
+                                                                   'Choose either a pre-trained model (.pth) OR an '
+                                                                   'encoder, not both.',
                                                                    gooey_options={'show_border': True})
 
-    spotlight_parser_panel_1.add_argument('--encoder_name', type=str, required=True,
+    spotlight_parser_panel_1.add_argument('--encoder_name', type=str,
                                           metavar="Pretrained Encoder",
-                                          help='Encoder, pre-trained on ImageNet dataset',
+                                          help='Encoder, pre-trained on ImageNet dataset.',
                                           widget='Dropdown', choices=get_classifier_encoders())
 
-    spotlight_parser_panel_1.add_argument('--pre_trained_path', required=False,
+    spotlight_parser_panel_1.add_argument('--pre_trained_path',
                                           metavar="Pretrained Path",
-                                          help='Path to pre-trained model',
+                                          help='Path to pre-trained model.',
                                           widget="FileChooser")
 
-    spotlight_parser_panel_1.add_argument('--patches', type=str,
+    spotlight_parser_panel_2 = spotlight_parser.add_argument_group('Patches',
+                                                                   'Display patch data in feature space using '
+                                                                   'Spotlight. Requires a patch file.',
+                                                                   gooey_options={'show_border': True})
+
+    spotlight_parser_panel_2.add_argument('--patches', type=str,
                                           metavar="Patch Data",
                                           help='Patches dataframe file',
                                           widget="FileChooser")
 
-    spotlight_parser_panel_1.add_argument('--frac', type=int,
+    spotlight_parser_panel_2.add_argument('--batch_size', type=int, default=128,
+                                          metavar="Batch Size",
+                                          help='The number of samples per batch; GPU dependent.')
+
+    spotlight_parser_panel_2.add_argument('--frac', type=int,
                                           metavar='Percentage',
                                           default=50,
                                           help='Percentage of samples to use.',
