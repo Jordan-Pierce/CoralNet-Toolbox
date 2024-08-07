@@ -191,6 +191,7 @@ class MainWindow(QMainWindow):
                 if file_name not in self.imported_image_paths:
                     self.thumbnail_window.add_image(file_name)
                     self.imported_image_paths.add(file_name)
+                    self.annotation_window.loaded_image_paths.add(file_name)
                     progress_bar.update_progress()
                     QApplication.processEvents()  # Update GUI
 
@@ -297,7 +298,8 @@ class AnnotationWindow(QGraphicsView):
             return
 
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Annotations", "", "JSON Files (*.json);;All Files (*)", options=options)
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Annotations", "", "JSON Files (*.json);;All Files (*)",
+                                                   options=options)
         if file_path:
             with open(file_path, 'r') as file:
                 imported_annotations = json.load(file)
@@ -323,8 +325,24 @@ class AnnotationWindow(QGraphicsView):
                     color = QColor(*annotation['annotation_color'])
                     self.main_window.label_window.add_label_if_not_exists(short_label, long_label, color)
 
-            if self.current_image_path:
-                self.load_annotations(self.current_image_path)
+            # Update annotations to match the color of the label already in the project
+            updated_annotations = False
+            for image_path, annotations in self.annotations_dict.items():
+                for annotation in annotations:
+                    short_label = annotation['label_short_code']
+                    long_label = annotation['label_long_code']
+                    existing_color = self.main_window.label_window.get_label_color(short_label, long_label)
+                    if existing_color != QColor(*annotation['annotation_color']):
+                        annotation['annotation_color'] = existing_color.getRgb()
+                        updated_annotations = True
+
+            if updated_annotations:
+                QMessageBox.information(self, "Annotations Updated",
+                                        "Some annotations have been updated to match the color of the labels already in the project.")
+
+            # Load annotations for all images in the project
+            for image_path in self.loaded_image_paths:
+                self.load_annotations(image_path)
 
     def export_coralnet_annotations(self):
         options = QFileDialog.Options()
@@ -963,8 +981,11 @@ class LabelWindow(QWidget):
         dialog = AddLabelDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             short_label, long_label, color = dialog.get_label_details()
-            new_label = self.add_label(short_label, long_label, color)
-            self.set_active_label(new_label)
+            if self.label_exists(short_label, long_label):
+                QMessageBox.warning(self, "Label Exists", "A label with the same short and long name already exists.")
+            else:
+                new_label = self.add_label(short_label, long_label, color)
+                self.set_active_label(new_label)
 
     def add_label(self, short_label, long_label, color):
         label = Label(short_label, long_label, color, self.label_width)
@@ -977,11 +998,22 @@ class LabelWindow(QWidget):
 
         return label
 
-    def add_label_if_not_exists(self, short_label, long_label, color):
+    def get_label_color(self, short_label, long_label):
+        label_color = None
+        for label in self.labels:
+            if short_label == label.short_label and long_label == label.long_label:
+                label_color = label.color
+        return label_color
+
+    def label_exists(self, short_label, long_label):
         for label in self.labels:
             if label.short_label == short_label and label.long_label == long_label:
-                return
-        self.add_label(short_label, long_label, color)
+                return True
+        return False
+
+    def add_label_if_not_exists(self, short_label, long_label, color):
+        if not self.label_exists(short_label, long_label):
+            self.add_label(short_label, long_label, color)
 
     def set_active_label(self, selected_label):
         if self.active_label and self.active_label != selected_label:
