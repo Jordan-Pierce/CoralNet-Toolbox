@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import pandas as pd
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QDockWidget, QToolBar, QToolButton, QLabel, QTextEdit,
                              QVBoxLayout, QWidget, QScrollArea, QGridLayout, QPushButton, QFileDialog, QAction,
@@ -88,6 +89,8 @@ from PyQt5.QtWidgets import QAction, QStyle
 from PyQt5.QtWidgets import QAction
 
 class MainWindow(QMainWindow):
+    toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
+
     def __init__(self):
         super().__init__()
 
@@ -130,7 +133,17 @@ class MainWindow(QMainWindow):
         self.toolbar.setFixedWidth(40)
         self.toolbar.setMovable(False)  # Lock the toolbar in place
         self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
+
         # Add tools here
+        self.select_tool_action = QAction(QIcon(QPixmap(16, 16)), "Select", self)
+        self.select_tool_action.setCheckable(True)
+        self.select_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.select_tool_action)
+
+        self.annotate_tool_action = QAction(QIcon(QPixmap(16, 16)), "Annotate", self)
+        self.annotate_tool_action.setCheckable(True)
+        self.annotate_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.annotate_tool_action)
 
         self.left_layout.addWidget(self.annotation_window, 85)
         self.left_layout.addWidget(self.label_window, 15)
@@ -143,20 +156,27 @@ class MainWindow(QMainWindow):
         self.import_images_action.triggered.connect(self.import_images)
         self.import_menu.addAction(self.import_images_action)
 
-        self.import_annotations_action = QAction("Import Annotations", self)
+        self.import_annotations_action = QAction("Import Annotations (JSON)", self)
         self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
         self.import_menu.addAction(self.import_annotations_action)
 
         self.export_menu = self.menu_bar.addMenu("Export")
-        self.export_annotations_action = QAction("Export Annotations", self)
+        self.export_annotations_action = QAction("Export Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
         self.export_menu.addAction(self.export_annotations_action)
+
+        self.export_coralnet_annotations_action = QAction("Export Annotations (CoralNet)", self)
+        self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
+        self.export_menu.addAction(self.export_coralnet_annotations_action)
 
         # Set up global event filter
         self.global_event_filter = GlobalEventFilter(self.label_window, self.annotation_window)
         QApplication.instance().installEventFilter(self.global_event_filter)
 
         self.imported_image_paths = set()  # Set to keep track of imported image paths
+
+        # Connect the toolChanged signal to the AnnotationWindow
+        self.toolChanged.connect(self.annotation_window.handle_tool_change)
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
@@ -197,6 +217,21 @@ class MainWindow(QMainWindow):
         if event.key() == Qt.Key_Escape:
             self.close()
 
+    def toggle_tool(self, state):
+        action = self.sender()
+        if action == self.select_tool_action:
+            if state:
+                self.annotate_tool_action.setChecked(False)
+                self.toolChanged.emit("select")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.annotate_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.toolChanged.emit("annotate")
+            else:
+                self.toolChanged.emit(None)
+
 from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem
 from PyQt5.QtGui import QPixmap, QPen, QTransform, QMouseEvent, QColor
 from PyQt5.QtCore import Qt, QPointF, pyqtSignal
@@ -208,6 +243,7 @@ from PyQt5.QtCore import Qt
 
 class AnnotationWindow(QGraphicsView):
     imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
+    toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
 
     def __init__(self, main_window, parent=None, annotation_size=224, annotation_color=(255, 0, 0)):
         super().__init__(parent)
@@ -219,12 +255,14 @@ class AnnotationWindow(QGraphicsView):
         self.pan_active = False
         self.annotation_size = annotation_size
         self.set_annotation_color(annotation_color)
+        self.selected_annotation = None
         self.temp_annotation = None
         self.image_set = False  # Flag to check if the image has been set
         self.annotations_dict = {}  # Dictionary to store annotations for each image
         self.undo_stack = []  # Stack to store undo actions
         self.redo_stack = []  # Stack to store redo actions
         self.active_label = None  # Flag to check if an active label is set
+        self.current_tool = None  # Store the current tool state
 
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
@@ -234,6 +272,23 @@ class AnnotationWindow(QGraphicsView):
 
         self.image_item = None  # Initialize image_item to None
         self.loaded_image_paths = set()  # Initialize the set to store loaded image paths
+
+        self.toolChanged.connect(self.handle_tool_change)
+
+    def handle_tool_change(self, tool):
+        self.current_tool = tool
+        if self.current_tool == "select":
+            self.setCursor(Qt.PointingHandCursor)
+        elif self.current_tool == "annotate":
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+            self.hide_temp_annotation()
+
+        # Unselect the annotation if the tool is changed
+        if self.selected_annotation:
+            self.selected_annotation.setPen(QPen(self.annotation_color, 2))
+            self.selected_annotation = None
 
     def export_annotations(self):
         options = QFileDialog.Options()
@@ -277,7 +332,33 @@ class AnnotationWindow(QGraphicsView):
             if self.current_image_path:
                 self.load_annotations(self.current_image_path)
 
+    def export_coralnet_annotations(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export CoralNet Annotations", "", "CSV Files (*.csv);;All Files (*)", options=options)
+        if file_path:
+            try:
+                data = []
+                for image_path, annotations in self.annotations_dict.items():
+                    for annotation in annotations:
+                        image_basename = os.path.basename(image_path)
+                        center_xy = annotation['center_xy']
+                        label = annotation['label_short_code']
+                        patch_size = annotation['annotation_size']
+                        data.append([image_basename, int(center_xy[1]), int(center_xy[0]), label, patch_size])
+
+                df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Patch Size'])
+                df.to_csv(file_path, index=False)
+
+            except Exception as e:
+                QMessageBox.warning(self, "Error Exporting Annotations", f"An error occurred while exporting annotations: {str(e)}")
+
     def set_image(self, image, image_path):
+
+        # Unselect the annotation if a new image is loaded
+        if self.selected_annotation:
+            self.selected_annotation.setPen(QPen(self.annotation_color, 2))
+            self.selected_annotation = None
+
         self.image_item = QGraphicsPixmapItem(QPixmap(image))
         self.scene.clear()
         self.scene.addItem(self.image_item)
@@ -305,23 +386,47 @@ class AnnotationWindow(QGraphicsView):
         self.scale(factor, factor)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if self.image_set and event.button() == Qt.LeftButton:
-            self.add_annotation(self.mapToScene(event.pos()))
-        elif event.button() == Qt.RightButton:
-            self.pan_active = True
-            self.pan_start = event.pos()
-            self.setCursor(Qt.ClosedHandCursor)  # Change cursor to indicate panning
+        if self.image_set:
+            if self.current_tool == "select":
+                self.select_annotation(event)
+            elif self.current_tool == "annotate" and event.button() == Qt.LeftButton:
+                self.add_annotation(self.mapToScene(event.pos()))
+            elif event.button() == Qt.RightButton:
+                self.pan_active = True
+                self.pan_start = event.pos()
+                self.setCursor(Qt.ClosedHandCursor)  # Change cursor to indicate panning
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        scene_pos = self.mapToScene(event.pos())
-        if self.pan_active:
+        if self.current_tool == "annotate" and self.image_set and self.image_item and self.image_item.boundingRect().contains(self.mapToScene(event.pos())):
+            self.show_temp_annotation(self.mapToScene(event.pos()))
+        elif self.pan_active:
             self.pan(event.pos())
-        elif self.image_set and self.image_item and self.image_item.boundingRect().contains(scene_pos):
-            self.show_temp_annotation(scene_pos)
         else:
             self.hide_temp_annotation()
         super().mouseMoveEvent(event)
+
+    def select_annotation(self, event):
+        pos = self.mapToScene(event.pos())
+        items = self.scene.items(pos)
+        for item in items:
+            if isinstance(item, QGraphicsRectItem):
+                if self.selected_annotation:
+                    self.selected_annotation.setPen(QPen(self.annotation_color, 2))
+                self.selected_annotation = item
+                self.selected_annotation.setPen(QPen(Qt.blue, 2))
+                break
+
+    def delete_selected_annotation(self):
+        if self.selected_annotation:
+            for annotation_details in self.annotations_dict.get(self.current_image_path, []):
+                center_xy = annotation_details['center_xy']
+                half_size = annotation_details['annotation_size'] / 2
+                if self.selected_annotation.rect().x() == center_xy[0] - half_size and self.selected_annotation.rect().y() == center_xy[1] - half_size:
+                    self.annotations_dict[self.current_image_path].remove(annotation_details)
+                    self.scene.removeItem(self.selected_annotation)
+                    self.selected_annotation = None
+                    break
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.RightButton:
@@ -336,6 +441,8 @@ class AnnotationWindow(QGraphicsView):
                 self.undo()
             elif event.key() == Qt.Key_Y:
                 self.redo()
+        elif event.key() == Qt.Key_Delete:
+            self.delete_selected_annotation()
         super().keyPressEvent(event)
 
     def pan(self, pos):
@@ -485,12 +592,10 @@ class AnnotationWindow(QGraphicsView):
                 del self.annotations_dict[image_path]
             self.load_annotations(image_path)
 
-
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QLabel, QSizePolicy, QMessageBox, QCheckBox, QMenu
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 import os
-
 
 class ThumbnailWindow(QWidget):
     imageSelected = pyqtSignal(str)  # Signal to emit the selected image path
