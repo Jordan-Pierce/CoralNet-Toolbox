@@ -1,23 +1,17 @@
 import os
 import sys
 import json
+import random
+
 import pandas as pd
 
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QDockWidget, QToolBar, QToolButton, QLabel, QTextEdit,
-                             QVBoxLayout, QWidget, QScrollArea, QGridLayout, QPushButton, QFileDialog, QAction,
-                             QVBoxLayout, QHBoxLayout, QDialog, QProgressBar, QSizePolicy)
+from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
+                             QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
+                             QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
+                             QPushButton, QColorDialog, QMenu, QLineEdit)
 
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QWindow
-from PyQt5.QtCore import Qt, QPoint, QSize, QEvent, QTimer, QObject
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea, QGridLayout, QDialog, QApplication
-from PyQt5.QtCore import QEvent
-
-
-from PyQt5.QtCore import QObject, QEvent
-from PyQt5.QtGui import QKeyEvent, QWindow
-from PyQt5.QtWidgets import QApplication
-
-from PyQt5.QtCore import QObject, QEvent, Qt
+from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics
+from PyQt5.QtCore import pyqtSignal, Qt, QTimer, QEvent, QObject, QPointF, QSize
 
 
 class GlobalEventFilter(QObject):
@@ -80,21 +74,18 @@ class ProgressBar(QDialog):
         self.timer.stop()
 
 
-from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea, QGridLayout, QDialog, QAction, QFileDialog, QApplication
-from PyQt5.QtCore import pyqtSignal, Qt, QEvent, QObject
-from PyQt5.QtGui import QColor, QImage
-
-from PyQt5.QtWidgets import QAction, QStyle
-
-from PyQt5.QtWidgets import QAction
-
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
 
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Patch Extractor")
+        # Define the icon path
+
+        self.setWindowTitle("CoralNet Toolbox")
+        # Set the window icon
+        main_window_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/toolbox.png"
+        self.setWindowIcon(QIcon(main_window_icon_path))
 
         # Set window flags for resizing, minimize, maximize, and customizing
         self.setWindowFlags(Qt.Window |
@@ -134,13 +125,24 @@ class MainWindow(QMainWindow):
         self.toolbar.setMovable(False)  # Lock the toolbar in place
         self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
 
-        # Add tools here
-        self.select_tool_action = QAction(QIcon(QPixmap(16, 16)), "Select", self)
+        # Add a spacer before the first tool with a fixed height
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        spacer.setFixedHeight(10)  # Set a fixed height for the spacer
+        self.toolbar.addWidget(spacer)
+
+        # TODO
+        # Define icon paths
+        select_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/select.png"
+        annotate_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/annotate.png"
+
+        # Add tools here with icons
+        self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
         self.select_tool_action.setCheckable(True)
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
 
-        self.annotate_tool_action = QAction(QIcon(QPixmap(16, 16)), "Annotate", self)
+        self.annotate_tool_action = QAction(QIcon(annotate_icon_path), "Annotate", self)
         self.annotate_tool_action.setCheckable(True)
         self.annotate_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.annotate_tool_action)
@@ -232,14 +234,6 @@ class MainWindow(QMainWindow):
             else:
                 self.toolChanged.emit(None)
 
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem
-from PyQt5.QtGui import QPixmap, QPen, QTransform, QMouseEvent, QColor
-from PyQt5.QtCore import Qt, QPointF, pyqtSignal
-import os
-
-from PyQt5.QtWidgets import QToolBar, QAction
-from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import Qt
 
 class AnnotationWindow(QGraphicsView):
     imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
@@ -387,46 +381,25 @@ class AnnotationWindow(QGraphicsView):
 
     def mousePressEvent(self, event: QMouseEvent):
         if self.image_set:
-            if self.current_tool == "select":
-                self.select_annotation(event)
-            elif self.current_tool == "annotate" and event.button() == Qt.LeftButton:
-                self.add_annotation(self.mapToScene(event.pos()))
-            elif event.button() == Qt.RightButton:
+            if event.button() == Qt.RightButton:
                 self.pan_active = True
                 self.pan_start = event.pos()
                 self.setCursor(Qt.ClosedHandCursor)  # Change cursor to indicate panning
+            elif self.current_tool == "select" and event.button() == Qt.LeftButton:
+                self.select_annotation(event)
+            elif self.current_tool == "annotate" and event.button() == Qt.LeftButton:
+                self.add_annotation(self.mapToScene(event.pos()))
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self.current_tool == "annotate" and self.image_set and self.image_item and self.image_item.boundingRect().contains(self.mapToScene(event.pos())):
-            self.show_temp_annotation(self.mapToScene(event.pos()))
-        elif self.pan_active:
+        if self.pan_active:
             self.pan(event.pos())
+        elif self.current_tool == "annotate" and self.image_set and self.image_item and self.image_item.boundingRect().contains(
+                self.mapToScene(event.pos())):
+            self.show_temp_annotation(self.mapToScene(event.pos()))
         else:
             self.hide_temp_annotation()
         super().mouseMoveEvent(event)
-
-    def select_annotation(self, event):
-        pos = self.mapToScene(event.pos())
-        items = self.scene.items(pos)
-        for item in items:
-            if isinstance(item, QGraphicsRectItem):
-                if self.selected_annotation:
-                    self.selected_annotation.setPen(QPen(self.annotation_color, 2))
-                self.selected_annotation = item
-                self.selected_annotation.setPen(QPen(Qt.blue, 2))
-                break
-
-    def delete_selected_annotation(self):
-        if self.selected_annotation:
-            for annotation_details in self.annotations_dict.get(self.current_image_path, []):
-                center_xy = annotation_details['center_xy']
-                half_size = annotation_details['annotation_size'] / 2
-                if self.selected_annotation.rect().x() == center_xy[0] - half_size and self.selected_annotation.rect().y() == center_xy[1] - half_size:
-                    self.annotations_dict[self.current_image_path].remove(annotation_details)
-                    self.scene.removeItem(self.selected_annotation)
-                    self.selected_annotation = None
-                    break
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.RightButton:
@@ -463,7 +436,7 @@ class AnnotationWindow(QGraphicsView):
 
         half_size = self.annotation_size / 2
         annotation = QGraphicsRectItem(scene_pos.x() - half_size, scene_pos.y() - half_size, self.annotation_size, self.annotation_size)
-        annotation.setPen(QPen(self.annotation_color, 2))
+        annotation.setPen(QPen(self.annotation_color, 4))
         self.scene.addItem(annotation)
 
         # Store the annotation details in the dictionary
@@ -486,6 +459,28 @@ class AnnotationWindow(QGraphicsView):
         # Push the action onto the undo stack
         self.undo_stack.append(('add', annotation_details))
         self.redo_stack.clear()  # Clear the redo stack
+
+    def select_annotation(self, event):
+        pos = self.mapToScene(event.pos())
+        items = self.scene.items(pos)
+        for item in items:
+            if isinstance(item, QGraphicsRectItem):
+                if self.selected_annotation:
+                    self.selected_annotation.setPen(QPen(self.annotation_color, 4))
+                self.selected_annotation = item
+                self.selected_annotation.setPen(QPen(Qt.blue, 4))
+                break
+
+    def delete_selected_annotation(self):
+        if self.selected_annotation:
+            for annotation_details in self.annotations_dict.get(self.current_image_path, []):
+                center_xy = annotation_details['center_xy']
+                half_size = annotation_details['annotation_size'] / 2
+                if self.selected_annotation.rect().x() == center_xy[0] - half_size and self.selected_annotation.rect().y() == center_xy[1] - half_size:
+                    self.annotations_dict[self.current_image_path].remove(annotation_details)
+                    self.scene.removeItem(self.selected_annotation)
+                    self.selected_annotation = None
+                    break
 
     def clear_annotations(self):
         for annotation in self.scene.items():
@@ -517,7 +512,7 @@ class AnnotationWindow(QGraphicsView):
         self.hide_temp_annotation()
         half_size = self.annotation_size / 2
         self.temp_annotation = QGraphicsRectItem(scene_pos.x() - half_size, scene_pos.y() - half_size, self.annotation_size, self.annotation_size)
-        self.temp_annotation.setPen(QPen(self.annotation_color, 2))
+        self.temp_annotation.setPen(QPen(self.annotation_color, 4))
         self.scene.addItem(self.temp_annotation)
 
     def hide_temp_annotation(self):
@@ -531,7 +526,7 @@ class AnnotationWindow(QGraphicsView):
                 center_xy = annotation_details['center_xy']
                 half_size = annotation_details['annotation_size'] / 2
                 annotation = QGraphicsRectItem(center_xy[0] - half_size, center_xy[1] - half_size, annotation_details['annotation_size'], annotation_details['annotation_size'])
-                annotation.setPen(QPen(QColor(*annotation_details['annotation_color']), 2))
+                annotation.setPen(QPen(QColor(*annotation_details['annotation_color']), 4))
                 self.scene.addItem(annotation)
 
     def undo(self):
@@ -564,7 +559,7 @@ class AnnotationWindow(QGraphicsView):
         center_xy = details['center_xy']
         half_size = details['annotation_size'] / 2
         annotation = QGraphicsRectItem(center_xy[0] - half_size, center_xy[1] - half_size, details['annotation_size'], details['annotation_size'])
-        annotation.setPen(QPen(QColor(*details['annotation_color']), 2))
+        annotation.setPen(QPen(QColor(*details['annotation_color']), 4))
         self.scene.addItem(annotation)
 
         image_path = details['image_path']
@@ -592,10 +587,6 @@ class AnnotationWindow(QGraphicsView):
                 del self.annotations_dict[image_path]
             self.load_annotations(image_path)
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QLabel, QSizePolicy, QMessageBox, QCheckBox, QMenu
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
-from PyQt5.QtGui import QImage, QPixmap
-import os
 
 class ThumbnailWindow(QWidget):
     imageSelected = pyqtSignal(str)  # Signal to emit the selected image path
@@ -764,10 +755,6 @@ class ThumbnailLabel(QLabel):
         return QSize(self.size, self.size)
 
 
-import random
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QColorDialog
-from PyQt5.QtGui import QColor
-
 class AddLabelDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -817,9 +804,6 @@ class AddLabelDialog(QDialog):
     def get_label_details(self):
         return self.short_label_input.text(), self.long_label_input.text(), self.color
 
-from PyQt5.QtCore import pyqtSignal, Qt
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QColorDialog, QMenu
-from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics
 
 class Label(QWidget):
     color_changed = pyqtSignal(QColor)
