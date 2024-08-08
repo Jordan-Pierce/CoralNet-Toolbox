@@ -96,9 +96,10 @@ class MainWindow(QMainWindow):
                             Qt.WindowTitleHint)
 
         self.annotation_window = AnnotationWindow(self)
-        self.label_window = LabelWindow(self.annotation_window)
-        self.thumbnail_window = ThumbnailWindow(self.annotation_window)
+        self.label_window = LabelWindow(self)
+        self.thumbnail_window = ThumbnailWindow(self)
 
+        self.label_window.label_selected.connect(self.annotation_window.update_selected_annotation_label)
         # Connect the label window to the annotation window for current selected label
         self.label_window.label_selected.connect(self.annotation_window.set_label_details)
         # Connect thumbnail window to the annotation window for current image selected
@@ -239,6 +240,7 @@ class MainWindow(QMainWindow):
 class AnnotationWindow(QGraphicsView):
     imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
+    annotationSelected = pyqtSignal(dict)  # Signal to emit when an annotation is selected
 
     def __init__(self, main_window, parent=None, annotation_size=224, annotation_color=(255, 0, 0)):
         super().__init__(parent)
@@ -251,6 +253,8 @@ class AnnotationWindow(QGraphicsView):
         self.annotation_size = annotation_size
         self.set_annotation_color(annotation_color)
         self.selected_annotation = None
+        self.selected_annotation_color = None
+        self.selected_annotation_details = None
         self.temp_annotation = None
         self.image_set = False  # Flag to check if the image has been set
         self.annotations_dict = {}  # Dictionary to store annotations for each image
@@ -282,7 +286,7 @@ class AnnotationWindow(QGraphicsView):
 
         # Unselect the annotation if the tool is changed
         if self.selected_annotation:
-            self.selected_annotation.setPen(QPen(self.annotation_color, 2))
+            self.selected_annotation.setPen(QPen(self.annotation_color, 4))
             self.selected_annotation = None
 
     def export_annotations(self):
@@ -365,19 +369,23 @@ class AnnotationWindow(QGraphicsView):
                 QMessageBox.warning(self, "Error Exporting Annotations", f"An error occurred while exporting annotations: {str(e)}")
 
     def set_image(self, image, image_path):
-
         # Unselect the annotation if a new image is loaded
         if self.selected_annotation:
-            self.selected_annotation.setPen(QPen(self.annotation_color, 2))
+            self.selected_annotation.setPen(QPen(self.selected_annotation_color, 4))
             self.selected_annotation = None
 
+        # Create a new scene
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+
         self.image_item = QGraphicsPixmapItem(QPixmap(image))
-        self.scene.clear()
         self.scene.addItem(self.image_item)
+
+        # Fit the image in the view while maintaining the aspect ratio
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-        self.original_center = self.image_item.boundingRect().center()
+
         self.image_set = True  # Set the flag to True after the image has been set
-        self.hide_temp_annotation()  # Hide temp annotation when a new image is set
+        self.toggle_temp_annotation()  # Hide temp annotation when a new image is set
 
         # Store the image path as a string
         self.current_image_path = image_path
@@ -404,7 +412,7 @@ class AnnotationWindow(QGraphicsView):
                 self.pan_start = event.pos()
                 self.setCursor(Qt.ClosedHandCursor)  # Change cursor to indicate panning
             elif self.current_tool == "select" and event.button() == Qt.LeftButton:
-                self.select_annotation(event)
+                self.update_annotation_selection(event)
             elif self.current_tool == "annotate" and event.button() == Qt.LeftButton:
                 self.add_annotation(self.mapToScene(event.pos()))
         super().mousePressEvent(event)
@@ -414,16 +422,16 @@ class AnnotationWindow(QGraphicsView):
             self.pan(event.pos())
         elif self.current_tool == "annotate" and self.image_set and self.image_item and self.image_item.boundingRect().contains(
                 self.mapToScene(event.pos())):
-            self.show_temp_annotation(self.mapToScene(event.pos()))
+            self.toggle_temp_annotation(self.mapToScene(event.pos()))
         else:
-            self.hide_temp_annotation()
+            self.toggle_temp_annotation()
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.RightButton:
             self.pan_active = False
             self.setCursor(Qt.ArrowCursor)  # Reset cursor to default
-        self.hide_temp_annotation()
+        self.toggle_temp_annotation()
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
@@ -442,8 +450,53 @@ class AnnotationWindow(QGraphicsView):
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
 
-    def add_annotation(self, scene_pos: QPointF):
+    def undo(self):
+        if self.undo_stack:
+            action, details = self.undo_stack.pop()
+            if action == 'add':
+                self.remove_annotation(details)
+                self.redo_stack.append(('add', details))
 
+    def redo(self):
+        if self.redo_stack:
+            action, details = self.redo_stack.pop()
+            if action == 'add':
+                self.add_annotation_from_details(details)
+                self.undo_stack.append(('add', details))
+
+    def update_current_image_path(self, image_path):
+        self.current_image_path = image_path
+
+    def set_annotation_size(self, size):
+        self.annotation_size = size
+
+    def set_label_details(self, short_label, long_label, color):
+        self.label_short_code = short_label
+        self.label_long_code = long_label
+        self.set_annotation_color(color.getRgb()[:3])
+        self.active_label = True  # Set the active label flag
+
+    def set_annotation_color(self, color):
+        if isinstance(color, tuple) and len(color) == 3:
+            self.annotation_color = QColor(color[0], color[1], color[2])
+        else:
+            raise ValueError("Annotation color must be a tuple of three integers (R, G, B)")
+
+    def is_annotation_matching(self, annotation, details):
+
+        if not annotation:
+            return False
+
+        center_xy = details['center_xy']
+        half_size = details['annotation_size'] / 2
+        short_label = details['label_short_code']
+        long_label = details['label_long_code']
+        return (annotation.rect().x() == center_xy[0] - half_size and
+                annotation.rect().y() == center_xy[1] - half_size and
+                annotation.data(0) == short_label and
+                annotation.data(1) == long_label)
+
+    def add_annotation(self, scene_pos: QPointF, details=None):
         if not self.active_label:
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
             return
@@ -453,7 +506,8 @@ class AnnotationWindow(QGraphicsView):
             return
 
         half_size = self.annotation_size / 2
-        annotation = QGraphicsRectItem(scene_pos.x() - half_size, scene_pos.y() - half_size, self.annotation_size, self.annotation_size)
+        annotation = QGraphicsRectItem(scene_pos.x() - half_size, scene_pos.y() - half_size, self.annotation_size,
+                                       self.annotation_size)
         annotation.setPen(QPen(self.annotation_color, 4))
         self.scene.addItem(annotation)
 
@@ -478,26 +532,78 @@ class AnnotationWindow(QGraphicsView):
         self.undo_stack.append(('add', annotation_details))
         self.redo_stack.clear()  # Clear the redo stack
 
-    def select_annotation(self, event):
+    def add_annotation_from_details(self, details):
+        center_xy = details['center_xy']
+        self.add_annotation(QPointF(center_xy[0], center_xy[1]), details)
+
+    def update_annotation_selection(self, event, short_label=None, long_label=None, color=None):
         pos = self.mapToScene(event.pos())
         items = self.scene.items(pos)
+
+        # Find the first QGraphicsRectItem in the list, which is the topmost
         for item in items:
             if isinstance(item, QGraphicsRectItem):
                 if self.selected_annotation:
-                    self.selected_annotation.setPen(QPen(self.annotation_color, 4))
+                    # Reset the previously selected annotation's pen color
+                    self.selected_annotation.setPen(QPen(self.selected_annotation_color, 4))
+                    self.selected_annotation.update()
+
+                # Set the new selected annotation
                 self.selected_annotation = item
+                self.selected_annotation_color = item.pen().color()
                 self.selected_annotation.setPen(QPen(Qt.blue, 4))
+                self.selected_annotation.update()
+
+                # Update the label if provided
+                for annotation_details in self.annotations_dict.get(self.current_image_path, []):
+                    if self.is_annotation_matching(item, annotation_details):
+                        annotation_details['label_short_code'] = short_label
+                        annotation_details['label_long_code'] = long_label
+                        annotation_details['annotation_color'] = color.getRgb()
+                        self.selected_annotation.setPen(QPen(color, 4))
+                        break
+
+                break  # Exit the loop after selecting the first QGraphicsRectItem
+
+    def update_selected_annotation_label(self, short_label, long_label, color):
+        # Find the annotation details for the selected annotation
+        selected_annotation_details = None
+        for annotation_details in self.annotations_dict.get(self.current_image_path, []):
+            if self.is_annotation_matching(self.selected_annotation, annotation_details):
+                selected_annotation_details = annotation_details
                 break
+
+        # Update the label if provided
+        if selected_annotation_details:
+            selected_annotation_details['label_short_code'] = short_label
+            selected_annotation_details['label_long_code'] = long_label
+            selected_annotation_details['annotation_color'] = color.getRgb()
+            self.selected_annotation.setPen(QPen(color, 4))
+
+        # Select the corresponding label in the LabelWindow
+        if selected_annotation_details:
+            self.main_window.label_window.select_label_for_annotation(selected_annotation_details)
+
+    def remove_annotation(self, details):
+        self.remove_annotation_by_details(details)
+        self.redo_stack.append(('add', details))
+
+    def remove_annotation_by_details(self, details):
+        image_path = details['image_path']
+        if image_path in self.annotations_dict:
+            self.annotations_dict[image_path] = [anno for anno in self.annotations_dict[image_path] if anno != details]
+            for item in self.scene.items():
+                if isinstance(item, QGraphicsRectItem) and self.is_annotation_matching(item, details):
+                    self.scene.removeItem(item)
+                    break
 
     def delete_selected_annotation(self):
         if self.selected_annotation:
             for annotation_details in self.annotations_dict.get(self.current_image_path, []):
-                center_xy = annotation_details['center_xy']
-                half_size = annotation_details['annotation_size'] / 2
-                if self.selected_annotation.rect().x() == center_xy[0] - half_size and self.selected_annotation.rect().y() == center_xy[1] - half_size:
-                    self.annotations_dict[self.current_image_path].remove(annotation_details)
-                    self.scene.removeItem(self.selected_annotation)
+                if self.is_annotation_matching(self.selected_annotation, annotation_details):
+                    self.remove_annotation_by_details(annotation_details)
                     self.selected_annotation = None
+                    self.scene.update()
                     break
 
     def clear_annotations(self):
@@ -508,82 +614,35 @@ class AnnotationWindow(QGraphicsView):
         self.undo_stack.clear()
         self.redo_stack.clear()
 
-    def set_annotation_size(self, size):
-        self.annotation_size = size
-
-    def set_label_details(self, short_label, long_label, color):
-        self.label_short_code = short_label
-        self.label_long_code = long_label
-        self.set_annotation_color(color.getRgb()[:3])
-        self.active_label = True  # Set the active label flag
-
-    def set_annotation_color(self, color):
-        if isinstance(color, tuple) and len(color) == 3:
-            self.annotation_color = QColor(color[0], color[1], color[2])
-        else:
-            raise ValueError("Annotation color must be a tuple of three integers (R, G, B)")
-
-    def show_temp_annotation(self, scene_pos: QPointF):
-        if not self.active_label:
-            return
-
-        self.hide_temp_annotation()
-        half_size = self.annotation_size / 2
-        self.temp_annotation = QGraphicsRectItem(scene_pos.x() - half_size, scene_pos.y() - half_size, self.annotation_size, self.annotation_size)
-        self.temp_annotation.setPen(QPen(self.annotation_color, 4))
-        self.scene.addItem(self.temp_annotation)
-
-    def hide_temp_annotation(self):
-        if self.temp_annotation and self.scene.items().__contains__(self.temp_annotation):
+    def toggle_temp_annotation(self, scene_pos: QPointF = None):
+        if self.temp_annotation:
+            # Hide the temporary annotation if it exists
             self.scene.removeItem(self.temp_annotation)
-        self.temp_annotation = None
+            self.temp_annotation = None
+        elif scene_pos:
+            # Show the temporary annotation if a position is provided
+            if not self.active_label:
+                return
+
+            half_size = self.annotation_size / 2
+            self.temp_annotation = QGraphicsRectItem(scene_pos.x() - half_size, scene_pos.y() - half_size, self.annotation_size, self.annotation_size)
+            self.temp_annotation.setPen(QPen(self.annotation_color, 4))
+            self.scene.addItem(self.temp_annotation)
 
     def load_annotations(self, image_path):
         if image_path in self.annotations_dict:
             for annotation_details in self.annotations_dict[image_path]:
                 center_xy = annotation_details['center_xy']
                 half_size = annotation_details['annotation_size'] / 2
-                annotation = QGraphicsRectItem(center_xy[0] - half_size, center_xy[1] - half_size, annotation_details['annotation_size'], annotation_details['annotation_size'])
+
+                annotation = QGraphicsRectItem(center_xy[0] - half_size, center_xy[1] - half_size,
+                                               annotation_details['annotation_size'],
+                                               annotation_details['annotation_size'])
+
                 annotation.setPen(QPen(QColor(*annotation_details['annotation_color']), 4))
+                annotation.setData(0, annotation_details['label_short_code'])
+                annotation.setData(1, annotation_details['label_long_code'])
                 self.scene.addItem(annotation)
-
-    def undo(self):
-        if self.undo_stack:
-            action, details = self.undo_stack.pop()
-            if action == 'add':
-                self.remove_annotation(details)
-                self.redo_stack.append(('add', details))
-
-    def redo(self):
-        if self.redo_stack:
-            action, details = self.redo_stack.pop()
-            if action == 'add':
-                self.add_annotation_from_details(details)
-                self.undo_stack.append(('add', details))
-
-    def remove_annotation(self, details):
-        image_path = details['image_path']
-        if image_path in self.annotations_dict:
-            self.annotations_dict[image_path] = [anno for anno in self.annotations_dict[image_path] if anno != details]
-            for item in self.scene.items():
-                if isinstance(item, QGraphicsRectItem):
-                    center_xy = details['center_xy']
-                    half_size = details['annotation_size'] / 2
-                    if item.rect().x() == center_xy[0] - half_size and item.rect().y() == center_xy[1] - half_size:
-                        self.scene.removeItem(item)
-                        break
-
-    def add_annotation_from_details(self, details):
-        center_xy = details['center_xy']
-        half_size = details['annotation_size'] / 2
-        annotation = QGraphicsRectItem(center_xy[0] - half_size, center_xy[1] - half_size, details['annotation_size'], details['annotation_size'])
-        annotation.setPen(QPen(QColor(*details['annotation_color']), 4))
-        self.scene.addItem(annotation)
-
-        image_path = details['image_path']
-        if image_path not in self.annotations_dict:
-            self.annotations_dict[image_path] = []
-        self.annotations_dict[image_path].append(details)
 
     def delete_image(self, image_path):
         if image_path in self.annotations_dict:
@@ -594,9 +653,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_item = None  # Reset image_item to None
             self.image_set = False  # Reset image_set flag
         self.imageDeleted.emit(image_path)  # Emit the signal when an image is deleted
-
-    def update_current_image_path(self, image_path):
-        self.current_image_path = image_path
 
     def delete_annotations_for_label(self, short_label, long_label):
         for image_path, annotations in list(self.annotations_dict.items()):
@@ -610,10 +666,10 @@ class ThumbnailWindow(QWidget):
     imageSelected = pyqtSignal(str)  # Signal to emit the selected image path
     imageDeleted = pyqtSignal(str)  # Signal to emit the deleted image path
 
-    def __init__(self, annotation_window):
+    def __init__(self, main_window):
         super().__init__()
 
-        self.annotation_window = annotation_window
+        self.annotation_window = main_window.annotation_window
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
@@ -918,10 +974,10 @@ class Label(QWidget):
 class LabelWindow(QWidget):
     label_selected = pyqtSignal(str, str, QColor)  # Signal to emit label details
 
-    def __init__(self, annotation_window, label_width=80):
+    def __init__(self, main_window, label_width=80):
         super().__init__()
 
-        self.annotation_window = annotation_window
+        self.annotation_window = main_window.annotation_window
         self.label_width = label_width
         self.labels_per_row = 1  # Initial value, will be updated
 
@@ -960,6 +1016,9 @@ class LabelWindow(QWidget):
         # Do not set the default label as active
 
         self.show_confirmation_dialog = True
+
+        # Connect annotation selected signal
+        self.annotation_window.annotationSelected.connect(self.select_label_for_annotation)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1026,30 +1085,13 @@ class LabelWindow(QWidget):
         print(f"Active label: {self.active_label.short_label}")
         self.label_selected.emit(selected_label.short_label, selected_label.long_label, selected_label.color)
 
-    def handle_wasd_key(self, key):
-        if not self.active_label:
-            return
-
-        try:
-            current_index = self.labels.index(self.active_label)
-        except ValueError:
-            # If the active label is not in the list, set it to None
-            self.active_label = None
-            return
-
-        if key == Qt.Key_W:
-            new_index = current_index - self.labels_per_row
-        elif key == Qt.Key_S:
-            new_index = current_index + self.labels_per_row
-        elif key == Qt.Key_A:
-            new_index = current_index - 1 if current_index % self.labels_per_row != 0 else current_index
-        elif key == Qt.Key_D:
-            new_index = current_index + 1 if (current_index + 1) % self.labels_per_row != 0 else current_index
-        else:
-            return
-
-        if 0 <= new_index < len(self.labels):
-            self.set_active_label(self.labels[new_index])
+    def select_label_for_annotation(self, annotation_details):
+        short_label = annotation_details['label_short_code']
+        long_label = annotation_details['label_long_code']
+        for label in self.labels:
+            if label.short_label == short_label and label.long_label == long_label:
+                self.set_active_label(label)
+                break
 
     def delete_label(self, label):
         if label.short_label == "Review" and label.long_label == "Review" and label.color == QColor(255, 255, 255):
@@ -1086,6 +1128,31 @@ class LabelWindow(QWidget):
             self.active_label = None
             if self.labels:
                 self.set_active_label(self.labels[0])
+
+    def handle_wasd_key(self, key):
+        if not self.active_label:
+            return
+
+        try:
+            current_index = self.labels.index(self.active_label)
+        except ValueError:
+            # If the active label is not in the list, set it to None
+            self.active_label = None
+            return
+
+        if key == Qt.Key_W:
+            new_index = current_index - self.labels_per_row
+        elif key == Qt.Key_S:
+            new_index = current_index + self.labels_per_row
+        elif key == Qt.Key_A:
+            new_index = current_index - 1 if current_index % self.labels_per_row != 0 else current_index
+        elif key == Qt.Key_D:
+            new_index = current_index + 1 if (current_index + 1) % self.labels_per_row != 0 else current_index
+        else:
+            return
+
+        if 0 <= new_index < len(self.labels):
+            self.set_active_label(self.labels[new_index])
 
 
 if __name__ == "__main__":
