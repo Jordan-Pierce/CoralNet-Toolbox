@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
         # Connect thumbnail window to the annotation window for current image selected
         self.annotation_window.imageDeleted.connect(self.thumbnail_window.handle_image_deletion)
         # Connect the label_selected signal from LabelWindow to update the selected label in AnnotationWindow
-        self.label_window.label_selected.connect(self.annotation_window.set_selected_label_id)
+        self.label_window.label_selected.connect(self.annotation_window.set_selected_label)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -244,14 +244,18 @@ class Annotation(QObject):
     selected = pyqtSignal(object)  # Signal to emit the selected annotation
     annotation_deleted = pyqtSignal(object)  # Signal to emit when the annotation is deleted
 
-    def __init__(self, center_xy: QPointF, annotation_size: int, short_label_code: str, long_label_code: str,
-                 color: QColor, image_path: str, label_id: str):
+    def __init__(self, center_xy: QPointF,
+                 annotation_size: int,
+                 short_label_code: str,
+                 long_label_code: str,
+                 color: QColor,
+                 image_path: str,
+                 label_id: str):
         super().__init__()
         self.id = str(uuid.uuid4())  # Unique identifier
         self.center_xy = center_xy
         self.annotation_size = annotation_size
-        self.label = Label(short_label_code, long_label_code, color)  # Create a Label object
-        self.label_id = label_id  # Store the label's UUID
+        self.label = Label(short_label_code, long_label_code, color, label_id)
         self.image_path = image_path
         self.is_selected = False
         self.graphics_item = None  # QGraphicsRectItem for the annotation
@@ -265,7 +269,7 @@ class Annotation(QObject):
             'label_long_code': self.label.long_label_code,
             'annotation_color': self.label.color.getRgb(),
             'image_path': self.image_path,
-            'label_id': self.label_id  # Include the label's UUID in the dictionary
+            'label_id': self.label.id  # Include the label's UUID in the dictionary
         }
 
     @classmethod
@@ -287,21 +291,18 @@ class Annotation(QObject):
         if not self.is_selected:
             self.is_selected = True
             self.selected.emit(self)
-            self.update_graphics_item_color(self.get_inverse_color(self.label.color))
+            self.update_graphics_item_pen(self.label.color, 12)  # Increase line width
 
     def deselect(self):
         if self.is_selected:
             self.is_selected = False
-            self.update_graphics_item_color(self.label.color)
+            self.update_graphics_item_pen(self.label.color, 4)  # Reset line width
 
     def delete(self):
         self.annotation_deleted.emit(self)
         if self.graphics_item:
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
-
-    def get_inverse_color(self, color: QColor):
-        return QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
 
     def to_coralnet_format(self):
         return [os.path.basename(self.image_path),
@@ -334,6 +335,11 @@ class Annotation(QObject):
             self.graphics_item.setPen(QPen(color, 4))
             self.graphics_item.update()
 
+    def update_graphics_item_pen(self, color: QColor, width: int):
+        if self.graphics_item:
+            self.graphics_item.setPen(QPen(color, width))
+            self.graphics_item.update()
+
     def move(self, new_center_xy: QPointF):
         self.center_xy = new_center_xy
         self.update_graphics_item()
@@ -358,7 +364,6 @@ class Annotation(QObject):
 class AnnotationWindow(QGraphicsView):
     imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
-    annotationSelected = pyqtSignal(str)  # Signal to emit when the annotation changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
 
     def __init__(self, main_window, parent=None):
@@ -380,7 +385,6 @@ class AnnotationWindow(QGraphicsView):
 
         self.selected_annotation = None  # Stores the selected annotation
         self.selected_label = None  # Flag to check if an active label is set
-        self.selected_label_id = None
         self.selected_tool = None  # Store the current tool state
 
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
@@ -396,16 +400,6 @@ class AnnotationWindow(QGraphicsView):
         self.loaded_image_paths = set()  # Initialize the set to store loaded image paths
 
         self.toolChanged.connect(self.set_selected_tool)
-
-    def set_selected_tool(self, tool):
-        self.selected_tool = tool
-        if self.selected_tool == "select":
-            self.setCursor(Qt.PointingHandCursor)
-        elif self.selected_tool == "annotate":
-            self.setCursor(Qt.CrossCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
-        self.unselect_annotation()
 
     def export_annotations(self):
         options = QFileDialog.Options()
@@ -457,8 +451,11 @@ class AnnotationWindow(QGraphicsView):
                     short_label_code = annotation_data['label_short_code']
                     long_label_code = annotation_data['label_long_code']
                     color = QColor(*annotation_data['annotation_color'])
-                    # TODO update this
-                    self.main_window.label_window.add_label_if_not_exists(short_label_code, long_label_code, color)
+                    label_id = annotation_data['label_id']
+                    self.main_window.label_window.add_label_if_not_exists(short_label_code,
+                                                                          long_label_code,
+                                                                          color,
+                                                                          label_id)
 
                     existing_color = self.main_window.label_window.get_label_color(short_label_code, long_label_code)
                     if existing_color != color:
@@ -496,6 +493,50 @@ class AnnotationWindow(QGraphicsView):
             except Exception as e:
                 QMessageBox.warning(self, "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
+
+    def set_selected_tool(self, tool):
+        self.selected_tool = tool
+        if self.selected_tool == "select":
+            self.setCursor(Qt.PointingHandCursor)
+        elif self.selected_tool == "annotate":
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+        self.unselect_annotation()
+
+    def set_selected_label(self, label):
+        self.selected_label = label
+        self.annotation_color = label.color
+
+    def toggle_cursor_annotation(self, scene_pos: QPointF = None):
+        if scene_pos:
+            # Show the cursor annotation if a position is provided and within the image bounds
+            if not self.selected_label or not self.annotation_color:
+                return
+
+            if not self.cursorInWindow(scene_pos):
+                return
+
+            if not self.cursor_annotation:
+                half_size = self.annotation_size / 2
+                self.cursor_annotation = QGraphicsRectItem(scene_pos.x() - half_size,
+                                                           scene_pos.y() - half_size,
+                                                           self.annotation_size,
+                                                           self.annotation_size)
+                self.cursor_annotation.setPen(QPen(self.annotation_color, 4))
+                self.scene.addItem(self.cursor_annotation)
+            else:
+                half_size = self.annotation_size / 2
+                self.cursor_annotation.setRect(scene_pos.x() - half_size,
+                                               scene_pos.y() - half_size,
+                                               self.annotation_size,
+                                               self.annotation_size)
+                self.cursor_annotation.setPen(QPen(self.annotation_color, 4))
+        else:
+            # Hide the cursor annotation if it exists
+            if self.cursor_annotation:
+                self.scene.removeItem(self.cursor_annotation)
+                self.cursor_annotation = None
 
     def set_image(self, image, image_path):
         # Unselect annotation
@@ -643,26 +684,14 @@ class AnnotationWindow(QGraphicsView):
                 annotation.selected.connect(self.select_annotation)
                 annotation.annotation_deleted.connect(self.delete_annotation)
 
-    def set_selected_label_id(self, label_id):
-        self.selected_label_id = label_id
-
     def add_annotation(self, scene_pos: QPointF):
 
-        if not self.selected_label_id:
+        if not self.selected_label:
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
             return
 
         # Check if the annotation's center point is within the image bounds
         if not self.active_image or not self.image_item or not self.cursorInWindow(scene_pos):
-            return
-
-        # Find the label object based on the selected label's UUID
-        for label in self.main_window.label_window.labels:
-            if label.id == self.selected_label_id:
-                self.selected_label = label
-                break
-
-        if not self.selected_label:
             return
 
         # Create an Annotation object
@@ -707,35 +736,6 @@ class AnnotationWindow(QGraphicsView):
         self.undo_stack.clear()
         self.redo_stack.clear()
 
-    def toggle_cursor_annotation(self, scene_pos: QPointF = None):
-        if scene_pos:
-            # Show the cursor annotation if a position is provided and within the image bounds
-            if not self.selected_label or not self.selected_label.color:
-                return
-
-            if not self.cursorInWindow(scene_pos):
-                return
-
-            if not self.cursor_annotation:
-                half_size = self.annotation_size / 2
-                self.cursor_annotation = QGraphicsRectItem(scene_pos.x() - half_size,
-                                                           scene_pos.y() - half_size,
-                                                           self.annotation_size,
-                                                           self.annotation_size)
-                self.cursor_annotation.setPen(QPen(self.selected_label.color, 4))
-                self.scene.addItem(self.cursor_annotation)
-            else:
-                half_size = self.annotation_size / 2
-                self.cursor_annotation.setRect(scene_pos.x() - half_size,
-                                               scene_pos.y() - half_size,
-                                               self.annotation_size,
-                                               self.annotation_size)
-        else:
-            # Hide the cursor annotation if it exists
-            if self.cursor_annotation:
-                self.scene.removeItem(self.cursor_annotation)
-                self.cursor_annotation = None
-
     def delete_image(self, image_path):
         if image_path in self.annotations_dict:
             for annotation_id in list(self.annotations_dict.keys()):
@@ -752,12 +752,11 @@ class AnnotationWindow(QGraphicsView):
 
         self.imageDeleted.emit(image_path)  # Emit the signal when an image is deleted
 
-    def delete_annotations_for_label(self, short_label_code, long_label):
-        for annotation_id in list(self.annotations_dict.keys()):
-            annotation = self.annotations_dict[annotation_id]
-            if annotation.label_short_code == short_label_code and annotation.label_long_code == long_label:
+    def delete_annotations_for_label(self, label):
+        for annotation in list(self.annotations_dict.values()):
+            if annotation.label.id == label.id:
                 annotation.delete()
-                del self.annotations_dict[annotation_id]
+                del self.annotations_dict[annotation.id]
 
 
 class ThumbnailWindow(QWidget):
@@ -987,10 +986,10 @@ class Label(QWidget):
     selected = pyqtSignal(object)  # Signal to emit the selected label
     label_deleted = pyqtSignal(object)  # Signal to emit when the label is deleted
 
-    def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), fixed_width=80):
+    def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None, fixed_width=80):
         super().__init__()
 
-        self.id = str(uuid.uuid4())  # Unique identifier
+        self.id = str(uuid.uuid4()) if label_id is None else label_id
         self.short_label_code = short_label_code
         self.long_label_code = long_label_code
         self.color = color
@@ -1035,6 +1034,9 @@ class Label(QWidget):
         self.color_button.setStyleSheet(
             f"background-color: {self.color.name()}; border: none; border-radius: 10px;")
         self.update()  # Trigger a repaint
+
+    def change_id(self, label_id):
+        self.id = label_id
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1111,7 +1113,7 @@ class Label(QWidget):
                 f"color={self.color.name()})")
 
 class LabelWindow(QWidget):
-    label_selected = pyqtSignal(str)  # Signal to emit label details
+    label_selected = pyqtSignal(object)  # Signal to emit the entire Label object
 
     def __init__(self, main_window, label_width=80):
         super().__init__()
@@ -1151,7 +1153,7 @@ class LabelWindow(QWidget):
         default_short_label_code = "Review"
         default_long_label_code = "Review"
         default_color = QColor(255, 255, 255)  # White color
-        self.add_label(default_short_label_code, default_long_label_code, default_color)
+        self.add_label(default_short_label_code, default_long_label_code, default_color, label_id="-1")
         # Do not set the default label as active
 
         self.show_confirmation_dialog = True
@@ -1182,8 +1184,10 @@ class LabelWindow(QWidget):
                 new_label = self.add_label(short_label_code, long_label_code, color)
                 self.set_active_label(new_label)
 
-    def add_label(self, short_label_code, long_label_code, color):
-        label = Label(short_label_code, long_label_code, color, self.label_width)
+    def add_label(self, short_label_code, long_label_code, color, label_id=None):
+        # Create the label
+        label = Label(short_label_code, long_label_code, color, label_id, fixed_width=self.label_width)
+        # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
         self.labels.append(label)
@@ -1200,24 +1204,25 @@ class LabelWindow(QWidget):
         self.active_label = selected_label
         self.active_label.select()
         print(f"Active label: {self.active_label.short_label_code}")
-        self.label_selected.emit(selected_label.id)  # Emit the selected label's UUID
+        self.label_selected.emit(selected_label)  # Emit the entire Label object
 
     def get_label_color(self, short_label_code, long_label_code):
-        label_color = None
         for label in self.labels:
             if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
-                label_color = label.color
-        return label_color
+                return label.color
+        return None
 
-    def label_exists(self, short_label_code, long_label_code):
+    def label_exists(self, short_label_code, long_label_code, label_id=None):
         for label in self.labels:
+            if label_id is not None and label.id == label_id:
+                return True
             if label.short_label_code == short_label_code and label.long_label_code == long_label_code:
                 return True
         return False
 
-    def add_label_if_not_exists(self, short_label_code, long_label_code, color):
-        if not self.label_exists(short_label_code, long_label_code):
-            self.add_label(short_label_code, long_label_code, color)
+    def add_label_if_not_exists(self, short_label_code, long_label_code, color, label_id=None):
+        if not self.label_exists(short_label_code, long_label_code, label_id):
+            self.add_label(short_label_code, long_label_code, color, label_id)
 
     def select_label_for_annotation(self, label_id):
         for lbl in self.labels:
@@ -1226,7 +1231,9 @@ class LabelWindow(QWidget):
                 break
 
     def delete_label(self, label):
-        if label.short_label_code == "Review" and label.long_label_code == "Review" and label.color == QColor(255, 255, 255):
+        if (label.short_label_code == "Review" and
+                label.long_label_code == "Review" and
+                label.color == QColor(255, 255, 255)):
             QMessageBox.warning(self, "Cannot Delete Label", "The 'Review' label cannot be deleted.")
             return
 
@@ -1253,7 +1260,7 @@ class LabelWindow(QWidget):
         self.reorganize_labels()
 
         # Delete annotations associated with the label
-        self.annotation_window.delete_annotations_for_label(label.short_label_code, label.long_label_code)
+        self.annotation_window.delete_annotations_for_label(label)
 
         # Reset active label if it was deleted
         if self.active_label == label:
