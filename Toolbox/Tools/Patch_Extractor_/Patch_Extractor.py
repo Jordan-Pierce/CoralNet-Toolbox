@@ -100,16 +100,16 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.thumbnail_window = ThumbnailWindow(self)
 
-        # Connect the selectedLabel signal to the LabelWindow's select_label_for_annotation method
-        self.annotation_window.labelSelected.connect(self.label_window.select_label_for_annotation)
+        # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
+        self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
         self.thumbnail_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageDeleted signal to delete_image in AnnotationWindow
         self.thumbnail_window.imageDeleted.connect(self.annotation_window.delete_image)
         # Connect thumbnail window to the annotation window for current image selected
-        self.annotation_window.imageDeleted.connect(self.thumbnail_window.handle_image_deletion)
-        # Connect the label_selected signal from LabelWindow to update the selected label in AnnotationWindow
-        self.label_window.label_selected.connect(self.annotation_window.set_selected_label)
+        self.annotation_window.imageDeleted.connect(self.thumbnail_window.delete_image)
+        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
+        self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -508,6 +508,11 @@ class AnnotationWindow(QGraphicsView):
         self.selected_label = label
         self.annotation_color = label.color
 
+        if self.selected_annotation:
+            self.selected_annotation.change_label(self.selected_label)
+            self.selected_annotation.deselect()
+            self.selected_annotation.select()
+
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         if scene_pos:
             # Show the cursor annotation if a position is provided and within the image bounds
@@ -895,7 +900,7 @@ class ThumbnailWindow(QWidget):
                     return label
         return None
 
-    def handle_image_deletion(self, image_path):
+    def delete_image(self, image_path):
         if image_path in self.images:
             del self.images[image_path]
         for i in range(self.thumbnail_container_layout.count()):
@@ -1112,8 +1117,9 @@ class Label(QWidget):
                 f"long_label_code={self.long_label_code}, "
                 f"color={self.color.name()})")
 
+
 class LabelWindow(QWidget):
-    label_selected = pyqtSignal(object)  # Signal to emit the entire Label object
+    labelSelected = pyqtSignal(object)  # Signal to emit the entire Label object
 
     def __init__(self, main_window, label_width=80):
         super().__init__()
@@ -1204,7 +1210,7 @@ class LabelWindow(QWidget):
         self.active_label = selected_label
         self.active_label.select()
         print(f"Active label: {self.active_label.short_label_code}")
-        self.label_selected.emit(selected_label)  # Emit the entire Label object
+        self.labelSelected.emit(selected_label)  # Emit the entire Label object
 
     def get_label_color(self, short_label_code, long_label_code):
         for label in self.labels:
@@ -1224,7 +1230,7 @@ class LabelWindow(QWidget):
         if not self.label_exists(short_label_code, long_label_code, label_id):
             self.add_label(short_label_code, long_label_code, color, label_id)
 
-    def select_label_for_annotation(self, label_id):
+    def set_selected_label(self, label_id):
         for lbl in self.labels:
             if lbl.id == label_id:
                 self.set_active_label(lbl)
