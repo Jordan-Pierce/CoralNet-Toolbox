@@ -708,23 +708,33 @@ class AnnotationWindow(QGraphicsView):
         self.redo_stack.clear()
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
-        if self.cursor_annotation:
-            # Hide the cursor annotation if it exists
-            self.scene.removeItem(self.cursor_annotation)
-            self.cursor_annotation = None
-        elif scene_pos:
-            # Show the cursor annotation if a position is provided
+        if scene_pos:
+            # Show the cursor annotation if a position is provided and within the image bounds
             if not self.selected_label or not self.selected_label.color:
                 return
 
-            half_size = self.annotation_size / 2
-            self.cursor_annotation = QGraphicsRectItem(scene_pos.x() - half_size,
-                                                       scene_pos.y() - half_size,
-                                                       self.annotation_size,
-                                                       self.annotation_size)
+            if not self.cursorInWindow(scene_pos):
+                return
 
-            self.cursor_annotation.setPen(QPen(self.selected_label.color, 4))
-            self.scene.addItem(self.cursor_annotation)
+            if not self.cursor_annotation:
+                half_size = self.annotation_size / 2
+                self.cursor_annotation = QGraphicsRectItem(scene_pos.x() - half_size,
+                                                           scene_pos.y() - half_size,
+                                                           self.annotation_size,
+                                                           self.annotation_size)
+                self.cursor_annotation.setPen(QPen(self.selected_label.color, 4))
+                self.scene.addItem(self.cursor_annotation)
+            else:
+                half_size = self.annotation_size / 2
+                self.cursor_annotation.setRect(scene_pos.x() - half_size,
+                                               scene_pos.y() - half_size,
+                                               self.annotation_size,
+                                               self.annotation_size)
+        else:
+            # Hide the cursor annotation if it exists
+            if self.cursor_annotation:
+                self.scene.removeItem(self.cursor_annotation)
+                self.cursor_annotation = None
 
     def delete_image(self, image_path):
         if image_path in self.annotations_dict:
