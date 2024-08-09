@@ -75,6 +75,8 @@ class ProgressBar(QDialog):
         self.timer.stop()
 
 
+from PyQt5.QtWidgets import QStatusBar, QLabel, QSpinBox, QHBoxLayout
+
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
 
@@ -82,7 +84,6 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # Define the icon path
-
         self.setWindowTitle("CoralNet Toolbox")
         # Set the window icon
         main_window_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/toolbox.png"
@@ -134,7 +135,6 @@ class MainWindow(QMainWindow):
         spacer.setFixedHeight(10)  # Set a fixed height for the spacer
         self.toolbar.addWidget(spacer)
 
-        # TODO
         # Define icon paths
         select_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/select.png"
         annotate_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/annotate.png"
@@ -150,6 +150,29 @@ class MainWindow(QMainWindow):
         self.annotate_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.annotate_tool_action)
 
+        # Create status bar layout
+        self.status_bar_layout = QHBoxLayout()
+
+        # Labels for image dimensions and mouse position
+        self.image_dimensions_label = QLabel("Image: 0 x 0")
+        self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
+
+        # Spin box for annotation size control
+        self.annotation_size_spinbox = QSpinBox()
+        self.annotation_size_spinbox.setMinimum(1)
+        self.annotation_size_spinbox.setMaximum(1000)  # Adjust as needed
+        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
+
+        # Add widgets to status bar layout
+        self.status_bar_layout.addWidget(self.image_dimensions_label)
+        self.status_bar_layout.addWidget(self.mouse_position_label)
+        self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
+        self.status_bar_layout.addWidget(self.annotation_size_spinbox)
+
+        # Add status bar layout to left layout above the AnnotationWindow
+        self.left_layout.addLayout(self.status_bar_layout)
         self.left_layout.addWidget(self.annotation_window, 85)
         self.left_layout.addWidget(self.label_window, 15)
 
@@ -182,6 +205,10 @@ class MainWindow(QMainWindow):
 
         # Connect the toolChanged signal to the AnnotationWindow
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
+
+        # Connect signals to update status bar
+        self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
+        self.annotation_window.mouseMoved.connect(self.update_mouse_position)
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
@@ -237,6 +264,12 @@ class MainWindow(QMainWindow):
                 self.toolChanged.emit("annotate")
             else:
                 self.toolChanged.emit(None)
+
+    def update_image_dimensions(self, width, height):
+        self.image_dimensions_label.setText(f"Image: {width} x {height}")
+
+    def update_mouse_position(self, x, y):
+        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
 
 
 class Annotation(QObject):
@@ -362,6 +395,8 @@ class Annotation(QObject):
 
 
 class AnnotationWindow(QGraphicsView):
+    imageLoaded = pyqtSignal(int, int)
+    mouseMoved = pyqtSignal(int, int)
     imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
@@ -513,6 +548,9 @@ class AnnotationWindow(QGraphicsView):
             self.selected_annotation.deselect()
             self.selected_annotation.select()
 
+    def set_annotation_size(self, size):
+        self.annotation_size = size
+
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         if scene_pos:
             # Show the cursor annotation if a position is provided and within the image bounds
@@ -557,6 +595,9 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = image_path
         # Set the flag to True after the image has been set
         self.active_image = True
+
+        # Emit signal with image dimensions
+        self.imageLoaded.emit(image.width(), image.height())
 
         # Add to the scene
         self.scene.addItem(self.image_item)
@@ -617,6 +658,10 @@ class AnnotationWindow(QGraphicsView):
             self.toggle_cursor_annotation(self.mapToScene(event.pos()))
         else:
             self.toggle_cursor_annotation()
+
+        # Emit signal with mouse position
+        scene_pos = self.mapToScene(event.pos())
+        self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
