@@ -9,7 +9,7 @@ import pandas as pd
 from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
                              QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
                              QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit)
+                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox)
 
 from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics
 from PyQt5.QtCore import pyqtSignal, Qt, QTimer, QEvent, QObject, QPointF, QSize, QRectF
@@ -23,7 +23,6 @@ class GlobalEventFilter(QObject):
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
-
             # Place holder
             if obj.objectName() in [""]:
                 pass
@@ -38,6 +37,12 @@ class GlobalEventFilter(QObject):
                     return True
                 elif event.key() == Qt.Key_Y:
                     self.annotation_window.redo()
+                    return True
+                elif event.key() == Qt.Key_Plus or event.key() == Qt.Key_Equal:  # Handle Ctrl + +
+                    self.annotation_window.set_annotation_size(delta=10)  # Increase size
+                    return True
+                elif event.key() == Qt.Key_Minus:  # Handle Ctrl + -
+                    self.annotation_window.set_annotation_size(delta=-10)  # Decrease size
                     return True
 
         # Return False for other key events to allow them to be processed by the target object
@@ -74,8 +79,6 @@ class ProgressBar(QDialog):
     def stop_progress(self):
         self.timer.stop()
 
-
-from PyQt5.QtWidgets import QStatusBar, QLabel, QSpinBox, QHBoxLayout
 
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
@@ -163,6 +166,7 @@ class MainWindow(QMainWindow):
         self.annotation_size_spinbox.setMaximum(1000)  # Adjust as needed
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
+        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
 
         # Add widgets to status bar layout
         self.status_bar_layout.addWidget(self.image_dimensions_label)
@@ -395,11 +399,12 @@ class Annotation(QObject):
 
 
 class AnnotationWindow(QGraphicsView):
-    imageLoaded = pyqtSignal(int, int)
-    mouseMoved = pyqtSignal(int, int)
+    imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
+    mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
     imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
+    annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -548,8 +553,19 @@ class AnnotationWindow(QGraphicsView):
             self.selected_annotation.deselect()
             self.selected_annotation.select()
 
-    def set_annotation_size(self, size):
-        self.annotation_size = size
+    def set_annotation_size(self, size=None, delta=0):
+        if size is not None:
+            self.annotation_size = size
+        else:
+            self.annotation_size += delta
+            self.annotation_size = max(1, self.annotation_size)  # Ensure the size is at least 1
+
+        if self.selected_annotation:
+            self.selected_annotation.annotation_size = self.annotation_size
+            self.selected_annotation.update_graphics_item()
+        self.toggle_cursor_annotation()  # Update the cursor annotation size
+
+        self.annotationSizeChanged.emit(self.annotation_size)  # Emit the signal
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         if scene_pos:
