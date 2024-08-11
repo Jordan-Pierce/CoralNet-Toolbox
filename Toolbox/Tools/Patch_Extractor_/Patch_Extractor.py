@@ -786,14 +786,18 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_size = size
         else:
             self.annotation_size += delta
-            self.annotation_size = max(1, self.annotation_size)  # Ensure the size is at least 1
+            self.annotation_size = max(1, self.annotation_size)
 
         if self.selected_annotation:
+            self.selected_annotation.deselect()
             self.selected_annotation.annotation_size = self.annotation_size
             self.selected_annotation.update_graphics_item()
-        self.toggle_cursor_annotation()  # Update the cursor annotation size
+            self.selected_annotation.select()
 
-        self.annotationSizeChanged.emit(self.annotation_size)  # Emit the signal
+        # Update the cursor annotation size
+        self.toggle_cursor_annotation()
+        # Emit the signal
+        self.annotationSizeChanged.emit(self.annotation_size)
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         if scene_pos:
@@ -810,7 +814,17 @@ class AnnotationWindow(QGraphicsView):
                                                            scene_pos.y() - half_size,
                                                            self.annotation_size,
                                                            self.annotation_size)
-                self.cursor_annotation.setPen(QPen(self.annotation_color, 4))
+                # Use a thicker and dashed pen
+                pen = QPen(self.annotation_color, 6)
+                pen.setStyle(Qt.DashLine)
+                self.cursor_annotation.setPen(pen)
+                # Add a semi-transparent fill color
+                brush = QBrush(self.annotation_color.lighter(150))
+                brush.setStyle(Qt.SolidPattern)
+                color = brush.color()
+                color.setAlphaF(0.3)  # Adjust the alpha value for transparency
+                brush.setColor(color)
+                self.cursor_annotation.setBrush(brush)
                 self.scene.addItem(self.cursor_annotation)
             else:
                 half_size = self.annotation_size / 2
@@ -818,13 +832,22 @@ class AnnotationWindow(QGraphicsView):
                                                scene_pos.y() - half_size,
                                                self.annotation_size,
                                                self.annotation_size)
-                self.cursor_annotation.setPen(QPen(self.annotation_color, 4))
+                # Update the pen to be thicker and dashed
+                pen = QPen(self.annotation_color, 6)
+                pen.setStyle(Qt.DashLine)
+                self.cursor_annotation.setPen(pen)
+                # Update the semi-transparent fill color
+                brush = QBrush(self.annotation_color.lighter(150))
+                brush.setStyle(Qt.SolidPattern)
+                color = brush.color()
+                color.setAlphaF(0.3)  # Adjust the alpha value for transparency
+                brush.setColor(color)
+                self.cursor_annotation.setBrush(brush)
         else:
             # Hide the cursor annotation if it exists
             if self.cursor_annotation:
                 self.scene.removeItem(self.cursor_annotation)
                 self.cursor_annotation = None
-
     def set_image(self, image, image_path):
         # Unselect annotation
         self.unselect_annotation()
@@ -1150,7 +1173,7 @@ class ThumbnailWindow(QWidget):
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Question)
         msg_box.setWindowTitle("Confirm Delete")
-        msg_box.setText("Are you sure you want to delete this image?")
+        msg_box.setText("Are you sure you want to delete this image? This will delete all associated annotations.")
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
         checkbox = QCheckBox("Do not show this message again")
@@ -1537,7 +1560,7 @@ class LabelWindow(QWidget):
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Question)
             msg_box.setWindowTitle("Confirm Delete")
-            msg_box.setText("Are you sure you want to delete this label?")
+            msg_box.setText("Are you sure you want to delete this label? This will delete all associated annotations")
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
             checkbox = QCheckBox("Do not show this message again")
