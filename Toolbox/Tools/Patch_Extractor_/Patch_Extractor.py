@@ -1083,25 +1083,7 @@ class ThumbnailWindow(QWidget):
     def add_image(self, image_path):
         if image_path not in self.annotation_window.main_window.imported_image_paths:
             image = QImage(image_path)
-
-            container = QWidget()
-            container_layout = QVBoxLayout(container)
-            container_layout.setContentsMargins(0, 0, 0, 0)
-
-            label = ThumbnailLabel(image_path, image)
-            label.mousePressEvent = lambda event, img=image, img_path=image_path, lbl=label: self.load_image(img,
-                                                                                                             img_path,
-                                                                                                             lbl)
-            label.setContextMenuPolicy(Qt.CustomContextMenu)
-            label.customContextMenuRequested.connect(lambda pos, lbl=label: self.show_context_menu(pos, lbl))
-
-            basename_label = QLabel(os.path.basename(image_path))
-            basename_label.setAlignment(Qt.AlignCenter)
-            basename_label.setWordWrap(True)
-
-            container_layout.addWidget(label)
-            container_layout.addWidget(basename_label)
-
+            container = self._create_thumbnail_container(image_path, image)
             self.thumbnail_container_layout.addWidget(container)
             self.images[image_path] = image
 
@@ -1109,19 +1091,38 @@ class ThumbnailWindow(QWidget):
 
             # Automatically select the first image added
             if not self.selected_thumbnail:
-                self.load_image(image, image_path, label)
+                self.load_image(image, image_path, container.layout().itemAt(0).widget())
 
             self.annotation_window.main_window.imported_image_paths.add(image_path)
 
+    def _create_thumbnail_container(self, image_path, image):
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+
+        label = ThumbnailLabel(image_path, image)
+        label.mousePressEvent = lambda event, img=image, path=image_path, lbl=label: self.load_image(img, path, lbl)
+        label.setContextMenuPolicy(Qt.CustomContextMenu)
+        label.customContextMenuRequested.connect(lambda pos, lbl=label: self.show_context_menu(pos, lbl))
+
+        basename_label = QLabel(os.path.basename(image_path))
+        basename_label.setAlignment(Qt.AlignCenter)
+        basename_label.setWordWrap(True)
+
+        container_layout.addWidget(label)
+        container_layout.addWidget(basename_label)
+
+        return container
+
     def load_image(self, image, image_path, label):
         if self.selected_thumbnail:
-            self.selected_thumbnail.deselect()  # Use deselect method
+            self.selected_thumbnail.deselect()
 
         self.selected_thumbnail = label
-        self.selected_thumbnail.select()  # Use select method
+        self.selected_thumbnail.select()
 
         self.annotation_window.set_image(image, image_path)
-        self.imageSelected.emit(image_path)  # Emit the signal with the selected image path
+        self.imageSelected.emit(image_path)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1137,38 +1138,44 @@ class ThumbnailWindow(QWidget):
 
     def delete_image(self, label):
         if self.show_confirmation_dialog:
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Question)
-            msg_box.setWindowTitle("Confirm Delete")
-            msg_box.setText("Are you sure you want to delete this image?")
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-
-            checkbox = QCheckBox("Do not show this message again")
-            msg_box.setCheckBox(checkbox)
-
-            result = msg_box.exec_()
-
-            if checkbox.isChecked():
-                self.show_confirmation_dialog = False
-
+            result = self._confirm_delete()
             if result == QMessageBox.No:
                 return
 
-        # Remove the image from the layout and dictionary
+        self._remove_image(label)
+        self.imageDeleted.emit(label.image_path)
+        self.annotation_window.main_window.imported_image_paths.discard(label.image_path)
+
+    def _confirm_delete(self):
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setWindowTitle("Confirm Delete")
+        msg_box.setText("Are you sure you want to delete this image?")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+
+        checkbox = QCheckBox("Do not show this message again")
+        msg_box.setCheckBox(checkbox)
+
+        result = msg_box.exec_()
+
+        if checkbox.isChecked():
+            self.show_confirmation_dialog = False
+
+        return result
+
+    def _remove_image(self, label):
         for i in range(self.thumbnail_container_layout.count()):
             item = self.thumbnail_container_layout.itemAt(i)
             widget = item.widget()
             if widget and widget.layout().itemAt(0).widget() == label:
                 self.thumbnail_container_layout.removeItem(item)
                 widget.deleteLater()
-                break  # Exit the loop once the correct widget is found and deleted
+                break
 
-        # Remove the image from the dictionary
         image_path = label.image_path
         if image_path in self.images:
             del self.images[image_path]
 
-        # Reset the selected thumbnail if it was deleted
         if self.selected_thumbnail == label:
             self.selected_thumbnail = None
             if self.images:
@@ -1176,9 +1183,6 @@ class ThumbnailWindow(QWidget):
                 first_label = self.find_label_by_image_path(first_image_path)
                 if first_label:
                     self.load_image(self.images[first_image_path], first_image_path, first_label)
-
-        self.imageDeleted.emit(image_path)  # Emit the signal when an image is deleted
-        self.annotation_window.main_window.imported_image_paths.discard(image_path)
 
     def find_label_by_image_path(self, image_path):
         for i in range(self.thumbnail_container_layout.count()):
