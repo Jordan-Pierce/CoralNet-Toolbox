@@ -9,7 +9,8 @@ import pandas as pd
 from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
                              QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
                              QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox)
+                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout,
+                             QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem)
 
 from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics
 from PyQt5.QtCore import pyqtSignal, Qt, QTimer, QEvent, QObject, QPointF, QSize, QRectF
@@ -38,11 +39,11 @@ class GlobalEventFilter(QObject):
                 elif event.key() == Qt.Key_Y:
                     self.annotation_window.redo()
                     return True
-                elif event.key() == Qt.Key_Plus or event.key() == Qt.Key_Equal:  # Handle Ctrl + +
-                    self.annotation_window.set_annotation_size(delta=10)  # Increase size
+                elif event.key() == Qt.Key_Plus or event.key() == Qt.Key_Equal:
+                    self.annotation_window.set_annotation_size(delta=16)
                     return True
                 elif event.key() == Qt.Key_Minus:  # Handle Ctrl + -
-                    self.annotation_window.set_annotation_size(delta=-10)  # Decrease size
+                    self.annotation_window.set_annotation_size(delta=-16)
                     return True
 
         # Return False for other key events to allow them to be processed by the target object
@@ -104,16 +105,25 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.thumbnail_window = ThumbnailWindow(self)
 
+        # Connect signals to update status bar
+        self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
+        self.annotation_window.mouseMoved.connect(self.update_mouse_position)
+
+        # Connect the toolChanged signal to the AnnotationWindow
+        self.toolChanged.connect(self.annotation_window.set_selected_tool)
+
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
         self.thumbnail_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageDeleted signal to delete_image in AnnotationWindow
         self.thumbnail_window.imageDeleted.connect(self.annotation_window.delete_image)
-        # Connect thumbnail window to the annotation window for current image selected
-        self.annotation_window.imageDeleted.connect(self.thumbnail_window.delete_image)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
+
+        # Set up global event filter
+        self.global_event_filter = GlobalEventFilter(self.label_window, self.annotation_window)
+        QApplication.instance().installEventFilter(self.global_event_filter)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -201,42 +211,11 @@ class MainWindow(QMainWindow):
         self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
         self.export_menu.addAction(self.export_coralnet_annotations_action)
 
-        # Set up global event filter
-        self.global_event_filter = GlobalEventFilter(self.label_window, self.annotation_window)
-        QApplication.instance().installEventFilter(self.global_event_filter)
+        self.annotation_sampling_action = QAction("Sample Annotations", self)
+        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
+        self.menu_bar.addAction(self.annotation_sampling_action)
 
         self.imported_image_paths = set()  # Set to keep track of imported image paths
-
-        # Connect the toolChanged signal to the AnnotationWindow
-        self.toolChanged.connect(self.annotation_window.set_selected_tool)
-
-        # Connect signals to update status bar
-        self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
-        self.annotation_window.mouseMoved.connect(self.update_mouse_position)
-
-    def import_images(self):
-        file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
-        if file_names:
-            progress_bar = ProgressBar(self, title="Importing Images")
-            progress_bar.show()
-            progress_bar.start_progress(len(file_names))
-
-            for i, file_name in enumerate(file_names):
-                if file_name not in self.imported_image_paths:
-                    self.thumbnail_window.add_image(file_name)
-                    self.imported_image_paths.add(file_name)
-                    self.annotation_window.loaded_image_paths.add(file_name)
-                    progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
-
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-            if file_names:
-                # Load the first image
-                image_path = file_names[0]
-                image = QImage(image_path)
-                self.annotation_window.set_image(image, image_path)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -274,6 +253,255 @@ class MainWindow(QMainWindow):
 
     def update_mouse_position(self, x, y):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
+
+    def import_images(self):
+        file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
+        if file_names:
+            progress_bar = ProgressBar(self, title="Importing Images")
+            progress_bar.show()
+            progress_bar.start_progress(len(file_names))
+
+            for i, file_name in enumerate(file_names):
+                if file_name not in self.imported_image_paths:
+                    self.thumbnail_window.add_image(file_name)
+                    self.imported_image_paths.add(file_name)
+                    self.annotation_window.loaded_image_paths.add(file_name)
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
+
+            progress_bar.stop_progress()
+            progress_bar.close()
+
+            if file_names:
+                # Load the first image
+                image_path = file_names[0]
+                image = QImage(image_path)
+                self.annotation_window.set_image(image, image_path)
+
+    def open_annotation_sampling_dialog(self):
+        dialog = AnnotationSamplingDialog(self.annotation_window, self)
+        dialog.annotationsSampled.connect(self.add_sampled_annotations)
+        dialog.exec_()
+
+    def add_sampled_annotations(self, method, num_annotations, annotation_size,
+                                margin_x_min, margin_y_min, margin_x_max, margin_y_max,
+                                apply_to_all):
+
+        # Sets the LabelWindow and AnnotationWindow to Review
+        self.label_window.set_selected_label("-1")
+        review_label = self.annotation_window.selected_label
+
+        if apply_to_all:
+            image_paths = list(self.annotation_window.loaded_image_paths)
+        else:
+            image_paths = [self.annotation_window.current_image_path]
+
+        for image_path in image_paths:
+            image = QImage(image_path)
+            image_width = image.width()
+            image_height = image.height()
+            # Sample the annotation, given params
+            annotations = sample_annotations(method,
+                                             num_annotations,
+                                             annotation_size,
+                                             margin_x_min,
+                                             margin_y_min,
+                                             margin_x_max,
+                                             margin_y_max,
+                                             image_width,
+                                             image_height)
+
+            for annotation in annotations:
+                x, y, size = annotation
+                new_annotation = Annotation(QPointF(x, y),
+                                            size,
+                                            review_label.short_label_code,
+                                            review_label.long_label_code,
+                                            review_label.color,
+                                            image_path,
+                                            review_label.id)
+
+                # Add the annotation on the image
+                self.annotation_window.add_annotation(QPointF(x, y), new_annotation)
+            # Reload the annotations on the image
+            self.annotation_window.load_annotations(image_path)
+
+
+def sample_annotations(method, num_annotations, annotation_size,
+                       margin_x_min, margin_y_min, margin_x_max, margin_y_max, image_width, image_height):
+    annotations = []
+
+    if method == "Random":
+        for _ in range(num_annotations):
+            x = random.randint(margin_x_min, image_width - annotation_size - margin_x_max)
+            y = random.randint(margin_y_min, image_height - annotation_size - margin_y_max)
+            annotations.append((x, y, annotation_size))
+    elif method == "Uniform":
+        grid_size = int(num_annotations ** 0.5)
+        x_step = (image_width - margin_x_min - margin_x_max - annotation_size) // grid_size
+        y_step = (image_height - margin_y_min - margin_y_max - annotation_size) // grid_size
+        for i in range(grid_size):
+            for j in range(grid_size):
+                x = margin_x_min + i * x_step
+                y = margin_y_min + j * y_step
+                annotations.append((x, y, annotation_size))
+    elif method == "Stratified Random":
+        grid_size = int(num_annotations ** 0.5)
+        x_step = (image_width - margin_x_min - margin_x_max) // grid_size
+        y_step = (image_height - margin_y_min - margin_y_max) // grid_size
+        for i in range(grid_size):
+            for j in range(grid_size):
+                x = margin_x_min + i * x_step + random.randint(0, x_step - annotation_size)
+                y = margin_y_min + j * y_step + random.randint(0, y_step - annotation_size)
+                annotations.append((x, y, annotation_size))
+
+    return annotations
+
+
+class AnnotationSamplingDialog(QDialog):
+    annotationsSampled = pyqtSignal(list, bool)  # Signal to emit the sampled annotations and apply to all flag
+
+    def __init__(self, annotation_window, parent=None):
+        super().__init__(parent)
+        self.annotation_window = annotation_window
+        self.setWindowTitle("Sample Annotations")
+
+        self.layout = QVBoxLayout(self)
+
+        # Sampling Method
+        self.method_label = QLabel("Sampling Method:")
+        self.method_combo = QComboBox()
+        self.method_combo.addItems(["Random", "Uniform", "Stratified Random"])
+        self.layout.addWidget(self.method_label)
+        self.layout.addWidget(self.method_combo)
+
+        # Number of Annotations
+        self.num_annotations_label = QLabel("Number of Annotations:")
+        self.num_annotations_spinbox = QSpinBox()
+        self.num_annotations_spinbox.setMinimum(1)
+        self.num_annotations_spinbox.setMaximum(10000)  # Arbitrary large number for "infinite"
+        self.layout.addWidget(self.num_annotations_label)
+        self.layout.addWidget(self.num_annotations_spinbox)
+
+        # Annotation Size
+        self.annotation_size_label = QLabel("Annotation Size:")
+        self.annotation_size_spinbox = QSpinBox()
+        self.annotation_size_spinbox.setMinimum(32)
+        self.annotation_size_spinbox.setMaximum(10000)  # Arbitrary large number for "infinite"
+        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.layout.addWidget(self.annotation_size_label)
+        self.layout.addWidget(self.annotation_size_spinbox)
+
+        # Margin Offsets
+        self.margin_layout = QHBoxLayout()
+        self.margin_x_min_spinbox = self.create_margin_spinbox("X Min")
+        self.margin_y_min_spinbox = self.create_margin_spinbox("Y Min")
+        self.margin_x_max_spinbox = self.create_margin_spinbox("X Max")
+        self.margin_y_max_spinbox = self.create_margin_spinbox("Y Max")
+        self.layout.addLayout(self.margin_layout)
+
+        # Apply to All Images Checkbox
+        self.apply_all_checkbox = QCheckBox("Apply to all images")
+        self.layout.addWidget(self.apply_all_checkbox)
+
+        # Preview Button
+        self.preview_button = QPushButton("Preview")
+        self.preview_button.clicked.connect(self.preview_annotations)
+        self.layout.addWidget(self.preview_button)
+
+        # Preview Area
+        self.preview_view = QGraphicsView(self)
+        self.preview_scene = QGraphicsScene(self)
+        self.preview_view.setScene(self.preview_scene)
+        self.preview_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.preview_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.layout.addWidget(self.preview_view)
+
+        # Accept/Cancel Buttons
+        self.button_box = QHBoxLayout()
+        self.accept_button = QPushButton("Accept")
+        self.accept_button.clicked.connect(self.accept_annotations)
+        self.button_box.addWidget(self.accept_button)
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        self.button_box.addWidget(self.cancel_button)
+
+        self.layout.addLayout(self.button_box)
+
+        self.sampled_annotations = []
+
+    def create_margin_spinbox(self, label_text):
+        label = QLabel(label_text + ":")
+        spinbox = QSpinBox()
+        spinbox.setMinimum(0)
+        spinbox.setMaximum(1000)
+        self.margin_layout.addWidget(label)
+        self.margin_layout.addWidget(spinbox)
+        return spinbox
+
+    def preview_annotations(self):
+        method = self.method_combo.currentText()
+        num_annotations = self.num_annotations_spinbox.value()
+        annotation_size = self.annotation_size_spinbox.value()
+        margin_x_min = self.margin_x_min_spinbox.value()
+        margin_y_min = self.margin_y_min_spinbox.value()
+        margin_x_max = self.margin_x_max_spinbox.value()
+        margin_y_max = self.margin_y_max_spinbox.value()
+
+        self.sampled_annotations = sample_annotations(method,
+                                                      num_annotations,
+                                                      annotation_size,
+                                                      margin_x_min,
+                                                      margin_y_min,
+                                                      margin_x_max,
+                                                      margin_y_max,
+                                                      self.annotation_window.image_item.pixmap().width(),
+                                                      self.annotation_window.image_item.pixmap().height())
+
+        self.draw_annotation_previews(margin_x_min, margin_y_min, margin_x_max, margin_y_max)
+
+    def draw_annotation_previews(self, margin_x_min, margin_y_min, margin_x_max, margin_y_max):
+        self.preview_scene.clear()
+        pixmap = self.annotation_window.image_item.pixmap()
+        if pixmap:
+            self.preview_scene.addItem(QGraphicsPixmapItem(pixmap))
+            for annotation in self.sampled_annotations:
+                x, y, size = annotation
+                rect_item = QGraphicsRectItem(x, y, size, size)
+                rect_item.setPen(QPen(Qt.white, 2))  # Set the color to white for review category
+                self.preview_scene.addItem(rect_item)
+
+            # Draw margin lines
+            pen = QPen(QColor("red"), 5)  # Thicker red lines
+            image_width = pixmap.width()
+            image_height = pixmap.height()
+
+            # Vertical margins
+            self.preview_scene.addLine(margin_x_min, 0, margin_x_min, image_height, pen)
+            self.preview_scene.addLine(image_width - margin_x_max, 0, image_width - margin_x_max, image_height, pen)
+
+            # Horizontal margins
+            self.preview_scene.addLine(0, margin_y_min, image_width, margin_y_min, pen)
+            self.preview_scene.addLine(0, image_height - margin_y_max, image_width, image_height - margin_y_max, pen)
+
+            self.preview_view.fitInView(self.preview_scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def accept_annotations(self):
+        apply_to_all = self.apply_all_checkbox.isChecked()
+        self.parent().add_sampled_annotations(self.method_combo.currentText(),
+                                              self.num_annotations_spinbox.value(),
+                                              self.annotation_size_spinbox.value(),
+                                              self.margin_x_min_spinbox.value(),
+                                              self.margin_y_min_spinbox.value(),
+                                              self.margin_x_max_spinbox.value(),
+                                              self.margin_y_max_spinbox.value(),
+                                              apply_to_all)
+        self.accept()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.showMaximized()  # Maximize the dialog when it is shown
 
 
 class Annotation(QObject):
@@ -750,7 +978,7 @@ class AnnotationWindow(QGraphicsView):
                 annotation.selected.connect(self.select_annotation)
                 annotation.annotation_deleted.connect(self.delete_annotation)
 
-    def add_annotation(self, scene_pos: QPointF):
+    def add_annotation(self, scene_pos: QPointF, annotation=None):
 
         if not self.selected_label:
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
@@ -760,14 +988,15 @@ class AnnotationWindow(QGraphicsView):
         if not self.active_image or not self.image_item or not self.cursorInWindow(scene_pos):
             return
 
-        # Create an Annotation object
-        annotation = Annotation(scene_pos,
-                                self.annotation_size,
-                                self.selected_label.short_label_code,
-                                self.selected_label.long_label_code,
-                                self.selected_label.color,
-                                self.current_image_path,
-                                self.selected_label.id)
+        if annotation is None:
+            # Create an Annotation object
+            annotation = Annotation(scene_pos,
+                                    self.annotation_size,
+                                    self.selected_label.short_label_code,
+                                    self.selected_label.long_label_code,
+                                    self.selected_label.color,
+                                    self.current_image_path,
+                                    self.selected_label.id)
 
         # Create the graphics item for the annotation
         annotation.create_graphics_item(self.scene)
@@ -816,8 +1045,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_item = None
             self.active_image = False  # Reset image_set flag
 
-        self.imageDeleted.emit(image_path)  # Emit the signal when an image is deleted
-
     def delete_annotations_for_label(self, label):
         for annotation in list(self.annotations_dict.values()):
             if annotation.label.id == label.id:
@@ -862,7 +1089,9 @@ class ThumbnailWindow(QWidget):
             container_layout.setContentsMargins(0, 0, 0, 0)
 
             label = ThumbnailLabel(image_path, image)
-            label.mousePressEvent = lambda event, img=image, img_path=image_path, lbl=label: self.load_image(img, img_path, lbl)
+            label.mousePressEvent = lambda event, img=image, img_path=image_path, lbl=label: self.load_image(img,
+                                                                                                             img_path,
+                                                                                                             lbl)
             label.setContextMenuPolicy(Qt.CustomContextMenu)
             label.customContextMenuRequested.connect(lambda pos, lbl=label: self.show_context_menu(pos, lbl))
 
@@ -886,10 +1115,10 @@ class ThumbnailWindow(QWidget):
 
     def load_image(self, image, image_path, label):
         if self.selected_thumbnail:
-            self.selected_thumbnail.setStyleSheet("")  # Reset the previous selection
+            self.selected_thumbnail.deselect()  # Use deselect method
 
         self.selected_thumbnail = label
-        self.selected_thumbnail.setStyleSheet("border: 2px solid blue;")  # Highlight the selected thumbnail
+        self.selected_thumbnail.select()  # Use select method
 
         self.annotation_window.set_image(image, image_path)
         self.imageSelected.emit(image_path)  # Emit the signal with the selected image path
@@ -932,7 +1161,7 @@ class ThumbnailWindow(QWidget):
             if widget and widget.layout().itemAt(0).widget() == label:
                 self.thumbnail_container_layout.removeItem(item)
                 widget.deleteLater()
-                break
+                break  # Exit the loop once the correct widget is found and deleted
 
         # Remove the image from the dictionary
         image_path = label.image_path
@@ -961,18 +1190,6 @@ class ThumbnailWindow(QWidget):
                     return label
         return None
 
-    def delete_image(self, image_path):
-        if image_path in self.images:
-            del self.images[image_path]
-        for i in range(self.thumbnail_container_layout.count()):
-            item = self.thumbnail_container_layout.itemAt(i)
-            widget = item.widget()
-            if widget:
-                label = widget.layout().itemAt(0).widget()
-                if isinstance(label, ThumbnailLabel) and label.image_path == image_path:
-                    self.thumbnail_container_layout.removeItem(item)
-                    widget.deleteLater()
-                    break
 
 class ThumbnailLabel(QLabel):
     def __init__(self, image_path, image, size=100):
@@ -983,6 +1200,7 @@ class ThumbnailLabel(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setScaledContents(False)
         self.setImage(image_path, image)
+        self.is_selected = False
 
     def setImage(self, image_path, image):
         scaled_image = image.scaled(self.size, self.size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -991,12 +1209,18 @@ class ThumbnailLabel(QLabel):
     def sizeHint(self):
         return QSize(self.size, self.size)
 
+    def select(self):
+        self.is_selected = True
+        self.setStyleSheet("border: 2px solid blue;")
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea, QGridLayout, QMessageBox, QDialog, QLineEdit, QColorDialog, QLabel, QCheckBox
-from PyQt5.QtGui import QColor, QFontMetrics
-from PyQt5.QtCore import Qt, pyqtSignal
-import random
-import uuid
+    def deselect(self):
+        self.is_selected = False
+        self.setStyleSheet("")
+
+    def delete(self):
+        self.setParent(None)
+        self.deleteLater()
+
 
 class AddLabelDialog(QDialog):
     def __init__(self, parent=None):
@@ -1046,6 +1270,7 @@ class AddLabelDialog(QDialog):
 
     def get_label_details(self):
         return self.short_label_input.text(), self.long_label_input.text(), self.color
+
 
 class Label(QWidget):
     color_changed = pyqtSignal(QColor)
