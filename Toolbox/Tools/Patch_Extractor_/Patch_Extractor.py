@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem)
 
-from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics
+from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient
 from PyQt5.QtCore import pyqtSignal, Qt, QTimer, QEvent, QObject, QPointF, QSize, QRectF
 
 
@@ -848,6 +848,7 @@ class AnnotationWindow(QGraphicsView):
             if self.cursor_annotation:
                 self.scene.removeItem(self.cursor_annotation)
                 self.cursor_annotation = None
+
     def set_image(self, image, image_path):
         # Unselect annotation
         self.unselect_annotation()
@@ -1336,7 +1337,7 @@ class Label(QWidget):
         # Calculate the height based on the text height
         font_metrics = QFontMetrics(self.short_label_widget.font())
         text_height = font_metrics.height()
-        self.setFixedSize(self.fixed_width, text_height + 40)  # Add some padding
+        self.setFixedSize(self.fixed_width, text_height + 25)  # Add some padding
 
         # Set tooltip for long label
         self.setToolTip(self.long_label_code)
@@ -1376,9 +1377,9 @@ class Label(QWidget):
 
         # Draw selection border if selected
         if self.is_selected:
-            painter.setPen(QPen(Qt.blue, 2, Qt.SolidLine))
+            painter.setPen(QPen(self.color, 4, Qt.DotLine))  # Thicker, dotted border matching label color
             painter.setBrush(Qt.NoBrush)
-            painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
+            painter.drawRect(2, 2, self.width() - 4, self.height() - 4)
 
         super().paintEvent(event)
 
