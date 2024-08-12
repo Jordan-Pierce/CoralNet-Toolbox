@@ -340,11 +340,11 @@ def main():
     annotate_parser = subs.add_parser('Annotate')
 
     # Panel 1
-    annotate_parser_panel_1 = annotate_parser.add_argument_group('Annotate',
-                                                                 'Extract patches manually, which can be used as '
-                                                                 'annotations in CoralNet, or used to train a model '
-                                                                 'locally.',
-                                                                 gooey_options={'show_border': True})
+    annotate_parser.add_argument_group('Annotate',
+                                       'Extract patches manually, which can be used as '
+                                       'annotations in CoralNet, or used to train a model '
+                                       'locally.',
+                                       gooey_options={'show_border': True})
 
     # ------------------------------------------------------------------------------------------------------------------
     # Patches
