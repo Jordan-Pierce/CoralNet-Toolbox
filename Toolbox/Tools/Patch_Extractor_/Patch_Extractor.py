@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
                              QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
-                             QFormLayout)
+                             QFormLayout, QInputDialog)
 
 from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
@@ -149,6 +149,11 @@ class MainWindow(QMainWindow):
         self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
         self.import_menu.addAction(self.import_annotations_action)
 
+        # Add the new import CoralNet annotations action
+        self.import_coralnet_annotations_action = QAction("Import Annotations (CoralNet)", self)
+        self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
+        self.import_menu.addAction(self.import_coralnet_annotations_action)
+
         self.export_menu = self.menu_bar.addMenu("Export")
         self.export_annotations_action = QAction("Export Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
@@ -161,6 +166,33 @@ class MainWindow(QMainWindow):
         self.annotation_sampling_action = QAction("Sample Annotations", self)
         self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
+
+        # Add CoralNet menu
+        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+
+        self.coralnet_authenticate_action = QAction("Authenticate", self)
+        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
+
+        self.coralnet_upload_action = QAction("Upload", self)
+        self.coralnet_menu.addAction(self.coralnet_upload_action)
+
+        self.coralnet_download_action = QAction("Download", self)
+        self.coralnet_menu.addAction(self.coralnet_download_action)
+
+        self.coralnet_model_api_action = QAction("Model API", self)
+        self.coralnet_menu.addAction(self.coralnet_model_api_action)
+
+        # Add Machine Learning menu
+        self.ml_menu = self.menu_bar.addMenu("Machine Learning")
+
+        self.ml_create_dataset_action = QAction("Create Dataset", self)
+        self.ml_menu.addAction(self.ml_create_dataset_action)
+
+        self.ml_train_model_action = QAction("Train Model", self)
+        self.ml_menu.addAction(self.ml_train_model_action)
+
+        self.ml_make_predictions_action = QAction("Make Predictions", self)
+        self.ml_menu.addAction(self.ml_make_predictions_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -627,6 +659,17 @@ class Annotation(QObject):
                    data['image_path'],
                    data['label_id'])  # Include the label's UUID in the constructor
 
+    def to_coralnet_format(self):
+        return [os.path.basename(self.image_path),
+                int(self.center_xy.y()),
+                int(self.center_xy.x()),
+                self.label.short_label_code,
+                self.label.long_label_code,
+                self.annotation_size]
+
+    def from_coralnet_format(self):
+        pass
+
     def change_label(self, new_label: 'Label'):
         self.label = new_label
         self.update_graphics_item_color(self.label.color)
@@ -647,13 +690,6 @@ class Annotation(QObject):
         if self.graphics_item:
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
-
-    def to_coralnet_format(self):
-        return [os.path.basename(self.image_path),
-                int(self.center_xy.y()),
-                int(self.center_xy.x()),
-                self.label.short_label_code,
-                self.annotation_size]
 
     def create_graphics_item(self, scene):
         half_size = self.annotation_size / 2
@@ -769,7 +805,10 @@ class AnnotationWindow(QGraphicsView):
 
     def export_annotations(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Annotations", "", "JSON Files (*.json);;All Files (*)",
+        file_path, _ = QFileDialog.getSaveFileName(self,
+                                                   "Save Annotations",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
             # Create a dictionary to hold the annotations grouped by image path
@@ -789,7 +828,10 @@ class AnnotationWindow(QGraphicsView):
             return
 
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Annotations", "", "JSON Files (*.json);;All Files (*)",
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Load Annotations",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
             with open(file_path, 'r') as file:
@@ -799,14 +841,14 @@ class AnnotationWindow(QGraphicsView):
             total_images_with_annotations = len(imported_annotations)
 
             # Filter annotations to include only those for images already in the program
-            filtered_annotations = {image_path: annotations for image_path, annotations in imported_annotations.items()
-                                    if image_path in self.loaded_image_paths}
+            filtered_annotations = {p: a for p, a in imported_annotations.items() if p in self.loaded_image_paths}
 
             # Count the number of images loaded with annotations
             loaded_images_with_annotations = len(filtered_annotations)
 
             # Display a message box with the information
-            QMessageBox.information(self, "Annotations Loaded",
+            QMessageBox.information(self,
+                                    "Annotations Loaded",
                                     f"Loaded annotations for {loaded_images_with_annotations} "
                                     f"out of {total_images_with_annotations} images.")
 
@@ -823,13 +865,15 @@ class AnnotationWindow(QGraphicsView):
                                                                           color,
                                                                           label_id)
 
-                    existing_color = self.main_window.label_window.get_label_color(short_label_code, long_label_code)
+                    existing_color = self.main_window.label_window.get_label_color(short_label_code,
+                                                                                   long_label_code)
                     if existing_color != color:
                         annotation_data['annotation_color'] = existing_color.getRgb()
                         updated_annotations = True
 
             if updated_annotations:
-                QMessageBox.information(self, "Annotations Updated",
+                QMessageBox.information(self,
+                                        "Annotations Updated",
                                         "Some annotations have been updated to match the "
                                         "color of the labels already in the project.")
 
@@ -848,20 +892,106 @@ class AnnotationWindow(QGraphicsView):
 
     def export_coralnet_annotations(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export CoralNet Annotations", "",
-                                                   "CSV Files (*.csv);;All Files (*)", options=options)
+        file_path, _ = QFileDialog.getSaveFileName(self,
+                                                   "Export CoralNet Annotations",
+                                                   "",
+                                                   "CSV Files (*.csv);;All Files (*)",
+                                                   options=options)
         if file_path:
             try:
                 data = []
                 for annotation in self.annotations_dict.values():
                     data.append(annotation.to_coralnet_format())
 
-                df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Patch Size'])
+                df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size'])
                 df.to_csv(file_path, index=False)
 
             except Exception as e:
                 QMessageBox.warning(self, "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
+
+    def import_coralnet_annotations(self):
+        if not self.active_image:
+            QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
+            return
+
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Import CoralNet Annotations",
+                                                   "",
+                                                   "CSV Files (*.csv);;All Files (*)",
+                                                   options=options)
+        if file_path:
+            try:
+                df = pd.read_csv(file_path)
+                if not all(col in df.columns for col in ['Name', 'Row', 'Column', 'Label']):
+                    QMessageBox.warning(self,
+                                        "Invalid CSV Format",
+                                        "The selected CSV file does not match the expected CoralNet format.")
+                    return
+
+                # Prompt the user to specify the annotation size
+                annotation_size, ok = QInputDialog.getInt(self,
+                                                          "Annotation Size",
+                                                          "Enter the annotation size for all imported annotations:",
+                                                          224, 1, 10000, 1)
+                if not ok:
+                    return
+
+                for index, row in df.iterrows():
+                    image_name = row['Name']
+                    row_coord = row['Row']
+                    col_coord = row['Column']
+                    label_code = row['Label']
+
+                    # Find the full image path using the image name
+                    image_path = None
+                    for loaded_image_path in self.loaded_image_paths:
+                        if os.path.basename(loaded_image_path) == image_name:
+                            image_path = loaded_image_path
+                            break
+
+                    if image_path is None:
+                        continue
+
+                    # Use the label code for both short and long label codes
+                    short_label_code = label_code
+                    long_label_code = label_code
+
+                    # Check if the label already exists in the LabelWindow
+                    existing_label = self.main_window.label_window.get_label_by_codes(short_label_code,
+                                                                                      long_label_code)
+                    if existing_label:
+                        color = existing_label.color
+                        label_id = existing_label.id
+                    else:
+                        # Create a new label
+                        color = QColor(random.randint(0, 255),
+                                       random.randint(0, 255),
+                                       random.randint(0, 255))
+
+                        label_id = str(uuid.uuid4())  # Generate a new UUID for the label
+                        self.main_window.label_window.add_label(short_label_code, long_label_code, color, label_id)
+
+                    # Create the Annotation object
+                    annotation = Annotation(QPointF(col_coord, row_coord),
+                                            annotation_size,
+                                            short_label_code,
+                                            long_label_code,
+                                            color,
+                                            image_path,
+                                            label_id,  # Use the existing or new label ID
+                                            transparency=self.transparency)
+
+                    # Add the annotation to the scene and the annotations dictionary
+                    self.add_annotation(QPointF(col_coord, row_coord), annotation)
+
+                QMessageBox.information(self, "Annotations Imported",
+                                        "CoralNet annotations have been successfully imported.")
+
+            except Exception as e:
+                QMessageBox.warning(self, "Error Importing Annotations",
+                                    f"An error occurred while importing annotations: {str(e)}")
 
     def set_selected_tool(self, tool):
         self.selected_tool = tool
@@ -1646,6 +1776,7 @@ class LabelWindow(QWidget):
 
         self.update_labels_per_row()
         self.reorganize_labels()
+        self.set_active_label(label)
 
         return label
 
@@ -1662,6 +1793,12 @@ class LabelWindow(QWidget):
         for label in self.labels:
             if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
                 return label.color
+        return None
+
+    def get_label_by_codes(self, short_label_code, long_label_code):
+        for label in self.labels:
+            if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
+                return label
         return None
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
