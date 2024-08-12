@@ -394,8 +394,9 @@ class MainWindow(QMainWindow):
 
                 # Add the annotation on the image
                 self.annotation_window.add_annotation(QPointF(x, y), new_annotation)
+
             # Reload the annotations on the image
-            self.annotation_window.load_annotations(image_path)
+            self.annotation_window.load_annotations(self.annotation_window.current_image_path)
 
 
 def sample_annotations(method, num_annotations, annotation_size,
@@ -611,6 +612,7 @@ class AnnotationSamplingDialog(QDialog):
         super().showEvent(event)
         self.showMaximized()  # Maximize the dialog when it is shown
 
+
 class Annotation(QObject):
     color_changed = pyqtSignal(QColor)
     selected = pyqtSignal(object)
@@ -788,6 +790,7 @@ class AnnotationWindow(QGraphicsView):
                 json.dump(export_dict, file, indent=4)
 
     def import_annotations(self):
+
         if not self.active_image:
             QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
             return
@@ -851,9 +854,8 @@ class AnnotationWindow(QGraphicsView):
                     annotation.set_transparency(self.transparency)
                     self.annotations_dict[annotation.id] = annotation
 
-            # Load annotations for all images in the project
-            for image_path in self.loaded_image_paths:
-                self.load_annotations(image_path)
+        # Draw only those for the current image
+        self.load_annotations(self.current_image_path)
 
     def export_coralnet_annotations(self):
         options = QFileDialog.Options()
@@ -876,6 +878,7 @@ class AnnotationWindow(QGraphicsView):
                                     f"An error occurred while exporting annotations: {str(e)}")
 
     def import_coralnet_annotations(self):
+
         if not self.active_image:
             QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
             return
@@ -958,6 +961,9 @@ class AnnotationWindow(QGraphicsView):
                 QMessageBox.warning(self, "Error Importing Annotations",
                                     f"An error occurred while importing annotations: {str(e)}")
 
+        # Draw only those for the current image
+        self.load_annotations(self.current_image_path)
+
     def set_selected_tool(self, tool):
         self.selected_tool = tool
         if self.selected_tool == "select":
@@ -977,8 +983,6 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_annotation:
             if self.selected_annotation.label.id != label.id:
                 self.selected_annotation.change_label(self.selected_label)
-                self.selected_annotation.deselect()
-                self.selected_annotation.select()
 
         if self.cursor_annotation:
             if self.cursor_annotation.label.id != label.id:
@@ -1192,7 +1196,6 @@ class AnnotationWindow(QGraphicsView):
         for annotation_id, annotation in self.annotations_dict.items():
             if annotation.image_path == image_path:
                 annotation.create_graphics_item(self.scene)
-                annotation.color_changed.connect(annotation.update_graphics_item) # TODO Bug
                 annotation.selected.connect(self.select_annotation)
                 annotation.annotation_deleted.connect(self.delete_annotation)
 
@@ -1217,11 +1220,10 @@ class AnnotationWindow(QGraphicsView):
                                     self.selected_label.id,
                                     transparency=self.transparency)
 
-        # Create the graphics item for the annotation
-        annotation.create_graphics_item(self.scene)
+        # # Create the graphics item for the annotation
+        # annotation.create_graphics_item(self.scene)
 
         # Connect signals for new annotation
-        annotation.color_changed.connect(lambda color: annotation.graphics_item.setPen(QPen(color, 4))) # TODO Bug
         annotation.selected.connect(self.select_annotation)
         annotation.annotation_deleted.connect(self.delete_annotation)
 
