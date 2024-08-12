@@ -92,10 +92,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        root = os.path.dirname(os.path.abspath(__file__))
+
         # Define the icon path
         self.setWindowTitle("CoralNet Toolbox")
         # Set the window icon
-        main_window_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/toolbox.png"
+        main_window_icon_path = f"{root}/icons/toolbox.png"
         self.setWindowIcon(QIcon(main_window_icon_path))
 
         # Set window flags for resizing, minimize, maximize, and customizing
@@ -215,9 +217,9 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Define icon paths
-        select_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/select.png"
-        annotate_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/annotate.png"
-        polygon_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/polygon.png"
+        select_icon_path = f"{root}/icons/select.png"
+        annotate_icon_path = f"{root}/icons/annotate.png"
+        polygon_icon_path = f"{root}/icons/polygon.png"
 
         # Add tools here with icons
         self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
@@ -2027,9 +2029,13 @@ class LabelWindow(QWidget):
             self.set_active_label(self.labels[new_index])
 
 
-if __name__ == "__main__":
+def patch_extractor():
     app = QApplication([])
     app.setStyle('WindowsXP')
     main_window = MainWindow()
     main_window.show()
     app.exec_()
+
+
+if __name__ == "__main__":
+    patch_extractor()

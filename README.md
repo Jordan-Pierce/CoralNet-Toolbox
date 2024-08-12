@@ -42,6 +42,7 @@ a GUI; these scripts currently include the following:
 - `Segmentation Inf.`: Perform inference using a locally trained segmentation model
 - `SfM`: Use Metashape to create 3D models (sure, why not)
 - `Segmentation3D`: Use masks and SfM to create classified 3D models
+- `Annotate`: Check it out 🤠
 
 
 <p align="center">
