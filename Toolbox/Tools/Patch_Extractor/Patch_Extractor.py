@@ -793,17 +793,32 @@ class AnnotationWindow(QGraphicsView):
         if file_path:
             # Create a dictionary to hold the annotations grouped by image path
             export_dict = {}
+            total_annotations = 0
             for annotation in self.annotations_dict.values():
                 image_path = annotation.image_path
                 if image_path not in export_dict:
                     export_dict[image_path] = []
                 export_dict[image_path].append(annotation.to_dict())
+                total_annotations += 1
+
+            # Create and show the progress bar
+            progress_bar = ProgressBar(self, title="Exporting Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(total_annotations)
 
             with open(file_path, 'w') as file:
-                json.dump(export_dict, file, indent=4)
+                for image_path, annotations in export_dict.items():
+                    for annotation_data in annotations:
+                        json.dump(export_dict, file, indent=4)
+                        file.flush()  # Ensure the data is written to the file
+                        progress_bar.update_progress()
+                        QApplication.processEvents()  # Update GUI
+
+            # Stop the progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
 
     def import_annotations(self):
-        
         if not self.active_image:
             QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
             return
@@ -818,8 +833,13 @@ class AnnotationWindow(QGraphicsView):
             with open(file_path, 'r') as file:
                 imported_annotations = json.load(file)
 
-            # Count the total number of images with annotations in the JSON file
-            total_images_with_annotations = len(imported_annotations)
+            # Count the total number of annotations in the JSON file
+            total_annotations = sum(len(annotations) for annotations in imported_annotations.values())
+
+            # Create and show the progress bar
+            progress_bar = ProgressBar(self, title="Importing Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(total_annotations)
 
             # Filter annotations to include only those for images already in the program
             filtered_annotations = {p: a for p, a in imported_annotations.items() if p in self.loaded_image_paths}
@@ -831,7 +851,7 @@ class AnnotationWindow(QGraphicsView):
             QMessageBox.information(self,
                                     "Annotations Loaded",
                                     f"Loaded annotations for {loaded_images_with_annotations} "
-                                    f"out of {total_images_with_annotations} images.")
+                                    f"out of {len(imported_annotations)} images.")
 
             # Add labels to LabelWindow if they are not already present and update annotation colors
             updated_annotations = False
@@ -852,6 +872,10 @@ class AnnotationWindow(QGraphicsView):
                         annotation_data['annotation_color'] = existing_color.getRgb()
                         updated_annotations = True
 
+                    # Update the progress bar
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
+
             if updated_annotations:
                 QMessageBox.information(self,
                                         "Annotations Updated",
@@ -867,6 +891,14 @@ class AnnotationWindow(QGraphicsView):
                     annotation.set_transparency(self.transparency)
                     self.annotations_dict[annotation.id] = annotation
 
+                    # Update the progress bar
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
+
+            # Stop the progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
+
         # Draw only those for the current image
         self.load_annotations(self.current_image_path)
 
@@ -880,18 +912,30 @@ class AnnotationWindow(QGraphicsView):
         if file_path:
             try:
                 data = []
+                total_annotations = len(self.annotations_dict)
+
+                # Create and show the progress bar
+                progress_bar = ProgressBar(self, title="Exporting CoralNet Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(total_annotations)
+
                 for annotation in self.annotations_dict.values():
                     data.append(annotation.to_coralnet_format())
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
 
                 df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size'])
                 df.to_csv(file_path, index=False)
+
+                # Stop the progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
 
             except Exception as e:
                 QMessageBox.warning(self, "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
     def import_coralnet_annotations(self):
-
         if not self.active_image:
             QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
             return
@@ -919,6 +963,14 @@ class AnnotationWindow(QGraphicsView):
                 if not ok:
                     return
 
+                # Count the total number of annotations in the CSV file
+                total_annotations = len(df)
+
+                # Create and show the progress bar
+                progress_bar = ProgressBar(self, title="Importing CoralNet Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(total_annotations)
+
                 for index, row in df.iterrows():
                     image_name = row['Name']
                     row_coord = row['Row']
@@ -940,17 +992,13 @@ class AnnotationWindow(QGraphicsView):
                     long_label_code = label_code
 
                     # Check if the label already exists in the LabelWindow
-                    existing_label = self.main_window.label_window.get_label_by_codes(short_label_code,
-                                                                                      long_label_code)
+                    existing_label = self.main_window.label_window.get_label_by_codes(short_label_code, long_label_code)
                     if existing_label:
                         color = existing_label.color
                         label_id = existing_label.id
                     else:
                         # Create a new label
-                        color = QColor(random.randint(0, 255),
-                                       random.randint(0, 255),
-                                       random.randint(0, 255))
-
+                        color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
                         label_id = str(uuid.uuid4())  # Generate a new UUID for the label
                         self.main_window.label_window.add_label(short_label_code, long_label_code, color, label_id)
 
@@ -966,6 +1014,14 @@ class AnnotationWindow(QGraphicsView):
 
                     # Add the annotation to the scene and the annotations dictionary
                     self.add_annotation(QPointF(col_coord, row_coord), annotation)
+
+                    # Update the progress bar
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
+
+                # Stop the progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
 
                 QMessageBox.information(self, "Annotations Imported",
                                         "CoralNet annotations have been successfully imported.")
