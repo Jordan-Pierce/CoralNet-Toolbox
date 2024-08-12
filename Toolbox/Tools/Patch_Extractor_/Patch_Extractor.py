@@ -3,6 +3,8 @@ import sys
 import uuid
 import json
 import random
+import weakref
+import threading
 
 import pandas as pd
 
@@ -10,10 +12,11 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
                              QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
                              QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout,
-                             QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem)
+                             QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
+                             QFormLayout)
 
-from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient
-from PyQt5.QtCore import pyqtSignal, Qt, QTimer, QEvent, QObject, QPointF, QSize, QRectF
+from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
 
 
 class GlobalEventFilter(QObject):
@@ -23,11 +26,17 @@ class GlobalEventFilter(QObject):
         self.annotation_window = annotation_window
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress:
-            # Place holder
-            if obj.objectName() in [""]:
-                pass
+        if event.type() == QEvent.Wheel:  # Check if the event is a wheel event
+            # Check for Ctrl modifier
+            if event.modifiers() & Qt.ControlModifier:
+                delta = event.angleDelta().y()
+                if delta > 0:
+                    self.annotation_window.set_annotation_size(delta=16)  # Zoom in
+                else:
+                    self.annotation_window.set_annotation_size(delta=-16)  # Zoom out
+                return True
 
+        elif event.type() == QEvent.KeyPress:
             # Check for Ctrl modifier
             if event.modifiers() & Qt.ControlModifier:
                 if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
@@ -39,14 +48,12 @@ class GlobalEventFilter(QObject):
                 elif event.key() == Qt.Key_Y:
                     self.annotation_window.redo()
                     return True
-                elif event.key() == Qt.Key_Plus or event.key() == Qt.Key_Equal:
-                    self.annotation_window.set_annotation_size(delta=16)
-                    return True
-                elif event.key() == Qt.Key_Minus:  # Handle Ctrl + -
-                    self.annotation_window.set_annotation_size(delta=-16)
-                    return True
 
-        # Return False for other key events to allow them to be processed by the target object
+            # Place holder
+            if obj.objectName() in [""]:
+                pass
+
+        # Return False for other events to allow them to be processed by the target object
         return False
 
 
@@ -132,8 +139,28 @@ class MainWindow(QMainWindow):
         self.left_layout = QVBoxLayout()
         self.right_layout = QVBoxLayout()
 
-        self.main_layout.addLayout(self.left_layout, 85)
-        self.main_layout.addLayout(self.right_layout, 15)
+        self.menu_bar = self.menuBar()
+        self.import_menu = self.menu_bar.addMenu("Import")
+        self.import_images_action = QAction("Import Images", self)
+        self.import_images_action.triggered.connect(self.import_images)
+        self.import_menu.addAction(self.import_images_action)
+
+        self.import_annotations_action = QAction("Import Annotations (JSON)", self)
+        self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
+        self.import_menu.addAction(self.import_annotations_action)
+
+        self.export_menu = self.menu_bar.addMenu("Export")
+        self.export_annotations_action = QAction("Export Annotations (JSON)", self)
+        self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
+        self.export_menu.addAction(self.export_annotations_action)
+
+        self.export_coralnet_annotations_action = QAction("Export Annotations (CoralNet)", self)
+        self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
+        self.export_menu.addAction(self.export_coralnet_annotations_action)
+
+        self.annotation_sampling_action = QAction("Sample Annotations", self)
+        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
+        self.menu_bar.addAction(self.annotation_sampling_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -170,6 +197,10 @@ class MainWindow(QMainWindow):
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
 
+        # Set fixed width for labels to prevent them from resizing
+        self.image_dimensions_label.setFixedWidth(150)
+        self.mouse_position_label.setFixedWidth(150)
+
         # Spin box for annotation size control
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
@@ -178,12 +209,23 @@ class MainWindow(QMainWindow):
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
 
+        # Transparency slider
+        self.transparency_slider = QSlider(Qt.Horizontal)
+        self.transparency_slider.setRange(0, 255)
+        self.transparency_slider.setValue(128)  # Default transparency
+        self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
+
         # Add widgets to status bar layout
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
         self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("Transparency:"))
+        self.status_bar_layout.addWidget(self.transparency_slider)
+        self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
         self.status_bar_layout.addWidget(self.annotation_size_spinbox)
+
+        self.imported_image_paths = set()  # Set to keep track of imported image paths
 
         # Add status bar layout to left layout above the AnnotationWindow
         self.left_layout.addLayout(self.status_bar_layout)
@@ -192,30 +234,8 @@ class MainWindow(QMainWindow):
 
         self.right_layout.addWidget(self.thumbnail_window)
 
-        self.menu_bar = self.menuBar()
-        self.import_menu = self.menu_bar.addMenu("Import")
-        self.import_images_action = QAction("Import Images", self)
-        self.import_images_action.triggered.connect(self.import_images)
-        self.import_menu.addAction(self.import_images_action)
-
-        self.import_annotations_action = QAction("Import Annotations (JSON)", self)
-        self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
-        self.import_menu.addAction(self.import_annotations_action)
-
-        self.export_menu = self.menu_bar.addMenu("Export")
-        self.export_annotations_action = QAction("Export Annotations (JSON)", self)
-        self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
-        self.export_menu.addAction(self.export_annotations_action)
-
-        self.export_coralnet_annotations_action = QAction("Export Annotations (CoralNet)", self)
-        self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
-        self.export_menu.addAction(self.export_coralnet_annotations_action)
-
-        self.annotation_sampling_action = QAction("Sample Annotations", self)
-        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
-        self.menu_bar.addAction(self.annotation_sampling_action)
-
-        self.imported_image_paths = set()  # Set to keep track of imported image paths
+        self.main_layout.addLayout(self.left_layout, 85)
+        self.main_layout.addLayout(self.right_layout, 15)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -254,6 +274,10 @@ class MainWindow(QMainWindow):
     def update_mouse_position(self, x, y):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
 
+    def update_annotation_transparency(self, value):
+        if self.annotation_window.selected_label:
+            self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
+
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
         if file_names:
@@ -279,6 +303,14 @@ class MainWindow(QMainWindow):
                 self.annotation_window.set_image(image, image_path)
 
     def open_annotation_sampling_dialog(self):
+        # Check if there are any loaded images
+        if not self.annotation_window.loaded_image_paths:
+            # Show a message box if no images are loaded
+            QMessageBox.warning(self, "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+
+        # Proceed to open the dialog if images are loaded
         dialog = AnnotationSamplingDialog(self.annotation_window, self)
         dialog.annotationsSampled.connect(self.add_sampled_annotations)
         dialog.exec_()
@@ -319,7 +351,8 @@ class MainWindow(QMainWindow):
                                             review_label.long_label_code,
                                             review_label.color,
                                             image_path,
-                                            review_label.id)
+                                            review_label.id,
+                                            transparency=self.annotation_window.transparency)
 
                 # Add the annotation on the image
                 self.annotation_window.add_annotation(QPointF(x, y), new_annotation)
@@ -392,13 +425,13 @@ class AnnotationSamplingDialog(QDialog):
         self.layout.addWidget(self.annotation_size_label)
         self.layout.addWidget(self.annotation_size_spinbox)
 
-        # Margin Offsets
-        self.margin_layout = QHBoxLayout()
-        self.margin_x_min_spinbox = self.create_margin_spinbox("X Min")
-        self.margin_y_min_spinbox = self.create_margin_spinbox("Y Min")
-        self.margin_x_max_spinbox = self.create_margin_spinbox("X Max")
-        self.margin_y_max_spinbox = self.create_margin_spinbox("Y Max")
-        self.layout.addLayout(self.margin_layout)
+        # Margin Offsets using QFormLayout
+        self.margin_form_layout = QFormLayout()
+        self.margin_x_min_spinbox = self.create_margin_spinbox("X Min", self.margin_form_layout)
+        self.margin_y_min_spinbox = self.create_margin_spinbox("Y Min", self.margin_form_layout)
+        self.margin_x_max_spinbox = self.create_margin_spinbox("X Max", self.margin_form_layout)
+        self.margin_y_max_spinbox = self.create_margin_spinbox("Y Max", self.margin_form_layout)
+        self.layout.addLayout(self.margin_form_layout)
 
         # Apply to All Images Checkbox
         self.apply_all_checkbox = QCheckBox("Apply to all images")
@@ -431,13 +464,12 @@ class AnnotationSamplingDialog(QDialog):
 
         self.sampled_annotations = []
 
-    def create_margin_spinbox(self, label_text):
+    def create_margin_spinbox(self, label_text, layout):
         label = QLabel(label_text + ":")
         spinbox = QSpinBox()
         spinbox.setMinimum(0)
         spinbox.setMaximum(1000)
-        self.margin_layout.addWidget(label)
-        self.margin_layout.addWidget(spinbox)
+        layout.addRow(label, spinbox)
         return spinbox
 
     def preview_annotations(self):
@@ -465,25 +497,63 @@ class AnnotationSamplingDialog(QDialog):
         self.preview_scene.clear()
         pixmap = self.annotation_window.image_item.pixmap()
         if pixmap:
+            # Add the image to the scene
             self.preview_scene.addItem(QGraphicsPixmapItem(pixmap))
+
+            # Draw annotations
             for annotation in self.sampled_annotations:
                 x, y, size = annotation
                 rect_item = QGraphicsRectItem(x, y, size, size)
-                rect_item.setPen(QPen(Qt.white, 2))  # Set the color to white for review category
+                rect_item.setPen(QPen(Qt.white, 4))
+                brush = QBrush(Qt.white)
+                brush.setStyle(Qt.SolidPattern)
+                color = brush.color()
+                color.setAlpha(50)
+                brush.setColor(color)
+                rect_item.setBrush(brush)
                 self.preview_scene.addItem(rect_item)
 
             # Draw margin lines
-            pen = QPen(QColor("red"), 5)  # Thicker red lines
+            pen = QPen(QColor("red"), 5)
+            pen.setStyle(Qt.DotLine)
             image_width = pixmap.width()
             image_height = pixmap.height()
 
-            # Vertical margins
             self.preview_scene.addLine(margin_x_min, 0, margin_x_min, image_height, pen)
             self.preview_scene.addLine(image_width - margin_x_max, 0, image_width - margin_x_max, image_height, pen)
-
-            # Horizontal margins
             self.preview_scene.addLine(0, margin_y_min, image_width, margin_y_min, pen)
             self.preview_scene.addLine(0, image_height - margin_y_max, image_width, image_height - margin_y_max, pen)
+
+            # Apply dark transparency outside the margins
+            overlay_color = QColor(0, 0, 0, 150)  # Black with transparency
+
+            # Left overlay
+            left_overlay = QGraphicsRectItem(0, 0, margin_x_min, image_height)
+            left_overlay.setBrush(QBrush(overlay_color))
+            left_overlay.setPen(QPen(Qt.NoPen))
+            self.preview_scene.addItem(left_overlay)
+
+            # Right overlay
+            right_overlay = QGraphicsRectItem(image_width - margin_x_max, 0, margin_x_max, image_height)
+            right_overlay.setBrush(QBrush(overlay_color))
+            right_overlay.setPen(QPen(Qt.NoPen))
+            self.preview_scene.addItem(right_overlay)
+
+            # Top overlay
+            top_overlay = QGraphicsRectItem(margin_x_min, 0, image_width - margin_x_min - margin_x_max, margin_y_min)
+            top_overlay.setBrush(QBrush(overlay_color))
+            top_overlay.setPen(QPen(Qt.NoPen))
+            self.preview_scene.addItem(top_overlay)
+
+            # Bottom overlay
+            bottom_overlay = QGraphicsRectItem(margin_x_min,
+                                               image_height - margin_y_max,
+                                               image_width - margin_x_min - margin_x_max,
+                                               margin_y_max)
+
+            bottom_overlay.setBrush(QBrush(overlay_color))
+            bottom_overlay.setPen(QPen(Qt.NoPen))
+            self.preview_scene.addItem(bottom_overlay)
 
             self.preview_view.fitInView(self.preview_scene.sceneRect(), Qt.KeepAspectRatio)
 
@@ -515,7 +585,9 @@ class Annotation(QObject):
                  long_label_code: str,
                  color: QColor,
                  image_path: str,
-                 label_id: str):
+                 label_id: str,
+                 transparency: int = 50):
+
         super().__init__()
         self.id = str(uuid.uuid4())  # Unique identifier
         self.center_xy = center_xy
@@ -524,6 +596,7 @@ class Annotation(QObject):
         self.image_path = image_path
         self.is_selected = False
         self.graphics_item = None  # QGraphicsRectItem for the annotation
+        self.transparency = transparency  # Transparency value (0-255)
 
     def to_dict(self):
         return {
@@ -556,12 +629,12 @@ class Annotation(QObject):
         if not self.is_selected:
             self.is_selected = True
             self.selected.emit(self)
-            self.update_graphics_item_pen(self.label.color, 12)  # Increase line width
+            self.update_graphics_item_pen(self.label.color, 8, Qt.DotLine)  # Thicker, dotted line when selected
 
     def deselect(self):
         if self.is_selected:
             self.is_selected = False
-            self.update_graphics_item_pen(self.label.color, 4)  # Reset line width
+            self.update_graphics_item_pen(self.label.color, 4, Qt.SolidLine)  # Solid line when deselected
 
     def delete(self):
         self.annotation_deleted.emit(self)
@@ -582,9 +655,18 @@ class Annotation(QObject):
                                                self.center_xy.y() - half_size,
                                                self.annotation_size,
                                                self.annotation_size)
-        self.graphics_item.setPen(QPen(self.label.color, 4))
+        self.update_graphics_item()  # Ensure both pen and brush are set correctly
         self.graphics_item.setData(0, self.id)  # Store the UUID in the graphics item's data
         scene.addItem(self.graphics_item)
+
+    def set_graphics_item_brush(self):
+        if self.graphics_item:
+            brush = QBrush(self.label.color)
+            brush.setStyle(Qt.SolidPattern)
+            color = brush.color()
+            color.setAlpha(self.transparency)  # Apply transparency
+            brush.setColor(color)
+            self.graphics_item.setBrush(brush)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -593,17 +675,26 @@ class Annotation(QObject):
                                        self.center_xy.y() - half_size,
                                        self.annotation_size,
                                        self.annotation_size)
-            self.graphics_item.setPen(QPen(self.label.color, 4))
+            self.update_graphics_item_pen(self.label.color, 4, Qt.SolidLine)  # Update pen
+            self.set_graphics_item_brush()  # Update brush
 
     def update_graphics_item_color(self, color: QColor):
         if self.graphics_item:
-            self.graphics_item.setPen(QPen(color, 4))
+            self.update_graphics_item_pen(color, 4, Qt.SolidLine)  # Update pen
+            self.set_graphics_item_brush()  # Update brush
             self.graphics_item.update()
 
-    def update_graphics_item_pen(self, color: QColor, width: int):
+    def update_graphics_item_pen(self, color: QColor, width: int, style=Qt.SolidLine):
         if self.graphics_item:
-            self.graphics_item.setPen(QPen(color, width))
+            pen_color = QColor(color)
+            pen_color.setAlpha(self.transparency)  # Apply transparency to the pen color
+            pen = QPen(pen_color, width, style)
+            self.graphics_item.setPen(pen)
             self.graphics_item.update()
+
+    def set_transparency(self, transparency: int):
+        self.transparency = transparency
+        self.update_graphics_item()  # Ensure both pen and brush are updated
 
     def move(self, new_center_xy: QPointF):
         self.center_xy = new_center_xy
@@ -642,6 +733,7 @@ class AnnotationWindow(QGraphicsView):
 
         self.annotation_size = 224
         self.annotation_color = None
+        self.transparency = 128
 
         self.zoom_factor = 1.0
         self.pan_active = False
@@ -738,7 +830,10 @@ class AnnotationWindow(QGraphicsView):
             # Convert annotation data to Annotation objects and store in annotations_dict
             for image_path, annotations in filtered_annotations.items():
                 for annotation_data in annotations:
+                    # Load the information for the Annotation
                     annotation = Annotation.from_dict(annotation_data)
+                    # Update transparency, updates graphics
+                    annotation.set_transparency(self.transparency)
                     self.annotations_dict[annotation.id] = annotation
 
             # Load annotations for all images in the project
@@ -781,6 +876,9 @@ class AnnotationWindow(QGraphicsView):
             self.selected_annotation.deselect()
             self.selected_annotation.select()
 
+        if self.cursor_annotation:
+            self.toggle_cursor_annotation()
+
     def set_annotation_size(self, size=None, delta=0):
         if size is not None:
             self.annotation_size = size
@@ -788,6 +886,7 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_size += delta
             self.annotation_size = max(1, self.annotation_size)
 
+        # Update the selected annotation size
         if self.selected_annotation:
             self.selected_annotation.deselect()
             self.selected_annotation.annotation_size = self.annotation_size
@@ -795,9 +894,15 @@ class AnnotationWindow(QGraphicsView):
             self.selected_annotation.select()
 
         # Update the cursor annotation size
-        self.toggle_cursor_annotation()
+        if self.cursor_annotation:
+            self.cursor_annotation.annotation_size = self.annotation_size
+            self.cursor_annotation.update_graphics_item()
+
         # Emit the signal
         self.annotationSizeChanged.emit(self.annotation_size)
+
+    def set_transparency(self, transparency: int):
+        self.transparency = transparency
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         if scene_pos:
@@ -809,44 +914,24 @@ class AnnotationWindow(QGraphicsView):
                 return
 
             if not self.cursor_annotation:
-                half_size = self.annotation_size / 2
-                self.cursor_annotation = QGraphicsRectItem(scene_pos.x() - half_size,
-                                                           scene_pos.y() - half_size,
-                                                           self.annotation_size,
-                                                           self.annotation_size)
-                # Use a thicker and dashed pen
-                pen = QPen(self.annotation_color, 6)
-                pen.setStyle(Qt.DashLine)
-                self.cursor_annotation.setPen(pen)
-                # Add a semi-transparent fill color
-                brush = QBrush(self.annotation_color.lighter(150))
-                brush.setStyle(Qt.SolidPattern)
-                color = brush.color()
-                color.setAlphaF(0.3)  # Adjust the alpha value for transparency
-                brush.setColor(color)
-                self.cursor_annotation.setBrush(brush)
-                self.scene.addItem(self.cursor_annotation)
+                self.cursor_annotation = Annotation(scene_pos,
+                                                    self.annotation_size,
+                                                    self.selected_label.short_label_code,
+                                                    self.selected_label.long_label_code,
+                                                    self.selected_label.color,
+                                                    self.current_image_path,
+                                                    self.selected_label.id,
+                                                    transparency=128)
+                # Graphic, set dotted line
+                self.cursor_annotation.create_graphics_item(self.scene)
             else:
-                half_size = self.annotation_size / 2
-                self.cursor_annotation.setRect(scene_pos.x() - half_size,
-                                               scene_pos.y() - half_size,
-                                               self.annotation_size,
-                                               self.annotation_size)
-                # Update the pen to be thicker and dashed
-                pen = QPen(self.annotation_color, 6)
-                pen.setStyle(Qt.DashLine)
-                self.cursor_annotation.setPen(pen)
-                # Update the semi-transparent fill color
-                brush = QBrush(self.annotation_color.lighter(150))
-                brush.setStyle(Qt.SolidPattern)
-                color = brush.color()
-                color.setAlphaF(0.3)  # Adjust the alpha value for transparency
-                brush.setColor(color)
-                self.cursor_annotation.setBrush(brush)
+                self.cursor_annotation.move(scene_pos)
+                self.cursor_annotation.update_graphics_item()
+                self.cursor_annotation.set_transparency(128)
         else:
             # Hide the cursor annotation if it exists
             if self.cursor_annotation:
-                self.scene.removeItem(self.cursor_annotation)
+                self.cursor_annotation.delete()
                 self.cursor_annotation = None
 
     def set_image(self, image, image_path):
@@ -994,6 +1079,15 @@ class AnnotationWindow(QGraphicsView):
             self.selected_annotation.deselect()
             self.selected_annotation = None
 
+    def update_annotations_transparency(self, label, transparency):
+        # Update the transparency in AnnotationWindow
+        self.set_transparency(transparency)
+        # Update transparency for all existing Annotations
+        for annotation in self.annotations_dict.values():
+            if annotation.label.id == label.id:
+                annotation.set_transparency(transparency)
+                annotation.update_graphics_item()
+
     def load_annotations(self, image_path):
         for annotation_id, annotation in self.annotations_dict.items():
             if annotation.image_path == image_path:
@@ -1020,7 +1114,8 @@ class AnnotationWindow(QGraphicsView):
                                     self.selected_label.long_label_code,
                                     self.selected_label.color,
                                     self.current_image_path,
-                                    self.selected_label.id)
+                                    self.selected_label.id,
+                                    transparency=self.transparency)
 
         # Create the graphics item for the annotation
         annotation.create_graphics_item(self.scene)
@@ -1077,8 +1172,8 @@ class AnnotationWindow(QGraphicsView):
 
 
 class ThumbnailWindow(QWidget):
-    imageSelected = pyqtSignal(str)  # Signal to emit the selected image path
-    imageDeleted = pyqtSignal(str)  # Signal to emit the deleted image path
+    imageSelected = pyqtSignal(str)
+    imageDeleted = pyqtSignal(str)
 
     def __init__(self, main_window):
         super().__init__()
@@ -1101,8 +1196,14 @@ class ThumbnailWindow(QWidget):
         self.layout.addWidget(self.scrollArea)
 
         self.images = {}
+        self.thumbnails = weakref.WeakValueDictionary()
         self.selected_thumbnail = None
         self.show_confirmation_dialog = True
+        self.threadpool = QThreadPool()
+
+    def add_image_async(self, image_path):
+        loader = ThumbnailLoader(self, image_path)
+        self.threadpool.start(loader)
 
     def add_image(self, image_path):
         if image_path not in self.annotation_window.main_window.imported_image_paths:
@@ -1110,10 +1211,10 @@ class ThumbnailWindow(QWidget):
             container = self._create_thumbnail_container(image_path, image)
             self.thumbnail_container_layout.addWidget(container)
             self.images[image_path] = image
+            self.thumbnails[image_path] = container.layout().itemAt(0).widget()
 
             self.scrollArea.verticalScrollBar().setValue(self.scrollArea.verticalScrollBar().maximum())
 
-            # Automatically select the first image added
             if not self.selected_thumbnail:
                 self.load_image(image, image_path, container.layout().itemAt(0).widget())
 
@@ -1174,7 +1275,8 @@ class ThumbnailWindow(QWidget):
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Question)
         msg_box.setWindowTitle("Confirm Delete")
-        msg_box.setText("Are you sure you want to delete this image? This will delete all associated annotations.")
+        msg_box.setText("Are you sure you want to delete this image?\n"
+                        "This will delete all associated annotations.")
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
         checkbox = QCheckBox("Do not show this message again")
@@ -1248,6 +1350,17 @@ class ThumbnailLabel(QLabel):
     def delete(self):
         self.setParent(None)
         self.deleteLater()
+
+
+class ThumbnailLoader(QRunnable):
+    def __init__(self, thumbnail_window, image_path):
+        super().__init__()
+        self.thumbnail_window = thumbnail_window
+        self.image_path = image_path
+
+    def run(self):
+        image = QImage(self.image_path)
+        self.thumbnail_window.add_image(self.image_path)
 
 
 class AddLabelDialog(QDialog):
@@ -1561,7 +1674,8 @@ class LabelWindow(QWidget):
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Question)
             msg_box.setWindowTitle("Confirm Delete")
-            msg_box.setText("Are you sure you want to delete this label? This will delete all associated annotations")
+            msg_box.setText("Are you sure you want to delete this label?\n"
+                            "This will delete all associated annotations.")
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
             checkbox = QCheckBox("Do not show this message again")
