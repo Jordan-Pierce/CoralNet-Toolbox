@@ -19,6 +19,10 @@ for analyzing the annotated images, and create patch-based image classifiers.
 
 ### [**Tools**](./Toolbox/README.md#coralnet-toolbox)
 
+<p align="center">
+  <img src="Figures/toolbox_qt.PNG" alt="CoralNet-Toolbox-Features">
+</p>
+
 The `CoralNet-Toolbox` is an **unofficial** codebase that can be used to augment processes associated
 with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
 a GUI; these scripts currently include the following:
@@ -42,7 +46,7 @@ a GUI; these scripts currently include the following:
 - `Segmentation Inf.`: Perform inference using a locally trained segmentation model
 - `SfM`: Use Metashape to create 3D models (sure, why not)
 - `Segmentation3D`: Use masks and SfM to create classified 3D models
-- `Annotate`: Check it out 🤠
+- `Annotate`: [Check it out](Figures/toolbox_qt.PNG) 🤠
 
 
 <p align="center">
