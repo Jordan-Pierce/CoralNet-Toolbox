@@ -9,7 +9,6 @@ from Toolbox.Tools.Download import download
 from Toolbox.Tools.Labelset import labelset
 from Toolbox.Tools.Upload import upload
 
-from Toolbox.Tools.Annotate import annotate
 from Toolbox.Tools.Patches import patches
 from Toolbox.Tools.Visualize import visualize
 from Toolbox.Tools.Points import points
@@ -43,6 +42,8 @@ from Toolbox.Tools.Common import console_user
 from Toolbox.Tools.Common import DATA_DIR
 from Toolbox.Tools.Common import PATCH_EXTRACTOR
 from Toolbox.Tools.Common import FUNC_GROUPS_LIST
+
+from Toolbox.Tools.Patch_Extractor.Patch_Extractor import patch_extractor
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -344,17 +345,6 @@ def main():
                                                                  'annotations in CoralNet, or used to train a model '
                                                                  'locally.',
                                                                  gooey_options={'show_border': True})
-
-    annotate_parser_panel_1.add_argument('--patch_extractor_path', required=True, type=str,
-                                         metavar="Patch Extractor Path",
-                                         help='The path to the CNNDataExtractor.exe',
-                                         default=PATCH_EXTRACTOR,
-                                         widget="FileChooser")
-
-    annotate_parser_panel_1.add_argument('--image_dir', required=True,
-                                         metavar='Image Directory',
-                                         help='A directory where all images are located.',
-                                         widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Patches
@@ -1113,7 +1103,7 @@ def main():
             upload(args)
 
         if args.command == 'Annotate':
-            annotate(args)
+            patch_extractor()
 
         if args.command == 'Patches':
             patches(args)

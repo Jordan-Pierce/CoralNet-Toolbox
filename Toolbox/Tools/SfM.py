@@ -457,8 +457,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.print_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == '__main__':
