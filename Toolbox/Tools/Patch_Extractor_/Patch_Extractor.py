@@ -611,30 +611,23 @@ class AnnotationSamplingDialog(QDialog):
         super().showEvent(event)
         self.showMaximized()  # Maximize the dialog when it is shown
 
-
 class Annotation(QObject):
     color_changed = pyqtSignal(QColor)
-    selected = pyqtSignal(object)  # Signal to emit the selected annotation
-    annotation_deleted = pyqtSignal(object)  # Signal to emit when the annotation is deleted
+    selected = pyqtSignal(object)
+    annotation_deleted = pyqtSignal(object)
 
-    def __init__(self, center_xy: QPointF,
-                 annotation_size: int,
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
-                 image_path: str,
-                 label_id: str,
+    def __init__(self, center_xy: QPointF, annotation_size: int, short_label_code: str,
+                 long_label_code: str, color: QColor, image_path: str, label_id: str,
                  transparency: int = 50):
-
         super().__init__()
-        self.id = str(uuid.uuid4())  # Unique identifier
+        self.id = str(uuid.uuid4())
         self.center_xy = center_xy
         self.annotation_size = annotation_size
         self.label = Label(short_label_code, long_label_code, color, label_id)
         self.image_path = image_path
         self.is_selected = False
-        self.graphics_item = None  # QGraphicsRectItem for the annotation
-        self.transparency = transparency  # Transparency value (0-255)
+        self.graphics_item = None
+        self.transparency = transparency
 
     def to_dict(self):
         return {
@@ -645,42 +638,32 @@ class Annotation(QObject):
             'label_long_code': self.label.long_label_code,
             'annotation_color': self.label.color.getRgb(),
             'image_path': self.image_path,
-            'label_id': self.label.id  # Include the label's UUID in the dictionary
+            'label_id': self.label.id
         }
 
     @classmethod
     def from_dict(cls, data):
-        center_xy = QPointF(data['center_xy'][0], data['center_xy'][1])
-        return cls(center_xy,
-                   data['annotation_size'],
-                   data['label_short_code'],
-                   data['label_long_code'],
-                   QColor(*data['annotation_color']),
-                   data['image_path'],
-                   data['label_id'])  # Include the label's UUID in the constructor
+        return cls(QPointF(*data['center_xy']), data['annotation_size'],
+                   data['label_short_code'], data['label_long_code'],
+                   QColor(*data['annotation_color']), data['image_path'],
+                   data['label_id'])
 
     def to_coralnet_format(self):
-        return [os.path.basename(self.image_path),
-                int(self.center_xy.y()),
-                int(self.center_xy.x()),
-                self.label.short_label_code,
-                self.label.long_label_code,
-                self.annotation_size]
+        return [os.path.basename(self.image_path), int(self.center_xy.y()),
+                int(self.center_xy.x()), self.label.short_label_code,
+                self.label.long_label_code, self.annotation_size]
 
     def change_label(self, new_label: 'Label'):
         self.label = new_label
-        self.update_graphics_item_color(self.label.color)
+        self.update_graphics_item()
 
     def select(self):
-        if not self.is_selected:
-            self.is_selected = True
-            self.selected.emit(self)
-            self.update_graphics_item_pen(self.label.color, 8, Qt.DotLine)  # Thicker, dotted line when selected
+        self.is_selected = True
+        self.update_graphics_item()
 
     def deselect(self):
-        if self.is_selected:
-            self.is_selected = False
-            self.update_graphics_item_pen(self.label.color, 4, Qt.SolidLine)  # Solid line when deselected
+        self.is_selected = False
+        self.update_graphics_item()
 
     def delete(self):
         self.annotation_deleted.emit(self)
@@ -694,18 +677,9 @@ class Annotation(QObject):
                                                self.center_xy.y() - half_size,
                                                self.annotation_size,
                                                self.annotation_size)
-        self.update_graphics_item()  # Ensure both pen and brush are set correctly
-        self.graphics_item.setData(0, self.id)  # Store the UUID in the graphics item's data
+        self.update_graphics_item()
+        self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
-
-    def set_graphics_item_brush(self):
-        if self.graphics_item:
-            brush = QBrush(self.label.color)
-            brush.setStyle(Qt.SolidPattern)
-            color = brush.color()
-            color.setAlpha(self.transparency)  # Apply transparency
-            brush.setColor(color)
-            self.graphics_item.setBrush(brush)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -714,26 +688,21 @@ class Annotation(QObject):
                                        self.center_xy.y() - half_size,
                                        self.annotation_size,
                                        self.annotation_size)
-            self.update_graphics_item_pen(self.label.color, 4, Qt.SolidLine)  # Update pen
-            self.set_graphics_item_brush()  # Update brush
-
-    def update_graphics_item_color(self, color: QColor):
-        if self.graphics_item:
-            self.update_graphics_item_pen(color, 4, Qt.SolidLine)  # Update pen
-            self.set_graphics_item_brush()  # Update brush
-            self.graphics_item.update()
-
-    def update_graphics_item_pen(self, color: QColor, width: int, style=Qt.SolidLine):
-        if self.graphics_item:
-            pen_color = QColor(color)
-            pen_color.setAlpha(self.transparency)  # Apply transparency to the pen color
-            pen = QPen(pen_color, width, style)
+            color = QColor(self.label.color)
+            color.setAlpha(self.transparency)
+            pen = QPen(color, 4, Qt.DotLine if self.is_selected else Qt.SolidLine)
             self.graphics_item.setPen(pen)
+            brush = QBrush(color)
+            self.graphics_item.setBrush(brush)
             self.graphics_item.update()
+
+    def set_annotation_size(self, size):
+        self.annotation_size = size
+        self.update_graphics_item()
 
     def set_transparency(self, transparency: int):
         self.transparency = transparency
-        self.update_graphics_item()  # Ensure both pen and brush are updated
+        self.update_graphics_item()
 
     def move(self, new_center_xy: QPointF):
         self.center_xy = new_center_xy
@@ -748,8 +717,7 @@ class Annotation(QObject):
         return rect.contains(point)
 
     def __repr__(self):
-        return (f"Annotation(id={self.id}, "
-                f"center_xy={self.center_xy}, "
+        return (f"Annotation(id={self.id}, center_xy={self.center_xy}, "
                 f"annotation_size={self.annotation_size}, "
                 f"annotation_color={self.label.color.name()}, "
                 f"image_path={self.image_path}, "
@@ -998,6 +966,8 @@ class AnnotationWindow(QGraphicsView):
             self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
+
+        # Uses Annotation.deselect()
         self.unselect_annotation()
 
     def set_selected_label(self, label):
@@ -1005,12 +975,14 @@ class AnnotationWindow(QGraphicsView):
         self.annotation_color = label.color
 
         if self.selected_annotation:
-            self.selected_annotation.change_label(self.selected_label)
-            self.selected_annotation.deselect()
-            self.selected_annotation.select()
+            if self.selected_annotation.label.id != label.id:
+                self.selected_annotation.change_label(self.selected_label)
+                self.selected_annotation.deselect()
+                self.selected_annotation.select()
 
         if self.cursor_annotation:
-            self.toggle_cursor_annotation()
+            if self.cursor_annotation.label.id != label.id:
+                self.toggle_cursor_annotation()
 
     def set_annotation_size(self, size=None, delta=0):
         if size is not None:
@@ -1021,15 +993,11 @@ class AnnotationWindow(QGraphicsView):
 
         # Update the selected annotation size
         if self.selected_annotation:
-            self.selected_annotation.deselect()
-            self.selected_annotation.annotation_size = self.annotation_size
-            self.selected_annotation.update_graphics_item()
-            self.selected_annotation.select()
+            self.selected_annotation.set_annotation_size(self.annotation_size)
 
         # Update the cursor annotation size
         if self.cursor_annotation:
-            self.cursor_annotation.annotation_size = self.annotation_size
-            self.cursor_annotation.update_graphics_item()
+            self.cursor_annotation.set_annotation_size(self.annotation_size)
 
         # Emit the signal
         self.annotationSizeChanged.emit(self.annotation_size)
@@ -1219,13 +1187,12 @@ class AnnotationWindow(QGraphicsView):
         for annotation in self.annotations_dict.values():
             if annotation.label.id == label.id:
                 annotation.set_transparency(transparency)
-                annotation.update_graphics_item()
 
     def load_annotations(self, image_path):
         for annotation_id, annotation in self.annotations_dict.items():
             if annotation.image_path == image_path:
                 annotation.create_graphics_item(self.scene)
-                annotation.color_changed.connect(annotation.update_graphics_item_color)
+                annotation.color_changed.connect(annotation.update_graphics_item) # TODO Bug
                 annotation.selected.connect(self.select_annotation)
                 annotation.annotation_deleted.connect(self.delete_annotation)
 
@@ -1254,7 +1221,7 @@ class AnnotationWindow(QGraphicsView):
         annotation.create_graphics_item(self.scene)
 
         # Connect signals for new annotation
-        annotation.color_changed.connect(lambda color: annotation.graphics_item.setPen(QPen(color, 4)))
+        annotation.color_changed.connect(lambda color: annotation.graphics_item.setPen(QPen(color, 4))) # TODO Bug
         annotation.selected.connect(self.select_annotation)
         annotation.annotation_deleted.connect(self.delete_annotation)
 
@@ -1603,12 +1570,12 @@ class EditLabelDialog(QDialog):
         short_label_code = self.short_label_input.text().strip()
         long_label_code = self.long_label_input.text().strip()
 
-        if short_label_code == 'Review' and long_label_code == 'Review':
-            QMessageBox.warning(self, "Cannot Edit Label", "The 'Review' label cannot be editted.")
-            return
-
         if not short_label_code or not long_label_code:
             QMessageBox.warning(self, "Input Error", "Both short and long label codes are required.")
+            return
+
+        if short_label_code == 'Review' and long_label_code == 'Review':
+            QMessageBox.warning(self, "Cannot Edit Label", "The 'Review' label cannot be edited.")
             return
 
         # Search for existing label
