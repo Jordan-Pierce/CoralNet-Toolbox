@@ -1603,9 +1603,14 @@ class EditLabelDialog(QDialog):
         short_label_code = self.short_label_input.text().strip()
         long_label_code = self.long_label_input.text().strip()
 
+        if short_label_code == 'Review' and long_label_code == 'Review':
+            QMessageBox.warning(self, "Cannot Edit Label", "The 'Review' label cannot be editted.")
+            return
+
         if not short_label_code or not long_label_code:
             QMessageBox.warning(self, "Input Error", "Both short and long label codes are required.")
             return
+
         # Search for existing label
         existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
 
