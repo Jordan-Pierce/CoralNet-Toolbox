@@ -667,9 +667,6 @@ class Annotation(QObject):
                 self.label.long_label_code,
                 self.annotation_size]
 
-    def from_coralnet_format(self):
-        pass
-
     def change_label(self, new_label: 'Label'):
         self.label = new_label
         self.update_graphics_item_color(self.label.color)
@@ -1558,6 +1555,92 @@ class AddLabelDialog(QDialog):
             self.accept()
 
 
+class EditLabelDialog(QDialog):
+    def __init__(self, label, label_window, parent=None):
+        super().__init__(parent)
+        self.label = label
+        self.label_window = label_window
+        self.setWindowTitle("Edit Label")
+
+        self.layout = QVBoxLayout(self)
+
+        self.short_label_input = QLineEdit(self.label.short_label_code, self)
+        self.short_label_input.setPlaceholderText("Short Label")
+        self.layout.addWidget(self.short_label_input)
+
+        self.long_label_input = QLineEdit(self.label.long_label_code, self)
+        self.long_label_input.setPlaceholderText("Long Label")
+        self.layout.addWidget(self.long_label_input)
+
+        self.color_button = QPushButton("Select Color", self)
+        self.color_button.clicked.connect(self.select_color)
+        self.layout.addWidget(self.color_button)
+
+        self.button_box = QHBoxLayout()
+        self.ok_button = QPushButton("OK", self)
+        self.ok_button.clicked.connect(self.validate_and_accept)
+        self.button_box.addWidget(self.ok_button)
+
+        self.cancel_button = QPushButton("Cancel", self)
+        self.cancel_button.clicked.connect(self.reject)
+        self.button_box.addWidget(self.cancel_button)
+
+        self.layout.addLayout(self.button_box)
+
+        self.color = self.label.color
+        self.update_color_button()
+
+    def update_color_button(self):
+        self.color_button.setStyleSheet(f"background-color: {self.color.name()};")
+
+    def select_color(self):
+        color = QColorDialog.getColor(self.color, self, "Select Label Color")
+        if color.isValid():
+            self.color = color
+            self.update_color_button()
+
+    def validate_and_accept(self):
+        short_label_code = self.short_label_input.text().strip()
+        long_label_code = self.long_label_input.text().strip()
+
+        if not short_label_code or not long_label_code:
+            QMessageBox.warning(self, "Input Error", "Both short and long label codes are required.")
+            return
+        # Search for existing label
+        existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
+
+        if existing_label and existing_label != self.label:
+
+            text = (f"A label with the short code '{short_label_code}' "
+                    f"and long code '{long_label_code}' already exists. "
+                    f"Do you want to merge the labels?")
+
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Question)
+            msg_box.setText(text)
+            msg_box.setWindowTitle("Merge Labels?")
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            result = msg_box.exec_()
+
+            if result == QMessageBox.Yes:
+                # Merge with existing label
+                self.label_window.edit_labels(self.label, existing_label, delete_old=True)
+                self.accept()
+
+            # If No, do nothing and keep the dialog open for further modification
+        else:
+            # Update the label with the next text and color
+            self.label.short_label_code = short_label_code
+            self.label.long_label_code = long_label_code
+            self.label.color = self.color
+            self.label.update_label_color(self.color)
+            self.accept()
+
+            # Hack to update the graphics for Annotations and Label
+            self.label_window.edit_labels(self.label, self.label, delete_old=False)
+
+
 class Label(QWidget):
     color_changed = pyqtSignal(QColor)
     selected = pyqtSignal(object)  # Signal to emit the selected label
@@ -1647,11 +1730,6 @@ class Label(QWidget):
 
     def show_context_menu(self, pos):
         context_menu = QMenu(self)
-        delete_action = context_menu.addAction("Delete")
-        action = context_menu.exec_(self.mapToGlobal(pos))
-
-        if action == delete_action:
-            self.delete_label()
 
     def delete_label(self):
         self.label_deleted.emit(self)
@@ -1708,12 +1786,23 @@ class LabelWindow(QWidget):
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
-        # Top bar with Add Label button
+        # Top bar with Add Label, Edit Label, and Delete Label buttons
         self.top_bar = QHBoxLayout()
         self.top_bar.addStretch()
         self.add_label_button = QPushButton("Add Label")
         self.add_label_button.setFixedSize(80, 30)
         self.top_bar.addWidget(self.add_label_button)
+
+        self.edit_label_button = QPushButton("Edit Label")
+        self.edit_label_button.setFixedSize(80, 30)
+        self.edit_label_button.setEnabled(False)  # Initially disabled
+        self.top_bar.addWidget(self.edit_label_button)
+
+        self.delete_label_button = QPushButton("Delete Label")
+        self.delete_label_button.setFixedSize(80, 30)
+        self.delete_label_button.setEnabled(False)  # Initially disabled
+        self.top_bar.addWidget(self.delete_label_button)
+
         self.main_layout.addLayout(self.top_bar)
 
         # Scroll area for labels
@@ -1728,6 +1817,8 @@ class LabelWindow(QWidget):
         self.main_layout.addWidget(self.scroll_area)
 
         self.add_label_button.clicked.connect(self.open_add_label_dialog)
+        self.edit_label_button.clicked.connect(self.open_edit_label_dialog)
+        self.delete_label_button.clicked.connect(self.delete_active_label)
         self.labels = []
         self.active_label = None
 
@@ -1766,6 +1857,13 @@ class LabelWindow(QWidget):
                 new_label = self.add_label(short_label_code, long_label_code, color)
                 self.set_active_label(new_label)
 
+    def open_edit_label_dialog(self):
+        if self.active_label:
+            dialog = EditLabelDialog(self.active_label, self)
+            if dialog.exec_() == QDialog.Accepted:
+                self.update_labels_per_row()
+                self.reorganize_labels()
+
     def add_label(self, short_label_code, long_label_code, color, label_id=None):
         # Create the label
         label = Label(short_label_code, long_label_code, color, label_id, fixed_width=self.label_width)
@@ -1786,8 +1884,23 @@ class LabelWindow(QWidget):
 
         self.active_label = selected_label
         self.active_label.select()
-        print(f"Active label: {self.active_label.short_label_code}")
-        self.labelSelected.emit(selected_label)  # Emit the entire Label object
+        self.labelSelected.emit(selected_label)
+
+        # Enable or disable the Edit Label and Delete Label buttons based on whether a label is selected
+        self.edit_label_button.setEnabled(self.active_label is not None)
+        self.delete_label_button.setEnabled(self.active_label is not None)
+
+        # Update annotations with the new label
+        self.update_annotations_with_label(selected_label)
+
+    def delete_active_label(self):
+        if self.active_label:
+            self.delete_label(self.active_label)
+
+    def update_annotations_with_label(self, label):
+        for annotation in self.annotation_window.annotations_dict.values():
+            if annotation.label.id == label.id:
+                annotation.change_label(label)
 
     def get_label_color(self, short_label_code, long_label_code):
         for label in self.labels:
@@ -1819,6 +1932,24 @@ class LabelWindow(QWidget):
                 self.set_active_label(lbl)
                 break
 
+    def edit_labels(self, old_label, new_label, delete_old=False):
+        # Update annotations to use the new label
+        for annotation in self.annotation_window.annotations_dict.values():
+            if annotation.label.id == old_label.id:
+                annotation.change_label(new_label)
+
+        if delete_old:
+            # Remove the old label
+            self.labels.remove(old_label)
+            old_label.deleteLater()
+
+        # Update the active label if necessary
+        if self.active_label == old_label:
+            self.set_active_label(new_label)
+
+        self.update_labels_per_row()
+        self.reorganize_labels()
+
     def delete_label(self, label):
         if (label.short_label_code == "Review" and
                 label.long_label_code == "Review" and
@@ -1845,9 +1976,9 @@ class LabelWindow(QWidget):
             if result == QMessageBox.No:
                 return
 
+        # Remove from the LabelWindow
         self.labels.remove(label)
-        self.update_labels_per_row()
-        self.reorganize_labels()
+        label.deleteLater()
 
         # Delete annotations associated with the label
         self.annotation_window.delete_annotations_for_label(label)
@@ -1857,6 +1988,10 @@ class LabelWindow(QWidget):
             self.active_label = None
             if self.labels:
                 self.set_active_label(self.labels[0])
+
+        # Update the LabelWindow
+        self.update_labels_per_row()
+        self.reorganize_labels()
 
     def handle_wasd_key(self, key):
         if not self.active_label:
