@@ -137,21 +137,31 @@ class MainWindow(QMainWindow):
         self.right_layout = QVBoxLayout()
 
         self.menu_bar = self.menuBar()
+
         self.import_menu = self.menu_bar.addMenu("Import")
+
         self.import_images_action = QAction("Import Images", self)
         self.import_images_action.triggered.connect(self.import_images)
         self.import_menu.addAction(self.import_images_action)
+
+        self.import_labels_action = QAction("Import Labels (JSON)", self)
+        self.import_labels_action.triggered.connect(self.label_window.import_labels)
+        self.import_menu.addAction(self.import_labels_action)
 
         self.import_annotations_action = QAction("Import Annotations (JSON)", self)
         self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
         self.import_menu.addAction(self.import_annotations_action)
 
-        # Add the new import CoralNet annotations action
         self.import_coralnet_annotations_action = QAction("Import Annotations (CoralNet)", self)
         self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
         self.import_menu.addAction(self.import_coralnet_annotations_action)
 
         self.export_menu = self.menu_bar.addMenu("Export")
+
+        self.export_labels_action = QAction("Export Labels (JSON)", self)
+        self.export_labels_action.triggered.connect(self.label_window.export_labels)
+        self.export_menu.addAction(self.export_labels_action)
+
         self.export_annotations_action = QAction("Export Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
         self.export_menu.addAction(self.export_annotations_action)
@@ -1801,6 +1811,33 @@ class LabelWindow(QWidget):
         # Do not set the default label as active
 
         self.show_confirmation_dialog = True
+
+    def export_labels(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(self,
+                                                   "Export Labels",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
+                                                   options=options)
+        if file_path:
+            labels_data = [label.to_dict() for label in self.labels]
+            with open(file_path, 'w') as file:
+                json.dump(labels_data, file, indent=4)
+
+    def import_labels(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Import Labels",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
+                                                   options=options)
+        if file_path:
+            with open(file_path, 'r') as file:
+                labels_data = json.load(file)
+
+            for label_data in labels_data:
+                label = Label.from_dict(label_data)
+                self.add_label(label.short_label_code, label.long_label_code, label.color, label.id)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
