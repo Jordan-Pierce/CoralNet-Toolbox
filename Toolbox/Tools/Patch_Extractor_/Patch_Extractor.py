@@ -1,10 +1,8 @@
 import os
-import sys
 import uuid
 import json
 import random
 import weakref
-import threading
 
 import pandas as pd
 
@@ -13,7 +11,7 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
                              QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
-                             QFormLayout, QInputDialog)
+                             QFormLayout, QInputDialog, QFrame)
 
 from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
@@ -102,7 +100,6 @@ class MainWindow(QMainWindow):
 
         # Set window flags for resizing, minimize, maximize, and customizing
         self.setWindowFlags(Qt.Window |
-                            Qt.CustomizeWindowHint |
                             Qt.WindowCloseButtonHint |
                             Qt.WindowMinimizeButtonHint |
                             Qt.WindowMaximizeButtonHint |
@@ -277,15 +274,19 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.showMaximized()  # Ensure the window is maximized when shown
 
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange:
-            if self.windowState() == Qt.WindowMinimized:
-                pass  # Allow minimizing
+            if self.windowState() & Qt.WindowMinimized:
+                # Allow minimizing
+                pass
+            elif self.windowState() & Qt.WindowMaximized:
+                # Window is maximized, do nothing
+                pass
             else:
-                self.showMaximized()  # Restore maximized state
+                # Restore to normal state
+                pass  # Do nothing, let the OS handle the restore
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -790,7 +791,7 @@ class AnnotationWindow(QGraphicsView):
                 json.dump(export_dict, file, indent=4)
 
     def import_annotations(self):
-
+        
         if not self.active_image:
             QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
             return
@@ -1273,6 +1274,52 @@ class AnnotationWindow(QGraphicsView):
                 del self.annotations_dict[annotation.id]
 
 
+class ThumbnailWidget(QFrame):
+    def __init__(self, parent, image_path, image, size=100):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.image_path = image_path
+        self.size = size
+        self.is_selected = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
+
+        self.image_label = QLabel()
+        self.image_label.setFixedSize(self.size, self.size)
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setScaledContents(False)
+        self.setImage(image)
+        layout.addWidget(self.image_label, alignment=Qt.AlignCenter)
+
+        self.text_label = QLabel(os.path.basename(image_path))
+        self.text_label.setAlignment(Qt.AlignCenter)
+        self.text_label.setWordWrap(True)
+        layout.addWidget(self.text_label)
+
+        self.setFixedHeight(self.size + self.text_label.sizeHint().height() + 20)
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShadow(QFrame.Raised)
+
+    def setImage(self, image):
+        scaled_image = image.scaled(self.size, self.size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.image_label.setPixmap(QPixmap.fromImage(scaled_image))
+
+    def select(self):
+        self.is_selected = True
+        self.setStyleSheet("ThumbnailWidget { background-color: rgba(0, 0, 255, 0.1); }")
+        self.parent_window.set_selected_widget_width(self)
+
+    def deselect(self):
+        self.is_selected = False
+        self.setStyleSheet("")
+        self.setFixedWidth(self.parent_window.thumbnail_container.width())
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.parent_window.load_image(self)
+
 class ThumbnailWindow(QWidget):
     imageSelected = pyqtSignal(str)
     imageDeleted = pyqtSignal(str)
@@ -1310,68 +1357,61 @@ class ThumbnailWindow(QWidget):
     def add_image(self, image_path):
         if image_path not in self.annotation_window.main_window.imported_image_paths:
             image = QImage(image_path)
-            container = self._create_thumbnail_container(image_path, image)
-            self.thumbnail_container_layout.addWidget(container)
+            thumbnail = ThumbnailWidget(self, image_path, image)
+            thumbnail.setContextMenuPolicy(Qt.CustomContextMenu)
+            thumbnail.customContextMenuRequested.connect(lambda pos, t=thumbnail: self.show_context_menu(pos, t))
+
+            self.thumbnail_container_layout.addWidget(thumbnail)
             self.images[image_path] = image
-            self.thumbnails[image_path] = container.layout().itemAt(0).widget()
+            self.thumbnails[image_path] = thumbnail
 
             self.scrollArea.verticalScrollBar().setValue(self.scrollArea.verticalScrollBar().maximum())
 
             if not self.selected_thumbnail:
-                self.load_image(image, image_path, container.layout().itemAt(0).widget())
+                self.load_image(thumbnail)
 
             self.annotation_window.main_window.imported_image_paths.add(image_path)
 
-    def _create_thumbnail_container(self, image_path, image):
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-
-        label = ThumbnailLabel(image_path, image)
-        label.mousePressEvent = lambda event, img=image, path=image_path, lbl=label: self.load_image(img, path, lbl)
-        label.setContextMenuPolicy(Qt.CustomContextMenu)
-        label.customContextMenuRequested.connect(lambda pos, lbl=label: self.show_context_menu(pos, lbl))
-
-        basename_label = QLabel(os.path.basename(image_path))
-        basename_label.setAlignment(Qt.AlignCenter)
-        basename_label.setWordWrap(True)
-
-        container_layout.addWidget(label)
-        container_layout.addWidget(basename_label)
-
-        return container
-
-    def load_image(self, image, image_path, label):
+    def load_image(self, thumbnail):
         if self.selected_thumbnail:
             self.selected_thumbnail.deselect()
 
-        self.selected_thumbnail = label
+        self.selected_thumbnail = thumbnail
         self.selected_thumbnail.select()
 
-        self.annotation_window.set_image(image, image_path)
+        image_path = thumbnail.image_path
+        self.annotation_window.set_image(self.images[image_path], image_path)
         self.imageSelected.emit(image_path)
+
+    def set_selected_widget_width(self, widget):
+        widget.setFixedWidth(self.thumbnail_container.width())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.thumbnail_container.setFixedWidth(self.width() - self.scrollArea.verticalScrollBar().width())
+        new_width = self.width() - self.scrollArea.verticalScrollBar().width()
+        self.thumbnail_container.setFixedWidth(new_width)
+        for thumbnail in self.thumbnails.values():
+            thumbnail.setFixedWidth(new_width)
+        if self.selected_thumbnail:
+            self.set_selected_widget_width(self.selected_thumbnail)
 
-    def show_context_menu(self, pos, label):
+    def show_context_menu(self, pos, thumbnail):
         context_menu = QMenu(self)
         delete_action = context_menu.addAction("Delete")
-        action = context_menu.exec_(label.mapToGlobal(pos))
+        action = context_menu.exec_(thumbnail.mapToGlobal(pos))
 
         if action == delete_action:
-            self.delete_image(label)
+            self.delete_image(thumbnail)
 
-    def delete_image(self, label):
+    def delete_image(self, thumbnail):
         if self.show_confirmation_dialog:
             result = self._confirm_delete()
             if result == QMessageBox.No:
                 return
 
-        self._remove_image(label)
-        self.imageDeleted.emit(label.image_path)
-        self.annotation_window.main_window.imported_image_paths.discard(label.image_path)
+        self._remove_image(thumbnail)
+        self.imageDeleted.emit(thumbnail.image_path)
+        self.annotation_window.main_window.imported_image_paths.discard(thumbnail.image_path)
 
     def _confirm_delete(self):
         msg_box = QMessageBox(self)
@@ -1391,67 +1431,24 @@ class ThumbnailWindow(QWidget):
 
         return result
 
-    def _remove_image(self, label):
-        for i in range(self.thumbnail_container_layout.count()):
-            item = self.thumbnail_container_layout.itemAt(i)
-            widget = item.widget()
-            if widget and widget.layout().itemAt(0).widget() == label:
-                self.thumbnail_container_layout.removeItem(item)
-                widget.deleteLater()
-                break
+    def _remove_image(self, thumbnail):
+        self.thumbnail_container_layout.removeWidget(thumbnail)
+        thumbnail.deleteLater()
 
-        image_path = label.image_path
+        image_path = thumbnail.image_path
         if image_path in self.images:
             del self.images[image_path]
 
-        if self.selected_thumbnail == label:
+        if self.selected_thumbnail == thumbnail:
             self.selected_thumbnail = None
             if self.images:
                 first_image_path = next(iter(self.images))
-                first_label = self.find_label_by_image_path(first_image_path)
-                if first_label:
-                    self.load_image(self.images[first_image_path], first_image_path, first_label)
+                first_thumbnail = self.thumbnails.get(first_image_path)
+                if first_thumbnail:
+                    self.load_image(first_thumbnail)
 
-    def find_label_by_image_path(self, image_path):
-        for i in range(self.thumbnail_container_layout.count()):
-            item = self.thumbnail_container_layout.itemAt(i)
-            widget = item.widget()
-            if widget:
-                label = widget.layout().itemAt(0).widget()
-                if isinstance(label, ThumbnailLabel) and label.image_path == image_path:
-                    return label
-        return None
-
-
-class ThumbnailLabel(QLabel):
-    def __init__(self, image_path, image, size=100):
-        super().__init__()
-        self.image_path = image_path
-        self.size = size
-        self.setFixedSize(self.size, self.size)
-        self.setAlignment(Qt.AlignCenter)
-        self.setScaledContents(False)
-        self.setImage(image_path, image)
-        self.is_selected = False
-
-    def setImage(self, image_path, image):
-        scaled_image = image.scaled(self.size, self.size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.setPixmap(QPixmap.fromImage(scaled_image))
-
-    def sizeHint(self):
-        return QSize(self.size, self.size)
-
-    def select(self):
-        self.is_selected = True
-        self.setStyleSheet("border: 2px solid blue;")
-
-    def deselect(self):
-        self.is_selected = False
-        self.setStyleSheet("")
-
-    def delete(self):
-        self.setParent(None)
-        self.deleteLater()
+    def find_thumbnail_by_image_path(self, image_path):
+        return self.thumbnails.get(image_path)
 
 
 class ThumbnailLoader(QRunnable):
