@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
                              QFormLayout)
 
-from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics
+from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
 
 
@@ -178,6 +178,7 @@ class MainWindow(QMainWindow):
         # Define icon paths
         select_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/select.png"
         annotate_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/annotate.png"
+        polygon_icon_path = "Toolbox/Tools/Patch_Extractor_/icons/polygon.png"
 
         # Add tools here with icons
         self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
@@ -189,6 +190,11 @@ class MainWindow(QMainWindow):
         self.annotate_tool_action.setCheckable(True)
         self.annotate_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.annotate_tool_action)
+
+        self.polygon_tool_action = QAction(QIcon(polygon_icon_path), "Polygon", self)
+        self.polygon_tool_action.setCheckable(False)
+        self.polygon_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.polygon_tool_action)
 
         # Create status bar layout
         self.status_bar_layout = QHBoxLayout()
@@ -1385,7 +1391,7 @@ class AddLabelDialog(QDialog):
 
         self.button_box = QHBoxLayout()
         self.ok_button = QPushButton("OK", self)
-        self.ok_button.clicked.connect(self.accept)
+        self.ok_button.clicked.connect(self.validate_and_accept)
         self.button_box.addWidget(self.ok_button)
 
         self.cancel_button = QPushButton("Cancel", self)
@@ -1412,6 +1418,15 @@ class AddLabelDialog(QDialog):
     def get_label_details(self):
         return self.short_label_input.text(), self.long_label_input.text(), self.color
 
+    def validate_and_accept(self):
+        short_label_code = self.short_label_input.text().strip()
+        long_label_code = self.long_label_input.text().strip()
+
+        if not short_label_code or not long_label_code:
+            QMessageBox.warning(self, "Input Error", "Both short and long label codes are required.")
+        else:
+            self.accept()
+
 
 class Label(QWidget):
     color_changed = pyqtSignal(QColor)
@@ -1428,47 +1443,18 @@ class Label(QWidget):
         self.is_selected = False
         self.fixed_width = fixed_width
 
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-
-        self.short_label_widget = QLabel(self.short_label_code)
-        self.short_label_widget.setAlignment(Qt.AlignCenter)
-        self.short_label_widget.setStyleSheet("color: black; background-color: transparent;")
-        self.color_button = QPushButton()
-        self.color_button.setFixedSize(20, 20)
-        self.update_color()
-
-        self.setContentsMargins(0, 0, 0, 0)  # Remove internal margins
-        self.layout.setContentsMargins(0, 0, 0, 0)  # Remove layout margins
-        self.layout.setSpacing(0)  # Remove spacing in the layout
-
-        self.layout.addWidget(self.short_label_widget)
-        self.layout.addWidget(self.color_button, alignment=Qt.AlignCenter)
-
         self.setCursor(Qt.PointingHandCursor)
-
-        # Calculate the height based on the text height
-        font_metrics = QFontMetrics(self.short_label_widget.font())
-        text_height = font_metrics.height()
-        self.setFixedSize(self.fixed_width, text_height + 25)  # Add some padding
+        self.setFixedWidth(self.fixed_width)
 
         # Set tooltip for long label
         self.setToolTip(self.long_label_code)
-
-        # Disable color change
-        self.color_button.setEnabled(False)
 
         # Context menu
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
     def update_color(self):
-        self.color_button.setStyleSheet(
-            f"background-color: {self.color.name()}; border: none; border-radius: 10px;")
         self.update()  # Trigger a repaint
-
-    def change_id(self, label_id):
-        self.id = label_id
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1483,16 +1469,49 @@ class Label(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw the main rectangle
-        painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))  # Thinner border
-        painter.setBrush(QBrush(self.color, Qt.SolidPattern))
-        painter.drawRect(0, 0, self.width(), self.height())  # Fill the entire widget
+        # Calculate the height based on the text height
+        font_metrics = QFontMetrics(painter.font())
+        text_height = font_metrics.height()
+        # Add some padding
+        self.setFixedHeight(text_height + 20)
 
-        # Draw selection border if selected
+        # Draw the main rectangle with a light transparent fill
+        transparent_color = QColor(self.color)
+        # Set higher transparency (0-255, where 255 is fully opaque)
+        transparent_color.setAlpha(20)
+        # Light transparent fill
+        painter.setBrush(QBrush(transparent_color, Qt.SolidPattern))
+
+        # Set the border color based on selection status
         if self.is_selected:
-            painter.setPen(QPen(self.color, 4, Qt.DotLine))  # Thicker, dotted border matching label color
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(2, 2, self.width() - 4, self.height() - 4)
+            # Lighter version of the label color
+            selected_border_color = self.color.lighter(150)
+            # Thicker border when selected
+            painter.setPen(QPen(selected_border_color, 2, Qt.SolidLine))
+        else:
+            # Normal border with the color of the label
+            painter.setPen(QPen(self.color, 1, Qt.SolidLine))
+
+        painter.drawRect(0, 0, self.width(), self.height())
+
+        # Draw the color rectangle only if selected
+        if self.is_selected:
+            # Width 5 pixels less than the main rectangle's width
+            rectangle_width = self.width() - 10
+            rectangle_height = 20
+            inner_transparent_color = QColor(self.color)
+            inner_transparent_color.setAlpha(100)
+            painter.setBrush(QBrush(inner_transparent_color, Qt.SolidPattern))
+            painter.drawRect(5, (self.height() - rectangle_height) // 2, rectangle_width, rectangle_height)
+
+        # Draw the text
+        if self.is_selected:
+            painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
+            painter.setFont(QFont(painter.font().family(), painter.font().pointSize(), QFont.Bold))
+        else:
+            painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
+
+        painter.drawText(12, 0, self.width() - 30, self.height(), Qt.AlignVCenter, self.short_label_code)
 
         super().paintEvent(event)
 
