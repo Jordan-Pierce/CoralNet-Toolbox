@@ -1,3 +1,7 @@
+# TODO
+#   - Delete image needs to delete all annotations in scene and from annotation dict
+#   - Importing a new image needs to highlight in thumbnailwindow
+
 import os
 import uuid
 import json
@@ -963,8 +967,15 @@ class AnnotationWindow(QGraphicsView):
                 if not ok:
                     return
 
+                # Subset the dataframe to only include annotations for in-project images
+                loaded_image_names = [os.path.basename(path) for path in list(self.loaded_image_paths)]
+                df = df[df['Name'].isin(loaded_image_names)]
+
                 # Count the total number of annotations in the CSV file
                 total_annotations = len(df)
+
+                if not total_annotations:
+                    raise Exception("No annotations found for loaded images.")
 
                 # Create and show the progress bar
                 progress_bar = ProgressBar(self, title="Importing CoralNet Annotations")
@@ -998,8 +1009,12 @@ class AnnotationWindow(QGraphicsView):
                         label_id = existing_label.id
                     else:
                         # Create a new label
-                        color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-                        label_id = str(uuid.uuid4())  # Generate a new UUID for the label
+                        color = QColor(random.randint(0, 255),
+                                       random.randint(0, 255),
+                                       random.randint(0, 255))
+
+                        # Generate a new UUID for the label
+                        label_id = str(uuid.uuid4())
                         self.main_window.label_window.add_label(short_label_code, long_label_code, color, label_id)
 
                     # Create the Annotation object
@@ -1084,9 +1099,6 @@ class AnnotationWindow(QGraphicsView):
             if not self.selected_label or not self.annotation_color:
                 return
 
-            if not self.cursorInWindow(scene_pos):
-                return
-
             if not self.cursor_annotation:
                 self.cursor_annotation = Annotation(scene_pos,
                                                     self.annotation_size,
@@ -1096,9 +1108,10 @@ class AnnotationWindow(QGraphicsView):
                                                     self.current_image_path,
                                                     self.selected_label.id,
                                                     transparency=128)
-                # Graphic, set dotted line
+                # Create the graphic
                 self.cursor_annotation.create_graphics_item(self.scene)
             else:
+                # Cursor annotation exists, just update
                 self.cursor_annotation.move(scene_pos)
                 self.cursor_annotation.update_graphics_item()
                 self.cursor_annotation.set_transparency(128)
@@ -1194,7 +1207,8 @@ class AnnotationWindow(QGraphicsView):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.RightButton:
             self.pan_active = False
-            self.setCursor(Qt.ArrowCursor)  # Reset cursor to default
+            # Reset cursor to default
+            self.setCursor(Qt.ArrowCursor)
         self.toggle_cursor_annotation()
         super().mouseReleaseEvent(event)
 
@@ -1214,8 +1228,13 @@ class AnnotationWindow(QGraphicsView):
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
 
-    def cursorInWindow(self, pos):
-        return self.image_item.boundingRect().contains(pos)
+    def cursorInWindow(self, pos, mapped=False):
+        if self.image_item:
+            image_rect = self.image_item.boundingRect()
+            if not mapped:
+                pos = self.mapToScene(pos)
+            return image_rect.contains(pos)
+        return False
 
     def undo(self):
         if self.undo_stack:
@@ -1275,7 +1294,7 @@ class AnnotationWindow(QGraphicsView):
             return
 
         # Check if the annotation's center point is within the image bounds
-        if not self.active_image or not self.image_item or not self.cursorInWindow(scene_pos):
+        if not self.active_image or not self.image_item or not self.cursorInWindow(scene_pos, mapped=True):
             return
 
         if annotation is None:
@@ -1290,7 +1309,7 @@ class AnnotationWindow(QGraphicsView):
                                     transparency=self.transparency)
 
         # # Create the graphics item for the annotation
-        # annotation.create_graphics_item(self.scene)
+        annotation.create_graphics_item(self.scene)
 
         # Connect signals for new annotation
         annotation.selected.connect(self.select_annotation)
@@ -1366,7 +1385,6 @@ class ThumbnailWidget(QFrame):
         self.text_label.setWordWrap(True)
         layout.addWidget(self.text_label)
 
-        self.setFixedHeight(self.size + self.text_label.sizeHint().height() + 20)
         self.setFrameShape(QFrame.StyledPanel)
         self.setFrameShadow(QFrame.Raised)
 
@@ -1387,6 +1405,7 @@ class ThumbnailWidget(QFrame):
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         self.parent_window.load_image(self)
+
 
 class ThumbnailWindow(QWidget):
     imageSelected = pyqtSignal(str)
