@@ -21,3 +21,4 @@ segmentation-models-pytorch==0.3.3
 renumics-spotlight==1.6.9
 gooey==1.0.8.1
 PyQt5
+pyqtgraph

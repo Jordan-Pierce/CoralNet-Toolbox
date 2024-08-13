@@ -4,7 +4,10 @@ import json
 import random
 import weakref
 
+import numpy as np
 import pandas as pd
+
+import pyqtgraph as PyQtGraph
 
 from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
                              QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
@@ -110,6 +113,7 @@ class MainWindow(QMainWindow):
         self.annotation_window = AnnotationWindow(self)
         self.label_window = LabelWindow(self)
         self.thumbnail_window = ThumbnailWindow(self)
+        self.confidence_window = ConfidenceWindow(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -274,13 +278,25 @@ class MainWindow(QMainWindow):
 
         self.imported_image_paths = set()  # Set to keep track of imported image paths
 
+        # Create the main layout
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QHBoxLayout(self.central_widget)
+
+        # Create left and right layouts
+        self.left_layout = QVBoxLayout()
+        self.right_layout = QVBoxLayout()
+
         # Add status bar layout to left layout above the AnnotationWindow
         self.left_layout.addLayout(self.status_bar_layout)
         self.left_layout.addWidget(self.annotation_window, 85)
         self.left_layout.addWidget(self.label_window, 15)
 
-        self.right_layout.addWidget(self.thumbnail_window)
+        # Add widgets to right layout
+        self.right_layout.addWidget(self.thumbnail_window, 54)
+        self.right_layout.addWidget(self.confidence_window, 46)
 
+        # Add left and right layouts to main layout
         self.main_layout.addLayout(self.left_layout, 85)
         self.main_layout.addLayout(self.right_layout, 15)
 
@@ -1295,10 +1311,33 @@ class AnnotationWindow(QGraphicsView):
             # Emit the selected label's ID
             self.labelSelected.emit(annotation.label.id)
 
+            # Crop the annotation image and pass it to the ConfidenceWindow
+            cropped_pixmap = self.crop_annotation_image(annotation)
+            self.main_window.confidence_window.display_cropped_image(cropped_pixmap)
+
     def unselect_annotation(self):
         if self.selected_annotation:
             self.selected_annotation.deselect()
             self.selected_annotation = None
+
+    def crop_annotation_image(self, annotation):
+        if not self.image_item:
+            return
+
+        # Get the image pixmap
+        pixmap = self.image_item.pixmap()
+
+        # Calculate the bounding rectangle of the annotation
+        half_size = annotation.annotation_size / 2
+        rect = QRectF(annotation.center_xy.x() - half_size,
+                      annotation.center_xy.y() - half_size,
+                      annotation.annotation_size,
+                      annotation.annotation_size).toRect()
+
+        # Crop the pixmap
+        cropped_pixmap = pixmap.copy(rect)
+
+        return cropped_pixmap
 
     def update_annotations_transparency(self, label, transparency):
         # Update the transparency in AnnotationWindow
@@ -1349,6 +1388,9 @@ class AnnotationWindow(QGraphicsView):
         # Push the action onto the undo stack
         self.undo_stack.append(('add', annotation.to_dict()))
         self.redo_stack.clear()  # Clear the redo stack
+
+        # View in ConfidenceWindow
+        self.main_window.confidence_window.display_cropped_image(self.crop_annotation_image(annotation))
 
     def delete_selected_annotation(self):
         if self.selected_annotation:
@@ -1458,11 +1500,17 @@ class ThumbnailWindow(QWidget):
         # Add a label to display the index of the currently highlighted image
         self.current_image_index_label = QLabel("Current Image: None", self)
         self.current_image_index_label.setAlignment(Qt.AlignCenter)
+        self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Set the desired height (to align with AnnotationWindow)
+        self.current_image_index_label.setFixedHeight(24)
         self.info_layout.addWidget(self.current_image_index_label)
 
         # Add a label to display the total number of images
         self.image_count_label = QLabel("Total Images: 0", self)
         self.image_count_label.setAlignment(Qt.AlignCenter)
+        self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Set the desired height (to align with AnnotationWindow)
+        self.image_count_label.setFixedHeight(24)
         self.info_layout.addWidget(self.image_count_label)
 
         self.scrollArea = QScrollArea(self)
@@ -1920,7 +1968,6 @@ class LabelWindow(QWidget):
 
         # Top bar with Add Label, Edit Label, and Delete Label buttons
         self.top_bar = QHBoxLayout()
-        self.top_bar.addStretch()
         self.add_label_button = QPushButton("Add Label")
         self.add_label_button.setFixedSize(80, 30)
         self.top_bar.addWidget(self.add_label_button)
@@ -1934,6 +1981,8 @@ class LabelWindow(QWidget):
         self.delete_label_button.setFixedSize(80, 30)
         self.delete_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.delete_label_button)
+
+        self.top_bar.addStretch()  # Add stretch to the right side
 
         self.main_layout.addLayout(self.top_bar)
 
@@ -2194,6 +2243,86 @@ class LabelWindow(QWidget):
         if 0 <= new_index < len(self.labels):
             self.set_active_label(self.labels[new_index])
 
+
+class ConfidenceWindow(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
+        # Top part: QGraphicsView for blank image
+        self.graphics_view = QGraphicsView(self)
+        self.scene = QGraphicsScene(self)
+        self.graphics_view.setScene(self.scene)
+        self.layout.addWidget(self.graphics_view, 2)  # 3 for stretch factor
+
+        # Add a blank pixmap to the scene
+        blank_pixmap = QPixmap(100, 100)  # Adjust size as needed
+        blank_pixmap.fill(Qt.transparent)
+        self.scene.addPixmap(blank_pixmap)
+
+        # Bottom part: PyQtGraph widget for bar chart
+        self.bar_chart_widget = PyQtGraph.PlotWidget()
+        self.layout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
+
+        # Create a minimal bar chart
+        self.create_bar_chart()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Adjust the size of the blank pixmap to match the graphics view
+        view_size = self.graphics_view.size()
+        new_pixmap = QPixmap(view_size)
+        new_pixmap.fill(Qt.transparent)
+        self.scene.clear()
+        self.scene.addPixmap(new_pixmap)
+        self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def create_bar_chart(self):
+        # Clear any existing items
+        self.bar_chart_widget.clear()
+
+        # Set background to white
+        self.bar_chart_widget.setBackground('w')
+
+        # Create data for the bar chart
+        x = [0, 1, 2]
+        y = [0.5, 0.7, 0.3]  # Example values, adjust as needed
+        colors = ['r', 'g', 'b']
+
+        # Create bar graph items
+        for i in range(3):
+            bar = PyQtGraph.BarGraphItem(x=[x[i]], height=[y[i]], width=0.15, brush=colors[i])
+            self.bar_chart_widget.addItem(bar)
+
+        # Set axis properties
+        self.bar_chart_widget.setXRange(0, 3)
+        self.bar_chart_widget.setYRange(0, 1)
+        self.bar_chart_widget.getAxis('left').setTicks([[(v, str(v)) for v in [0, 0.5, 1]]])
+        self.bar_chart_widget.getAxis('bottom').setTicks([[(v, str(v)) for v in [0, 1, 2]]])
+
+        # Remove top and right axes
+        self.bar_chart_widget.showAxis('top', False)
+        self.bar_chart_widget.showAxis('right', False)
+
+        # Remove labels and title for minimalism
+        self.bar_chart_widget.setLabel('left', '')
+        self.bar_chart_widget.setLabel('bottom', '')
+        self.bar_chart_widget.setTitle('')
+
+    def display_cropped_image(self, pixmap):
+        self.scene.clear()
+        self.scene.addPixmap(pixmap)
+
+        # Set the scene rect to the size of the pixmap
+        self.scene.setSceneRect(QRectF(pixmap.rect()))
+
+        # Fit the image in the view while maintaining the aspect ratio
+        self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+        # Center the image in the view
+        self.graphics_view.centerOn(self.scene.sceneRect().center())
 
 def patch_extractor():
     app = QApplication([])
