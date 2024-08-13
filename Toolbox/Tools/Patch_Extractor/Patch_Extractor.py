@@ -1,7 +1,3 @@
-# TODO
-#   - Delete image needs to delete all annotations in scene and from annotation dict
-#   - Importing a new image needs to highlight in thumbnailwindow
-
 import os
 import uuid
 import json
@@ -352,8 +348,8 @@ class MainWindow(QMainWindow):
             progress_bar.close()
 
             if file_names:
-                # Load the first image
-                image_path = file_names[0]
+                # Load the last image
+                image_path = file_names[-1]
                 image = QImage(image_path)
                 self.annotation_window.set_image(image, image_path)
 
@@ -383,6 +379,11 @@ class MainWindow(QMainWindow):
         else:
             image_paths = [self.annotation_window.current_image_path]
 
+        # Create and show the progress bar
+        progress_bar = ProgressBar(self, title="Sampling Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(num_annotations)
+
         for image_path in image_paths:
             image = QImage(image_path)
             image_width = image.width()
@@ -409,11 +410,22 @@ class MainWindow(QMainWindow):
                                             review_label.id,
                                             transparency=self.annotation_window.transparency)
 
-                # Add the annotation on the image
-                self.annotation_window.add_annotation(QPointF(x, y), new_annotation)
+                # Add annotation to the dict
+                self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
 
-            # Reload the annotations on the image
-            self.annotation_window.load_annotations(self.annotation_window.current_image_path)
+                # Update the progress bar
+                progress_bar.update_progress()
+                QApplication.processEvents()  # Update GUI
+
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        # Reload the annotations on the image
+        self.annotation_window.load_annotations(self.annotation_window.current_image_path)
+
+        QMessageBox.information(self, "Annotations Sampled",
+                                "Annotations have been sampled successfully.")
 
 
 def sample_annotations(method, num_annotations, annotation_size,
@@ -637,7 +649,7 @@ class Annotation(QObject):
 
     def __init__(self, center_xy: QPointF, annotation_size: int, short_label_code: str,
                  long_label_code: str, color: QColor, image_path: str, label_id: str,
-                 transparency: int = 50):
+                 transparency: int = 128):
         super().__init__()
         self.id = str(uuid.uuid4())
         self.center_xy = center_xy
@@ -788,6 +800,7 @@ class AnnotationWindow(QGraphicsView):
         self.toolChanged.connect(self.set_selected_tool)
 
     def export_annotations(self):
+
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
                                                    "Save Annotations",
@@ -795,36 +808,44 @@ class AnnotationWindow(QGraphicsView):
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
-            # Create a dictionary to hold the annotations grouped by image path
-            export_dict = {}
-            total_annotations = 0
-            for annotation in self.annotations_dict.values():
-                image_path = annotation.image_path
-                if image_path not in export_dict:
-                    export_dict[image_path] = []
-                export_dict[image_path].append(annotation.to_dict())
-                total_annotations += 1
 
-            # Create and show the progress bar
-            progress_bar = ProgressBar(self, title="Exporting Annotations")
-            progress_bar.show()
-            progress_bar.start_progress(total_annotations)
+            try:
+                # Create a dictionary to hold the annotations grouped by image path
+                export_dict = {}
+                total_annotations = 0
+                for annotation in self.annotations_dict.values():
+                    image_path = annotation.image_path
+                    if image_path not in export_dict:
+                        export_dict[image_path] = []
+                    export_dict[image_path].append(annotation.to_dict())
+                    total_annotations += 1
 
-            with open(file_path, 'w') as file:
-                for image_path, annotations in export_dict.items():
-                    for annotation_data in annotations:
-                        json.dump(export_dict, file, indent=4)
-                        file.flush()  # Ensure the data is written to the file
-                        progress_bar.update_progress()
-                        QApplication.processEvents()  # Update GUI
+                # Create and show the progress bar
+                progress_bar = ProgressBar(self, title="Exporting Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(total_annotations)
 
-            # Stop the progress bar
-            progress_bar.stop_progress()
-            progress_bar.close()
+                with open(file_path, 'w') as file:
+                    json.dump(export_dict, file, indent=4)
+                    file.flush()  # Ensure the data is written to the file
+
+                # Stop the progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
+
+                QMessageBox.information(self, "Annotations Exported",
+                                        "Annotations have been successfully exported.")
+
+            except Exception as e:
+                QMessageBox.warning(self, "Error Exporting Annotations",
+                                    f"An error occurred while exporting annotations: {str(e)}")
 
     def import_annotations(self):
+
         if not self.active_image:
-            QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images first before importing annotations.")
             return
 
         options = QFileDialog.Options()
@@ -834,79 +855,81 @@ class AnnotationWindow(QGraphicsView):
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
-            with open(file_path, 'r') as file:
-                imported_annotations = json.load(file)
 
-            # Count the total number of annotations in the JSON file
-            total_annotations = sum(len(annotations) for annotations in imported_annotations.values())
+            try:
+                with open(file_path, 'r') as file:
+                    imported_annotations = json.load(file)
 
-            # Create and show the progress bar
-            progress_bar = ProgressBar(self, title="Importing Annotations")
-            progress_bar.show()
-            progress_bar.start_progress(total_annotations)
+                # Count the total number of annotations in the JSON file
+                total_annotations = sum(len(annotations) for annotations in imported_annotations.values())
 
-            # Filter annotations to include only those for images already in the program
-            filtered_annotations = {p: a for p, a in imported_annotations.items() if p in self.loaded_image_paths}
+                # Create and show the progress bar
+                progress_bar = ProgressBar(self, title="Importing Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(total_annotations)
 
-            # Count the number of images loaded with annotations
-            loaded_images_with_annotations = len(filtered_annotations)
+                # Filter annotations to include only those for images already in the program
+                filtered_annotations = {p: a for p, a in imported_annotations.items() if p in self.loaded_image_paths}
 
-            # Display a message box with the information
-            QMessageBox.information(self,
-                                    "Annotations Loaded",
-                                    f"Loaded annotations for {loaded_images_with_annotations} "
-                                    f"out of {len(imported_annotations)} images.")
+                # Count the number of images loaded with annotations
+                loaded_images_with_annotations = len(filtered_annotations)
 
-            # Add labels to LabelWindow if they are not already present and update annotation colors
-            updated_annotations = False
-            for image_path, annotations in filtered_annotations.items():
-                for annotation_data in annotations:
-                    short_label_code = annotation_data['label_short_code']
-                    long_label_code = annotation_data['label_long_code']
-                    color = QColor(*annotation_data['annotation_color'])
-                    label_id = annotation_data['label_id']
-                    self.main_window.label_window.add_label_if_not_exists(short_label_code,
-                                                                          long_label_code,
-                                                                          color,
-                                                                          label_id)
+                # Add labels to LabelWindow if they are not already present and update annotation colors
+                updated_annotations = False
+                for image_path, annotations in filtered_annotations.items():
+                    for annotation_data in annotations:
+                        short_label_code = annotation_data['label_short_code']
+                        long_label_code = annotation_data['label_long_code']
+                        color = QColor(*annotation_data['annotation_color'])
+                        label_id = annotation_data['label_id']
+                        self.main_window.label_window.add_label_if_not_exists(short_label_code,
+                                                                              long_label_code,
+                                                                              color,
+                                                                              label_id)
 
-                    existing_color = self.main_window.label_window.get_label_color(short_label_code,
-                                                                                   long_label_code)
-                    if existing_color != color:
-                        annotation_data['annotation_color'] = existing_color.getRgb()
-                        updated_annotations = True
+                        existing_color = self.main_window.label_window.get_label_color(short_label_code,
+                                                                                       long_label_code)
+                        if existing_color != color:
+                            annotation_data['annotation_color'] = existing_color.getRgb()
+                            updated_annotations = True
 
-                    # Update the progress bar
-                    progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
+                        # Update the progress bar
+                        progress_bar.update_progress()
+                        QApplication.processEvents()  # Update GUI
 
-            if updated_annotations:
-                QMessageBox.information(self,
-                                        "Annotations Updated",
-                                        "Some annotations have been updated to match the "
-                                        "color of the labels already in the project.")
+                if updated_annotations:
+                    QMessageBox.information(self,
+                                            "Annotations Updated",
+                                            "Some annotations have been updated to match the "
+                                            "color of the labels already in the project.")
 
-            # Convert annotation data to Annotation objects and store in annotations_dict
-            for image_path, annotations in filtered_annotations.items():
-                for annotation_data in annotations:
-                    # Load the information for the Annotation
-                    annotation = Annotation.from_dict(annotation_data)
-                    # Update transparency, updates graphics
-                    annotation.set_transparency(self.transparency)
-                    self.annotations_dict[annotation.id] = annotation
+                # Convert annotation data to Annotation objects and store in annotations_dict
+                for image_path, annotations in filtered_annotations.items():
+                    for annotation_data in annotations:
+                        # Load the information for the Annotation
+                        annotation = Annotation.from_dict(annotation_data)
+                        self.annotations_dict[annotation.id] = annotation
 
-                    # Update the progress bar
-                    progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
+                        # Update the progress bar
+                        progress_bar.update_progress()
+                        QApplication.processEvents()  # Update GUI
 
-            # Stop the progress bar
-            progress_bar.stop_progress()
-            progress_bar.close()
+                # Stop the progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
 
-        # Draw only those for the current image
-        self.load_annotations(self.current_image_path)
+                # Draw only those for the current image
+                self.load_annotations(self.current_image_path)
+
+                QMessageBox.information(self, "Annotations Imported",
+                                        "Annotations have been successfully imported.")
+
+            except Exception as e:
+                QMessageBox.warning(self, "Error Importing Annotations",
+                                    f"An error occurred while importing annotations: {str(e)}")
 
     def export_coralnet_annotations(self):
+
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
                                                    "Export CoralNet Annotations",
@@ -935,13 +958,19 @@ class AnnotationWindow(QGraphicsView):
                 progress_bar.stop_progress()
                 progress_bar.close()
 
+                QMessageBox.information(self, "Annotations Exported",
+                                        "Annotations have been successfully exported.")
+
             except Exception as e:
                 QMessageBox.warning(self, "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
     def import_coralnet_annotations(self):
+
         if not self.active_image:
-            QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images first before importing annotations.")
             return
 
         options = QFileDialog.Options()
@@ -1024,11 +1053,10 @@ class AnnotationWindow(QGraphicsView):
                                             long_label_code,
                                             color,
                                             image_path,
-                                            label_id,  # Use the existing or new label ID
-                                            transparency=self.transparency)
+                                            label_id)  # Use the existing or new label ID
 
-                    # Add the annotation to the scene and the annotations dictionary
-                    self.add_annotation(QPointF(col_coord, row_coord), annotation)
+                    # Add annotation to the dict
+                    self.annotations_dict[annotation.id] = annotation
 
                     # Update the progress bar
                     progress_bar.update_progress()
@@ -1038,15 +1066,15 @@ class AnnotationWindow(QGraphicsView):
                 progress_bar.stop_progress()
                 progress_bar.close()
 
+                # Draw only those for the current image
+                self.load_annotations(self.current_image_path)
+
                 QMessageBox.information(self, "Annotations Imported",
-                                        "CoralNet annotations have been successfully imported.")
+                                        "Annotations have been successfully imported.")
 
             except Exception as e:
                 QMessageBox.warning(self, "Error Importing Annotations",
                                     f"An error occurred while importing annotations: {str(e)}")
-
-        # Draw only those for the current image
-        self.load_annotations(self.current_image_path)
 
     def set_selected_tool(self, tool):
         self.selected_tool = tool
@@ -1341,18 +1369,23 @@ class AnnotationWindow(QGraphicsView):
         self.redo_stack.clear()
 
     def delete_image(self, image_path):
-        if image_path in self.annotations_dict:
-            for annotation_id in list(self.annotations_dict.keys()):
-                annotation = self.annotations_dict[annotation_id]
-                if annotation.image_path == image_path:
-                    annotation.delete()
-                    del self.annotations_dict[annotation_id]
+        # Create a list of annotation IDs to delete
+        annotation_ids_to_delete = [i for i, a in self.annotations_dict.items() if a.image_path == image_path]
+
+        # Delete each annotation
+        for annotation_id in annotation_ids_to_delete:
+            annotation = self.annotations_dict[annotation_id]
+            annotation.delete()
+            del self.annotations_dict[annotation_id]
 
         if self.current_image_path == image_path:
             self.scene.clear()
             self.current_image_path = None
             self.image_item = None
             self.active_image = False  # Reset image_set flag
+
+        # Emit the signal to inform other parts of the application
+        self.imageDeleted.emit(image_path)
 
     def delete_annotations_for_label(self, label):
         for annotation in list(self.annotations_dict.values()):
@@ -1418,6 +1451,20 @@ class ThumbnailWindow(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
+        # Create a horizontal layout for the labels
+        self.info_layout = QHBoxLayout()
+        self.layout.addLayout(self.info_layout)
+
+        # Add a label to display the index of the currently highlighted image
+        self.current_image_index_label = QLabel("Current Image: None", self)
+        self.current_image_index_label.setAlignment(Qt.AlignCenter)
+        self.info_layout.addWidget(self.current_image_index_label)
+
+        # Add a label to display the total number of images
+        self.image_count_label = QLabel("Total Images: 0", self)
+        self.image_count_label.setAlignment(Qt.AlignCenter)
+        self.info_layout.addWidget(self.image_count_label)
+
         self.scrollArea = QScrollArea(self)
         self.scrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.scrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1454,21 +1501,30 @@ class ThumbnailWindow(QWidget):
 
             self.scrollArea.verticalScrollBar().setValue(self.scrollArea.verticalScrollBar().maximum())
 
-            if not self.selected_thumbnail:
-                self.load_image(thumbnail)
+            # Select and set thumbnail widget
+            self.load_image(thumbnail)
 
             self.annotation_window.main_window.imported_image_paths.add(image_path)
+
+            # Update the image count label
+            self.update_image_count_label()
 
     def load_image(self, thumbnail):
         if self.selected_thumbnail:
             self.selected_thumbnail.deselect()
 
+        # Selects the thumbnail
         self.selected_thumbnail = thumbnail
         self.selected_thumbnail.select()
+        # Sets the thumbnail widget
+        self.set_selected_widget_width(self.selected_thumbnail)
 
         image_path = thumbnail.image_path
         self.annotation_window.set_image(self.images[image_path], image_path)
         self.imageSelected.emit(image_path)
+
+        # Update the current image index label
+        self.update_current_image_index_label()
 
     def set_selected_widget_width(self, widget):
         widget.setFixedWidth(self.thumbnail_container.width())
@@ -1497,8 +1553,14 @@ class ThumbnailWindow(QWidget):
                 return
 
         self._remove_image(thumbnail)
-        self.imageDeleted.emit(thumbnail.image_path)
+        self.imageDeleted.emit(thumbnail.image_path)  # Emit the signal
         self.annotation_window.main_window.imported_image_paths.discard(thumbnail.image_path)
+
+        # Update the image count label
+        self.update_image_count_label()
+
+        # Update the current image index label
+        self.update_current_image_index_label()
 
     def _confirm_delete(self):
         msg_box = QMessageBox(self)
@@ -1536,6 +1598,18 @@ class ThumbnailWindow(QWidget):
 
     def find_thumbnail_by_image_path(self, image_path):
         return self.thumbnails.get(image_path)
+
+    def update_image_count_label(self):
+        total_images = len(self.images)
+        self.image_count_label.setText(f"Total Images: {total_images}")
+
+    def update_current_image_index_label(self):
+        if self.selected_thumbnail:
+            image_paths = list(self.images.keys())
+            current_index = image_paths.index(self.selected_thumbnail.image_path)
+            self.current_image_index_label.setText(f"Current Image: {current_index + 1}")
+        else:
+            self.current_image_index_label.setText("Current Image: None")
 
 
 class ThumbnailLoader(QRunnable):
@@ -1897,9 +1971,17 @@ class LabelWindow(QWidget):
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
-            labels_data = [label.to_dict() for label in self.labels]
-            with open(file_path, 'w') as file:
-                json.dump(labels_data, file, indent=4)
+            try:
+                labels_data = [label.to_dict() for label in self.labels]
+                with open(file_path, 'w') as file:
+                    json.dump(labels_data, file, indent=4)
+
+                QMessageBox.information(self, "Labels Exported",
+                                        "Labels have been successfully exported.")
+
+            except Exception as e:
+                QMessageBox.warning(self, "Error Importing Labels",
+                                    f"An error occurred while importing labels: {str(e)}")
 
     def import_labels(self):
         options = QFileDialog.Options()
@@ -1909,12 +1991,21 @@ class LabelWindow(QWidget):
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
-            with open(file_path, 'r') as file:
-                labels_data = json.load(file)
+            try:
+                with open(file_path, 'r') as file:
+                    labels_data = json.load(file)
 
-            for label_data in labels_data:
-                label = Label.from_dict(label_data)
-                self.add_label(label.short_label_code, label.long_label_code, label.color, label.id)
+                for label_data in labels_data:
+                    label = Label.from_dict(label_data)
+                    if not self.label_exists(label.short_label_code, label.long_label_code):
+                        self.add_label(label.short_label_code, label.long_label_code, label.color, label.id)
+
+                QMessageBox.information(self, "Labels Imported",
+                                        "Annotations have been successfully imported.")
+
+            except Exception as e:
+                QMessageBox.warning(self, "Error Importing Labels",
+                                    f"An error occurred while importing Labels: {str(e)}")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
