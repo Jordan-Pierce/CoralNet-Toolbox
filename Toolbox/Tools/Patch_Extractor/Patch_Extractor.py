@@ -1,23 +1,27 @@
+# TODO
+#   - When importing annotations, for the unselect of all tools (otherwise selected annotations get a label)
+#   - If a user has annotation selected, and they zoom, update confidence window accordingly (message about scores lost)
+#   - Move annotation crop as a method, store confidences, change confidence window to take annotation directly,
+#       connect to labelwindow
+
 import os
 import uuid
 import json
 import random
 import weakref
 
-import numpy as np
 import pandas as pd
-
-import pyqtgraph as PyQtGraph
 
 from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
                              QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
                              QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QVBoxLayout, QHBoxLayout,
-                             QLabel, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
+                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout,
+                             QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
                              QFormLayout, QInputDialog, QFrame)
 
 from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
+
 
 
 class GlobalEventFilter(QObject):
@@ -119,8 +123,10 @@ class MainWindow(QMainWindow):
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
         self.annotation_window.mouseMoved.connect(self.update_mouse_position)
 
-        # Connect the toolChanged signal to the AnnotationWindow
+        # Connect the toolChanged signal (to the AnnotationWindow)
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
+        # Connect the toolChanged signal (to the Toolbar)
+        self.annotation_window.toolChanged.connect(self.handle_tool_changed)
 
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
@@ -334,6 +340,17 @@ class MainWindow(QMainWindow):
                 self.toolChanged.emit("annotate")
             else:
                 self.toolChanged.emit(None)
+
+    def handle_tool_changed(self, tool):
+        if tool == "select":
+            self.select_tool_action.setChecked(True)
+            self.annotate_tool_action.setChecked(False)
+        elif tool == "annotate":
+            self.select_tool_action.setChecked(False)
+            self.annotate_tool_action.setChecked(True)
+        else:
+            self.select_tool_action.setChecked(False)
+            self.annotate_tool_action.setChecked(False)
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {width} x {height}")
@@ -690,9 +707,12 @@ class Annotation(QObject):
 
     @classmethod
     def from_dict(cls, data):
-        return cls(QPointF(*data['center_xy']), data['annotation_size'],
-                   data['label_short_code'], data['label_long_code'],
-                   QColor(*data['annotation_color']), data['image_path'],
+        return cls(QPointF(*data['center_xy']),
+                   data['annotation_size'],
+                   data['label_short_code'],
+                   data['label_long_code'],
+                   QColor(*data['annotation_color']),
+                   data['image_path'],
                    data['label_id'])
 
     def to_coralnet_format(self):
@@ -737,7 +757,13 @@ class Annotation(QObject):
                                        self.annotation_size)
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            pen = QPen(color, 4, Qt.DotLine if self.is_selected else Qt.SolidLine)
+
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                pen = QPen(inverse_color, 4, Qt.DotLine)  # Inverse color, thicker border, and dotted line
+            else:
+                pen = QPen(color, 2, Qt.SolidLine)  # Default border color and thickness
+
             self.graphics_item.setPen(pen)
             brush = QBrush(color)
             self.graphics_item.setBrush(brush)
@@ -858,6 +884,11 @@ class AnnotationWindow(QGraphicsView):
 
     def import_annotations(self):
 
+        # Unselect tool, annotation
+        self.set_selected_tool(None)
+        # Emit message
+        self.toolChanged.emit(None)
+
         if not self.active_image:
             QMessageBox.warning(self,
                                 "No Images Loaded",
@@ -886,9 +917,6 @@ class AnnotationWindow(QGraphicsView):
 
                 # Filter annotations to include only those for images already in the program
                 filtered_annotations = {p: a for p, a in imported_annotations.items() if p in self.loaded_image_paths}
-
-                # Count the number of images loaded with annotations
-                loaded_images_with_annotations = len(filtered_annotations)
 
                 # Add labels to LabelWindow if they are not already present and update annotation colors
                 updated_annotations = False
@@ -982,6 +1010,11 @@ class AnnotationWindow(QGraphicsView):
                                     f"An error occurred while exporting annotations: {str(e)}")
 
     def import_coralnet_annotations(self):
+
+        # Unselect tool, annotation
+        self.set_selected_tool(None)
+        # Emit message
+        self.toolChanged.emit(None)
 
         if not self.active_image:
             QMessageBox.warning(self,
@@ -1205,6 +1238,14 @@ class AnnotationWindow(QGraphicsView):
         self.zoom_factor *= factor
         self.scale(factor, factor)
 
+        # Maintain the cursor style based on the selected tool
+        if self.selected_tool == "select":
+            self.setCursor(Qt.PointingHandCursor)
+        elif self.selected_tool == "annotate":
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
     def mousePressEvent(self, event: QMouseEvent):
         if self.active_image:
 
@@ -1350,9 +1391,10 @@ class AnnotationWindow(QGraphicsView):
     def load_annotations(self, image_path):
         for annotation_id, annotation in self.annotations_dict.items():
             if annotation.image_path == image_path:
-                annotation.create_graphics_item(self.scene)
-                annotation.selected.connect(self.select_annotation)
-                annotation.annotation_deleted.connect(self.delete_annotation)
+                if not annotation.graphics_item:
+                    annotation.create_graphics_item(self.scene)
+                    annotation.selected.connect(self.select_annotation)
+                    annotation.annotation_deleted.connect(self.delete_annotation)
 
     def add_annotation(self, scene_pos: QPointF, annotation=None):
 
@@ -2005,7 +2047,8 @@ class LabelWindow(QWidget):
         default_long_label_code = "Review"
         default_color = QColor(255, 255, 255)  # White color
         self.add_label(default_short_label_code, default_long_label_code, default_color, label_id="-1")
-        # Do not set the default label as active
+        # Deselect at first
+        self.active_label.deselect()
 
         self.show_confirmation_dialog = True
 
@@ -2243,6 +2286,27 @@ class LabelWindow(QWidget):
             self.set_active_label(self.labels[new_index])
 
 
+class CustomBar(QFrame):
+    def __init__(self, color, value, parent=None):
+        super().__init__(parent)
+        self.color = color
+        self.value = value
+        self.setFixedHeight(20)  # Set a fixed height for the bars
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw the border
+        painter.setPen(self.color)
+        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
+
+        # Draw the filled part of the bar
+        filled_width = int(self.width() * (self.value / 100))
+        painter.setBrush(QColor(self.color.red(), self.color.green(), self.color.blue(), 192))  # 75% transparency
+        painter.drawRect(0, 0, filled_width, self.height() - 1)
+
+
 class ConfidenceWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2254,15 +2318,18 @@ class ConfidenceWindow(QWidget):
         self.graphics_view = QGraphicsView(self)
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
-        self.layout.addWidget(self.graphics_view, 2)  # 3 for stretch factor
+        self.layout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
 
         # Add a blank pixmap to the scene
         blank_pixmap = QPixmap(100, 100)  # Adjust size as needed
         blank_pixmap.fill(Qt.transparent)
         self.scene.addPixmap(blank_pixmap)
 
-        # Bottom part: PyQtGraph widget for bar chart
-        self.bar_chart_widget = PyQtGraph.PlotWidget()
+        # Bottom part: Custom widget for bar chart
+        self.bar_chart_widget = QWidget()
+        self.bar_chart_layout = QVBoxLayout(self.bar_chart_widget)
+        self.bar_chart_layout.setContentsMargins(0, 0, 0, 0)
+        self.bar_chart_layout.setSpacing(2)  # Set spacing to make bars closer
         self.layout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
 
         # Create a minimal bar chart
@@ -2280,35 +2347,38 @@ class ConfidenceWindow(QWidget):
 
     def create_bar_chart(self):
         # Clear any existing items
-        self.bar_chart_widget.clear()
-
-        # Set background to white
-        self.bar_chart_widget.setBackground('w')
+        for i in reversed(range(self.bar_chart_layout.count())):
+            self.bar_chart_layout.itemAt(i).widget().setParent(None)
 
         # Create data for the bar chart
-        x = [0, 1, 2]
-        y = [0.5, 0.7, 0.3]  # Example values, adjust as needed
-        colors = ['r', 'g', 'b']
+        classes = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5']
+        colors = [QColor(random.randint(0, 255),
+                         random.randint(0, 255),
+                         random.randint(0, 255)) for _ in range(5)]
+        values = [random.uniform(0, 1) * 100 for _ in range(5)]  # Random values between 0 and 1
+
+        # Find the class with the highest ratio
+        max_value_index = values.index(max(values))
+        max_color = colors[max_value_index]
+
+        # Set the border color of the QGraphicsView
+        self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
 
         # Create bar graph items
-        for i in range(3):
-            bar = PyQtGraph.BarGraphItem(x=[x[i]], height=[y[i]], width=0.15, brush=colors[i])
-            self.bar_chart_widget.addItem(bar)
+        for i in range(5):
+            bar_widget = CustomBar(colors[i], values[i], self.bar_chart_widget)
+            bar_layout = QHBoxLayout(bar_widget)
+            bar_layout.setContentsMargins(5, 2, 5, 2)
 
-        # Set axis properties
-        self.bar_chart_widget.setXRange(0, 3)
-        self.bar_chart_widget.setYRange(0, 1)
-        self.bar_chart_widget.getAxis('left').setTicks([[(v, str(v)) for v in [0, 0.5, 1]]])
-        self.bar_chart_widget.getAxis('bottom').setTicks([[(v, str(v)) for v in [0, 1, 2]]])
+            class_label = QLabel(classes[i], bar_widget)
+            class_label.setAlignment(Qt.AlignCenter)
+            bar_layout.addWidget(class_label)
 
-        # Remove top and right axes
-        self.bar_chart_widget.showAxis('top', False)
-        self.bar_chart_widget.showAxis('right', False)
+            percentage_label = QLabel(f"{values[i]:.2f}%", bar_widget)
+            percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            bar_layout.addWidget(percentage_label)
 
-        # Remove labels and title for minimalism
-        self.bar_chart_widget.setLabel('left', '')
-        self.bar_chart_widget.setLabel('bottom', '')
-        self.bar_chart_widget.setTitle('')
+            self.bar_chart_layout.addWidget(bar_widget)
 
     def display_cropped_image(self, pixmap):
         self.scene.clear()
@@ -2322,6 +2392,10 @@ class ConfidenceWindow(QWidget):
 
         # Center the image in the view
         self.graphics_view.centerOn(self.scene.sceneRect().center())
+
+        # Recreate the bar chart with new colors and values
+        self.create_bar_chart()
+
 
 def patch_extractor():
     app = QApplication([])
