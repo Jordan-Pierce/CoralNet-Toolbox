@@ -1680,7 +1680,8 @@ class AddLabelDialog(QDialog):
         self.layout = QVBoxLayout(self)
 
         self.short_label_input = QLineEdit(self)
-        self.short_label_input.setPlaceholderText("Short Label")
+        self.short_label_input.setPlaceholderText("Short Label (max 10 characters)")
+        self.short_label_input.setMaxLength(10)
         self.layout.addWidget(self.short_label_input)
 
         self.long_label_input = QLineEdit(self)
@@ -1740,7 +1741,8 @@ class EditLabelDialog(QDialog):
         self.layout = QVBoxLayout(self)
 
         self.short_label_input = QLineEdit(self.label.short_label_code, self)
-        self.short_label_input.setPlaceholderText("Short Label")
+        self.short_label_input.setPlaceholderText("Short Label (max 10 characters)")
+        self.short_label_input.setMaxLength(10)
         self.layout.addWidget(self.short_label_input)
 
         self.long_label_input = QLineEdit(self.label.long_label_code, self)
@@ -1786,11 +1788,9 @@ class EditLabelDialog(QDialog):
             QMessageBox.warning(self, "Cannot Edit Label", "The 'Review' label cannot be edited.")
             return
 
-        # Search for existing label
         existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
 
         if existing_label and existing_label != self.label:
-
             text = (f"A label with the short code '{short_label_code}' "
                     f"and long code '{long_label_code}' already exists. "
                     f"Do you want to merge the labels?")
@@ -1804,20 +1804,17 @@ class EditLabelDialog(QDialog):
             result = msg_box.exec_()
 
             if result == QMessageBox.Yes:
-                # Merge with existing label
                 self.label_window.edit_labels(self.label, existing_label, delete_old=True)
                 self.accept()
 
-            # If No, do nothing and keep the dialog open for further modification
+            return
         else:
-            # Update the label with the next text and color
             self.label.short_label_code = short_label_code
             self.label.long_label_code = long_label_code
             self.label.color = self.color
             self.label.update_label_color(self.color)
             self.accept()
 
-            # Hack to update the graphics for Annotations and Label
             self.label_window.edit_labels(self.label, self.label, delete_old=False)
 
 
@@ -1955,7 +1952,7 @@ class Label(QWidget):
 class LabelWindow(QWidget):
     labelSelected = pyqtSignal(object)  # Signal to emit the entire Label object
 
-    def __init__(self, main_window, label_width=80):
+    def __init__(self, main_window, label_width=100):
         super().__init__()
 
         self.annotation_window = main_window.annotation_window
@@ -2086,6 +2083,8 @@ class LabelWindow(QWidget):
         if self.active_label:
             dialog = EditLabelDialog(self.active_label, self)
             if dialog.exec_() == QDialog.Accepted:
+                # Update the tooltip with the new long label code
+                self.active_label.setToolTip(self.active_label.long_label_code)
                 self.update_labels_per_row()
                 self.reorganize_labels()
 
