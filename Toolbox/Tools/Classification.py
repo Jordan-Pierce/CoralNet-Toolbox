@@ -118,15 +118,18 @@ def get_training_augmentation(height=224, width=224):
     """
     Training augmentation techniques
     """
-    train_transform = [
+    train_transform = []
 
-        albu.HorizontalFlip(p=0.5),
+    # ratio = np.random.rand()
+    # crop_size = max(int(height * ratio) if ratio >= 0.5 else height, 224)
+
+    train_transform.extend([
+        # albu.CenterCrop(p=0.5, height=crop_size, width=crop_size),
         albu.Resize(height=height, width=width),
         albu.PadIfNeeded(min_height=height, min_width=width, always_apply=True, border_mode=0, value=0),
-
+        albu.HorizontalFlip(p=0.5),
         albu.GaussNoise(p=0.2),
         albu.PixelDropout(p=1.0, dropout_prob=0.1),
-
         albu.OneOf(
             [
                 albu.CLAHE(p=1),
@@ -135,7 +138,6 @@ def get_training_augmentation(height=224, width=224):
             ],
             p=0.9,
         ),
-
         albu.OneOf(
             [
                 albu.Sharpen(p=1),
@@ -144,7 +146,6 @@ def get_training_augmentation(height=224, width=224):
             ],
             p=0.9,
         ),
-
         albu.OneOf(
             [
                 albu.RandomContrast(p=1),
@@ -152,8 +153,7 @@ def get_training_augmentation(height=224, width=224):
             ],
             p=0.9,
         ),
-
-    ]
+    ])
 
     return albu.Compose(train_transform)
 
@@ -162,16 +162,19 @@ def get_validation_augmentation(height=224, width=224):
     """
     Validation augmentation techniques
     """
-    test_transform = [
+    test_transform = []
+
+    test_transform.extend([
         albu.Resize(height=height, width=width),
         albu.PadIfNeeded(min_height=height, min_width=width, always_apply=True, border_mode=0, value=0),
-    ]
+    ])
+
     return albu.Compose(test_transform)
 
 
 def to_tensor(x, **kwargs):
     """
-
+    Convert image to tensor
     """
     if len(x.shape) == 2:
         return x
@@ -182,12 +185,28 @@ def get_preprocessing(preprocessing_fn):
     """
     Preprocessing
     """
-
     _transform = [
         albu.Lambda(image=preprocessing_fn),
         albu.Lambda(image=to_tensor, mask=to_tensor),
     ]
     return albu.Compose(_transform)
+
+
+# Function to downsample majority classes
+def downsample_majority_classes(df):
+    label_counts = df['Label'].value_counts()
+    minority_count = label_counts.min()
+    target_range = (minority_count * 0.9, minority_count * 1.1)
+
+    downsampled_df = pd.DataFrame()
+    for label, count in label_counts.items():
+        if count > target_range[1]:
+            sampled_df = df[df['Label'] == label].sample(n=int(target_range[1]), random_state=42)
+        else:
+            sampled_df = df[df['Label'] == label]
+        downsampled_df = pd.concat([downsampled_df, sampled_df])
+
+    return downsampled_df
 
 
 def compute_class_weights(df, mu=0.15):
@@ -459,7 +478,8 @@ class Epoch:
         # Log the visualization to TensorBoard
         figure = np.array(Image.open(save_path))
         self.writer.add_image(f'{self.stage_name}_Results',
-                              figure, dataformats="HWC",
+                              figure,
+                              dataformats="HWC",
                               global_step=epoch_num)
 
     def log_results(self, logs, epoch_num):
@@ -750,7 +770,7 @@ def classification(args):
     for patches_path in args.patches:
         if os.path.exists(patches_path):
             # Patch dataframe
-            patches = pd.read_csv(patches_path, index_col=0)
+            patches = pd.read_csv(patches_path)
             patches = patches.dropna()
             patches_df = pd.concat((patches_df, patches))
         else:
@@ -873,6 +893,12 @@ def classification(args):
     train_df = patches_df[patches_df['Image Name'].isin(training_images)]
     valid_df = patches_df[patches_df['Image Name'].isin(validation_images)]
     test_df = patches_df[patches_df['Image Name'].isin(testing_images)]
+
+    if args.even_dist:
+        # Downsample majority classes to make even distribution (+/- 10%)
+        train_df = downsample_majority_classes(train_df)
+        valid_df = downsample_majority_classes(valid_df)
+        test_df = downsample_majority_classes(test_df)
 
     train_classes = len(set(train_df['Label'].unique()))
     valid_classes = len(set(valid_df['Label'].unique()))
@@ -1270,8 +1296,11 @@ def main():
     parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
                         help='The loss function to use to train the model')
 
-    parser.add_argument('--weighted_loss', type=bool, default=True,
+    parser.add_argument('--weighted_loss', action='store_true',
                         help='Use a weighted loss function; good for imbalanced datasets')
+
+    parser.add_argument('--even_dist', action='store_true',
+                        help='Downsample majority classes to be +/- 10% of minority; good for imbalanced datasets')
 
     parser.add_argument('--metrics', nargs="+", default=[],
                         help='The metrics used to evaluate the model (default is all applicable)')

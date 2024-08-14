@@ -3,7 +3,6 @@ import argparse
 import warnings
 import traceback
 
-import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -26,6 +25,12 @@ warnings.filterwarnings("ignore")
 def crop_patch(image, y, x, patch_size=224):
     """
     Given an image, and a Y, X location, this function will extract the patch.
+
+    :param image:
+    :param y:
+    :param x:
+    :param patch_size:
+    :return:
     """
 
     height, width, _ = image.shape
@@ -81,46 +86,50 @@ def crop_patch(image, y, x, patch_size=224):
     return patch
 
 
-def process_image(image_name, image_dir, annotation_df, output_dir, patch_size):
+def process_image(image_name, image_dir, annotations, output_dir, patch_size):
     """
 
+    :param image_name:
+    :param image_dir:
+    :param annotations:
+    :param output_dir:
+    :param patch_size:
+    :return:
     """
-    # Get the name and path
     image_prefix = image_name.split(".")[0]
-    image_path = os.path.join(image_dir, image_name)
+    image_path = f"{image_dir}/{image_name}"
 
     if not os.path.exists(image_path):
         print(f"ERROR: Image {image_path} does not exist; skipping")
-        return
+        return []
 
-    # Open the image as np array just once
     image = imread(image_path)
-    # Get the annotations specific to this image
-    image_df = annotation_df[annotation_df['Name'] == image_name]
 
-    # List to hold patches
-    patches = []
+    patch_data = []
 
-    # Loop through each annotation for this image
-    for i, r in image_df.iterrows():
+    for annotation in annotations:
         try:
-            # Extract the patch
-            patch = crop_patch(image, r['Row'], r['Column'], patch_size)
-            name = f"{image_prefix}_{r['Row']}_{r['Column']}_{r['Label']}.jpg"
-            path = os.path.join(output_dir, 'patches', r['Label'], name)
+            patch = crop_patch(image, annotation['Row'], annotation['Column'], patch_size)
+            name = f"{image_prefix}_{annotation['Row']}_{annotation['Column']}_{annotation['Label']}.jpg"
+            path = f"{output_dir}/patches/{annotation['Label']}/{name}"
 
-            # Save
             if patch is not None:
-                # Save the patch
                 imsave(fname=path, arr=patch, quality=90)
-                # Add to list
-                patches.append([name, path, r['Label'], r['Row'], r['Column'], image_name, image_path])
+                patch_data.append({
+                    'Name': name,
+                    'Path': path,
+                    'Label': annotation['Label'],
+                    'Row': annotation['Row'],
+                    'Column': annotation['Column'],
+                    'Image Name': image_name,
+                    'Image Path': image_path
+                })
 
         except Exception as e:
             print(f"ERROR: {e}")
             continue
 
-    return patches
+    return patch_data
 
 
 def patches(args):
@@ -140,52 +149,64 @@ def patches(args):
     if os.path.exists(args.annotation_file):
         annotation_file = args.annotation_file
         annotation_df = pd.read_csv(annotation_file)
+        annotation_df.dropna(inplace=True)
 
+        assert "Name" in annotation_df.columns, print(f"ERROR: 'Name' not in provided csv")
         assert "Row" in annotation_df.columns, print(f"ERROR: 'Row' not in provided csv")
         assert "Column" in annotation_df.columns, print(f"ERROR: 'Column' not in provided csv")
         assert args.label_column in annotation_df.columns, print(f"ERROR: '{args.label_column}' not in provided csv")
         assert args.image_column in annotation_df.columns, print(f"ERROR: {args.image_column} not in provided csv")
+
+        annotation_df['Name'] = [os.path.basename(p) for p in annotation_df['Name'].values]
     else:
         raise Exception(f"ERROR: Annotation file provided does not exist; please check input")
 
     # Create output
-    output_dir = f"{args.output_dir}/patches/{get_now()}/"
-    output_path = f"{output_dir}patches.csv"
+    output_name = args.output_name if args.output_name else get_now()
+    output_dir = f"{args.output_dir}/patches/{output_name}"
+    output_path = f"{output_dir}/patches.csv"
     os.makedirs(output_dir, exist_ok=True)
+
+    # Create a dictionary of image names to their annotations
+    image_annotations = {}
+    for _, row in annotation_df.iterrows():
+        image_name = os.path.basename(row[args.image_column])
+
+        if image_name not in image_annotations:
+            image_annotations[image_name] = []
+
+        image_annotations[image_name].append({
+            'Row': row['Row'],
+            'Column': row['Column'],
+            'Label': row[args.label_column]
+        })
 
     # Make sub-folders for all the class categories
     for label in annotation_df[args.label_column].unique():
         os.makedirs(os.path.join(output_dir, 'patches', label), exist_ok=True)
 
-    # Subset of annotation df, simpler
-    sub_df = annotation_df[[args.image_column, 'Row', 'Column', args.label_column]]
-    sub_df.columns = ['Name', 'Row', 'Column', 'Label']
-    # All unique images in the annotation dataframe
-    image_names = sub_df['Name'].unique()
+    # Create an empty list to store patch information
+    patches_data = []
 
-    # Size of patches to crop
-    patch_size = args.patch_size
+    def process_image_wrapper(image_name):
+        return process_image(image_name,
+                             image_dir,
+                             image_annotations[image_name],
+                             output_dir,
+                             args.patch_size)
 
-    # All patches
-    patches = []
-
-    # Using ThreadPoolExecutor to process each image concurrently
     with ThreadPoolExecutor() as executor:
-        future_to_patches = {
-            executor.submit(process_image, image_name, image_dir, sub_df, output_dir, patch_size): image_name
-            for image_name in image_names
-        }
+        results = executor.map(process_image_wrapper, image_annotations.keys())
 
-        for future in concurrent.futures.as_completed(future_to_patches):
-            image_name = future_to_patches[future]
-            patches.extend(future.result())
+    for result in results:
+        patches_data.extend(result)
 
-    # Save patches dataframe
-    patches = pd.DataFrame(patches, columns=['Name', 'Path',
-                                             'Label', 'Row', 'Column',
-                                             'Image Name', 'Image Path'])
-    # Save as CSV
-    patches.to_csv(output_path)
+    # Create a DataFrame from the collected patch data
+    patches_df = pd.DataFrame(patches_data,
+                              columns=['Name', 'Path', 'Label', 'Row', 'Column', 'Image Name', 'Image Path'])
+
+    # Save the DataFrame to CSV
+    patches_df.to_csv(output_path, index=False)
 
     if os.path.exists(output_path):
         print(f"NOTE: Patches dataframe saved to {output_path}")
@@ -221,6 +242,9 @@ def main():
     parser.add_argument("--patch_size", type=int, default=112,
                         help="The size of each patch extracted")
 
+    parser.add_argument('--output_name', type=str, default="",
+                        help='A name to give the out output dir; else timestamped.')
+
     parser.add_argument('--output_dir', type=str, required=True,
                         help='A root directory where all output will be saved to.')
 
@@ -232,8 +256,7 @@ def main():
         print("Done.\n")
 
     except Exception as e:
-        print(f"ERROR: {e}")
-        print(traceback.format_exc())
+        console_user(f"{e}\n{traceback.format_exc()}")
 
 
 if __name__ == "__main__":

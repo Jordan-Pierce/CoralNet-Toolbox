@@ -381,7 +381,17 @@ def main():
                                         metavar="Patch Extent",
                                         help="The extent of each patch extracted")
 
-    patches_parser_panel_1.add_argument('--output_dir', required=True,
+    # Panel 2
+    patches_parser_panel_2 = patches_parser.add_argument_group('Output',
+                                                               'Specify the output directory',
+                                                               gooey_options={'show_border': True})
+
+    patches_parser_panel_2.add_argument('--output_name', required=False, type=str,
+                                        metavar='Output Name',
+                                        default="",
+                                        help='Optional name for output directory; else timestamped.')
+
+    patches_parser_panel_2.add_argument('--output_dir', required=True,
                                         metavar='Output Directory',
                                         default=DATA_DIR,
                                         help='Root directory where output will be saved',
@@ -664,6 +674,13 @@ def main():
     classification_parser_panel_2.add_argument('--weighted_loss', default=True,
                                                metavar="Weighted Loss Function",
                                                help='Recommended; useful if class categories are imbalanced',
+                                               action="store_true",
+                                               widget='BlockCheckbox')
+
+    classification_parser_panel_2.add_argument('--even_dist',
+                                               metavar="Even Distribution",
+                                               help='Downsample majority classes to be +/- 10% of minority; '
+                                                    'good for imbalanced datasets',
                                                action="store_true",
                                                widget='BlockCheckbox')
 
