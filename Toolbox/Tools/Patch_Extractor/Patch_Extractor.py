@@ -1,8 +1,10 @@
 # TODO
-#   - When importing annotations, for the unselect of all tools (otherwise selected annotations get a label)
 #   - If a user has annotation selected, and they zoom, update confidence window accordingly (message about scores lost)
+#   - Update the undo and redo
 #   - Move annotation crop as a method, store confidences, change confidence window to take annotation directly,
 #       connect to labelwindow
+#   - Resolution / resizing
+#   - If an annotation' label is updated, re-draw / update crop, 1%
 
 import os
 import uuid
@@ -455,7 +457,7 @@ class MainWindow(QMainWindow):
         progress_bar.close()
 
         # Reload the annotations on the image
-        self.annotation_window.load_annotations(self.annotation_window.current_image_path)
+        self.annotation_window.load_annotations()
 
         QMessageBox.information(self, "Annotations Sampled",
                                 "Annotations have been sampled successfully.")
@@ -679,9 +681,15 @@ class Annotation(QObject):
     color_changed = pyqtSignal(QColor)
     selected = pyqtSignal(object)
     annotation_deleted = pyqtSignal(object)
+    annotation_updated = pyqtSignal(object)
 
-    def __init__(self, center_xy: QPointF, annotation_size: int, short_label_code: str,
-                 long_label_code: str, color: QColor, image_path: str, label_id: str,
+    def __init__(self, center_xy: QPointF,
+                 annotation_size: int,
+                 short_label_code: str,
+                 long_label_code: str,
+                 color: QColor,
+                 image_path: str,
+                 label_id: str,
                  transparency: int = 128):
         super().__init__()
         self.id = str(uuid.uuid4())
@@ -692,6 +700,95 @@ class Annotation(QObject):
         self.is_selected = False
         self.graphics_item = None
         self.transparency = transparency
+        self.user_confidence = {self.label: 1.0}
+        self.machine_confidence = {}
+        self.cropped_image = None
+
+    def move(self, new_center_xy: QPointF):
+        self.center_xy = new_center_xy
+        self.update_graphics_item()
+
+    def contains_point(self, point: QPointF) -> bool:
+        half_size = self.annotation_size / 2
+        rect = QRectF(self.center_xy.x() - half_size,
+                      self.center_xy.y() - half_size,
+                      self.annotation_size,
+                      self.annotation_size)
+        return rect.contains(point)
+
+    def select(self):
+        self.is_selected = True
+        self.update_graphics_item()
+
+    def deselect(self):
+        self.is_selected = False
+        self.update_graphics_item()
+
+    def delete(self):
+        self.annotation_deleted.emit(self)
+        if self.graphics_item:
+            self.graphics_item.scene().removeItem(self.graphics_item)
+            self.graphics_item = None
+
+    def create_cropped_image(self, image_item: QGraphicsPixmapItem):
+        pixmap = image_item.pixmap()
+        half_size = self.annotation_size / 2
+        rect = QRectF(self.center_xy.x() - half_size,
+                      self.center_xy.y() - half_size,
+                      self.annotation_size,
+                      self.annotation_size).toRect()
+        self.cropped_image = pixmap.copy(rect)
+        self.annotation_updated.emit(self)  # Notify update
+
+    def create_graphics_item(self, scene: QGraphicsScene):
+        half_size = self.annotation_size / 2
+        self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
+                                               self.center_xy.y() - half_size,
+                                               self.annotation_size,
+                                               self.annotation_size)
+        self.update_graphics_item()
+        self.graphics_item.setData(0, self.id)
+        scene.addItem(self.graphics_item)
+
+    def update_user_confidence(self, new_label: 'Label'):
+        self.user_confidence = {new_label: 1.0}
+
+    def update_machine_confidence(self, label: 'Label', confidence: float):
+        self.machine_confidence[label] = confidence
+
+    def update_label(self, new_label: 'Label'):
+        self.label = new_label
+        self.update_user_confidence(new_label)
+        self.update_graphics_item()
+
+    def update_annotation_size(self, size):
+        self.annotation_size = size
+        self.update_graphics_item()
+
+    def update_transparency(self, transparency: int):
+        self.transparency = transparency
+        self.update_graphics_item()
+
+    def update_graphics_item(self):
+        if self.graphics_item:
+            half_size = self.annotation_size / 2
+            self.graphics_item.setRect(self.center_xy.x() - half_size,
+                                       self.center_xy.y() - half_size,
+                                       self.annotation_size,
+                                       self.annotation_size)
+            color = QColor(self.label.color)
+            color.setAlpha(self.transparency)
+
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                pen = QPen(inverse_color, 4, Qt.DotLine)  # Inverse color, thicker border, and dotted line
+            else:
+                pen = QPen(color, 2, Qt.SolidLine)  # Default border color and thickness
+
+            self.graphics_item.setPen(pen)
+            brush = QBrush(color)
+            self.graphics_item.setBrush(brush)
+            self.graphics_item.update()
 
     def to_dict(self):
         return {
@@ -719,75 +816,6 @@ class Annotation(QObject):
         return [os.path.basename(self.image_path), int(self.center_xy.y()),
                 int(self.center_xy.x()), self.label.short_label_code,
                 self.label.long_label_code, self.annotation_size]
-
-    def change_label(self, new_label: 'Label'):
-        self.label = new_label
-        self.update_graphics_item()
-
-    def select(self):
-        self.is_selected = True
-        self.update_graphics_item()
-
-    def deselect(self):
-        self.is_selected = False
-        self.update_graphics_item()
-
-    def delete(self):
-        self.annotation_deleted.emit(self)
-        if self.graphics_item:
-            self.graphics_item.scene().removeItem(self.graphics_item)
-            self.graphics_item = None
-
-    def create_graphics_item(self, scene):
-        half_size = self.annotation_size / 2
-        self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
-                                               self.center_xy.y() - half_size,
-                                               self.annotation_size,
-                                               self.annotation_size)
-        self.update_graphics_item()
-        self.graphics_item.setData(0, self.id)
-        scene.addItem(self.graphics_item)
-
-    def update_graphics_item(self):
-        if self.graphics_item:
-            half_size = self.annotation_size / 2
-            self.graphics_item.setRect(self.center_xy.x() - half_size,
-                                       self.center_xy.y() - half_size,
-                                       self.annotation_size,
-                                       self.annotation_size)
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
-
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 4, Qt.DotLine)  # Inverse color, thicker border, and dotted line
-            else:
-                pen = QPen(color, 2, Qt.SolidLine)  # Default border color and thickness
-
-            self.graphics_item.setPen(pen)
-            brush = QBrush(color)
-            self.graphics_item.setBrush(brush)
-            self.graphics_item.update()
-
-    def set_annotation_size(self, size):
-        self.annotation_size = size
-        self.update_graphics_item()
-
-    def set_transparency(self, transparency: int):
-        self.transparency = transparency
-        self.update_graphics_item()
-
-    def move(self, new_center_xy: QPointF):
-        self.center_xy = new_center_xy
-        self.update_graphics_item()
-
-    def contains_point(self, point: QPointF) -> bool:
-        half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size)
-        return rect.contains(point)
 
     def __repr__(self):
         return (f"Annotation(id={self.id}, center_xy={self.center_xy}, "
@@ -842,7 +870,6 @@ class AnnotationWindow(QGraphicsView):
         self.toolChanged.connect(self.set_selected_tool)
 
     def export_annotations(self):
-
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
                                                    "Save Annotations",
@@ -850,9 +877,7 @@ class AnnotationWindow(QGraphicsView):
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
-
             try:
-                # Create a dictionary to hold the annotations grouped by image path
                 export_dict = {}
                 total_annotations = 0
                 for annotation in self.annotations_dict.values():
@@ -862,7 +887,6 @@ class AnnotationWindow(QGraphicsView):
                     export_dict[image_path].append(annotation.to_dict())
                     total_annotations += 1
 
-                # Create and show the progress bar
                 progress_bar = ProgressBar(self, title="Exporting Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
@@ -871,7 +895,6 @@ class AnnotationWindow(QGraphicsView):
                     json.dump(export_dict, file, indent=4)
                     file.flush()  # Ensure the data is written to the file
 
-                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 
@@ -883,10 +906,7 @@ class AnnotationWindow(QGraphicsView):
                                     f"An error occurred while exporting annotations: {str(e)}")
 
     def import_annotations(self):
-
-        # Unselect tool, annotation
         self.set_selected_tool(None)
-        # Emit message
         self.toolChanged.emit(None)
 
         if not self.active_image:
@@ -902,23 +922,18 @@ class AnnotationWindow(QGraphicsView):
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
-
             try:
                 with open(file_path, 'r') as file:
                     imported_annotations = json.load(file)
 
-                # Count the total number of annotations in the JSON file
                 total_annotations = sum(len(annotations) for annotations in imported_annotations.values())
 
-                # Create and show the progress bar
                 progress_bar = ProgressBar(self, title="Importing Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
 
-                # Filter annotations to include only those for images already in the program
                 filtered_annotations = {p: a for p, a in imported_annotations.items() if p in self.loaded_image_paths}
 
-                # Add labels to LabelWindow if they are not already present and update annotation colors
                 updated_annotations = False
                 for image_path, annotations in filtered_annotations.items():
                     for annotation_data in annotations:
@@ -937,7 +952,6 @@ class AnnotationWindow(QGraphicsView):
                             annotation_data['annotation_color'] = existing_color.getRgb()
                             updated_annotations = True
 
-                        # Update the progress bar
                         progress_bar.update_progress()
                         QApplication.processEvents()  # Update GUI
 
@@ -947,23 +961,18 @@ class AnnotationWindow(QGraphicsView):
                                             "Some annotations have been updated to match the "
                                             "color of the labels already in the project.")
 
-                # Convert annotation data to Annotation objects and store in annotations_dict
                 for image_path, annotations in filtered_annotations.items():
                     for annotation_data in annotations:
-                        # Load the information for the Annotation
                         annotation = Annotation.from_dict(annotation_data)
                         self.annotations_dict[annotation.id] = annotation
 
-                        # Update the progress bar
                         progress_bar.update_progress()
                         QApplication.processEvents()  # Update GUI
 
-                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-                # Draw only those for the current image
-                self.load_annotations(self.current_image_path)
+                self.load_annotations()
 
                 QMessageBox.information(self, "Annotations Imported",
                                         "Annotations have been successfully imported.")
@@ -973,7 +982,6 @@ class AnnotationWindow(QGraphicsView):
                                     f"An error occurred while importing annotations: {str(e)}")
 
     def export_coralnet_annotations(self):
-
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
                                                    "Export CoralNet Annotations",
@@ -985,7 +993,6 @@ class AnnotationWindow(QGraphicsView):
                 data = []
                 total_annotations = len(self.annotations_dict)
 
-                # Create and show the progress bar
                 progress_bar = ProgressBar(self, title="Exporting CoralNet Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
@@ -998,7 +1005,6 @@ class AnnotationWindow(QGraphicsView):
                 df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size'])
                 df.to_csv(file_path, index=False)
 
-                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 
@@ -1010,10 +1016,7 @@ class AnnotationWindow(QGraphicsView):
                                     f"An error occurred while exporting annotations: {str(e)}")
 
     def import_coralnet_annotations(self):
-
-        # Unselect tool, annotation
         self.set_selected_tool(None)
-        # Emit message
         self.toolChanged.emit(None)
 
         if not self.active_image:
@@ -1037,7 +1040,6 @@ class AnnotationWindow(QGraphicsView):
                                         "The selected CSV file does not match the expected CoralNet format.")
                     return
 
-                # Prompt the user to specify the annotation size
                 annotation_size, ok = QInputDialog.getInt(self,
                                                           "Annotation Size",
                                                           "Enter the annotation size for all imported annotations:",
@@ -1045,17 +1047,14 @@ class AnnotationWindow(QGraphicsView):
                 if not ok:
                     return
 
-                # Subset the dataframe to only include annotations for in-project images
                 loaded_image_names = [os.path.basename(path) for path in list(self.loaded_image_paths)]
                 df = df[df['Name'].isin(loaded_image_names)]
 
-                # Count the total number of annotations in the CSV file
                 total_annotations = len(df)
 
                 if not total_annotations:
                     raise Exception("No annotations found for loaded images.")
 
-                # Create and show the progress bar
                 progress_bar = ProgressBar(self, title="Importing CoralNet Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
@@ -1066,7 +1065,6 @@ class AnnotationWindow(QGraphicsView):
                     col_coord = row['Column']
                     label_code = row['Label']
 
-                    # Find the full image path using the image name
                     image_path = None
                     for loaded_image_path in self.loaded_image_paths:
                         if os.path.basename(loaded_image_path) == image_name:
@@ -1076,47 +1074,38 @@ class AnnotationWindow(QGraphicsView):
                     if image_path is None:
                         continue
 
-                    # Use the label code for both short and long label codes
                     short_label_code = label_code
                     long_label_code = label_code
 
-                    # Check if the label already exists in the LabelWindow
                     existing_label = self.main_window.label_window.get_label_by_codes(short_label_code, long_label_code)
                     if existing_label:
                         color = existing_label.color
                         label_id = existing_label.id
                     else:
-                        # Create a new label
                         color = QColor(random.randint(0, 255),
                                        random.randint(0, 255),
                                        random.randint(0, 255))
 
-                        # Generate a new UUID for the label
                         label_id = str(uuid.uuid4())
                         self.main_window.label_window.add_label(short_label_code, long_label_code, color, label_id)
 
-                    # Create the Annotation object
                     annotation = Annotation(QPointF(col_coord, row_coord),
                                             annotation_size,
                                             short_label_code,
                                             long_label_code,
                                             color,
                                             image_path,
-                                            label_id)  # Use the existing or new label ID
+                                            label_id)
 
-                    # Add annotation to the dict
                     self.annotations_dict[annotation.id] = annotation
 
-                    # Update the progress bar
                     progress_bar.update_progress()
                     QApplication.processEvents()  # Update GUI
 
-                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-                # Draw only those for the current image
-                self.load_annotations(self.current_image_path)
+                self.load_annotations()
 
                 QMessageBox.information(self, "Annotations Imported",
                                         "Annotations have been successfully imported.")
@@ -1134,7 +1123,6 @@ class AnnotationWindow(QGraphicsView):
         else:
             self.setCursor(Qt.ArrowCursor)
 
-        # Uses Annotation.deselect()
         self.unselect_annotation()
 
     def set_selected_label(self, label):
@@ -1143,7 +1131,10 @@ class AnnotationWindow(QGraphicsView):
 
         if self.selected_annotation:
             if self.selected_annotation.label.id != label.id:
-                self.selected_annotation.change_label(self.selected_label)
+                self.selected_annotation.update_label(self.selected_label)
+                self.selected_annotation.create_cropped_image(self.image_item)
+                # Notify ConfidenceWindow the selected annotation has changed
+                self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
         if self.cursor_annotation:
             if self.cursor_annotation.label.id != label.id:
@@ -1156,15 +1147,16 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_size += delta
             self.annotation_size = max(1, self.annotation_size)
 
-        # Update the selected annotation size
         if self.selected_annotation:
-            self.selected_annotation.set_annotation_size(self.annotation_size)
+            self.selected_annotation.update_annotation_size(self.annotation_size)
+            self.selected_annotation.create_cropped_image(self.image_item)
+            # Notify ConfidenceWindow the selected annotation has changed
+            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
-        # Update the cursor annotation size
         if self.cursor_annotation:
-            self.cursor_annotation.set_annotation_size(self.annotation_size)
+            self.cursor_annotation.update_annotation_size(self.annotation_size)
 
-        # Emit the signal
+        # Emit that the annotation size has changed
         self.annotationSizeChanged.emit(self.annotation_size)
 
     def set_transparency(self, transparency: int):
@@ -1172,7 +1164,6 @@ class AnnotationWindow(QGraphicsView):
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         if scene_pos:
-            # Show the cursor annotation if a position is provided and within the image bounds
             if not self.selected_label or not self.annotation_color:
                 return
 
@@ -1185,49 +1176,39 @@ class AnnotationWindow(QGraphicsView):
                                                     self.current_image_path,
                                                     self.selected_label.id,
                                                     transparency=128)
-                # Create the graphic
+
                 self.cursor_annotation.create_graphics_item(self.scene)
             else:
-                # Cursor annotation exists, just update
                 self.cursor_annotation.move(scene_pos)
                 self.cursor_annotation.update_graphics_item()
-                self.cursor_annotation.set_transparency(128)
+                self.cursor_annotation.update_transparency(128)
         else:
-            # Hide the cursor annotation if it exists
             if self.cursor_annotation:
                 self.cursor_annotation.delete()
                 self.cursor_annotation = None
 
     def set_image(self, image, image_path):
-        # Unselect annotation
+
         self.unselect_annotation()
 
-        # Create a new scene
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        # Store the image item
         self.image_item = QGraphicsPixmapItem(QPixmap(image))
-        # Store the image path as a string
         self.current_image_path = image_path
-        # Set the flag to True after the image has been set
         self.active_image = True
 
-        # Emit signal with image dimensions
         self.imageLoaded.emit(image.width(), image.height())
 
-        # Add to the scene
         self.scene.addItem(self.image_item)
-        # Fit the image in the view while maintaining the aspect ratio
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-        # Hide temp annotation when a new image is set
         self.toggle_cursor_annotation()
 
-        # Draw annotations for the current image
-        self.load_annotations(image_path)
-
-        # Update the list of loaded image paths
+        self.load_annotations()
         self.loaded_image_paths.add(image_path)
+
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
 
     def wheelEvent(self, event: QMouseEvent):
         if event.angleDelta().y() > 0:
@@ -1238,7 +1219,6 @@ class AnnotationWindow(QGraphicsView):
         self.zoom_factor *= factor
         self.scale(factor, factor)
 
-        # Maintain the cursor style based on the selected tool
         if self.selected_tool == "select":
             self.setCursor(Qt.PointingHandCursor)
         elif self.selected_tool == "annotate":
@@ -1258,7 +1238,6 @@ class AnnotationWindow(QGraphicsView):
                 position = self.mapToScene(event.pos())
                 items = self.scene.items(position)
 
-                # Filter and sort items by z-value
                 rect_items = [item for item in items if isinstance(item, QGraphicsRectItem)]
                 rect_items.sort(key=lambda item: item.zValue(), reverse=True)
 
@@ -1284,7 +1263,6 @@ class AnnotationWindow(QGraphicsView):
         else:
             self.toggle_cursor_annotation()
 
-        # Emit signal with mouse position
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
         super().mouseMoveEvent(event)
@@ -1292,7 +1270,6 @@ class AnnotationWindow(QGraphicsView):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.RightButton:
             self.pan_active = False
-            # Reset cursor to default
             self.setCursor(Qt.ArrowCursor)
         self.toggle_cursor_annotation()
         super().mouseReleaseEvent(event)
@@ -1349,65 +1326,47 @@ class AnnotationWindow(QGraphicsView):
             self.selected_label = self.selected_annotation.label
             self.annotation_color = self.selected_annotation.label.color
 
-            # Emit the selected label's ID
             self.labelSelected.emit(annotation.label.id)
 
-            # Crop the annotation image and pass it to the ConfidenceWindow
-            cropped_pixmap = self.crop_annotation_image(annotation)
-            self.main_window.confidence_window.display_cropped_image(cropped_pixmap)
+            if not self.selected_annotation.cropped_image:
+                self.selected_annotation.create_cropped_image(self.image_item)
+
+            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
     def unselect_annotation(self):
         if self.selected_annotation:
             self.selected_annotation.deselect()
             self.selected_annotation = None
 
-    def crop_annotation_image(self, annotation):
-        if not self.image_item:
-            return
-
-        # Get the image pixmap
-        pixmap = self.image_item.pixmap()
-
-        # Calculate the bounding rectangle of the annotation
-        half_size = annotation.annotation_size / 2
-        rect = QRectF(annotation.center_xy.x() - half_size,
-                      annotation.center_xy.y() - half_size,
-                      annotation.annotation_size,
-                      annotation.annotation_size).toRect()
-
-        # Crop the pixmap
-        cropped_pixmap = pixmap.copy(rect)
-
-        return cropped_pixmap
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
 
     def update_annotations_transparency(self, label, transparency):
-        # Update the transparency in AnnotationWindow
         self.set_transparency(transparency)
-        # Update transparency for all existing Annotations
         for annotation in self.annotations_dict.values():
             if annotation.label.id == label.id:
-                annotation.set_transparency(transparency)
+                annotation.update_transparency(transparency)
 
-    def load_annotations(self, image_path):
+    def load_annotations(self):
         for annotation_id, annotation in self.annotations_dict.items():
-            if annotation.image_path == image_path:
-                if not annotation.graphics_item:
-                    annotation.create_graphics_item(self.scene)
-                    annotation.selected.connect(self.select_annotation)
-                    annotation.annotation_deleted.connect(self.delete_annotation)
+            if annotation.image_path == self.current_image_path:
+                annotation.create_graphics_item(self.scene)
+                annotation.create_cropped_image(self.image_item)
+
+                # Connect update signals
+                annotation.selected.connect(self.select_annotation)
+                annotation.annotation_deleted.connect(self.delete_annotation)
+                annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
 
     def add_annotation(self, scene_pos: QPointF, annotation=None):
-
         if not self.selected_label:
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
             return
 
-        # Check if the annotation's center point is within the image bounds
         if not self.active_image or not self.image_item or not self.cursorInWindow(scene_pos, mapped=True):
             return
 
         if annotation is None:
-            # Create an Annotation object
             annotation = Annotation(scene_pos,
                                     self.annotation_size,
                                     self.selected_label.short_label_code,
@@ -1417,27 +1376,27 @@ class AnnotationWindow(QGraphicsView):
                                     self.selected_label.id,
                                     transparency=self.transparency)
 
-        # # Create the graphics item for the annotation
         annotation.create_graphics_item(self.scene)
+        annotation.create_cropped_image(self.image_item)
 
-        # Connect signals for new annotation
+        # Connect update signals
         annotation.selected.connect(self.select_annotation)
         annotation.annotation_deleted.connect(self.delete_annotation)
+        annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
 
-        # Store the annotation in the dictionary
         self.annotations_dict[annotation.id] = annotation
 
-        # Push the action onto the undo stack
         self.undo_stack.append(('add', annotation.to_dict()))
         self.redo_stack.clear()  # Clear the redo stack
 
-        # View in ConfidenceWindow
-        self.main_window.confidence_window.display_cropped_image(self.crop_annotation_image(annotation))
+        self.main_window.confidence_window.display_cropped_image(annotation)
 
     def delete_selected_annotation(self):
         if self.selected_annotation:
             self.delete_annotation(self.selected_annotation.id)
             self.selected_annotation = None
+            # Clear the confidence window
+            self.main_window.confidence_window.clear_display()
 
     def delete_annotation(self, annotation_id):
         if annotation_id in self.annotations_dict:
@@ -1453,10 +1412,8 @@ class AnnotationWindow(QGraphicsView):
         self.redo_stack.clear()
 
     def delete_image(self, image_path):
-        # Create a list of annotation IDs to delete
         annotation_ids_to_delete = [i for i, a in self.annotations_dict.items() if a.image_path == image_path]
 
-        # Delete each annotation
         for annotation_id in annotation_ids_to_delete:
             annotation = self.annotations_dict[annotation_id]
             annotation.delete()
@@ -1468,7 +1425,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_item = None
             self.active_image = False  # Reset image_set flag
 
-        # Emit the signal to inform other parts of the application
         self.imageDeleted.emit(image_path)
 
     def delete_annotations_for_label(self, label):
@@ -2167,7 +2123,7 @@ class LabelWindow(QWidget):
     def update_annotations_with_label(self, label):
         for annotation in self.annotation_window.annotations_dict.values():
             if annotation.label.id == label.id:
-                annotation.change_label(label)
+                annotation.update_label(label)
 
     def get_label_color(self, short_label_code, long_label_code):
         for label in self.labels:
@@ -2203,7 +2159,7 @@ class LabelWindow(QWidget):
         # Update annotations to use the new label
         for annotation in self.annotation_window.annotations_dict.values():
             if annotation.label.id == old_label.id:
-                annotation.change_label(new_label)
+                annotation.update_label(new_label)
 
         if delete_old:
             # Remove the old label
@@ -2314,87 +2270,112 @@ class ConfidenceWindow(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
-        # Top part: QGraphicsView for blank image
+        self.graphics_view = None
+        self.scene = None
+
+        self.bar_chart_widget = None
+        self.bar_chart_layout = None
+
+        self.init_graphics_view()
+        self.init_bar_chart_widget()
+
+        self.annotation = None
+        self.user_confidence = None
+        self.machine_confidence = None
+        self.cropped_image = None
+        self.chart_dict = None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_blank_pixmap()
+        self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def init_graphics_view(self):
         self.graphics_view = QGraphicsView(self)
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
         self.layout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
+        self.update_blank_pixmap()
 
-        # Add a blank pixmap to the scene
-        blank_pixmap = QPixmap(100, 100)  # Adjust size as needed
-        blank_pixmap.fill(Qt.transparent)
-        self.scene.addPixmap(blank_pixmap)
-
-        # Bottom part: Custom widget for bar chart
+    def init_bar_chart_widget(self):
         self.bar_chart_widget = QWidget()
         self.bar_chart_layout = QVBoxLayout(self.bar_chart_widget)
         self.bar_chart_layout.setContentsMargins(0, 0, 0, 0)
         self.bar_chart_layout.setSpacing(2)  # Set spacing to make bars closer
         self.layout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
 
-        # Create a minimal bar chart
-        self.create_bar_chart()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Adjust the size of the blank pixmap to match the graphics view
+    def update_blank_pixmap(self):
         view_size = self.graphics_view.size()
         new_pixmap = QPixmap(view_size)
         new_pixmap.fill(Qt.transparent)
         self.scene.clear()
         self.scene.addPixmap(new_pixmap)
-        self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def update_annotation(self, annotation):
+        if annotation:
+            self.annotation = annotation
+            self.user_confidence = annotation.user_confidence
+            self.machine_confidence = annotation.machine_confidence
+            self.cropped_image = annotation.cropped_image.copy()
+            self.chart_dict = self.user_confidence or self.machine_confidence
+
+    def display_cropped_image(self, annotation):
+        self.clear_display()  # Clear the current display before updating
+        self.update_annotation(annotation)
+        if self.cropped_image:  # Ensure cropped_image is not None
+            self.scene.addPixmap(self.cropped_image)
+            self.scene.setSceneRect(QRectF(self.cropped_image.rect()))
+            self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+            self.graphics_view.centerOn(self.scene.sceneRect().center())
+            self.create_bar_chart()
 
     def create_bar_chart(self):
-        # Clear any existing items
-        for i in reversed(range(self.bar_chart_layout.count())):
-            self.bar_chart_layout.itemAt(i).widget().setParent(None)
+        self.clear_layout(self.bar_chart_layout)
 
-        # Create data for the bar chart
-        classes = ['Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5']
-        colors = [QColor(random.randint(0, 255),
-                         random.randint(0, 255),
-                         random.randint(0, 255)) for _ in range(5)]
-        values = [random.uniform(0, 1) * 100 for _ in range(5)]  # Random values between 0 and 1
-
-        # Find the class with the highest ratio
-        max_value_index = values.index(max(values))
-        max_color = colors[max_value_index]
-
-        # Set the border color of the QGraphicsView
+        classes, colors, values = self.get_chart_data()
+        max_color = colors[values.index(max(values))]
         self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
 
-        # Create bar graph items
-        for i in range(5):
-            bar_widget = CustomBar(colors[i], values[i], self.bar_chart_widget)
-            bar_layout = QHBoxLayout(bar_widget)
-            bar_layout.setContentsMargins(5, 2, 5, 2)
+        for cls, color, value in zip(classes, colors, values):
+            bar_widget = CustomBar(color, value, self.bar_chart_widget)
+            self.add_bar_to_layout(bar_widget, cls, value)
 
-            class_label = QLabel(classes[i], bar_widget)
-            class_label.setAlignment(Qt.AlignCenter)
-            bar_layout.addWidget(class_label)
+    def get_chart_data(self):
+        keys = list(self.chart_dict.keys())[:5]
+        return (
+            [label.short_label_code for label in keys],
+            [label.color for label in keys],
+            [conf_value * 100 for conf_value in self.chart_dict.values()][:5]
+        )
 
-            percentage_label = QLabel(f"{values[i]:.2f}%", bar_widget)
-            percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            bar_layout.addWidget(percentage_label)
+    def add_bar_to_layout(self, bar_widget, cls, value):
+        bar_layout = QHBoxLayout(bar_widget)
+        bar_layout.setContentsMargins(5, 2, 5, 2)
 
-            self.bar_chart_layout.addWidget(bar_widget)
+        class_label = QLabel(cls, bar_widget)
+        class_label.setAlignment(Qt.AlignCenter)
+        bar_layout.addWidget(class_label)
 
-    def display_cropped_image(self, pixmap):
+        percentage_label = QLabel(f"{value:.2f}%", bar_widget)
+        percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        bar_layout.addWidget(percentage_label)
+
+        self.bar_chart_layout.addWidget(bar_widget)
+
+    def clear_layout(self, layout):
+        for i in reversed(range(layout.count())):
+            layout.itemAt(i).widget().setParent(None)
+
+    def clear_display(self):
+        """
+        Clears the current scene and bar chart layout.
+        """
+        # Clear the scene
         self.scene.clear()
-        self.scene.addPixmap(pixmap)
-
-        # Set the scene rect to the size of the pixmap
-        self.scene.setSceneRect(QRectF(pixmap.rect()))
-
-        # Fit the image in the view while maintaining the aspect ratio
-        self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-
-        # Center the image in the view
-        self.graphics_view.centerOn(self.scene.sceneRect().center())
-
-        # Recreate the bar chart with new colors and values
-        self.create_bar_chart()
+        # Clear the bar chart layout
+        self.clear_layout(self.bar_chart_layout)
+        # Reset the style sheet to default
+        self.graphics_view.setStyleSheet("")
 
 
 def patch_extractor():
