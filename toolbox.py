@@ -671,16 +671,19 @@ def main():
                                                help='Loss function for training model',
                                                widget='Dropdown', choices=get_classifier_losses())
 
-    classification_parser_panel_2.add_argument('--weighted_loss', default=True,
-                                               metavar="Weighted Loss Function",
-                                               help='Recommended; useful if class categories are imbalanced',
+    classification_parser_panel_2.add_argument('--even_dist',
+                                               metavar="Even Distribution",
+                                               help='Downsample majority classes to be +/- N% of minority',
                                                action="store_true",
                                                widget='BlockCheckbox')
 
-    classification_parser_panel_2.add_argument('--even_dist',
-                                               metavar="Even Distribution",
-                                               help='Downsample majority classes to be +/- 10% of minority; '
-                                                    'good for imbalanced datasets',
+    classification_parser_panel_2.add_argument('--about', type=float, default=0.25,
+                                               metavar="About",
+                                               help='Downsample majority classes by "about" +/- N% of minority class')
+
+    classification_parser_panel_2.add_argument('--weighted_loss', default=True,
+                                               metavar="Weighted Loss Function",
+                                               help='Recommended; useful if class categories are imbalanced',
                                                action="store_true",
                                                widget='BlockCheckbox')
 

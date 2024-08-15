@@ -116,40 +116,52 @@ def get_classifier_optimizers():
 
 def get_training_augmentation(height=224, width=224):
     """
-    Training augmentation techniques
+    Training augmentation techniques; very light, if any.
     """
     train_transform = []
 
-    # ratio = np.random.rand()
-    # crop_size = max(int(height * ratio) if ratio >= 0.5 else height, 224)
-
     train_transform.extend([
-        # albu.CenterCrop(p=0.5, height=crop_size, width=crop_size),
+
+        # Center crop 112x112 1/4 the time, otherwise full patch,
+        albu.OneOf([
+            albu.CenterCrop(height=112, width=112, p=0.5),
+            albu.NoOp(p=1.0)
+        ], p=0.5),
+
+        # Always resize to 224x224
         albu.Resize(height=height, width=width),
         albu.PadIfNeeded(min_height=height, min_width=width, always_apply=True, border_mode=0, value=0),
+
+        # Flips
         albu.HorizontalFlip(p=0.5),
-        albu.GaussNoise(p=0.2),
-        albu.PixelDropout(p=1.0, dropout_prob=0.1),
+        albu.VerticalFlip(p=0.5),
+
+        albu.GaussNoise(p=0.1),
+        albu.PixelDropout(p=0.1, dropout_prob=0.05),
+
+        # Small amounts of brightness
         albu.OneOf(
             [
-                albu.CLAHE(p=1),
-                albu.RandomBrightness(p=1),
-                albu.RandomGamma(p=1),
+                albu.CLAHE(p=0.1),
+                albu.RandomBrightness(p=0.1),
+                albu.RandomGamma(p=0.1),
             ],
             p=0.9,
         ),
+        # Small amounts of blur
         albu.OneOf(
             [
-                albu.Sharpen(p=1),
-                albu.Blur(blur_limit=3, p=1),
-                albu.MotionBlur(blur_limit=3, p=1),
+                albu.Sharpen(p=0.1),
+                albu.Blur(blur_limit=3, p=0.1),
+                albu.MotionBlur(blur_limit=3, p=0.1),
             ],
             p=0.9,
         ),
+        # Small amounts of contrast / hue
         albu.OneOf(
             [
-                albu.RandomContrast(p=1),
-                albu.HueSaturationValue(p=1),
+                albu.RandomContrast(p=0.1),
+                albu.HueSaturationValue(p=0.1),
             ],
             p=0.9,
         ),
@@ -192,18 +204,26 @@ def get_preprocessing(preprocessing_fn):
     return albu.Compose(_transform)
 
 
-# Function to downsample majority classes
-def downsample_majority_classes(df):
+def downsample_majority_classes(df, about=0.1):
+    """
+    Function to downsample majority classes
+
+    :param df:
+    :param about:
+    :return:
+    """
     label_counts = df['Label'].value_counts()
     minority_count = label_counts.min()
-    target_range = (minority_count * 0.9, minority_count * 1.1)
+    target_range = (minority_count * (1 - about), minority_count * (1 + about))
 
     downsampled_df = pd.DataFrame()
+
     for label, count in label_counts.items():
         if count > target_range[1]:
             sampled_df = df[df['Label'] == label].sample(n=int(target_range[1]), random_state=42)
         else:
             sampled_df = df[df['Label'] == label]
+
         downsampled_df = pd.concat([downsampled_df, sampled_df])
 
     return downsampled_df
@@ -236,8 +256,12 @@ def plot_confusion_matrix(matrix, writer, epoch, class_names, mode='Train', save
     """
     Plots the confusion matrix, saves it locally (if save_dir is provided), and uploads it to TensorBoard.
     """
+    # Calculate the figure size dynamically based on the number of classes
+    num_classes = len(class_names)
+    figsize = (int(num_classes * 0.5), int(num_classes * 0.5))
+
     # Create a figure and axis
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=figsize)
 
     # Plot the confusion matrix
     plot_matrix(ax, matrix, class_names, title=f'{mode} Confusion Matrix')
@@ -875,6 +899,10 @@ def classification(args):
     valid_writer = SummaryWriter(log_dir=tensorboard_dir + "Valid")
     test_writer = SummaryWriter(log_dir=tensorboard_dir + "Test")
 
+    # Write the arguments used in training
+    with open(f"{logs_dir}/config.json", 'w') as json_file:
+        json.dump(vars(args), json_file, indent=4)
+
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
     # ------------------------------------------------------------------------------------------------------------------
@@ -895,10 +923,10 @@ def classification(args):
     test_df = patches_df[patches_df['Image Name'].isin(testing_images)]
 
     if args.even_dist:
-        # Downsample majority classes to make even distribution (+/- 10%)
-        train_df = downsample_majority_classes(train_df)
-        valid_df = downsample_majority_classes(valid_df)
-        test_df = downsample_majority_classes(test_df)
+        # Downsample majority classes to make even distribution (+/- N%)
+        train_df = downsample_majority_classes(train_df, about=args.about)
+        valid_df = downsample_majority_classes(valid_df, about=args.about)
+        test_df = downsample_majority_classes(test_df, about=args.about)
 
     train_classes = len(set(train_df['Label'].unique()))
     valid_classes = len(set(valid_df['Label'].unique()))
@@ -1011,7 +1039,7 @@ def classification(args):
                              log_dir=f"{tensorboard_dir}/Train/")
 
     # Loop through a few samples
-    for idx, save_path in enumerate(sample_dataset.plot_samples(n=5)):
+    for idx, save_path in enumerate(sample_dataset.plot_samples(n=10)):
 
         # Write to tensorboard
         train_writer.add_image(f'Training_Samples',
@@ -1035,6 +1063,10 @@ def classification(args):
         print(f"NOTE: {class_weight}")
     else:
         class_weight = {c: 1.0 for c in range(num_classes)}
+
+    # Write the class weights used in training
+    with open(f"{logs_dir}/class_weights.json", 'w') as json_file:
+        json.dump(class_weight, json_file, indent=4)
 
     # Reformat for training
     class_weight = torch.tensor(list(class_weight.values()))
@@ -1296,11 +1328,14 @@ def main():
     parser.add_argument('--loss_function', type=str, default='CrossEntropyLoss',
                         help='The loss function to use to train the model')
 
+    parser.add_argument('--even_dist', action='store_true',
+                        help='Downsample majority classes to be about +/- N% of minority class')
+
+    parser.add_argument('--about', type=float, default=0.25,
+                        help='Downsample majority classes by "about" +/- N% of minority class')
+
     parser.add_argument('--weighted_loss', action='store_true',
                         help='Use a weighted loss function; good for imbalanced datasets')
-
-    parser.add_argument('--even_dist', action='store_true',
-                        help='Downsample majority classes to be +/- 10% of minority; good for imbalanced datasets')
 
     parser.add_argument('--metrics', nargs="+", default=[],
                         help='The metrics used to evaluate the model (default is all applicable)')
