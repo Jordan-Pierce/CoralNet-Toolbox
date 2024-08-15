@@ -4,9 +4,10 @@
 #   - root output directory for create dataset
 
 import os
+import io
+import sys
 import uuid
 import json
-import shutil
 import random
 import weakref
 
@@ -15,13 +16,15 @@ import pandas as pd
 from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
                              QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
                              QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout,
+                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
                              QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
                              QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem)
+                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QWhatsThis)
 
-from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
+from PyQt5.QtGui import (QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont,
+                         QDesktopServices)
+
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF, QUrl
 
 
 
@@ -997,6 +1000,477 @@ class CreateDatasetDialog(QDialog):
             return 'test'
 
 
+class TrainModelDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Train Model")
+
+        # Add "What's This?" button to the dialog
+        self.setWindowFlags(self.windowFlags() | Qt.WindowContextHelpButtonHint)
+
+        # Main layout
+        self.main_layout = QVBoxLayout()
+
+        # Create and setup the tabs, parameters form, and console output
+        self.setup_ui()
+
+        # Wrap the main layout in a QScrollArea
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        scroll_widget.setLayout(self.main_layout)
+        scroll_area.setWidget(scroll_widget)
+
+        # Set the scroll area as the main layout of the dialog
+        self.setLayout(QVBoxLayout())
+        self.layout().addWidget(scroll_area)
+
+        # Redirect console output
+        self.old_stdout = sys.stdout
+        self.old_stderr = sys.stderr
+        self.redirect_console_output()
+
+        # Set up the "What's This?" context help
+        self.setup_whats_this()
+
+    def setup_whats_this(self):
+        help_text = "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>Click here for more information</a>"
+        QWhatsThis.showText(self.rect().center(), help_text, self)
+
+    def event(self, event):
+        if event.type() == QEvent.WhatsThisClicked:
+            QDesktopServices.openUrl(QUrl(event.href()))
+            return True
+        return super().event(event)
+
+    def setup_ui(self):
+        # Dataset Directory
+        self.dataset_dir_edit = QLineEdit()
+        self.dataset_dir_button = QPushButton("Browse...")
+        self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
+
+        dataset_dir_layout = QHBoxLayout()
+        dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
+        dataset_dir_layout.addWidget(self.dataset_dir_edit)
+        dataset_dir_layout.addWidget(self.dataset_dir_button)
+        self.main_layout.addLayout(dataset_dir_layout)
+
+        # Create tabs
+        self.tabs = QTabWidget()
+        self.tab_classification = QWidget()
+        self.tab_segmentation = QWidget()
+
+        self.tabs.addTab(self.tab_classification, "Image Classification")
+        self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
+
+        # Setup classification tab
+        self.setup_classification_tab()
+
+        # Setup segmentation tab
+        self.setup_segmentation_tab()
+
+        self.main_layout.addWidget(self.tabs)
+
+        # Parameters Form
+        self.form_layout = QFormLayout()
+
+        # Model
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        self.form_layout.addRow("Existing Model:", model_layout)
+
+        # Epochs
+        self.epochs_spinbox = QSpinBox()
+        self.epochs_spinbox.setMinimum(1)
+        self.epochs_spinbox.setMaximum(1000)
+        self.epochs_spinbox.setValue(100)
+        self.form_layout.addRow("Epochs:", self.epochs_spinbox)
+
+        # Patience
+        self.patience_spinbox = QSpinBox()
+        self.patience_spinbox.setMinimum(1)
+        self.patience_spinbox.setMaximum(1000)
+        self.patience_spinbox.setValue(100)
+        self.form_layout.addRow("Patience:", self.patience_spinbox)
+
+        # Batch
+        self.batch_spinbox = QSpinBox()
+        self.batch_spinbox.setMinimum(-1)
+        self.batch_spinbox.setMaximum(1024)
+        self.batch_spinbox.setValue(16)
+        self.form_layout.addRow("Batch:", self.batch_spinbox)
+
+        # Imgsz
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setMinimum(16)
+        self.imgsz_spinbox.setMaximum(4096)
+        self.imgsz_spinbox.setValue(640)
+        self.form_layout.addRow("Imgsz:", self.imgsz_spinbox)
+
+        # Save
+        self.save_checkbox = QCheckBox()
+        self.save_checkbox.setChecked(True)
+        self.form_layout.addRow("Save:", self.save_checkbox)
+
+        # Save Period
+        self.save_period_spinbox = QSpinBox()
+        self.save_period_spinbox.setMinimum(-1)
+        self.save_period_spinbox.setMaximum(1000)
+        self.save_period_spinbox.setValue(-1)
+        self.form_layout.addRow("Save Period:", self.save_period_spinbox)
+
+        # Workers
+        self.workers_spinbox = QSpinBox()
+        self.workers_spinbox.setMinimum(1)
+        self.workers_spinbox.setMaximum(64)
+        self.workers_spinbox.setValue(8)
+        self.form_layout.addRow("Workers:", self.workers_spinbox)
+
+        # Project
+        self.project_edit = QLineEdit()
+        self.form_layout.addRow("Project:", self.project_edit)
+
+        # Name
+        self.name_edit = QLineEdit()
+        self.form_layout.addRow("Name:", self.name_edit)
+
+        # Exist Ok
+        self.exist_ok_checkbox = QCheckBox()
+        self.exist_ok_checkbox.setChecked(False)
+        self.form_layout.addRow("Exist Ok:", self.exist_ok_checkbox)
+
+        # Pretrained
+        self.pretrained_checkbox = QCheckBox()
+        self.pretrained_checkbox.setChecked(True)
+        self.form_layout.addRow("Pretrained:", self.pretrained_checkbox)
+
+        # Optimizer
+        self.optimizer_combo = QComboBox()
+        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
+        self.optimizer_combo.setCurrentText("auto")
+        self.form_layout.addRow("Optimizer:", self.optimizer_combo)
+
+        # Verbose
+        self.verbose_checkbox = QCheckBox()
+        self.verbose_checkbox.setChecked(True)
+        self.form_layout.addRow("Verbose:", self.verbose_checkbox)
+
+        # Single Cls
+        self.single_cls_checkbox = QCheckBox()
+        self.single_cls_checkbox.setChecked(False)
+        self.form_layout.addRow("Single Cls:", self.single_cls_checkbox)
+
+        # Cos Lr
+        self.cos_lr_checkbox = QCheckBox()
+        self.cos_lr_checkbox.setChecked(False)
+        self.form_layout.addRow("Cos Lr:", self.cos_lr_checkbox)
+
+        # Amp
+        self.amp_checkbox = QCheckBox()
+        self.amp_checkbox.setChecked(True)
+        self.form_layout.addRow("Amp:", self.amp_checkbox)
+
+        # Fraction
+        self.fraction_spinbox = QDoubleSpinBox()
+        self.fraction_spinbox.setMinimum(0.1)
+        self.fraction_spinbox.setMaximum(1.0)
+        self.fraction_spinbox.setValue(1.0)
+        self.form_layout.addRow("Fraction:", self.fraction_spinbox)
+
+        # Freeze
+        self.freeze_edit = QLineEdit()
+        self.form_layout.addRow("Freeze:", self.freeze_edit)
+
+        # Lr0
+        self.lr0_spinbox = QDoubleSpinBox()
+        self.lr0_spinbox.setMinimum(0.0001)
+        self.lr0_spinbox.setMaximum(1.0)
+        self.lr0_spinbox.setValue(0.01)
+        self.form_layout.addRow("Lr0:", self.lr0_spinbox)
+
+        # Lrf
+        self.lrf_spinbox = QDoubleSpinBox()
+        self.lrf_spinbox.setMinimum(0.0001)
+        self.lrf_spinbox.setMaximum(1.0)
+        self.lrf_spinbox.setValue(0.01)
+        self.form_layout.addRow("Lrf:", self.lrf_spinbox)
+
+        # Cls
+        self.cls_spinbox = QDoubleSpinBox()
+        self.cls_spinbox.setMinimum(0.0)
+        self.cls_spinbox.setMaximum(1.0)
+        self.cls_spinbox.setValue(0.5)
+        self.form_layout.addRow("Cls:", self.cls_spinbox)
+
+        # Dropout
+        self.dropout_spinbox = QDoubleSpinBox()
+        self.dropout_spinbox.setMinimum(0.0)
+        self.dropout_spinbox.setMaximum(1.0)
+        self.dropout_spinbox.setValue(0.0)
+        self.form_layout.addRow("Dropout:", self.dropout_spinbox)
+
+        # Val
+        self.val_checkbox = QCheckBox()
+        self.val_checkbox.setChecked(True)
+        self.form_layout.addRow("Val:", self.val_checkbox)
+
+        # Optional Arguments
+        self.optional_args_edit = QPlainTextEdit()
+        self.optional_args_edit.setPlaceholderText("Enter optional arguments as a dictionary (e.g., {'key': 'value'})")
+        self.form_layout.addRow("Optional Arguments:", self.optional_args_edit)
+
+        self.main_layout.addLayout(self.form_layout)
+
+        # Console Output
+        self.console_output = QTextEdit()
+        self.console_output.setReadOnly(True)
+        self.console_output.setFixedHeight(200)  # Set a fixed height for the console box
+        self.main_layout.addWidget(self.console_output)
+
+        # Add OK and Cancel buttons
+        self.buttons = QPushButton("OK")
+        self.buttons.clicked.connect(self.accept)
+        self.main_layout.addWidget(self.buttons)
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        self.main_layout.addWidget(self.cancel_button)
+
+    def browse_dataset_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
+        if dir_path:
+            self.dataset_dir_edit.setText(dir_path)
+
+    def browse_model_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "Model Files (*.pt *.yaml)")
+        if file_path:
+            self.model_edit.setText(file_path)
+
+    def browse_data_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Data File", "", "Data Files (*.yaml)")
+        if file_path:
+            self.data_edit.setText(file_path)
+
+    def setup_classification_tab(self):
+        layout = QVBoxLayout()
+
+        # Classification Model Dropdown
+        self.classification_model_combo = QComboBox()
+        self.classification_model_combo.addItems(
+            ["yolov8n-cls.pt", "yolov8s-cls.pt", "yolov8m-cls.pt", "yolov8l-cls.pt", "yolov8x-cls.pt"])
+        self.classification_model_combo.setEditable(True)
+        layout.addWidget(QLabel("Select or Enter Classification Model:"))
+        layout.addWidget(self.classification_model_combo)
+
+        self.tab_classification.setLayout(layout)
+
+    def setup_segmentation_tab(self):
+        layout = QVBoxLayout()
+
+        # Segmentation Model Dropdown
+        self.segmentation_model_combo = QComboBox()
+        self.segmentation_model_combo.addItems(
+            ["yolov8n-seg.pt", "yolov8s-seg.pt", "yolov8m-seg.pt", "yolov8l-seg.pt", "yolov8x-seg.pt"])
+        self.segmentation_model_combo.setEditable(True)
+        layout.addWidget(QLabel("Select or Enter Segmentation Model:"))
+        layout.addWidget(self.segmentation_model_combo)
+
+        self.tab_segmentation.setLayout(layout)
+
+    def redirect_console_output(self):
+        self.buffer = io.StringIO()
+        sys.stdout = self.buffer
+        sys.stderr = self.buffer
+
+    def update_console_output(self):
+        output = self.buffer.getvalue()
+        self.console_output.setText(output)
+
+    def closeEvent(self, event):
+        self.restore_console_output()
+        super().closeEvent(event)
+
+    def accept(self):
+        self.restore_console_output()
+        super().accept()
+
+    def reject(self):
+        self.restore_console_output()
+        super().reject()
+
+    def restore_console_output(self):
+        sys.stdout = self.old_stdout
+        sys.stderr = self.old_stderr
+        self.update_console_output()
+
+class MakePredictionsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Make Predictions")
+        self.layout = QVBoxLayout(self)
+
+        label = QLabel("This is the Make Predictions dialog.")
+        self.layout.addWidget(label)
+
+        button = QPushButton("OK")
+        button.clicked.connect(self.accept)
+        self.layout.addWidget(button)
+
+
+class Annotation(QObject):
+    color_changed = pyqtSignal(QColor)
+    selected = pyqtSignal(object)
+    annotation_deleted = pyqtSignal(object)
+    annotation_updated = pyqtSignal(object)
+
+    def __init__(self, center_xy: QPointF,
+                 annotation_size: int,
+                 short_label_code: str,
+                 long_label_code: str,
+                 color: QColor,
+                 image_path: str,
+                 label_id: str,
+                 transparency: int = 128):
+        super().__init__()
+        self.id = str(uuid.uuid4())
+        self.center_xy = center_xy
+        self.annotation_size = annotation_size
+        self.label = Label(short_label_code, long_label_code, color, label_id)
+        self.image_path = image_path
+        self.is_selected = False
+        self.graphics_item = None
+        self.transparency = transparency
+        self.user_confidence = {self.label: 1.0}
+        self.machine_confidence = {}
+        self.cropped_image = None
+
+    def move(self, new_center_xy: QPointF):
+        self.center_xy = new_center_xy
+        self.update_graphics_item()
+        self.annotation_updated.emit(self)  # Notify update
+
+    def contains_point(self, point: QPointF) -> bool:
+        half_size = self.annotation_size / 2
+        rect = QRectF(self.center_xy.x() - half_size,
+                      self.center_xy.y() - half_size,
+                      self.annotation_size,
+                      self.annotation_size)
+        return rect.contains(point)
+
+    def select(self):
+        self.is_selected = True
+        self.update_graphics_item()
+
+    def deselect(self):
+        self.is_selected = False
+        self.update_graphics_item()
+
+    def delete(self):
+        self.annotation_deleted.emit(self)
+        if self.graphics_item:
+            self.graphics_item.scene().removeItem(self.graphics_item)
+            self.graphics_item = None
+
+    def create_cropped_image(self, image_item: QGraphicsPixmapItem):
+
+        pixmap = image_item.pixmap()
+        half_size = self.annotation_size / 2
+        rect = QRectF(self.center_xy.x() - half_size,
+                      self.center_xy.y() - half_size,
+                      self.annotation_size,
+                      self.annotation_size).toRect()
+        self.cropped_image = pixmap.copy(rect)
+        self.annotation_updated.emit(self)  # Notify update
+
+    def create_graphics_item(self, scene: QGraphicsScene):
+        half_size = self.annotation_size / 2
+        self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
+                                               self.center_xy.y() - half_size,
+                                               self.annotation_size,
+                                               self.annotation_size)
+        self.update_graphics_item()
+        self.graphics_item.setData(0, self.id)
+        scene.addItem(self.graphics_item)
+
+    def update_user_confidence(self, new_label: 'Label'):
+        self.user_confidence = {new_label: 1.0}
+
+    def update_machine_confidence(self, label: 'Label', confidence: float):
+        self.machine_confidence[label] = confidence
+
+    def update_label(self, new_label: 'Label'):
+        self.label = new_label
+        self.update_user_confidence(new_label)
+        self.update_graphics_item()
+
+    def update_annotation_size(self, size):
+        self.annotation_size = size
+        self.update_graphics_item()
+
+    def update_transparency(self, transparency: int):
+        self.transparency = transparency
+        self.update_graphics_item()
+
+    def update_graphics_item(self):
+        if self.graphics_item:
+            half_size = self.annotation_size / 2
+            self.graphics_item.setRect(self.center_xy.x() - half_size,
+                                       self.center_xy.y() - half_size,
+                                       self.annotation_size,
+                                       self.annotation_size)
+            color = QColor(self.label.color)
+            color.setAlpha(self.transparency)
+
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                pen = QPen(inverse_color, 4, Qt.DotLine)  # Inverse color, thicker border, and dotted line
+            else:
+                pen = QPen(color, 2, Qt.SolidLine)  # Default border color and thickness
+
+            self.graphics_item.setPen(pen)
+            brush = QBrush(color)
+            self.graphics_item.setBrush(brush)
+            self.graphics_item.update()
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'center_xy': (self.center_xy.x(), self.center_xy.y()),
+            'annotation_size': self.annotation_size,
+            'label_short_code': self.label.short_label_code,
+            'label_long_code': self.label.long_label_code,
+            'annotation_color': self.label.color.getRgb(),
+            'image_path': self.image_path,
+            'label_id': self.label.id
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(QPointF(*data['center_xy']),
+                   data['annotation_size'],
+                   data['label_short_code'],
+                   data['label_long_code'],
+                   QColor(*data['annotation_color']),
+                   data['image_path'],
+                   data['label_id'])
+
+    def to_coralnet_format(self):
+        return [os.path.basename(self.image_path), int(self.center_xy.y()),
+                int(self.center_xy.x()), self.label.short_label_code,
+                self.label.long_label_code, self.annotation_size]
+
+    def __repr__(self):
+        return (f"Annotation(id={self.id}, center_xy={self.center_xy}, "
+                f"annotation_size={self.annotation_size}, "
+                f"annotation_color={self.label.color.name()}, "
+                f"image_path={self.image_path}, "
+                f"label={self.label.short_label_code})")
+
+
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
@@ -1599,184 +2073,6 @@ class AnnotationWindow(QGraphicsView):
             if annotation.label.id == label.id:
                 annotation.delete()
                 del self.annotations_dict[annotation.id]
-
-
-class TrainModelDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Train Model")
-        self.layout = QVBoxLayout(self)
-
-        label = QLabel("This is the Train Model dialog.")
-        self.layout.addWidget(label)
-
-        button = QPushButton("OK")
-        button.clicked.connect(self.accept)
-        self.layout.addWidget(button)
-
-
-class MakePredictionsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Make Predictions")
-        self.layout = QVBoxLayout(self)
-
-        label = QLabel("This is the Make Predictions dialog.")
-        self.layout.addWidget(label)
-
-        button = QPushButton("OK")
-        button.clicked.connect(self.accept)
-        self.layout.addWidget(button)
-
-
-class Annotation(QObject):
-    color_changed = pyqtSignal(QColor)
-    selected = pyqtSignal(object)
-    annotation_deleted = pyqtSignal(object)
-    annotation_updated = pyqtSignal(object)
-
-    def __init__(self, center_xy: QPointF,
-                 annotation_size: int,
-                 short_label_code: str,
-                 long_label_code: str,
-                 color: QColor,
-                 image_path: str,
-                 label_id: str,
-                 transparency: int = 128):
-        super().__init__()
-        self.id = str(uuid.uuid4())
-        self.center_xy = center_xy
-        self.annotation_size = annotation_size
-        self.label = Label(short_label_code, long_label_code, color, label_id)
-        self.image_path = image_path
-        self.is_selected = False
-        self.graphics_item = None
-        self.transparency = transparency
-        self.user_confidence = {self.label: 1.0}
-        self.machine_confidence = {}
-        self.cropped_image = None
-
-    def move(self, new_center_xy: QPointF):
-        self.center_xy = new_center_xy
-        self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
-
-    def contains_point(self, point: QPointF) -> bool:
-        half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size)
-        return rect.contains(point)
-
-    def select(self):
-        self.is_selected = True
-        self.update_graphics_item()
-
-    def deselect(self):
-        self.is_selected = False
-        self.update_graphics_item()
-
-    def delete(self):
-        self.annotation_deleted.emit(self)
-        if self.graphics_item:
-            self.graphics_item.scene().removeItem(self.graphics_item)
-            self.graphics_item = None
-
-    def create_cropped_image(self, image_item: QGraphicsPixmapItem):
-
-        pixmap = image_item.pixmap()
-        half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size).toRect()
-        self.cropped_image = pixmap.copy(rect)
-        self.annotation_updated.emit(self)  # Notify update
-
-    def create_graphics_item(self, scene: QGraphicsScene):
-        half_size = self.annotation_size / 2
-        self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
-                                               self.center_xy.y() - half_size,
-                                               self.annotation_size,
-                                               self.annotation_size)
-        self.update_graphics_item()
-        self.graphics_item.setData(0, self.id)
-        scene.addItem(self.graphics_item)
-
-    def update_user_confidence(self, new_label: 'Label'):
-        self.user_confidence = {new_label: 1.0}
-
-    def update_machine_confidence(self, label: 'Label', confidence: float):
-        self.machine_confidence[label] = confidence
-
-    def update_label(self, new_label: 'Label'):
-        self.label = new_label
-        self.update_user_confidence(new_label)
-        self.update_graphics_item()
-
-    def update_annotation_size(self, size):
-        self.annotation_size = size
-        self.update_graphics_item()
-
-    def update_transparency(self, transparency: int):
-        self.transparency = transparency
-        self.update_graphics_item()
-
-    def update_graphics_item(self):
-        if self.graphics_item:
-            half_size = self.annotation_size / 2
-            self.graphics_item.setRect(self.center_xy.x() - half_size,
-                                       self.center_xy.y() - half_size,
-                                       self.annotation_size,
-                                       self.annotation_size)
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
-
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 4, Qt.DotLine)  # Inverse color, thicker border, and dotted line
-            else:
-                pen = QPen(color, 2, Qt.SolidLine)  # Default border color and thickness
-
-            self.graphics_item.setPen(pen)
-            brush = QBrush(color)
-            self.graphics_item.setBrush(brush)
-            self.graphics_item.update()
-
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'center_xy': (self.center_xy.x(), self.center_xy.y()),
-            'annotation_size': self.annotation_size,
-            'label_short_code': self.label.short_label_code,
-            'label_long_code': self.label.long_label_code,
-            'annotation_color': self.label.color.getRgb(),
-            'image_path': self.image_path,
-            'label_id': self.label.id
-        }
-
-    @classmethod
-    def from_dict(cls, data):
-        return cls(QPointF(*data['center_xy']),
-                   data['annotation_size'],
-                   data['label_short_code'],
-                   data['label_long_code'],
-                   QColor(*data['annotation_color']),
-                   data['image_path'],
-                   data['label_id'])
-
-    def to_coralnet_format(self):
-        return [os.path.basename(self.image_path), int(self.center_xy.y()),
-                int(self.center_xy.x()), self.label.short_label_code,
-                self.label.long_label_code, self.annotation_size]
-
-    def __repr__(self):
-        return (f"Annotation(id={self.id}, center_xy={self.center_xy}, "
-                f"annotation_size={self.annotation_size}, "
-                f"annotation_color={self.label.color.name()}, "
-                f"image_path={self.image_path}, "
-                f"label={self.label.short_label_code})")
 
 
 class ThumbnailWidget(QFrame):
