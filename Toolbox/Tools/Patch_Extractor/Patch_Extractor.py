@@ -1,6 +1,7 @@
 # TODO
 #   - Delete selected images with Del key
 #   - import images message
+#   - don't allow create dataset without images loaded
 #   - root output directory for create dataset
 
 import os
@@ -12,6 +13,7 @@ import random
 import weakref
 
 import pandas as pd
+from ultralytics import YOLO
 
 from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
                              QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
@@ -19,12 +21,11 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
                              QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
                              QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QWhatsThis)
+                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit)
 
-from PyQt5.QtGui import (QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont,
-                         QDesktopServices)
+from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF, QUrl
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
 
 
 
@@ -787,12 +788,12 @@ class CreateDatasetDialog(QDialog):
         self.train_ratio_spinbox = QDoubleSpinBox()
         self.train_ratio_spinbox.setRange(0.0, 1.0)
         self.train_ratio_spinbox.setSingleStep(0.1)
-        self.train_ratio_spinbox.setValue(0.8)
+        self.train_ratio_spinbox.setValue(0.7)
 
         self.val_ratio_spinbox = QDoubleSpinBox()
         self.val_ratio_spinbox.setRange(0.0, 1.0)
         self.val_ratio_spinbox.setSingleStep(0.1)
-        self.val_ratio_spinbox.setValue(0.1)
+        self.val_ratio_spinbox.setValue(0.2)
 
         self.test_ratio_spinbox = QDoubleSpinBox()
         self.test_ratio_spinbox.setRange(0.0, 1.0)
@@ -955,7 +956,7 @@ class CreateDatasetDialog(QDialog):
                 break
 
             # Find the subset of selected annotations that belong to current image
-            annotations = [a for a in self.selected_annotiations if a.image_path == image_path]
+            annotations = [a for a in self.selected_annotations if a.image_path == image_path]
 
             for annotation in annotations:
                 # If there isn't a cropped image, crop it
@@ -1005,8 +1006,12 @@ class TrainModelDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Train Model")
 
-        # Add "What's This?" button to the dialog
-        self.setWindowFlags(self.windowFlags() | Qt.WindowContextHelpButtonHint)
+        # Set window settings
+        self.setWindowFlags(Qt.Window |
+                            Qt.WindowCloseButtonHint |
+                            Qt.WindowMinimizeButtonHint |
+                            Qt.WindowMaximizeButtonHint |
+                            Qt.WindowTitleHint)
 
         # Main layout
         self.main_layout = QVBoxLayout()
@@ -1029,19 +1034,6 @@ class TrainModelDialog(QDialog):
         self.old_stdout = sys.stdout
         self.old_stderr = sys.stderr
         self.redirect_console_output()
-
-        # Set up the "What's This?" context help
-        self.setup_whats_this()
-
-    def setup_whats_this(self):
-        help_text = "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>Click here for more information</a>"
-        QWhatsThis.showText(self.rect().center(), help_text, self)
-
-    def event(self, event):
-        if event.type() == QEvent.WhatsThisClicked:
-            QDesktopServices.openUrl(QUrl(event.href()))
-            return True
-        return super().event(event)
 
     def setup_ui(self):
         # Dataset Directory
@@ -1260,8 +1252,7 @@ class TrainModelDialog(QDialog):
 
         # Classification Model Dropdown
         self.classification_model_combo = QComboBox()
-        self.classification_model_combo.addItems(
-            ["yolov8n-cls.pt", "yolov8s-cls.pt", "yolov8m-cls.pt", "yolov8l-cls.pt", "yolov8x-cls.pt"])
+        self.classification_model_combo.addItems(["yolov8n-cls.pt", "yolov8s-cls.pt", "yolov8m-cls.pt", "yolov8l-cls.pt", "yolov8x-cls.pt"])
         self.classification_model_combo.setEditable(True)
         layout.addWidget(QLabel("Select or Enter Classification Model:"))
         layout.addWidget(self.classification_model_combo)
@@ -1273,8 +1264,7 @@ class TrainModelDialog(QDialog):
 
         # Segmentation Model Dropdown
         self.segmentation_model_combo = QComboBox()
-        self.segmentation_model_combo.addItems(
-            ["yolov8n-seg.pt", "yolov8s-seg.pt", "yolov8m-seg.pt", "yolov8l-seg.pt", "yolov8x-seg.pt"])
+        self.segmentation_model_combo.addItems(["yolov8n-seg.pt", "yolov8s-seg.pt", "yolov8m-seg.pt", "yolov8l-seg.pt", "yolov8x-seg.pt"])
         self.segmentation_model_combo.setEditable(True)
         layout.addWidget(QLabel("Select or Enter Segmentation Model:"))
         layout.addWidget(self.segmentation_model_combo)
@@ -1296,6 +1286,7 @@ class TrainModelDialog(QDialog):
 
     def accept(self):
         self.restore_console_output()
+        self.train_classification_model()
         super().accept()
 
     def reject(self):
@@ -1306,6 +1297,65 @@ class TrainModelDialog(QDialog):
         sys.stdout = self.old_stdout
         sys.stderr = self.old_stderr
         self.update_console_output()
+
+    def get_training_parameters(self):
+        # Extract values from dialog widgets
+        params = {
+            'model': self.model_edit.text(),
+            'data': self.dataset_dir_edit.text(),
+            'epochs': self.epochs_spinbox.value(),
+            'patience': self.patience_spinbox.value(),
+            'batch': self.batch_spinbox.value(),
+            'imgsz': self.imgsz_spinbox.value(),
+            'save': self.save_checkbox.isChecked(),
+            'save_period': self.save_period_spinbox.value(),
+            'workers': self.workers_spinbox.value(),
+            'project': self.project_edit.text(),
+            'name': self.name_edit.text(),
+            'exist_ok': self.exist_ok_checkbox.isChecked(),
+            'pretrained': self.pretrained_checkbox.isChecked(),
+            'optimizer': self.optimizer_combo.currentText(),
+            'verbose': self.verbose_checkbox.isChecked(),
+            'single_cls': self.single_cls_checkbox.isChecked(),
+            'cos_lr': self.cos_lr_checkbox.isChecked(),
+            'amp': self.amp_checkbox.isChecked(),
+            'fraction': self.fraction_spinbox.value(),
+            'freeze': self.freeze_edit.text(),
+            'lr0': self.lr0_spinbox.value(),
+            'lrf': self.lrf_spinbox.value(),
+            'cls': self.cls_spinbox.value(),
+            'dropout': self.dropout_spinbox.value(),
+            'val': self.val_checkbox.isChecked()
+        }
+
+        # Return the dictionary of parameters
+        return params
+
+    def train_classification_model(self):
+        # Get training parameters
+        params = self.get_training_parameters()
+
+        try:
+            # Initialize the model
+            params['task'] = 'classify'
+            model_path = params.pop('model', None)
+            if not model_path:
+                model_path = self.classification_model_combo.currentText()
+
+            self.target_model = YOLO(model_path)
+
+            # Train the model
+            results = self.target_model.train(**params)
+
+            # Print results
+            print(results)
+
+        except Exception as e:
+            # Display an error message box to the user
+            error_message = f"An error occurred during model training: {e}"
+            QMessageBox.critical(self, "Error", error_message)
+            print(error_message)
+
 
 class MakePredictionsDialog(QDialog):
     def __init__(self, parent=None):

@@ -1,6 +1,7 @@
 *.hd
 *.hdf5
 *.idea
+*.pt
 *__pycache__/
 /Data/
 /Data/Mission_Iconic_Reefs
