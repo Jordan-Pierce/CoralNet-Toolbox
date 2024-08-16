@@ -1014,6 +1014,8 @@ class TrainModelDialog(QDialog):
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
 
+        self.resize(600, 800)
+
         # Main layout
         self.main_layout = QVBoxLayout()
 
@@ -1032,17 +1034,6 @@ class TrainModelDialog(QDialog):
         self.layout().addWidget(scroll_area)
 
     def setup_ui(self):
-        # Dataset Directory
-        self.dataset_dir_edit = QLineEdit()
-        self.dataset_dir_button = QPushButton("Browse...")
-        self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
-
-        dataset_dir_layout = QHBoxLayout()
-        dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
-        dataset_dir_layout.addWidget(self.dataset_dir_edit)
-        dataset_dir_layout.addWidget(self.dataset_dir_button)
-        self.main_layout.addLayout(dataset_dir_layout)
-
         # Create tabs
         self.tabs = QTabWidget()
         self.tab_classification = QWidget()
@@ -1051,12 +1042,10 @@ class TrainModelDialog(QDialog):
         self.tabs.addTab(self.tab_classification, "Image Classification")
         self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
 
-        # Setup classification tab
+        # Setup tabs
         self.setup_classification_tab()
-
-        # Setup segmentation tab
         self.setup_segmentation_tab()
-
+        # Add to main layout
         self.main_layout.addWidget(self.tabs)
 
         # Parameters Form
@@ -1214,13 +1203,29 @@ class TrainModelDialog(QDialog):
         if dir_path:
             self.dataset_dir_edit.setText(dir_path)
 
+    def browse_dataset_yaml(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Dataset YAML File", "", "YAML Files (*.yaml *.yml)")
+        if file_path:
+            self.dataset_yaml_edit.setText(file_path)
+
     def browse_model_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "Model Files (*.pt *.yaml)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
             self.model_edit.setText(file_path)
 
     def setup_classification_tab(self):
         layout = QVBoxLayout()
+
+        # Dataset Directory
+        self.dataset_dir_edit = QLineEdit()
+        self.dataset_dir_button = QPushButton("Browse...")
+        self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
+
+        dataset_dir_layout = QHBoxLayout()
+        dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
+        dataset_dir_layout.addWidget(self.dataset_dir_edit)
+        dataset_dir_layout.addWidget(self.dataset_dir_button)
+        layout.addLayout(dataset_dir_layout)
 
         # Classification Model Dropdown
         self.classification_model_combo = QComboBox()
@@ -1238,6 +1243,16 @@ class TrainModelDialog(QDialog):
 
     def setup_segmentation_tab(self):
         layout = QVBoxLayout()
+
+        self.dataset_yaml_edit = QLineEdit()
+        self.dataset_yaml_button = QPushButton("Browse...")
+        self.dataset_yaml_button.clicked.connect(self.browse_dataset_yaml)
+
+        dataset_yaml_layout = QHBoxLayout()
+        dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
+        dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
+        dataset_yaml_layout.addWidget(self.dataset_yaml_button)
+        layout.addLayout(dataset_yaml_layout)
 
         # Segmentation Model Dropdown
         self.segmentation_model_combo = QComboBox()
@@ -1294,7 +1309,7 @@ class TrainModelDialog(QDialog):
 
     def train_classification_model(self):
 
-        message = "Model training has commenced. Please monitor the console for real-time progress updates."
+        message = "Model training has commenced. Monitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
 
         # Minimization of windows
@@ -1319,7 +1334,7 @@ class TrainModelDialog(QDialog):
             # Restore the window after training is complete
             self.showNormal()
 
-            message = "The training process has been successfully completed."
+            message = "Model training has successfully been completed."
             QMessageBox.information(self, "Model Training Status", message)
 
         except Exception as e:
