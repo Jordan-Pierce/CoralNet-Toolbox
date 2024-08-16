@@ -11,6 +11,7 @@ import uuid
 import json
 import random
 import weakref
+import datetime
 
 import pandas as pd
 from ultralytics import YOLO
@@ -1030,11 +1031,6 @@ class TrainModelDialog(QDialog):
         self.setLayout(QVBoxLayout())
         self.layout().addWidget(scroll_area)
 
-        # Redirect console output
-        self.old_stdout = sys.stdout
-        self.old_stderr = sys.stderr
-        self.redirect_console_output()
-
     def setup_ui(self):
         # Dataset Directory
         self.dataset_dir_edit = QLineEdit()
@@ -1100,7 +1096,7 @@ class TrainModelDialog(QDialog):
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(640)
+        self.imgsz_spinbox.setValue(224)
         self.form_layout.addRow("Imgsz:", self.imgsz_spinbox)
 
         # Save
@@ -1121,14 +1117,6 @@ class TrainModelDialog(QDialog):
         self.workers_spinbox.setMaximum(64)
         self.workers_spinbox.setValue(8)
         self.form_layout.addRow("Workers:", self.workers_spinbox)
-
-        # Project
-        self.project_edit = QLineEdit()
-        self.form_layout.addRow("Project:", self.project_edit)
-
-        # Name
-        self.name_edit = QLineEdit()
-        self.form_layout.addRow("Name:", self.name_edit)
 
         # Exist Ok
         self.exist_ok_checkbox = QCheckBox()
@@ -1210,18 +1198,7 @@ class TrainModelDialog(QDialog):
         self.val_checkbox.setChecked(True)
         self.form_layout.addRow("Val:", self.val_checkbox)
 
-        # Optional Arguments
-        self.optional_args_edit = QPlainTextEdit()
-        self.optional_args_edit.setPlaceholderText("Enter optional arguments as a dictionary (e.g., {'key': 'value'})")
-        self.form_layout.addRow("Optional Arguments:", self.optional_args_edit)
-
         self.main_layout.addLayout(self.form_layout)
-
-        # Console Output
-        self.console_output = QTextEdit()
-        self.console_output.setReadOnly(True)
-        self.console_output.setFixedHeight(200)  # Set a fixed height for the console box
-        self.main_layout.addWidget(self.console_output)
 
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
@@ -1242,17 +1219,17 @@ class TrainModelDialog(QDialog):
         if file_path:
             self.model_edit.setText(file_path)
 
-    def browse_data_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Data File", "", "Data Files (*.yaml)")
-        if file_path:
-            self.data_edit.setText(file_path)
-
     def setup_classification_tab(self):
         layout = QVBoxLayout()
 
         # Classification Model Dropdown
         self.classification_model_combo = QComboBox()
-        self.classification_model_combo.addItems(["yolov8n-cls.pt", "yolov8s-cls.pt", "yolov8m-cls.pt", "yolov8l-cls.pt", "yolov8x-cls.pt"])
+        self.classification_model_combo.addItems(["yolov8n-cls.pt",
+                                                  "yolov8s-cls.pt",
+                                                  "yolov8m-cls.pt",
+                                                  "yolov8l-cls.pt",
+                                                  "yolov8x-cls.pt"])
+
         self.classification_model_combo.setEditable(True)
         layout.addWidget(QLabel("Select or Enter Classification Model:"))
         layout.addWidget(self.classification_model_combo)
@@ -1264,39 +1241,21 @@ class TrainModelDialog(QDialog):
 
         # Segmentation Model Dropdown
         self.segmentation_model_combo = QComboBox()
-        self.segmentation_model_combo.addItems(["yolov8n-seg.pt", "yolov8s-seg.pt", "yolov8m-seg.pt", "yolov8l-seg.pt", "yolov8x-seg.pt"])
+        self.segmentation_model_combo.addItems(["yolov8n-seg.pt",
+                                                "yolov8s-seg.pt",
+                                                "yolov8m-seg.pt",
+                                                "yolov8l-seg.pt",
+                                                "yolov8x-seg.pt"])
+
         self.segmentation_model_combo.setEditable(True)
         layout.addWidget(QLabel("Select or Enter Segmentation Model:"))
         layout.addWidget(self.segmentation_model_combo)
 
         self.tab_segmentation.setLayout(layout)
 
-    def redirect_console_output(self):
-        self.buffer = io.StringIO()
-        sys.stdout = self.buffer
-        sys.stderr = self.buffer
-
-    def update_console_output(self):
-        output = self.buffer.getvalue()
-        self.console_output.setText(output)
-
-    def closeEvent(self, event):
-        self.restore_console_output()
-        super().closeEvent(event)
-
     def accept(self):
-        self.restore_console_output()
         self.train_classification_model()
         super().accept()
-
-    def reject(self):
-        self.restore_console_output()
-        super().reject()
-
-    def restore_console_output(self):
-        sys.stdout = self.old_stdout
-        sys.stderr = self.old_stderr
-        self.update_console_output()
 
     def get_training_parameters(self):
         # Extract values from dialog widgets
@@ -1310,8 +1269,6 @@ class TrainModelDialog(QDialog):
             'save': self.save_checkbox.isChecked(),
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
-            'project': self.project_edit.text(),
-            'name': self.name_edit.text(),
             'exist_ok': self.exist_ok_checkbox.isChecked(),
             'pretrained': self.pretrained_checkbox.isChecked(),
             'optimizer': self.optimizer_combo.currentText(),
@@ -1325,13 +1282,25 @@ class TrainModelDialog(QDialog):
             'lrf': self.lrf_spinbox.value(),
             'cls': self.cls_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
-            'val': self.val_checkbox.isChecked()
+            'val': self.val_checkbox.isChecked(),
+            'project': "Data/Training",
         }
+        now = datetime.datetime.now()
+        now = now.strftime("%Y-%m-%d_%H-%M-%S")
+        params['name'] = now
 
         # Return the dictionary of parameters
         return params
 
     def train_classification_model(self):
+
+        message = "Model training has commenced. Please monitor the console for real-time progress updates."
+        QMessageBox.information(self, "Model Training Status", message)
+
+        # Minimization of windows
+        self.showMinimized()
+        self.parent().showMinimized()
+
         # Get training parameters
         params = self.get_training_parameters()
 
@@ -1347,14 +1316,21 @@ class TrainModelDialog(QDialog):
             # Train the model
             results = self.target_model.train(**params)
 
-            # Print results
-            print(results)
+            # Restore the window after training is complete
+            self.showNormal()
+
+            message = "The training process has been successfully completed."
+            QMessageBox.information(self, "Model Training Status", message)
 
         except Exception as e:
+            # Restore the window after training is complete
+            self.showNormal()
+
             # Display an error message box to the user
             error_message = f"An error occurred during model training: {e}"
             QMessageBox.critical(self, "Error", error_message)
             print(error_message)
+
 
 
 class MakePredictionsDialog(QDialog):
