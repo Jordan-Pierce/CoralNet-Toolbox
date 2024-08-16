@@ -1,12 +1,8 @@
 # TODO
-#   - Delete selected images with Del key
 #   - root output directory for create dataset
-#   - splitting the data per image
 #   - hot keys for annotation, image, and confidence
 
 import os
-import io
-import sys
 import uuid
 import json
 import random
@@ -28,6 +24,8 @@ from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, Q
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
 
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class GlobalEventFilter(QObject):
@@ -430,7 +428,7 @@ class MainWindow(QMainWindow):
         self.confidence_window = ConfidenceWindow(self)
 
         # Initialize MachineLearningTool
-        self.ml_tool = MachineLearningTool(self)
+        self.ml_tool = None
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -519,16 +517,16 @@ class MainWindow(QMainWindow):
         self.ml_menu = self.menu_bar.addMenu("Machine Learning")
 
         self.ml_create_dataset_action = QAction("Create Dataset", self)
-        self.ml_create_dataset_action.triggered.connect(self.ml_tool.create_dataset)
+        self.ml_create_dataset_action.triggered.connect(self.open_create_dataset_dialog)
         self.ml_menu.addAction(self.ml_create_dataset_action)
 
         self.ml_train_model_action = QAction("Train Model", self)
-        self.ml_train_model_action.triggered.connect(self.ml_tool.train_model)
+        self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
         self.ml_menu.addAction(self.ml_train_model_action)
 
-        self.ml_make_predictions_action = QAction("Make Predictions", self)
-        self.ml_make_predictions_action.triggered.connect(self.ml_tool.make_predictions)
-        self.ml_menu.addAction(self.ml_make_predictions_action)
+        self.ml_deploy_model_action = QAction("Deploy Model", self)
+        self.ml_deploy_model_action.triggered.connect(self.open_deploy_model_dialog)
+        self.ml_menu.addAction(self.ml_deploy_model_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -703,7 +701,8 @@ class MainWindow(QMainWindow):
                 image = QImage(image_path)
                 self.annotation_window.set_image(image, image_path)
 
-            QMessageBox.information(self, "Image(s) Imported",
+            QMessageBox.information(self,
+                                    "Image(s) Imported",
                                     "Image(s) have been successfully exported.")
 
     def open_annotation_sampling_dialog(self):
@@ -719,37 +718,31 @@ class MainWindow(QMainWindow):
         dialog = AnnotationSamplingDialog(self.annotation_window, self.label_window, self)
         dialog.exec_()
 
-
-class MachineLearningTool:
-    def __init__(self, main_window):
-        self.main_window = main_window
-
-    def create_dataset(self):
-
+    def open_create_dataset_dialog(self):
         # Check if there are loaded images
-        if not len(self.main_window.annotation_window.loaded_image_paths):
-            QMessageBox.warning(self.main_window,
+        if not len(self.annotation_window.loaded_image_paths):
+            QMessageBox.warning(self,
                                 "Create Dataset",
                                 "No images are present in the project.")
             return
 
         # Check if there are annotations
-        if not len(self.main_window.annotation_window.annotations_dict):
-            QMessageBox.warning(self.main_window,
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
                                 "Create Dataset",
                                 "No annotations are present in the project.")
             return
 
-        dialog = CreateDatasetDialog(self.main_window)
-        dialog.exec_()
+        self.create_dataset_dialog = CreateDatasetDialog(self)
+        self.create_dataset_dialog.exec_()
 
-    def train_model(self):
-        dialog = TrainModelDialog(self.main_window)
-        dialog.exec_()
+    def open_train_model_dialog(self):
+        self.train_model_dialog = TrainModelDialog(self)
+        self.train_model_dialog.exec_()
 
-    def make_predictions(self):
-        dialog = MakePredictionsDialog(self.main_window)
-        dialog.exec_()
+    def open_deploy_model_dialog(self):
+        self.deploy_model_dialog = DeployModelDialog(self)
+        self.deploy_model_dialog.exec_()
 
 
 class CreateDatasetDialog(QDialog):
@@ -838,7 +831,6 @@ class CreateDatasetDialog(QDialog):
         self.label_code_combo = QComboBox()
         self.label_code_combo.addItems(["Short Label Codes", "Long Label Codes"])
         self.label_code_combo.setCurrentText("Short Label Codes")
-        # Connect to update dynamically
         self.label_code_combo.currentTextChanged.connect(self.update_class_filter_list)
         self.label_code_combo.currentTextChanged.connect(self.update_summary_statistics)
         layout.addWidget(QLabel("Select Label Code Type:"))
@@ -856,11 +848,15 @@ class CreateDatasetDialog(QDialog):
         self.summary_label = QLabel()
         layout.addWidget(self.summary_label)
 
+        # Ready Status
+        self.ready_label = QLabel()
+        layout.addWidget(self.ready_label)
+
+        # Add the layour
         self.tab_classification.setLayout(layout)
 
         # Populate class filter list
         self.populate_class_filter_list()
-
         # Initial update of summary statistics
         self.update_summary_statistics()
 
@@ -896,37 +892,66 @@ class CreateDatasetDialog(QDialog):
                 item.setCheckState(Qt.Checked)
                 self.class_filter_list.addItem(item)
 
+    def split_data(self):
+        self.train_ratio = self.train_ratio_spinbox.value()
+        self.val_ratio = self.val_ratio_spinbox.value()
+        self.test_ratio = self.test_ratio_spinbox.value()
+
+        images = list(self.annotation_window.loaded_image_paths)
+        random.shuffle(images)
+
+        train_split = int(len(images) * self.train_ratio)
+        val_split = int(len(images) * (self.train_ratio + self.val_ratio))
+
+        self.train_images = images[:train_split]
+        self.val_images = images[train_split:val_split]
+        self.test_images = images[val_split:]
+
+    def determine_splits(self):
+        self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
+        self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
+        self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
+
+    def check_label_distribution(self):
+        for label in self.selected_labels:
+            if self.get_selected_label_code_type() == "Short Label Codes":
+                train_label_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
+                val_label_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
+                test_label_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
+            else:
+                train_label_count = sum(1 for a in self.train_annotations if a.label.long_label_code == label)
+                val_label_count = sum(1 for a in self.val_annotations if a.label.long_label_code == label)
+                test_label_count = sum(1 for a in self.test_annotations if a.label.long_label_code == label)
+
+            if train_label_count == 0 or val_label_count == 0 or test_label_count == 0:
+                return False
+        return True
+
     def update_summary_statistics(self):
-        # Find all labels that user selected
+        # Split the data by images
+        self.split_data()
+
+        # Selected labels based on user's selection
         matching_items = self.class_filter_list.findItems("", Qt.MatchContains)
         self.selected_labels = [item.text() for item in matching_items if item.checkState() == Qt.Checked]
 
-        # Fetch annotations and calculate statistics
-        annotations = [a for a in self.annotation_window.annotations_dict.values()]
-        label_code_type = self.get_selected_label_code_type()
+        # All annotations in project
+        annotations = list(self.annotation_window.annotations_dict.values())
 
-        if label_code_type == "Short Label Codes":
+        if self.get_selected_label_code_type() == "Short Label Codes":
             self.selected_annotations = [a for a in annotations if a.label.short_label_code in self.selected_labels]
         else:
             self.selected_annotations = [a for a in annotations if a.label.long_label_code in self.selected_labels]
 
         total_annotations = len(self.selected_annotations)
+        total_classes = len(self.selected_labels)
 
-        if label_code_type == "Short Label Codes":
-            unique_labels = set(annotation.label.short_label_code for annotation in self.selected_annotations)
-        else:
-            unique_labels = set(annotation.label.long_label_code for annotation in self.selected_annotations)
+        # Split the data by annotations
+        self.determine_splits()
 
-        total_classes = len(unique_labels)
-
-        # Calculate split counts based on ratios
-        train_ratio = self.train_ratio_spinbox.value()
-        val_ratio = self.val_ratio_spinbox.value()
-        test_ratio = self.test_ratio_spinbox.value()
-
-        train_count = int(total_annotations * train_ratio)
-        val_count = int(total_annotations * val_ratio)
-        test_count = total_annotations - train_count - val_count
+        train_count = len(self.train_annotations)
+        val_count = len(self.val_annotations)
+        test_count = len(self.test_annotations)
 
         self.summary_label.setText(f"Total Annotations: {total_annotations}\n"
                                    f"Total Classes: {total_classes}\n"
@@ -934,13 +959,24 @@ class CreateDatasetDialog(QDialog):
                                    f"Validation Samples: {val_count}\n"
                                    f"Test Samples: {test_count}")
 
+        self.ready_status = self.check_label_distribution()
+        self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
+        self.ready_label.setText("Ready" if (self.ready_status and self.split_status) else "Not Ready")
+
     def accept(self):
+
         dataset_name = self.dataset_name_edit.text()
         output_dir = self.output_dir_edit.text()
         train_ratio = self.train_ratio_spinbox.value()
         val_ratio = self.val_ratio_spinbox.value()
         test_ratio = self.test_ratio_spinbox.value()
         label_code_type = self.get_selected_label_code_type()
+
+        if not self.ready_status:
+            QMessageBox.warning(self, "Dataset Not Ready",
+                                "Not all labels are present in all sets.\n"
+                                "Please adjust your selections or sample more data.")
+            return
 
         if not dataset_name or not output_dir:
             QMessageBox.warning(self, "Input Error", "All fields must be filled.")
@@ -950,7 +986,6 @@ class CreateDatasetDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "Train, Validation, and Test ratios must sum to 1.0")
             return
 
-        # Check if the output directory already exists
         output_dir_path = os.path.join(output_dir, dataset_name)
         if os.path.exists(output_dir_path):
             reply = QMessageBox.question(self,
@@ -960,10 +995,6 @@ class CreateDatasetDialog(QDialog):
             if reply == QMessageBox.No:
                 return
 
-        # Update summary statistics before accepting
-        self.update_summary_statistics()
-
-        # Create output directories
         os.makedirs(output_dir_path, exist_ok=True)
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'val')
@@ -972,51 +1003,41 @@ class CreateDatasetDialog(QDialog):
         os.makedirs(val_dir, exist_ok=True)
         os.makedirs(test_dir, exist_ok=True)
 
-        # Create class directories within each split directory
         for label in self.selected_labels:
             os.makedirs(os.path.join(train_dir, label), exist_ok=True)
             os.makedirs(os.path.join(val_dir, label), exist_ok=True)
             os.makedirs(os.path.join(test_dir, label), exist_ok=True)
 
-        # Create progress bar
         progress = ProgressBar(self, title="Creating Dataset")
-        progress.start_progress(len(self.annotation_window.loaded_image_paths))
+        progress.start_progress(len(self.selected_annotations))
 
-        # Process each image
-        for idx, image_path in enumerate(self.annotation_window.loaded_image_paths):
-            if progress.wasCanceled():
-                break
-
-            # Find the subset of selected annotations that belong to current image
-            annotations = [a for a in self.selected_annotations if a.image_path == image_path]
-
+        def process_annotations(annotations, split_dir):
             for annotation in annotations:
-                # If there isn't a cropped image, crop it
+                if progress.wasCanceled():
+                    break
+
                 if not annotation.cropped_image:
-                    image = self.thumbnail_window.images[image_path]
+                    image = self.thumbnail_window.images[annotation.image_path]
                     image_item = QGraphicsPixmapItem(QPixmap(image))
                     annotation.create_cropped_image(image_item)
 
                 cropped_image = annotation.cropped_image
 
                 if cropped_image:
-                    split = self.determine_split(train_ratio, val_ratio, test_ratio)
-                    if split == 'train':
-                        output_path = os.path.join(train_dir, annotation.label.short_label_code)
-                    elif split == 'val':
-                        output_path = os.path.join(val_dir, annotation.label.short_label_code)
-                    else:
-                        output_path = os.path.join(test_dir, annotation.label.short_label_code)
-
                     if label_code_type == "Short Label Codes":
                         label_code = annotation.label.short_label_code
                     else:
                         label_code = annotation.label.long_label_code
 
+                    output_path = os.path.join(split_dir, label_code)
                     output_filename = f"{label_code}_{annotation.id}.jpg"
                     cropped_image.save(os.path.join(output_path, output_filename))
 
-            progress.update_progress()
+                progress.update_progress()
+
+        process_annotations(self.train_annotations, train_dir)
+        process_annotations(self.val_annotations, val_dir)
+        process_annotations(self.test_annotations, test_dir)
 
         progress.stop_progress()
         progress.close()
@@ -1026,16 +1047,6 @@ class CreateDatasetDialog(QDialog):
                                     "Dataset Created",
                                     "Dataset has been successfully created.")
         super().accept()
-
-    def determine_split(self, train_ratio, val_ratio, test_ratio):
-        import random
-        r = random.random()
-        if r < train_ratio:
-            return 'train'
-        elif r < train_ratio + val_ratio:
-            return 'val'
-        else:
-            return 'test'
 
 
 class TrainModelDialog(QDialog):
@@ -1383,13 +1394,13 @@ class TrainModelDialog(QDialog):
             print(error_message)
 
 
-class MakePredictionsDialog(QDialog):
+class DeployModelDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Make Predictions")
+        self.setWindowTitle("Deploy Model")
         self.layout = QVBoxLayout(self)
 
-        label = QLabel("This is the Make Predictions dialog.")
+        label = QLabel("This is the Model Deploy dialog.")
         self.layout.addWidget(label)
 
         button = QPushButton("OK")
