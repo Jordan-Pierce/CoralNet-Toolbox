@@ -1,8 +1,6 @@
 # TODO
 #   - root output directory for create dataset
-#   - uniform sampling margin bug
 #   - create dataset bug not appearing
-#   - update progress bar to update GUI automatically
 
 import os
 import uuid
@@ -49,27 +47,26 @@ class ProgressBar(QDialog):
         self.layout.addWidget(self.progress_bar)
         self.layout.addWidget(self.cancel_button)
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_progress)
-
         self.value = 0
+        self.max_value = 100
         self.canceled = False
 
     def update_progress(self):
         if not self.canceled:
             self.value += 1
             self.progress_bar.setValue(self.value)
-            if self.value >= self.progress_bar.maximum():
+            if self.value >= self.max_value:
                 self.stop_progress()
 
     def start_progress(self, max_value):
         self.value = 0
+        self.max_value = max_value
         self.canceled = False
         self.progress_bar.setRange(0, max_value)
-        self.timer.start(50)  # Update progress every 50 milliseconds
 
     def stop_progress(self):
-        self.timer.stop()
+        self.value = self.max_value
+        self.progress_bar.setValue(self.value)
 
     def cancel(self):
         self.canceled = True
@@ -233,23 +230,27 @@ class AnnotationSamplingDialog(QDialog):
                 x = random.randint(margin_x_min, image_width - annotation_size - margin_x_max)
                 y = random.randint(margin_y_min, image_height - annotation_size - margin_y_max)
                 annotations.append((x, y, annotation_size))
-        elif method == "Uniform":
+
+        if method == "Uniform":
             grid_size = int(num_annotations ** 0.5)
-            x_step = (image_width - margin_x_min - margin_x_max - annotation_size) // grid_size
-            y_step = (image_height - margin_y_min - margin_y_max - annotation_size) // grid_size
+            x_step = (image_width - margin_x_min - margin_x_max - annotation_size) / grid_size
+            y_step = (image_height - margin_y_min - margin_y_max - annotation_size) / grid_size
             for i in range(grid_size):
                 for j in range(grid_size):
-                    x = margin_x_min + i * x_step
-                    y = margin_y_min + j * y_step
+                    x = margin_x_min + int(i * x_step + annotation_size / 2)
+                    y = margin_y_min + int(j * y_step + annotation_size / 2)
                     annotations.append((x, y, annotation_size))
-        elif method == "Stratified Random":
+
+        if method == "Stratified Random":
             grid_size = int(num_annotations ** 0.5)
-            x_step = (image_width - margin_x_min - margin_x_max) // grid_size
-            y_step = (image_height - margin_y_min - margin_y_max) // grid_size
+            x_step = (image_width - margin_x_min - margin_x_max - annotation_size) / grid_size
+            y_step = (image_height - margin_y_min - margin_y_max - annotation_size) / grid_size
             for i in range(grid_size):
                 for j in range(grid_size):
-                    x = margin_x_min + i * x_step + random.randint(0, x_step - annotation_size)
-                    y = margin_y_min + j * y_step + random.randint(0, y_step - annotation_size)
+                    x = margin_x_min + int(
+                        i * x_step + random.uniform(annotation_size / 2, x_step - annotation_size / 2))
+                    y = margin_y_min + int(
+                        j * y_step + random.uniform(annotation_size / 2, y_step - annotation_size / 2))
                     annotations.append((x, y, annotation_size))
 
         return annotations
@@ -393,7 +394,7 @@ class AnnotationSamplingDialog(QDialog):
 
             for annotation in annotations:
                 x, y, size = annotation
-                new_annotation = Annotation(QPointF(x, y),
+                new_annotation = Annotation(QPointF(x + size // 2, y + size // 2),
                                             size,
                                             review_label.short_label_code,
                                             review_label.long_label_code,
@@ -1011,6 +1012,23 @@ class DeployModelDialog(QDialog):
         else:
             self.segmentation_file_path.setText("No model file selected")
 
+    def pixmap_to_numpy(self, pixmap):
+        # Convert QPixmap to QImage
+        image = pixmap.toImage()
+        # Get image dimensions
+        width = image.width()
+        height = image.height()
+
+        # Convert QImage to numpy array
+        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
+        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+
+        # If the image format is ARGB32, swap the first and last channels (A and B)
+        if format == QImage.Format_ARGB32:
+            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+
+        return numpy_array
+
     def predict(self, annotations=None):
         # If model isn't loaded
         if self.loaded_model is None:
@@ -1033,10 +1051,19 @@ class DeployModelDialog(QDialog):
             if not annotations:
                 # If not supplied with annotations, get those for current image
                 annotations = self.annotation_window.get_image_annotations()
-            for annotation in annotations:
-                # Only make predictions on 'Review'
-                if annotation.label.id == "-1":
-                    self.predict_annotation(annotation)
+
+            # Filter annotations to only include those with 'Review' label
+            review_annotations = [annotation for annotation in annotations if annotation.label.id == "-1"]
+
+            if review_annotations:
+                # Convert QImages to numpy arrays
+                images_np = [self.pixmap_to_numpy(annotation.cropped_image) for annotation in review_annotations]
+
+                # Perform batch prediction
+                results = self.loaded_model(images_np)
+
+                for annotation, result in zip(review_annotations, results):
+                    self.process_prediction_result(annotation, result)
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -1072,22 +1099,29 @@ class DeployModelDialog(QDialog):
             # Update the machine confidence
             annotation.update_machine_confidence(predictions)
 
-    def pixmap_to_numpy(self, pixmap):
-        # Convert QPixmap to QImage
-        image = pixmap.toImage()
-        # Get image dimensions
-        width = image.width()
-        height = image.height()
+    def process_prediction_result(self, annotation, result):
+        # Extract the results
+        class_names = result.names
+        top5 = result.probs.top5
+        top5conf = result.probs.top5conf
 
-        # Convert QImage to numpy array
-        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
-        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+        # Initialize an empty dictionary to store the results
+        predictions = {}
 
-        # If the image format is ARGB32, swap the first and last channels (A and B)
-        if format == QImage.Format_ARGB32:
-            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+        # Iterate over the top 5 predictions
+        for idx, conf in zip(top5, top5conf):
+            class_name = class_names[idx]
+            label = self.label_window.get_label_by_long_code(class_name)
 
-        return numpy_array
+            if label:
+                predictions[label] = float(conf)
+            else:
+                # User does not have label loaded; skip.
+                pass
+
+        if predictions:
+            # Update the machine confidence
+            annotation.update_machine_confidence(predictions)
 
 
 class CreateDatasetDialog(QDialog):
@@ -1109,10 +1143,9 @@ class CreateDatasetDialog(QDialog):
 
         # Setup classification tab
         self.setup_classification_tab()
-
-        # Setup segmentation tab (placeholder for future work)
+        # Setup segmentation tab
         self.setup_segmentation_tab()
-
+        # Add the tabs to the layout
         self.layout.addWidget(self.tabs)
 
         # Add OK and Cancel buttons
@@ -1175,9 +1208,9 @@ class CreateDatasetDialog(QDialog):
         # Label Code Selection
         self.label_code_combo = QComboBox()
         self.label_code_combo.addItems(["Short Label Codes", "Long Label Codes"])
-        self.label_code_combo.setCurrentText("Short Label Codes")
         self.label_code_combo.currentTextChanged.connect(self.update_class_filter_list)
         self.label_code_combo.currentTextChanged.connect(self.update_summary_statistics)
+        self.label_code_combo.setCurrentText("Short Label Codes")
         layout.addWidget(QLabel("Select Label Code Type:"))
         layout.addWidget(self.label_code_combo)
 
@@ -1197,7 +1230,7 @@ class CreateDatasetDialog(QDialog):
         self.ready_label = QLabel()
         layout.addWidget(self.ready_label)
 
-        # Add the layour
+        # Add the layout
         self.tab_classification.setLayout(layout)
 
         # Populate class filter list
@@ -1398,6 +1431,11 @@ class CreateDatasetDialog(QDialog):
 
         progress_bar.stop_progress()
         progress_bar.close()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.populate_class_filter_list()
+        self.update_summary_statistics()
 
 
 class TrainModelDialog(QDialog):
