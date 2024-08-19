@@ -1,6 +1,10 @@
 # TODO
 #   - root output directory for create dataset
 #   - hot keys for annotation, image, and confidence
+#   - uniform sampling margin bug
+#   - logic for confidence window
+#   - create dataset bug not appearing
+#   - update progress bar to update GUI automatically
 
 import os
 import uuid
@@ -9,6 +13,7 @@ import random
 import weakref
 import datetime
 
+import numpy as np
 import pandas as pd
 from ultralytics import YOLO
 
@@ -18,7 +23,7 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
                              QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
                              QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit)
+                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QRadioButton)
 
 from PyQt5.QtGui import QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
 
@@ -29,10 +34,11 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class GlobalEventFilter(QObject):
-    def __init__(self, label_window, annotation_window):
+    def __init__(self, main_window):
         super().__init__()
-        self.label_window = label_window
-        self.annotation_window = annotation_window
+        self.label_window = main_window.label_window
+        self.annotation_window = main_window.annotation_window
+        self.deploy_model_dialog = main_window.deploy_model_dialog
 
     def eventFilter(self, obj, event):
         # Check if the event is a wheel event
@@ -47,9 +53,9 @@ class GlobalEventFilter(QObject):
                 return True
 
         elif event.type() == QEvent.KeyPress:
-            # Handle WASD keys for selecting Label
             if event.modifiers() & Qt.ControlModifier:
 
+                # Handle WASD keys for selecting Label
                 if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
                     self.label_window.handle_wasd_key(event.key())
                     return True
@@ -59,7 +65,12 @@ class GlobalEventFilter(QObject):
                     self.annotation_window.delete_selected_annotation()
                     return True
 
-            # Handle Escape key foe exiting program
+                # Handle hotkey for prediction
+                if event.key() == Qt.Key_Z:
+                    self.deploy_model_dialog.predict()
+                    return True
+
+            # Handle Escape key for exiting program
             if event.key() == Qt.Key_Escape:
                 self.show_exit_confirmation_dialog()
                 return True
@@ -127,10 +138,12 @@ class ProgressBar(QDialog):
 class AnnotationSamplingDialog(QDialog):
     annotationsSampled = pyqtSignal(list, bool)  # Signal to emit the sampled annotations and apply to all flag
 
-    def __init__(self, annotation_window, label_window, parent=None):
+    def __init__(self, main_window, parent=None):
         super().__init__(parent)
-        self.annotation_window = annotation_window
-        self.label_window = label_window
+        self.annotation_window = main_window.annotation_window
+        self.label_window = main_window.label_window
+        self.deploy_model_dialog = main_window.deploy_model_dialog
+
         self.setWindowTitle("Sample Annotations")
 
         self.layout = QVBoxLayout(self)
@@ -138,7 +151,7 @@ class AnnotationSamplingDialog(QDialog):
         # Sampling Method
         self.method_label = QLabel("Sampling Method:")
         self.method_combo = QComboBox()
-        self.method_combo.addItems(["Random", "Uniform", "Stratified Random"])
+        self.method_combo.addItems(["Random", "Stratified Random", "Uniform"])
         self.layout.addWidget(self.method_label)
         self.layout.addWidget(self.method_combo)
 
@@ -167,9 +180,21 @@ class AnnotationSamplingDialog(QDialog):
         self.margin_y_max_spinbox = self.create_margin_spinbox("Y Max", self.margin_form_layout)
         self.layout.addLayout(self.margin_form_layout)
 
+        # Apply to Next Images Checkbox
+        self.apply_next_checkbox = QCheckBox("Apply to next images")
+        self.layout.addWidget(self.apply_next_checkbox)
         # Apply to All Images Checkbox
         self.apply_all_checkbox = QCheckBox("Apply to all images")
         self.layout.addWidget(self.apply_all_checkbox)
+        # Ensure only one of the apply checkboxes can be selected at a time
+        self.apply_next_checkbox.stateChanged.connect(self.update_apply_next_checkboxes)
+        self.apply_all_checkbox.stateChanged.connect(self.update_apply_all_checkboxes)
+
+        # Make predictions on sampled annotations checkbox
+        self.apply_predictions_checkbox = QCheckBox("Make predictions on sample annotations")
+        self.layout.addWidget(self.apply_predictions_checkbox)
+        # Ensure checkbox can only be selected if model is loaded
+        self.apply_predictions_checkbox.stateChanged.connect(self.update_apply_predictions_checkboxes)
 
         # Preview Button
         self.preview_button = QPushButton("Preview")
@@ -190,10 +215,6 @@ class AnnotationSamplingDialog(QDialog):
         self.accept_button.clicked.connect(self.accept_annotations)
         self.button_box.addWidget(self.accept_button)
 
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        self.button_box.addWidget(self.cancel_button)
-
         self.layout.addLayout(self.button_box)
 
         self.sampled_annotations = []
@@ -205,6 +226,56 @@ class AnnotationSamplingDialog(QDialog):
         spinbox.setMaximum(1000)
         layout.addRow(label, spinbox)
         return spinbox
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.showMaximized()  # Maximize the dialog when it is shown
+        self.reset_defaults()  # Reset settings to defaults
+
+    def reset_defaults(self):
+        self.preview_scene.clear()
+        self.method_combo.setCurrentIndex(0)
+        self.num_annotations_spinbox.setValue(1)
+        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.margin_x_min_spinbox.setValue(0)
+        self.margin_y_min_spinbox.setValue(0)
+        self.margin_x_max_spinbox.setValue(0)
+        self.margin_y_max_spinbox.setValue(0)
+        self.apply_all_checkbox.setChecked(False)
+        self.apply_next_checkbox.setChecked(False)
+
+    def update_apply_next_checkboxes(self):
+        if self.apply_next_checkbox.isChecked():
+            self.apply_next_checkbox.setChecked(True)
+            self.apply_all_checkbox.setChecked(False)
+            return
+
+        if not self.apply_next_checkbox.isChecked():
+            self.apply_next_checkbox.setChecked(False)
+            return
+
+    def update_apply_all_checkboxes(self):
+        if self.apply_all_checkbox.isChecked():
+            self.apply_all_checkbox.setChecked(True)
+            self.apply_next_checkbox.setChecked(False)
+            return
+
+        if not self.apply_all_checkbox.isChecked():
+            self.apply_all_checkbox.setChecked(False)
+            return
+
+    def update_apply_predictions_checkboxes(self):
+        model_loaded = self.deploy_model_dialog.loaded_model is not None
+
+        if not model_loaded:
+            self.apply_predictions_checkbox.setChecked(False)
+            QMessageBox.warning(self, "No model", "No model deployed to apply to predictions")
+            return
+
+        if self.apply_predictions_checkbox.isChecked():
+            self.apply_predictions_checkbox.setChecked(True)
+        else:
+            self.apply_predictions_checkbox.setChecked(False)
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins
@@ -393,12 +464,15 @@ class AnnotationSamplingDialog(QDialog):
         # Reload the annotations on the image
         self.annotation_window.load_annotations()
 
-        QMessageBox.information(self, "Annotations Sampled",
+        QMessageBox.information(self,
+                                "Annotations Sampled",
                                 "Annotations have been sampled successfully.")
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.showMaximized()  # Maximize the dialog when it is shown
+        self.reset_defaults()
+
+    def make_predictions_on_sampled_annotations(self):
+        # Placeholder function for making predictions on sampled annotations
+        pass
 
 
 class MainWindow(QMainWindow):
@@ -427,8 +501,11 @@ class MainWindow(QMainWindow):
         self.thumbnail_window = ThumbnailWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
-        # Initialize MachineLearningTool
-        self.ml_tool = None
+        self.create_dataset_dialog = CreateDatasetDialog(self)
+        self.train_model_dialog = TrainModelDialog(self)
+        self.deploy_model_dialog = DeployModelDialog(self)
+
+        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -438,7 +515,6 @@ class MainWindow(QMainWindow):
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
         # Connect the toolChanged signal (to the Toolbar)
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
-
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
@@ -447,10 +523,6 @@ class MainWindow(QMainWindow):
         self.thumbnail_window.imageDeleted.connect(self.annotation_window.delete_image)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
-
-        # Set up global event filter
-        self.global_event_filter = GlobalEventFilter(self.label_window, self.annotation_window)
-        QApplication.instance().installEventFilter(self.global_event_filter)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -621,6 +693,10 @@ class MainWindow(QMainWindow):
         self.main_layout.addLayout(self.left_layout, 85)
         self.main_layout.addLayout(self.right_layout, 15)
 
+        # Set up global event filter
+        self.global_event_filter = GlobalEventFilter(self)
+        QApplication.instance().installEventFilter(self.global_event_filter)
+
     def showEvent(self, event):
         super().showEvent(event)
 
@@ -715,8 +791,7 @@ class MainWindow(QMainWindow):
             return
 
         # Proceed to open the dialog if images are loaded
-        dialog = AnnotationSamplingDialog(self.annotation_window, self.label_window, self)
-        dialog.exec_()
+        self.annotation_sampling_dialog.exec_()
 
     def open_create_dataset_dialog(self):
         # Check if there are loaded images
@@ -733,16 +808,213 @@ class MainWindow(QMainWindow):
                                 "No annotations are present in the project.")
             return
 
-        self.create_dataset_dialog = CreateDatasetDialog(self)
         self.create_dataset_dialog.exec_()
 
     def open_train_model_dialog(self):
-        self.train_model_dialog = TrainModelDialog(self)
         self.train_model_dialog.exec_()
 
     def open_deploy_model_dialog(self):
-        self.deploy_model_dialog = DeployModelDialog(self)
         self.deploy_model_dialog.exec_()
+
+
+class DeployModelDialog(QDialog):
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        self.label_window = main_window.label_window
+        self.annotation_window = main_window.annotation_window
+
+        self.setWindowTitle("Deploy Model")
+        self.resize(300, 200)
+
+        self.layout = QVBoxLayout(self)
+
+        self.model_path = None
+        self.loaded_model = None
+
+        self.tab_widget = QTabWidget()
+        self.layout.addWidget(self.tab_widget)
+
+        self.classification_tab = QWidget()
+        self.segmentation_tab = QWidget()
+
+        self.tab_widget.addTab(self.classification_tab, "Image Classification")
+        self.tab_widget.addTab(self.segmentation_tab, "Instance Segmentation")
+
+        self.init_classification_tab()
+        self.init_segmentation_tab()
+
+        self.status_bar = QLabel("No model loaded")
+        self.layout.addWidget(self.status_bar)
+
+        self.setLayout(self.layout)
+
+    def init_classification_tab(self):
+        layout = QVBoxLayout()
+
+        self.classification_text_area = QTextEdit()
+        self.classification_text_area.setReadOnly(True)
+        layout.addWidget(self.classification_text_area)
+
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self.browse_file)
+        layout.addWidget(browse_button)
+
+        load_button = QPushButton("Load Model")
+        load_button.clicked.connect(self.load_model)
+        layout.addWidget(load_button)
+
+        deactivate_button = QPushButton("Deactivate Model")
+        deactivate_button.clicked.connect(self.deactivate_model)
+        layout.addWidget(deactivate_button)
+
+        self.classification_tab.setLayout(layout)
+
+    def init_segmentation_tab(self):
+        layout = QVBoxLayout()
+
+        self.segmentation_text_area = QTextEdit()
+        self.segmentation_text_area.setReadOnly(True)
+        layout.addWidget(self.segmentation_text_area)
+
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self.browse_file)
+        layout.addWidget(browse_button)
+
+        load_button = QPushButton("Load Model")
+        load_button.clicked.connect(self.load_model)
+        layout.addWidget(load_button)
+
+        deactivate_button = QPushButton("Deactivate Model")
+        deactivate_button.clicked.connect(self.deactivate_model)
+        layout.addWidget(deactivate_button)
+
+        self.segmentation_tab.setLayout(layout)
+
+    def browse_file(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Model File", "", "Model Files (*.pt)", options=options)
+        if file_path:
+            self.model_path = file_path
+            if self.tab_widget.currentIndex() == 0:
+                self.classification_text_area.setText("Model file selected")
+            else:
+                self.segmentation_file_path.setText("Model file selected")
+
+    def load_model(self):
+        if self.model_path:
+            try:
+                # Set the cursor to waiting (busy) cursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+
+                self.loaded_model = YOLO(self.model_path)
+                # Pre-warm the model; .names
+                self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
+
+                # Get the class names the model can predict
+                class_names = list(self.loaded_model.names.values())
+                class_names_str = "Class Names: \n"
+                missing_labels = []
+
+                for class_name in class_names:
+                    class_names_str += f"{class_name} \n"
+                    if not self.label_window.get_label_by_long_code(class_name):
+                        missing_labels.append(class_name)
+
+                self.classification_text_area.setText(class_names_str)
+                self.status_bar.setText("Model loaded")
+
+                if missing_labels:
+                    missing_labels_str = "\n".join(missing_labels)
+                    QMessageBox.warning(self,
+                                        "Warning",
+                                        f"The following classes are missing and cannot be predicted:"
+                                        f"\n{missing_labels_str}")
+
+                QMessageBox.information(self, "Model Loaded", "Model weights loaded successfully.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
+            finally:
+                # Restore the cursor to the default cursor
+                QApplication.restoreOverrideCursor()
+        else:
+            QMessageBox.warning(self, "Warning", "No model file selected")
+
+    def deactivate_model(self):
+        self.loaded_model = None
+        self.model_path = None
+        self.status_bar.setText("No model loaded")
+        if self.tab_widget.currentIndex() == 0:
+            self.classification_text_area.setText("No model file selected")
+        else:
+            self.segmentation_file_path.setText("No model file selected")
+
+    def predict(self):
+        # If model isn't loaded
+        if self.loaded_model is None:
+            return
+
+        # Get the selected annotation
+        selected_annotation = self.annotation_window.selected_annotation
+
+        if selected_annotation:
+            # Make predictions as user's request
+            self.predict_annotation(selected_annotation)
+        else:
+            # Run predictions on all annotations
+            annotations = self.annotation_window.get_image_annotations()
+            for annotation in annotations:
+                # Only make predictions on 'Review'
+                if annotation.label.id == "-1":
+                    self.predict_annotation(annotation)
+
+    def predict_annotation(self, annotation):
+        # Get the cropped image
+        image = annotation.cropped_image
+        # Convert QImage to np
+        image_np = self.pixmap_to_numpy(image)
+        # Perform prediction
+        results = self.loaded_model(image_np)[0]
+
+        # Extract the results
+        class_names = results.names
+        top5 = results.probs.top5
+        top5conf = results.probs.top5conf
+
+        # Initialize an empty dictionary to store the results
+        predictions = {}
+
+        # Iterate over the top 5 predictions
+        for idx, conf in zip(top5, top5conf):
+            class_name = class_names[idx]
+            label = self.label_window.get_label_by_long_code(class_name)
+
+            if label:
+                predictions[label] = float(conf)
+            else:
+                # Users does not have label loaded; skip.
+                pass
+
+        if predictions:
+            annotation.update_machine_confidence(predictions)
+            self.main_window.confidence_window.display_cropped_image(annotation)
+
+    def pixmap_to_numpy(self, pixmap):
+        # Convert QPixmap to QImage
+        image = pixmap.toImage()
+        # Get image dimensions
+        width = image.width()
+        height = image.height()
+
+        # Convert QImage to numpy array
+        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
+        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+
+        # If the image format is ARGB32, swap the first and last channels (A and B)
+        if format == QImage.Format_ARGB32:
+            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+
+        return numpy_array
 
 
 class CreateDatasetDialog(QDialog):
@@ -964,13 +1236,11 @@ class CreateDatasetDialog(QDialog):
         self.ready_label.setText("Ready" if (self.ready_status and self.split_status) else "Not Ready")
 
     def accept(self):
-
         dataset_name = self.dataset_name_edit.text()
         output_dir = self.output_dir_edit.text()
         train_ratio = self.train_ratio_spinbox.value()
         val_ratio = self.val_ratio_spinbox.value()
         test_ratio = self.test_ratio_spinbox.value()
-        label_code_type = self.get_selected_label_code_type()
 
         if not self.ready_status:
             QMessageBox.warning(self, "Dataset Not Ready",
@@ -1008,45 +1278,53 @@ class CreateDatasetDialog(QDialog):
             os.makedirs(os.path.join(val_dir, label), exist_ok=True)
             os.makedirs(os.path.join(test_dir, label), exist_ok=True)
 
-        progress = ProgressBar(self, title="Creating Dataset")
-        progress.start_progress(len(self.selected_annotations))
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        def process_annotations(annotations, split_dir):
-            for annotation in annotations:
-                if progress.wasCanceled():
-                    break
+        self.process_annotations(self.train_annotations, train_dir, "Training")
+        self.process_annotations(self.val_annotations, val_dir, "Validation")
+        self.process_annotations(self.test_annotations, test_dir, "Testing")
 
-                if not annotation.cropped_image:
-                    image = self.thumbnail_window.images[annotation.image_path]
-                    image_item = QGraphicsPixmapItem(QPixmap(image))
-                    annotation.create_cropped_image(image_item)
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
 
-                cropped_image = annotation.cropped_image
-
-                if cropped_image:
-                    if label_code_type == "Short Label Codes":
-                        label_code = annotation.label.short_label_code
-                    else:
-                        label_code = annotation.label.long_label_code
-
-                    output_path = os.path.join(split_dir, label_code)
-                    output_filename = f"{label_code}_{annotation.id}.jpg"
-                    cropped_image.save(os.path.join(output_path, output_filename))
-
-                progress.update_progress()
-
-        process_annotations(self.train_annotations, train_dir)
-        process_annotations(self.val_annotations, val_dir)
-        process_annotations(self.test_annotations, test_dir)
-
-        progress.stop_progress()
-        progress.close()
-
-        if not progress.wasCanceled():
-            QMessageBox.information(self,
-                                    "Dataset Created",
-                                    "Dataset has been successfully created.")
+        QMessageBox.information(self,
+                                "Dataset Created",
+                                "Dataset has been successfully created.")
         super().accept()
+
+    def process_annotations(self, annotations, split_dir, split):
+        progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+        progress_bar.show()
+
+        progress_bar.start_progress(len(annotations))
+
+        for annotation in annotations:
+            if progress_bar.wasCanceled():
+                break
+
+            if not annotation.cropped_image:
+                image = self.thumbnail_window.images[annotation.image_path]
+                image_item = QGraphicsPixmapItem(QPixmap(image))
+                annotation.create_cropped_image(image_item)
+
+            cropped_image = annotation.cropped_image
+
+            if cropped_image:
+                if self.get_selected_label_code_type() == "Short Label Codes":
+                    label_code = annotation.label.short_label_code
+                else:
+                    label_code = annotation.label.long_label_code
+
+                output_path = os.path.join(split_dir, label_code)
+                output_filename = f"{label_code}_{annotation.id}.jpg"
+                cropped_image.save(os.path.join(output_path, output_filename))
+
+            progress_bar.update_progress()
+            QApplication.processEvents()  # Update GUI
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
 
 class TrainModelDialog(QDialog):
@@ -1356,7 +1634,7 @@ class TrainModelDialog(QDialog):
 
     def train_classification_model(self):
 
-        message = "Model training has commenced. Monitor the console for real-time progress."
+        message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
 
         # Minimization of windows
@@ -1392,20 +1670,6 @@ class TrainModelDialog(QDialog):
             error_message = f"An error occurred during model training: {e}"
             QMessageBox.critical(self, "Error", error_message)
             print(error_message)
-
-
-class DeployModelDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Deploy Model")
-        self.layout = QVBoxLayout(self)
-
-        label = QLabel("This is the Model Deploy dialog.")
-        self.layout.addWidget(label)
-
-        button = QPushButton("OK")
-        button.clicked.connect(self.accept)
-        self.layout.addWidget(button)
 
 
 class Annotation(QObject):
@@ -1483,11 +1747,15 @@ class Annotation(QObject):
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
 
+    def update_machine_confidence(self, prediction: dict):
+        self.machine_confidence = prediction
+        # Pass the label with the largest confidence
+        self.label = max(prediction, key=prediction.get)
+        self.update_graphics_item()
+
     def update_user_confidence(self, new_label: 'Label'):
         self.user_confidence = {new_label: 1.0}
-
-    def update_machine_confidence(self, label: 'Label', confidence: float):
-        self.machine_confidence[label] = confidence
+        self.machine_confidence = {}
 
     def update_label(self, new_label: 'Label'):
         self.label = new_label
@@ -2085,6 +2353,17 @@ class AnnotationWindow(QGraphicsView):
                 annotation.selected.connect(self.select_annotation)
                 annotation.annotation_deleted.connect(self.delete_annotation)
                 annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+
+    def get_image_annotations(self, image_path=None):
+        if not image_path:
+            image_path = self.current_image_path
+
+        annotations = []
+        for annotation_id, annotation in self.annotations_dict.items():
+            if annotation.image_path == self.current_image_path:
+                annotations.append(annotation)
+
+        return annotations
 
     def add_annotation(self, scene_pos: QPointF, annotation=None):
         if not self.selected_label:
@@ -2775,6 +3054,9 @@ class LabelWindow(QWidget):
                     if not self.label_exists(label.short_label_code, label.long_label_code):
                         self.add_label(label.short_label_code, label.long_label_code, label.color, label.id)
 
+                # Set the Review label as active
+                self.set_active_label(self.get_label_by_long_code("Review"))
+
                 QMessageBox.information(self, "Labels Imported",
                                         "Annotations have been successfully imported.")
 
@@ -2864,6 +3146,12 @@ class LabelWindow(QWidget):
     def get_label_by_codes(self, short_label_code, long_label_code):
         for label in self.labels:
             if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
+                return label
+        return None
+
+    def get_label_by_long_code(self, long_label_code):
+        for label in self.labels:
+            if long_label_code == label.long_label_code:
                 return label
         return None
 
@@ -3047,7 +3335,7 @@ class ConfidenceWindow(QWidget):
             self.user_confidence = annotation.user_confidence
             self.machine_confidence = annotation.machine_confidence
             self.cropped_image = annotation.cropped_image.copy()
-            self.chart_dict = self.user_confidence or self.machine_confidence
+            self.chart_dict = self.machine_confidence if self.machine_confidence else self.user_confidence
 
     def display_cropped_image(self, annotation):
         self.clear_display()  # Clear the current display before updating
