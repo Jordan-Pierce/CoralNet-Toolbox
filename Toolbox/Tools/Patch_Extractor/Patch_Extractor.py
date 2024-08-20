@@ -86,7 +86,7 @@ class AnnotationSamplingDialog(QDialog):
         super().__init__(parent)
         self.annotation_window = main_window.annotation_window
         self.label_window = main_window.label_window
-        self.thumbnail_window = main_window.thumbnail_window
+        self.image_window = main_window.image_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
 
         self.setWindowTitle("Sample Annotations")
@@ -370,8 +370,8 @@ class AnnotationSamplingDialog(QDialog):
 
         if self.apply_to_next:
             current_image_path = self.annotation_window.current_image_path
-            current_image_index = self.thumbnail_window.image_list.index(current_image_path)
-            image_paths = self.thumbnail_window.image_list[current_image_index:]
+            current_image_index = self.image_window.image_list.index(current_image_path)
+            image_paths = self.image_window.image_list[current_image_index:]
         elif self.apply_to_all:
             image_paths = list(self.annotation_window.loaded_image_paths)
         else:
@@ -425,7 +425,7 @@ class AnnotationSamplingDialog(QDialog):
         self.make_predictions_on_sampled_annotations(image_paths)
 
         # Set / load the image / annotations of the last image
-        self.thumbnail_window._load_image_by_path(image_path)
+        self.image_window.load_image_by_path(image_path)
 
         QMessageBox.information(self,
                                 "Annotations Sampled",
@@ -461,7 +461,7 @@ class GlobalEventFilter(QObject):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
-        self.thumbnail_window = main_window.thumbnail_window
+        self.image_window = main_window.image_window
 
     def eventFilter(self, obj, event):
         # Check if the event is a wheel event
@@ -503,10 +503,10 @@ class GlobalEventFilter(QObject):
 
                 # Handle thumbnail cycling hotkeys
                 if event.key() == Qt.Key_Up:
-                    self.thumbnail_window.cycle_previous_image()
+                    self.image_window.cycle_previous_image()
                     return True
                 elif event.key() == Qt.Key_Down:
-                    self.thumbnail_window.cycle_next_image()
+                    self.image_window.cycle_next_image()
                     return True
 
             # Handle Escape key for exiting program
@@ -550,7 +550,7 @@ class MainWindow(QMainWindow):
 
         self.annotation_window = AnnotationWindow(self)
         self.label_window = LabelWindow(self)
-        self.thumbnail_window = ThumbnailWindow(self)
+        self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
@@ -571,9 +571,9 @@ class MainWindow(QMainWindow):
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
-        self.thumbnail_window.imageSelected.connect(self.annotation_window.update_current_image_path)
+        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageDeleted signal to delete_image in AnnotationWindow
-        self.thumbnail_window.imageDeleted.connect(self.annotation_window.delete_image)
+        self.image_window.imageDeleted.connect(self.annotation_window.delete_image)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
 
@@ -743,7 +743,7 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.label_window, 15)
 
         # Add widgets to right layout
-        self.right_layout.addWidget(self.thumbnail_window, 54)
+        self.right_layout.addWidget(self.image_window, 54)
         self.right_layout.addWidget(self.confidence_window, 46)
 
         # Add left and right layouts to main layout
@@ -819,7 +819,7 @@ class MainWindow(QMainWindow):
 
             for i, file_name in enumerate(file_names):
                 if file_name not in self.imported_image_paths:
-                    self.thumbnail_window.add_image(file_name)
+                    self.image_window.add_image(file_name)
                     self.imported_image_paths.add(file_name)
                     self.annotation_window.loaded_image_paths.add(file_name)
                     progress_bar.update_progress()
@@ -831,8 +831,7 @@ class MainWindow(QMainWindow):
             if file_names:
                 # Load the last image
                 image_path = file_names[-1]
-                image = QImage(image_path)
-                self.annotation_window.set_image(image, image_path)
+                self.image_window.load_image_by_path(image_path)
 
             QMessageBox.information(self,
                                     "Image(s) Imported",
@@ -897,7 +896,7 @@ class CreateDatasetDialog(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.annotation_window = main_window.annotation_window
-        self.thumbnail_window = main_window.thumbnail_window
+        self.image_window = main_window.image_window
 
         self.setWindowTitle("Create Dataset")
         self.layout = QVBoxLayout(self)
@@ -1179,7 +1178,7 @@ class CreateDatasetDialog(QDialog):
                 break
 
             if not annotation.cropped_image:
-                image = self.thumbnail_window.images[annotation.image_path]
+                image = self.image_window.images[annotation.image_path]
                 image_item = QGraphicsPixmapItem(QPixmap(image))
                 annotation.create_cropped_image(image_item)
 
@@ -2767,260 +2766,7 @@ class AnnotationWindow(QGraphicsView):
                 del self.annotations_dict[annotation.id]
 
 
-# class ThumbnailWidget(QFrame):
-#     def __init__(self, parent, image_path, image, size=100):
-#         super().__init__(parent)
-#         self.parent_window = parent
-#         self.image_path = image_path
-#         self.size = size
-#         self.is_selected = False
-#
-#         layout = QVBoxLayout(self)
-#         layout.setContentsMargins(2, 2, 2, 2)
-#         layout.setSpacing(2)
-#
-#         self.image_label = QLabel()
-#         self.image_label.setFixedSize(self.size, self.size)
-#         self.image_label.setAlignment(Qt.AlignCenter)
-#         self.image_label.setScaledContents(False)
-#         self.setImage(image)
-#         layout.addWidget(self.image_label, alignment=Qt.AlignCenter)
-#
-#         self.text_label = QLabel(os.path.basename(image_path))
-#         self.text_label.setAlignment(Qt.AlignCenter)
-#         self.text_label.setWordWrap(True)
-#         layout.addWidget(self.text_label)
-#
-#         self.setFrameShape(QFrame.StyledPanel)
-#         self.setFrameShadow(QFrame.Raised)
-#
-#     def setImage(self, image):
-#         scaled_image = image.scaled(self.size, self.size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-#         self.image_label.setPixmap(QPixmap.fromImage(scaled_image))
-#
-#     def select(self):
-#         self.is_selected = True
-#         self.setStyleSheet("ThumbnailWidget { background-color: rgba(0, 0, 255, 0.1); }")
-#         self.parent_window.set_selected_widget_width(self)
-#
-#     def deselect(self):
-#         self.is_selected = False
-#         self.setStyleSheet("")
-#         self.setFixedWidth(self.parent_window.thumbnail_container.width())
-#
-#     def mousePressEvent(self, event):
-#         super().mousePressEvent(event)
-#         self.parent_window.load_image(self)
-#
-#
-# class ThumbnailWindow(QWidget):
-#     imageSelected = pyqtSignal(str)
-#     imageDeleted = pyqtSignal(str)
-#
-#     def __init__(self, main_window):
-#         super().__init__()
-#         self.main_window = main_window
-#         self.annotation_window = main_window.annotation_window
-#
-#         self.layout = QVBoxLayout(self)
-#         self.layout.setContentsMargins(0, 0, 0, 0)
-#
-#         # Create a horizontal layout for the labels
-#         self.info_layout = QHBoxLayout()
-#         self.layout.addLayout(self.info_layout)
-#
-#         # Add a label to display the index of the currently highlighted image
-#         self.current_image_index_label = QLabel("Current Image: None", self)
-#         self.current_image_index_label.setAlignment(Qt.AlignCenter)
-#         self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-#         # Set the desired height (to align with AnnotationWindow)
-#         self.current_image_index_label.setFixedHeight(24)
-#         self.info_layout.addWidget(self.current_image_index_label)
-#
-#         # Add a label to display the total number of images
-#         self.image_count_label = QLabel("Total Images: 0", self)
-#         self.image_count_label.setAlignment(Qt.AlignCenter)
-#         self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-#         # Set the desired height (to align with AnnotationWindow)
-#         self.image_count_label.setFixedHeight(24)
-#         self.info_layout.addWidget(self.image_count_label)
-#
-#         self.scrollArea = QScrollArea(self)
-#         self.scrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-#         self.scrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-#         self.scrollArea.setWidgetResizable(True)
-#
-#         self.thumbnail_container = QWidget()
-#         self.thumbnail_container_layout = QVBoxLayout(self.thumbnail_container)
-#         self.thumbnail_container_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-#         self.thumbnail_container_layout.setSpacing(5)
-#
-#         self.scrollArea.setWidget(self.thumbnail_container)
-#         self.layout.addWidget(self.scrollArea)
-#
-#         self.images = {}
-#         self.image_list = []
-#
-#         self.thumbnails = weakref.WeakValueDictionary()
-#         self.selected_thumbnail = None
-#         self.show_confirmation_dialog = True
-#         self.threadpool = QThreadPool()
-#
-#     def add_image(self, image_path):
-#         if image_path not in self.main_window.imported_image_paths:
-#             image = QImage(image_path)
-#             thumbnail = ThumbnailWidget(self, image_path, image)
-#             thumbnail.setContextMenuPolicy(Qt.CustomContextMenu)
-#             thumbnail.customContextMenuRequested.connect(lambda pos, t=thumbnail: self.show_context_menu(pos, t))
-#
-#             self.thumbnail_container_layout.addWidget(thumbnail)
-#             self.images[image_path] = image
-#             self.thumbnails[image_path] = thumbnail
-#
-#             self.scrollArea.verticalScrollBar().setValue(self.scrollArea.verticalScrollBar().maximum())
-#
-#             # Select and set thumbnail widget
-#             self.load_image(thumbnail)
-#             # Add to main window imported path
-#             self.main_window.imported_image_paths.add(image_path)
-#             # Add to sorted list
-#             self.image_list.append(image_path)
-#
-#             # Update the image count label
-#             self.update_image_count_label()
-#
-#     def load_image(self, thumbnail):
-#         if self.selected_thumbnail:
-#             self.selected_thumbnail.deselect()
-#
-#         # Selects the thumbnail
-#         self.selected_thumbnail = thumbnail
-#         self.selected_thumbnail.select()
-#         # Sets the thumbnail widget
-#         self.set_selected_widget_width(self.selected_thumbnail)
-#
-#         image_path = thumbnail.image_path
-#         self.annotation_window.set_image(self.images[image_path], image_path)
-#         self.imageSelected.emit(image_path)
-#
-#         # Update the current image index label
-#         self.update_current_image_index_label()
-#
-#     def set_selected_widget_width(self, widget):
-#         widget.setFixedWidth(self.thumbnail_container.width())
-#
-#     def resizeEvent(self, event):
-#         super().resizeEvent(event)
-#         new_width = self.width() - self.scrollArea.verticalScrollBar().width()
-#         self.thumbnail_container.setFixedWidth(new_width)
-#         for thumbnail in self.thumbnails.values():
-#             thumbnail.setFixedWidth(new_width)
-#         if self.selected_thumbnail:
-#             self.set_selected_widget_width(self.selected_thumbnail)
-#
-#     def show_context_menu(self, pos, thumbnail):
-#         context_menu = QMenu(self)
-#         delete_action = context_menu.addAction("Delete")
-#         action = context_menu.exec_(thumbnail.mapToGlobal(pos))
-#
-#         if action == delete_action:
-#             self.delete_image(thumbnail)
-#
-#     def delete_image(self, thumbnail):
-#         if self.show_confirmation_dialog:
-#             result = self._confirm_delete()
-#             if result == QMessageBox.No:
-#                 return
-#
-#         self._remove_image(thumbnail)
-#         self.imageDeleted.emit(thumbnail.image_path)  # Emit the signal
-#         self.main_window.imported_image_paths.discard(thumbnail.image_path)
-#
-#         # Update the image count label
-#         self.update_image_count_label()
-#
-#         # Update the current image index label
-#         self.update_current_image_index_label()
-#
-#     def _confirm_delete(self):
-#         msg_box = QMessageBox(self)
-#         msg_box.setIcon(QMessageBox.Question)
-#         msg_box.setWindowTitle("Confirm Delete")
-#         msg_box.setText("Are you sure you want to delete this image?\n"
-#                         "This will delete all associated annotations.")
-#         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-#
-#         checkbox = QCheckBox("Do not show this message again")
-#         msg_box.setCheckBox(checkbox)
-#
-#         result = msg_box.exec_()
-#
-#         if checkbox.isChecked():
-#             self.show_confirmation_dialog = False
-#
-#         return result
-#
-#     def _remove_image(self, thumbnail):
-#         self.thumbnail_container_layout.removeWidget(thumbnail)
-#         thumbnail.deleteLater()
-#
-#         image_path = thumbnail.image_path
-#         if image_path in self.images:
-#             del self.images[image_path]
-#
-#         if self.selected_thumbnail == thumbnail:
-#             self.selected_thumbnail = None
-#             if self.images:
-#                 first_image_path = next(iter(self.images))
-#                 first_thumbnail = self.thumbnails.get(first_image_path)
-#                 if first_thumbnail:
-#                     self.load_image(first_thumbnail)
-#
-#     def find_thumbnail_by_image_path(self, image_path):
-#         return self.thumbnails.get(image_path)
-#
-#     def update_image_count_label(self):
-#         total_images = len(self.images)
-#         self.image_count_label.setText(f"Total Images: {total_images}")
-#
-#     def update_current_image_index_label(self):
-#         if self.selected_thumbnail:
-#             image_paths = list(self.images.keys())
-#             current_index = image_paths.index(self.selected_thumbnail.image_path)
-#             self.current_image_index_label.setText(f"Current Image: {current_index + 1}")
-#         else:
-#             self.current_image_index_label.setText("Current Image: None")
-#
-#     def cycle_previous_image(self):
-#         if not self.image_list:
-#             return
-#
-#         if self.selected_thumbnail:
-#             current_index = self.image_list.index(self.selected_thumbnail.image_path)
-#             new_index = (current_index - 1) % len(self.image_list)
-#         else:
-#             new_index = 0
-#
-#         new_thumbnail = self.find_thumbnail_by_image_path(self.image_list[new_index])
-#         if new_thumbnail:
-#             self.load_image(new_thumbnail)
-#
-#     def cycle_next_image(self):
-#         if not self.image_list:
-#             return
-#
-#         if self.selected_thumbnail:
-#             current_index = self.image_list.index(self.selected_thumbnail.image_path)
-#             new_index = (current_index + 1) % len(self.image_list)
-#         else:
-#             new_index = 0
-#
-#         new_thumbnail = self.find_thumbnail_by_image_path(self.image_list[new_index])
-#         if new_thumbnail:
-#             self.load_image(new_thumbnail)
-
-
-class ThumbnailWindow(QWidget):
+class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)
     imageDeleted = pyqtSignal(str)
 
@@ -3091,14 +2837,11 @@ class ThumbnailWindow(QWidget):
             # Update the image count label
             self.update_image_count_label()
 
-            # Load the image
-            self._load_image_by_path(image_path)
-
     def load_image(self, row, column):
         image_path = self.image_list[row]
-        self._load_image_by_path(image_path)
+        self.load_image_by_path(image_path)
 
-    def _load_image_by_path(self, image_path):
+    def load_image_by_path(self, image_path):
         if self.selected_row is not None:
             self.tableWidget.item(self.selected_row, 0).setSelected(False)
 
@@ -3131,7 +2874,7 @@ class ThumbnailWindow(QWidget):
                 self.selected_row = row
             else:
                 self.selected_row = len(self.image_list) - 1
-            self._load_image_by_path(self.image_list[self.selected_row])
+            self.load_image_by_path(self.image_list[self.selected_row])
         else:
             self.selected_row = None
             self.annotation_window.clear_image()  # Clear the annotation window if no images are left
