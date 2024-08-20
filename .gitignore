@@ -2,6 +2,10 @@
 *.hdf5
 *.idea
 *.pt
+*.torchscript
+*.bin
+*.engine
+*.onnx
 *__pycache__/
 /Data/
 /Data/Mission_Iconic_Reefs
