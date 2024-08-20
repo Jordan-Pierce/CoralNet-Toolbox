@@ -22,7 +22,6 @@ renumics-spotlight==1.6.9
 gooey==1.0.8.1
 
 PyQt5
-pyqtgraph
 ultralytics
-supervision
+nncf
 dill

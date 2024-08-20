@@ -1,6 +1,7 @@
 # TODO
 #   - root output directory for create dataset
-#   - create dataset bug not appearing
+#   - update pre-warm inference based on input size of model
+#   - convert thumbnails to rows?
 
 import os
 import uuid
@@ -19,12 +20,14 @@ from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplicatio
                              QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
                              QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
                              QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QRadioButton)
+                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QRadioButton, QTableWidget,
+                             QTableWidgetItem)
 
 from PyQt5.QtGui import (QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont,
-                         QCursor)
+                         QCursor, QMovie)
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF
+from PyQt5.QtCore import (Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF,
+                          QThread)
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -83,7 +86,7 @@ class AnnotationSamplingDialog(QDialog):
         super().__init__(parent)
         self.annotation_window = main_window.annotation_window
         self.label_window = main_window.label_window
-        self.thumbnail_window = main_window.thumbnail_window
+        self.image_window = main_window.image_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
 
         self.setWindowTitle("Sample Annotations")
@@ -367,8 +370,8 @@ class AnnotationSamplingDialog(QDialog):
 
         if self.apply_to_next:
             current_image_path = self.annotation_window.current_image_path
-            current_image_index = self.thumbnail_window.image_list.index(current_image_path)
-            image_paths = self.thumbnail_window.image_list[current_image_index:]
+            current_image_index = self.image_window.image_list.index(current_image_path)
+            image_paths = self.image_window.image_list[current_image_index:]
         elif self.apply_to_all:
             image_paths = list(self.annotation_window.loaded_image_paths)
         else:
@@ -422,8 +425,7 @@ class AnnotationSamplingDialog(QDialog):
         self.make_predictions_on_sampled_annotations(image_paths)
 
         # Set / load the image / annotations of the last image
-        thumbnail = self.thumbnail_window.thumbnails[image_path]
-        self.thumbnail_window.load_image(thumbnail)
+        self.image_window.load_image_by_path(image_path)
 
         QMessageBox.information(self,
                                 "Annotations Sampled",
@@ -459,7 +461,7 @@ class GlobalEventFilter(QObject):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
-        self.thumbnail_window = main_window.thumbnail_window
+        self.image_window = main_window.image_window
 
     def eventFilter(self, obj, event):
         # Check if the event is a wheel event
@@ -501,10 +503,10 @@ class GlobalEventFilter(QObject):
 
                 # Handle thumbnail cycling hotkeys
                 if event.key() == Qt.Key_Up:
-                    self.thumbnail_window.cycle_previous_image()
+                    self.image_window.cycle_previous_image()
                     return True
                 elif event.key() == Qt.Key_Down:
-                    self.thumbnail_window.cycle_next_image()
+                    self.image_window.cycle_next_image()
                     return True
 
             # Handle Escape key for exiting program
@@ -548,11 +550,12 @@ class MainWindow(QMainWindow):
 
         self.annotation_window = AnnotationWindow(self)
         self.label_window = LabelWindow(self)
-        self.thumbnail_window = ThumbnailWindow(self)
+        self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
         self.train_model_dialog = TrainModelDialog(self)
+        self.optimize_model_dialog = OptimizeModelDialog(self)
         self.deploy_model_dialog = DeployModelDialog(self)
 
         self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
@@ -568,9 +571,9 @@ class MainWindow(QMainWindow):
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
-        self.thumbnail_window.imageSelected.connect(self.annotation_window.update_current_image_path)
+        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageDeleted signal to delete_image in AnnotationWindow
-        self.thumbnail_window.imageDeleted.connect(self.annotation_window.delete_image)
+        self.image_window.imageDeleted.connect(self.annotation_window.delete_image)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
 
@@ -645,6 +648,10 @@ class MainWindow(QMainWindow):
         self.ml_train_model_action = QAction("Train Model", self)
         self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
         self.ml_menu.addAction(self.ml_train_model_action)
+
+        self.ml_optimize_model_action = QAction("Optimize Model", self)
+        self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
+        self.ml_menu.addAction(self.ml_optimize_model_action)
 
         self.ml_deploy_model_action = QAction("Deploy Model", self)
         self.ml_deploy_model_action.triggered.connect(self.open_deploy_model_dialog)
@@ -736,7 +743,7 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.label_window, 15)
 
         # Add widgets to right layout
-        self.right_layout.addWidget(self.thumbnail_window, 54)
+        self.right_layout.addWidget(self.image_window, 54)
         self.right_layout.addWidget(self.confidence_window, 46)
 
         # Add left and right layouts to main layout
@@ -812,7 +819,7 @@ class MainWindow(QMainWindow):
 
             for i, file_name in enumerate(file_names):
                 if file_name not in self.imported_image_paths:
-                    self.thumbnail_window.add_image(file_name)
+                    self.image_window.add_image(file_name)
                     self.imported_image_paths.add(file_name)
                     self.annotation_window.loaded_image_paths.add(file_name)
                     progress_bar.update_progress()
@@ -824,8 +831,7 @@ class MainWindow(QMainWindow):
             if file_names:
                 # Load the last image
                 image_path = file_names[-1]
-                image = QImage(image_path)
-                self.annotation_window.set_image(image, image_path)
+                self.image_window.load_image_by_path(image_path)
 
             QMessageBox.information(self,
                                     "Image(s) Imported",
@@ -873,6 +879,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
+    def open_optimize_model_dialog(self):
+        try:
+            self.optimize_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
     def open_deploy_model_dialog(self):
         try:
             self.deploy_model_dialog.exec_()
@@ -880,255 +892,11 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
 
-class DeployModelDialog(QDialog):
-    def __init__(self, main_window, parent=None):
-        super().__init__(parent)
-        self.main_window = main_window
-        self.label_window = main_window.label_window
-        self.annotation_window = main_window.annotation_window
-
-        self.setWindowTitle("Deploy Model")
-        self.resize(300, 200)
-
-        self.layout = QVBoxLayout(self)
-
-        self.model_path = None
-        self.loaded_model = None
-
-        self.tab_widget = QTabWidget()
-        self.layout.addWidget(self.tab_widget)
-
-        self.classification_tab = QWidget()
-        self.segmentation_tab = QWidget()
-
-        self.tab_widget.addTab(self.classification_tab, "Image Classification")
-        self.tab_widget.addTab(self.segmentation_tab, "Instance Segmentation")
-
-        self.init_classification_tab()
-        self.init_segmentation_tab()
-
-        self.status_bar = QLabel("No model loaded")
-        self.layout.addWidget(self.status_bar)
-
-        self.setLayout(self.layout)
-
-    def init_classification_tab(self):
-        layout = QVBoxLayout()
-
-        self.classification_text_area = QTextEdit()
-        self.classification_text_area.setReadOnly(True)
-        layout.addWidget(self.classification_text_area)
-
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self.browse_file)
-        layout.addWidget(browse_button)
-
-        load_button = QPushButton("Load Model")
-        load_button.clicked.connect(self.load_model)
-        layout.addWidget(load_button)
-
-        deactivate_button = QPushButton("Deactivate Model")
-        deactivate_button.clicked.connect(self.deactivate_model)
-        layout.addWidget(deactivate_button)
-
-        self.classification_tab.setLayout(layout)
-
-    def init_segmentation_tab(self):
-        layout = QVBoxLayout()
-
-        self.segmentation_text_area = QTextEdit()
-        self.segmentation_text_area.setReadOnly(True)
-        layout.addWidget(self.segmentation_text_area)
-
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self.browse_file)
-        layout.addWidget(browse_button)
-
-        load_button = QPushButton("Load Model")
-        load_button.clicked.connect(self.load_model)
-        layout.addWidget(load_button)
-
-        deactivate_button = QPushButton("Deactivate Model")
-        deactivate_button.clicked.connect(self.deactivate_model)
-        layout.addWidget(deactivate_button)
-
-        self.segmentation_tab.setLayout(layout)
-
-    def browse_file(self):
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Model File", "", "Model Files (*.pt)", options=options)
-        if file_path:
-            self.model_path = file_path
-            if self.tab_widget.currentIndex() == 0:
-                self.classification_text_area.setText("Model file selected")
-            else:
-                self.segmentation_file_path.setText("Model file selected")
-
-    def load_model(self):
-        if self.model_path:
-            try:
-                # Set the cursor to waiting (busy) cursor
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-
-                self.loaded_model = YOLO(self.model_path)
-                # Pre-warm the model; .names
-                self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
-
-                # Get the class names the model can predict
-                class_names = list(self.loaded_model.names.values())
-                class_names_str = "Class Names: \n"
-                missing_labels = []
-
-                for class_name in class_names:
-                    class_names_str += f"{class_name} \n"
-                    if not self.label_window.get_label_by_long_code(class_name):
-                        missing_labels.append(class_name)
-
-                self.classification_text_area.setText(class_names_str)
-                self.status_bar.setText("Model loaded")
-
-                if missing_labels:
-                    missing_labels_str = "\n".join(missing_labels)
-                    QMessageBox.warning(self,
-                                        "Warning",
-                                        f"The following classes are missing and cannot be predicted:"
-                                        f"\n{missing_labels_str}")
-
-                QMessageBox.information(self, "Model Loaded", "Model weights loaded successfully.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
-            finally:
-                # Restore the cursor to the default cursor
-                QApplication.restoreOverrideCursor()
-        else:
-            QMessageBox.warning(self, "Warning", "No model file selected")
-
-    def deactivate_model(self):
-        self.loaded_model = None
-        self.model_path = None
-        self.status_bar.setText("No model loaded")
-        if self.tab_widget.currentIndex() == 0:
-            self.classification_text_area.setText("No model file selected")
-        else:
-            self.segmentation_file_path.setText("No model file selected")
-
-    def pixmap_to_numpy(self, pixmap):
-        # Convert QPixmap to QImage
-        image = pixmap.toImage()
-        # Get image dimensions
-        width = image.width()
-        height = image.height()
-
-        # Convert QImage to numpy array
-        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
-        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
-
-        # If the image format is ARGB32, swap the first and last channels (A and B)
-        if format == QImage.Format_ARGB32:
-            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
-
-        return numpy_array
-
-    def predict(self, annotations=None):
-        # If model isn't loaded
-        if self.loaded_model is None:
-            return
-
-        # Set the cursor to waiting (busy) cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        # Get the selected annotation
-        selected_annotation = self.annotation_window.selected_annotation
-
-        if selected_annotation:
-            # Make predictions on specific annotation
-            self.predict_annotation(selected_annotation)
-            # Update everything (essentially)
-            self.main_window.annotation_window.unselect_annotation()
-            self.main_window.annotation_window.select_annotation(selected_annotation)
-        else:
-            # Run predictions on multiple annotations
-            if not annotations:
-                # If not supplied with annotations, get those for current image
-                annotations = self.annotation_window.get_image_annotations()
-
-            # Filter annotations to only include those with 'Review' label
-            review_annotations = [annotation for annotation in annotations if annotation.label.id == "-1"]
-
-            if review_annotations:
-                # Convert QImages to numpy arrays
-                images_np = [self.pixmap_to_numpy(annotation.cropped_image) for annotation in review_annotations]
-
-                # Perform batch prediction
-                results = self.loaded_model(images_np)
-
-                for annotation, result in zip(review_annotations, results):
-                    self.process_prediction_result(annotation, result)
-
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
-
-    def predict_annotation(self, annotation):
-        # Get the cropped image
-        image = annotation.cropped_image
-        # Convert QImage to np
-        image_np = self.pixmap_to_numpy(image)
-        # Perform prediction
-        results = self.loaded_model(image_np)[0]
-
-        # Extract the results
-        class_names = results.names
-        top5 = results.probs.top5
-        top5conf = results.probs.top5conf
-
-        # Initialize an empty dictionary to store the results
-        predictions = {}
-
-        # Iterate over the top 5 predictions
-        for idx, conf in zip(top5, top5conf):
-            class_name = class_names[idx]
-            label = self.label_window.get_label_by_long_code(class_name)
-
-            if label:
-                predictions[label] = float(conf)
-            else:
-                # Users does not have label loaded; skip.
-                pass
-
-        if predictions:
-            # Update the machine confidence
-            annotation.update_machine_confidence(predictions)
-
-    def process_prediction_result(self, annotation, result):
-        # Extract the results
-        class_names = result.names
-        top5 = result.probs.top5
-        top5conf = result.probs.top5conf
-
-        # Initialize an empty dictionary to store the results
-        predictions = {}
-
-        # Iterate over the top 5 predictions
-        for idx, conf in zip(top5, top5conf):
-            class_name = class_names[idx]
-            label = self.label_window.get_label_by_long_code(class_name)
-
-            if label:
-                predictions[label] = float(conf)
-            else:
-                # User does not have label loaded; skip.
-                pass
-
-        if predictions:
-            # Update the machine confidence
-            annotation.update_machine_confidence(predictions)
-
-
 class CreateDatasetDialog(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.annotation_window = main_window.annotation_window
-        self.thumbnail_window = main_window.thumbnail_window
+        self.image_window = main_window.image_window
 
         self.setWindowTitle("Create Dataset")
         self.layout = QVBoxLayout(self)
@@ -1410,7 +1178,7 @@ class CreateDatasetDialog(QDialog):
                 break
 
             if not annotation.cropped_image:
-                image = self.thumbnail_window.images[annotation.image_path]
+                image = self.image_window.images[annotation.image_path]
                 image_item = QGraphicsPixmapItem(QPixmap(image))
                 annotation.create_cropped_image(image_item)
 
@@ -1441,6 +1209,10 @@ class CreateDatasetDialog(QDialog):
 class TrainModelDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # For holding parameters
+        self.custom_params = []
+
         self.setWindowTitle("Train Model")
 
         # Set window settings
@@ -1455,7 +1227,7 @@ class TrainModelDialog(QDialog):
         # Main layout
         self.main_layout = QVBoxLayout()
 
-        # Create and setup the tabs, parameters form, and console output
+        # Create and set up the tabs, parameters form, and console output
         self.setup_ui()
 
         # Wrap the main layout in a QScrollArea
@@ -1470,6 +1242,17 @@ class TrainModelDialog(QDialog):
         self.layout().addWidget(scroll_area)
 
     def setup_ui(self):
+
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Details on different hyperparameters can be found "
+                            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
+
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+
+        # Add the label to the main layout
+        self.main_layout.addWidget(info_label)
+
         # Create tabs
         self.tabs = QTabWidget()
         self.tab_classification = QWidget()
@@ -1564,21 +1347,6 @@ class TrainModelDialog(QDialog):
         self.verbose_checkbox.setChecked(True)
         self.form_layout.addRow("Verbose:", self.verbose_checkbox)
 
-        # Single Cls
-        self.single_cls_checkbox = QCheckBox()
-        self.single_cls_checkbox.setChecked(False)
-        self.form_layout.addRow("Single Cls:", self.single_cls_checkbox)
-
-        # Cos Lr
-        self.cos_lr_checkbox = QCheckBox()
-        self.cos_lr_checkbox.setChecked(False)
-        self.form_layout.addRow("Cos Lr:", self.cos_lr_checkbox)
-
-        # Amp
-        self.amp_checkbox = QCheckBox()
-        self.amp_checkbox.setChecked(True)
-        self.form_layout.addRow("Amp:", self.amp_checkbox)
-
         # Fraction
         self.fraction_spinbox = QDoubleSpinBox()
         self.fraction_spinbox.setMinimum(0.1)
@@ -1597,20 +1365,6 @@ class TrainModelDialog(QDialog):
         self.lr0_spinbox.setValue(0.01)
         self.form_layout.addRow("Lr0:", self.lr0_spinbox)
 
-        # Lrf
-        self.lrf_spinbox = QDoubleSpinBox()
-        self.lrf_spinbox.setMinimum(0.0001)
-        self.lrf_spinbox.setMaximum(1.0)
-        self.lrf_spinbox.setValue(0.01)
-        self.form_layout.addRow("Lrf:", self.lrf_spinbox)
-
-        # Cls
-        self.cls_spinbox = QDoubleSpinBox()
-        self.cls_spinbox.setMinimum(0.0)
-        self.cls_spinbox.setMaximum(1.0)
-        self.cls_spinbox.setValue(0.5)
-        self.form_layout.addRow("Cls:", self.cls_spinbox)
-
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
         self.dropout_spinbox.setMinimum(0.0)
@@ -1623,6 +1377,15 @@ class TrainModelDialog(QDialog):
         self.val_checkbox.setChecked(True)
         self.form_layout.addRow("Val:", self.val_checkbox)
 
+        # Add custom parameters section
+        self.custom_params_layout = QVBoxLayout()
+        self.form_layout.addRow("Additional Parameters:", self.custom_params_layout)
+
+        # Add button for new parameter pairs
+        self.add_param_button = QPushButton("Add Parameter")
+        self.add_param_button.clicked.connect(self.add_parameter_pair)
+        self.form_layout.addRow("", self.add_param_button)
+
         self.main_layout.addLayout(self.form_layout)
 
         # Add OK and Cancel buttons
@@ -1634,13 +1397,26 @@ class TrainModelDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.main_layout.addWidget(self.cancel_button)
 
+    def add_parameter_pair(self):
+        param_layout = QHBoxLayout()
+        param_name = QLineEdit()
+        param_value = QLineEdit()
+        param_layout.addWidget(param_name)
+        param_layout.addWidget(param_value)
+
+        self.custom_params.append((param_name, param_value))
+        self.custom_params_layout.addLayout(param_layout)
+
     def browse_dataset_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
             self.dataset_dir_edit.setText(dir_path)
 
     def browse_dataset_yaml(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Dataset YAML File", "", "YAML Files (*.yaml *.yml)")
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Dataset YAML File",
+                                                   "",
+                                                   "YAML Files (*.yaml *.yml)")
         if file_path:
             self.dataset_yaml_edit.setText(file_path)
 
@@ -1724,14 +1500,9 @@ class TrainModelDialog(QDialog):
             'pretrained': self.pretrained_checkbox.isChecked(),
             'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_checkbox.isChecked(),
-            'single_cls': self.single_cls_checkbox.isChecked(),
-            'cos_lr': self.cos_lr_checkbox.isChecked(),
-            'amp': self.amp_checkbox.isChecked(),
             'fraction': self.fraction_spinbox.value(),
             'freeze': self.freeze_edit.text(),
             'lr0': self.lr0_spinbox.value(),
-            'lrf': self.lrf_spinbox.value(),
-            'cls': self.cls_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_checkbox.isChecked(),
             'project': "Data/Training",
@@ -1739,6 +1510,24 @@ class TrainModelDialog(QDialog):
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = now
+
+        # Add custom parameters
+        for param_name, param_value in self.custom_params:
+            name = param_name.text().strip()
+            value = param_value.text().strip().lower()
+            if name:
+                if value == 'true':
+                    params[name] = True
+                elif value == 'false':
+                    params[name] = False
+                else:
+                    try:
+                        params[name] = int(value)
+                    except ValueError:
+                        try:
+                            params[name] = float(value)
+                        except ValueError:
+                            params[name] = value
 
         # Return the dictionary of parameters
         return params
@@ -1781,6 +1570,388 @@ class TrainModelDialog(QDialog):
             error_message = f"An error occurred during model training: {e}"
             QMessageBox.critical(self, "Error", error_message)
             print(error_message)
+
+
+class OptimizeModelDialog(QDialog):
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+
+        self.custom_params = []
+
+        self.setWindowTitle("Optimize Model")
+        self.resize(300, 200)
+
+        self.layout = QVBoxLayout(self)
+
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Details on different production formats can be found "
+                            "<a href='https://docs.ultralytics.com/modes/export/#export-formats'>here</a>.")
+
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        self.layout.addWidget(info_label)
+
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self.browse_file)
+        self.layout.addWidget(browse_button)
+
+        self.model_text_area = QTextEdit("No model file selected")
+        self.model_text_area.setReadOnly(True)
+        self.layout.addWidget(self.model_text_area)
+
+        # Export Format Dropdown
+        self.export_format_combo = QComboBox()
+        self.export_format_combo.addItems(["torchscript",
+                                           "onnx",
+                                           "openvino",
+                                           "engine"])
+
+        self.export_format_combo.setEditable(True)
+        self.layout.addWidget(QLabel("Select or Enter Export Format:"))
+        self.layout.addWidget(self.export_format_combo)
+
+        # Parameters Form
+        self.form_layout = QFormLayout()
+
+        # Add custom parameters section
+        self.custom_params_layout = QVBoxLayout()
+        self.form_layout.addRow("Parameters:", self.custom_params_layout)
+
+        # Add button for new parameter pairs
+        self.add_param_button = QPushButton("Add Parameter")
+        self.add_param_button.clicked.connect(self.add_parameter_pair)
+        self.form_layout.addRow("", self.add_param_button)
+
+        self.layout.addLayout(self.form_layout)
+
+        accept_button = QPushButton("Accept")
+        accept_button.clicked.connect(self.optimize_model)
+        self.layout.addWidget(accept_button)
+
+        self.setLayout(self.layout)
+
+    def add_parameter_pair(self):
+        param_layout = QHBoxLayout()
+        param_name = QLineEdit()
+        param_value = QLineEdit()
+        param_layout.addWidget(param_name)
+        param_layout.addWidget(param_value)
+
+        self.custom_params.append((param_name, param_value))
+        self.custom_params_layout.addLayout(param_layout)
+
+    def browse_file(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Open Model File", "",
+                                                   "Model Files (*.pt)", options=options)
+        if file_path:
+            self.model_path = file_path
+            self.model_text_area.setText("Model file selected")
+
+    def accept(self):
+        self.optimize_model()
+        super().accept()
+
+    def get_optimization_parameters(self):
+        # Extract values from dialog widgets
+        params = {'format': self.export_format_combo.currentText()}
+
+        for param_name, param_value in self.custom_params:
+            name = param_name.text().strip()
+            value = param_value.text().strip().lower()
+            if name:
+                if value == 'true':
+                    params[name] = True
+                elif value == 'false':
+                    params[name] = False
+                else:
+                    try:
+                        params[name] = int(value)
+                    except ValueError:
+                        try:
+                            params[name] = float(value)
+                        except ValueError:
+                            params[name] = value
+
+        # Return the dictionary of parameters
+        return params
+
+    def optimize_model(self):
+
+        # Get training parameters
+        params = self.get_optimization_parameters()
+
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+            # Initialize the model, export given params
+            YOLO(self.model_path).export(**params)
+
+            message = "Model export successful."
+            QMessageBox.information(self, "Model Export Status", message)
+
+        except Exception as e:
+
+            # Display an error message box to the user
+            error_message = f"An error occurred when converting model: {e}"
+            QMessageBox.critical(self, "Error", error_message)
+            print(error_message)
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+
+
+class DeployModelDialog(QDialog):
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        self.label_window = main_window.label_window
+        self.annotation_window = main_window.annotation_window
+
+        self.setWindowTitle("Deploy Model")
+        self.resize(300, 200)
+
+        self.layout = QVBoxLayout(self)
+
+        self.model_path = None
+        self.loaded_model = None
+
+        self.tab_widget = QTabWidget()
+        self.layout.addWidget(self.tab_widget)
+
+        self.classification_tab = QWidget()
+        self.segmentation_tab = QWidget()
+
+        self.tab_widget.addTab(self.classification_tab, "Image Classification")
+        self.tab_widget.addTab(self.segmentation_tab, "Instance Segmentation")
+
+        self.init_classification_tab()
+        self.init_segmentation_tab()
+
+        self.status_bar = QLabel("No model loaded")
+        self.layout.addWidget(self.status_bar)
+
+        self.setLayout(self.layout)
+
+    def init_classification_tab(self):
+        layout = QVBoxLayout()
+
+        self.classification_text_area = QTextEdit()
+        self.classification_text_area.setReadOnly(True)
+        layout.addWidget(self.classification_text_area)
+
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self.browse_file)
+        layout.addWidget(browse_button)
+
+        load_button = QPushButton("Load Model")
+        load_button.clicked.connect(self.load_model)
+        layout.addWidget(load_button)
+
+        deactivate_button = QPushButton("Deactivate Model")
+        deactivate_button.clicked.connect(self.deactivate_model)
+        layout.addWidget(deactivate_button)
+
+        self.classification_tab.setLayout(layout)
+
+    def init_segmentation_tab(self):
+        layout = QVBoxLayout()
+
+        self.segmentation_text_area = QTextEdit()
+        self.segmentation_text_area.setReadOnly(True)
+        layout.addWidget(self.segmentation_text_area)
+
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self.browse_file)
+        layout.addWidget(browse_button)
+
+        load_button = QPushButton("Load Model")
+        load_button.clicked.connect(self.load_model)
+        layout.addWidget(load_button)
+
+        deactivate_button = QPushButton("Deactivate Model")
+        deactivate_button.clicked.connect(self.deactivate_model)
+        layout.addWidget(deactivate_button)
+
+        self.segmentation_tab.setLayout(layout)
+
+    def browse_file(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Open Model File", "",
+                                                   "Model Files (*.pt *.onnx *.torchscript *.engine *.bin)",
+                                                   options=options)
+        if file_path:
+            if ".bin" in file_path:
+                # OpenVINO is a directory
+                file_path = os.path.dirname(file_path)
+
+            self.model_path = file_path
+            if self.tab_widget.currentIndex() == 0:
+                self.classification_text_area.setText("Model file selected")
+            else:
+                self.segmentation_file_path.setText("Model file selected")
+
+    def load_model(self):
+        if self.model_path:
+            try:
+                # Set the cursor to waiting (busy) cursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+
+                self.loaded_model = YOLO(self.model_path, task='classify')
+                self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
+
+                # Get the class names the model can predict
+                class_names = list(self.loaded_model.names.values())
+                class_names_str = "Class Names: \n"
+                missing_labels = []
+
+                for class_name in class_names:
+                    class_names_str += f"{class_name} \n"
+                    if not self.label_window.get_label_by_long_code(class_name):
+                        missing_labels.append(class_name)
+
+                self.classification_text_area.setText(class_names_str)
+                self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
+
+                if missing_labels:
+                    missing_labels_str = "\n".join(missing_labels)
+                    QMessageBox.warning(self,
+                                        "Warning",
+                                        f"The following classes are missing and cannot be predicted:"
+                                        f"\n{missing_labels_str}")
+
+                QMessageBox.information(self, "Model Loaded", "Model weights loaded successfully.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
+            finally:
+                # Restore the cursor to the default cursor
+                QApplication.restoreOverrideCursor()
+        else:
+            QMessageBox.warning(self, "Warning", "No model file selected")
+
+    def deactivate_model(self):
+        self.loaded_model = None
+        self.model_path = None
+        self.status_bar.setText("No model loaded")
+        if self.tab_widget.currentIndex() == 0:
+            self.classification_text_area.setText("No model file selected")
+        else:
+            self.segmentation_file_path.setText("No model file selected")
+
+    def pixmap_to_numpy(self, pixmap):
+        # Convert QPixmap to QImage
+        image = pixmap.toImage()
+        # Get image dimensions
+        width = image.width()
+        height = image.height()
+
+        # Convert QImage to numpy array
+        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
+        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+
+        # If the image format is ARGB32, swap the first and last channels (A and B)
+        if format == QImage.Format_ARGB32:
+            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+
+        return numpy_array
+
+    def predict(self, annotations=None):
+        # If model isn't loaded
+        if self.loaded_model is None:
+            return
+
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        # Get the selected annotation
+        selected_annotation = self.annotation_window.selected_annotation
+
+        if selected_annotation:
+            # Make predictions on specific annotation
+            self.predict_annotation(selected_annotation)
+            # Update everything (essentially)
+            self.main_window.annotation_window.unselect_annotation()
+            self.main_window.annotation_window.select_annotation(selected_annotation)
+        else:
+            # Run predictions on multiple annotations
+            if not annotations:
+                # If not supplied with annotations, get those for current image
+                annotations = self.annotation_window.get_image_annotations()
+
+            # Filter annotations to only include those with 'Review' label
+            review_annotations = [annotation for annotation in annotations if annotation.label.id == "-1"]
+
+            if review_annotations:
+                # Convert QImages to numpy arrays
+                images_np = [self.pixmap_to_numpy(annotation.cropped_image) for annotation in review_annotations]
+
+                # Perform batch prediction
+                results = self.loaded_model(images_np)
+
+                for annotation, result in zip(review_annotations, results):
+                    self.process_prediction_result(annotation, result)
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+
+    def predict_annotation(self, annotation):
+        # Get the cropped image
+        image = annotation.cropped_image
+        # Convert QImage to np
+        image_np = self.pixmap_to_numpy(image)
+        # Perform prediction
+        results = self.loaded_model(image_np)[0]
+
+        # Extract the results
+        class_names = results.names
+        top5 = results.probs.top5
+        top5conf = results.probs.top5conf
+
+        # Initialize an empty dictionary to store the results
+        predictions = {}
+
+        # Iterate over the top 5 predictions
+        for idx, conf in zip(top5, top5conf):
+            class_name = class_names[idx]
+            label = self.label_window.get_label_by_long_code(class_name)
+
+            if label:
+                predictions[label] = float(conf)
+            else:
+                # Users does not have label loaded; skip.
+                pass
+
+        if predictions:
+            # Update the machine confidence
+            annotation.update_machine_confidence(predictions)
+
+    def process_prediction_result(self, annotation, result):
+        # Extract the results
+        class_names = result.names
+        top5 = result.probs.top5
+        top5conf = result.probs.top5conf
+
+        # Initialize an empty dictionary to store the results
+        predictions = {}
+
+        # Iterate over the top 5 predictions
+        for idx, conf in zip(top5, top5conf):
+            class_name = class_names[idx]
+            label = self.label_window.get_label_by_long_code(class_name)
+
+            if label:
+                predictions[label] = float(conf)
+            else:
+                # User does not have label loaded; skip.
+                pass
+
+        if predictions:
+            # Update the machine confidence
+            annotation.update_machine_confidence(predictions)
 
 
 class Annotation(QObject):
@@ -2595,53 +2766,7 @@ class AnnotationWindow(QGraphicsView):
                 del self.annotations_dict[annotation.id]
 
 
-class ThumbnailWidget(QFrame):
-    def __init__(self, parent, image_path, image, size=100):
-        super().__init__(parent)
-        self.parent_window = parent
-        self.image_path = image_path
-        self.size = size
-        self.is_selected = False
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
-
-        self.image_label = QLabel()
-        self.image_label.setFixedSize(self.size, self.size)
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setScaledContents(False)
-        self.setImage(image)
-        layout.addWidget(self.image_label, alignment=Qt.AlignCenter)
-
-        self.text_label = QLabel(os.path.basename(image_path))
-        self.text_label.setAlignment(Qt.AlignCenter)
-        self.text_label.setWordWrap(True)
-        layout.addWidget(self.text_label)
-
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setFrameShadow(QFrame.Raised)
-
-    def setImage(self, image):
-        scaled_image = image.scaled(self.size, self.size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.image_label.setPixmap(QPixmap.fromImage(scaled_image))
-
-    def select(self):
-        self.is_selected = True
-        self.setStyleSheet("ThumbnailWidget { background-color: rgba(0, 0, 255, 0.1); }")
-        self.parent_window.set_selected_widget_width(self)
-
-    def deselect(self):
-        self.is_selected = False
-        self.setStyleSheet("")
-        self.setFixedWidth(self.parent_window.thumbnail_container.width())
-
-    def mousePressEvent(self, event):
-        super().mousePressEvent(event)
-        self.parent_window.load_image(self)
-
-
-class ThumbnailWindow(QWidget):
+class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)
     imageDeleted = pyqtSignal(str)
 
@@ -2673,103 +2798,86 @@ class ThumbnailWindow(QWidget):
         self.image_count_label.setFixedHeight(24)
         self.info_layout.addWidget(self.image_count_label)
 
-        self.scrollArea = QScrollArea(self)
-        self.scrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        self.scrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scrollArea.setWidgetResizable(True)
+        self.tableWidget = QTableWidget(self)
+        self.tableWidget.setColumnCount(1)
+        self.tableWidget.setHorizontalHeaderLabels(["Image Name"])
+        self.tableWidget.horizontalHeader().setStretchLastSection(True)
+        self.tableWidget.verticalHeader().setVisible(False)
+        self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tableWidget.setSelectionMode(QTableWidget.SingleSelection)
+        self.tableWidget.cellClicked.connect(self.load_image)
+        self.tableWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
 
-        self.thumbnail_container = QWidget()
-        self.thumbnail_container_layout = QVBoxLayout(self.thumbnail_container)
-        self.thumbnail_container_layout.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
-        self.thumbnail_container_layout.setSpacing(5)
-
-        self.scrollArea.setWidget(self.thumbnail_container)
-        self.layout.addWidget(self.scrollArea)
+        self.layout.addWidget(self.tableWidget)
 
         self.images = {}
         self.image_list = []
-
-        self.thumbnails = weakref.WeakValueDictionary()
-        self.selected_thumbnail = None
+        self.selected_row = None
         self.show_confirmation_dialog = True
-        self.threadpool = QThreadPool()
-
-    def add_image_async(self, image_path):
-        loader = ThumbnailLoader(self, image_path)
-        self.threadpool.start(loader)
 
     def add_image(self, image_path):
         if image_path not in self.main_window.imported_image_paths:
             image = QImage(image_path)
-            thumbnail = ThumbnailWidget(self, image_path, image)
-            thumbnail.setContextMenuPolicy(Qt.CustomContextMenu)
-            thumbnail.customContextMenuRequested.connect(lambda pos, t=thumbnail: self.show_context_menu(pos, t))
+            row_position = self.tableWidget.rowCount()
+            self.tableWidget.insertRow(row_position)
+            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(image_path)))
 
-            self.thumbnail_container_layout.addWidget(thumbnail)
             self.images[image_path] = image
-            self.thumbnails[image_path] = thumbnail
+            self.image_list.append(image_path)
 
-            self.scrollArea.verticalScrollBar().setValue(self.scrollArea.verticalScrollBar().maximum())
+            # Select and set the first image
+            if row_position == 0:
+                self.tableWidget.selectRow(0)
+                self.load_image(0, 0)
 
-            # Select and set thumbnail widget
-            self.load_image(thumbnail)
             # Add to main window imported path
             self.main_window.imported_image_paths.add(image_path)
-            # Add to sorted list
-            self.image_list.append(image_path)
 
             # Update the image count label
             self.update_image_count_label()
 
-    def load_image(self, thumbnail):
-        if self.selected_thumbnail:
-            self.selected_thumbnail.deselect()
+    def load_image(self, row, column):
+        image_path = self.image_list[row]
+        self.load_image_by_path(image_path)
 
-        # Selects the thumbnail
-        self.selected_thumbnail = thumbnail
-        self.selected_thumbnail.select()
-        # Sets the thumbnail widget
-        self.set_selected_widget_width(self.selected_thumbnail)
+    def load_image_by_path(self, image_path):
+        if self.selected_row is not None:
+            self.tableWidget.item(self.selected_row, 0).setSelected(False)
 
-        image_path = thumbnail.image_path
+        self.selected_row = self.image_list.index(image_path)
+        self.tableWidget.selectRow(self.selected_row)
         self.annotation_window.set_image(self.images[image_path], image_path)
         self.imageSelected.emit(image_path)
 
         # Update the current image index label
         self.update_current_image_index_label()
 
-    def set_selected_widget_width(self, widget):
-        widget.setFixedWidth(self.thumbnail_container.width())
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        new_width = self.width() - self.scrollArea.verticalScrollBar().width()
-        self.thumbnail_container.setFixedWidth(new_width)
-        for thumbnail in self.thumbnails.values():
-            thumbnail.setFixedWidth(new_width)
-        if self.selected_thumbnail:
-            self.set_selected_widget_width(self.selected_thumbnail)
-
-    def show_context_menu(self, pos, thumbnail):
-        context_menu = QMenu(self)
-        delete_action = context_menu.addAction("Delete")
-        action = context_menu.exec_(thumbnail.mapToGlobal(pos))
-
-        if action == delete_action:
-            self.delete_image(thumbnail)
-
-    def delete_image(self, thumbnail):
+    def delete_image(self, row):
         if self.show_confirmation_dialog:
             result = self._confirm_delete()
             if result == QMessageBox.No:
                 return
 
-        self._remove_image(thumbnail)
-        self.imageDeleted.emit(thumbnail.image_path)  # Emit the signal
-        self.main_window.imported_image_paths.discard(thumbnail.image_path)
+        image_path = self.image_list[row]
+        self.tableWidget.removeRow(row)
+        del self.images[image_path]
+        self.image_list.remove(image_path)
+        self.main_window.imported_image_paths.discard(image_path)
 
         # Update the image count label
         self.update_image_count_label()
+
+        # Update the selected row and load another image if possible
+        if self.image_list:
+            if row < len(self.image_list):
+                self.selected_row = row
+            else:
+                self.selected_row = len(self.image_list) - 1
+            self.load_image_by_path(self.image_list[self.selected_row])
+        else:
+            self.selected_row = None
+            self.annotation_window.clear_image()  # Clear the annotation window if no images are left
 
         # Update the current image index label
         self.update_current_image_index_label()
@@ -2792,34 +2900,23 @@ class ThumbnailWindow(QWidget):
 
         return result
 
-    def _remove_image(self, thumbnail):
-        self.thumbnail_container_layout.removeWidget(thumbnail)
-        thumbnail.deleteLater()
+    def show_context_menu(self, position):
+        row = self.tableWidget.rowAt(position.y())
+        if row >= 0:
+            context_menu = QMenu(self)
+            delete_action = context_menu.addAction("Delete")
+            action = context_menu.exec_(self.tableWidget.mapToGlobal(position))
 
-        image_path = thumbnail.image_path
-        if image_path in self.images:
-            del self.images[image_path]
-
-        if self.selected_thumbnail == thumbnail:
-            self.selected_thumbnail = None
-            if self.images:
-                first_image_path = next(iter(self.images))
-                first_thumbnail = self.thumbnails.get(first_image_path)
-                if first_thumbnail:
-                    self.load_image(first_thumbnail)
-
-    def find_thumbnail_by_image_path(self, image_path):
-        return self.thumbnails.get(image_path)
+            if action == delete_action:
+                self.delete_image(row)
 
     def update_image_count_label(self):
         total_images = len(self.images)
         self.image_count_label.setText(f"Total Images: {total_images}")
 
     def update_current_image_index_label(self):
-        if self.selected_thumbnail:
-            image_paths = list(self.images.keys())
-            current_index = image_paths.index(self.selected_thumbnail.image_path)
-            self.current_image_index_label.setText(f"Current Image: {current_index + 1}")
+        if self.selected_row is not None:
+            self.current_image_index_label.setText(f"Current Image: {self.selected_row + 1}")
         else:
             self.current_image_index_label.setText("Current Image: None")
 
@@ -2827,40 +2924,25 @@ class ThumbnailWindow(QWidget):
         if not self.image_list:
             return
 
-        if self.selected_thumbnail:
-            current_index = self.image_list.index(self.selected_thumbnail.image_path)
-            new_index = (current_index - 1) % len(self.image_list)
+        if self.selected_row is not None:
+            new_row = (self.selected_row - 1) % len(self.image_list)
         else:
-            new_index = 0
+            new_row = 0
 
-        new_thumbnail = self.find_thumbnail_by_image_path(self.image_list[new_index])
-        if new_thumbnail:
-            self.load_image(new_thumbnail)
+        self.tableWidget.selectRow(new_row)
+        self.load_image(new_row, 0)
 
     def cycle_next_image(self):
         if not self.image_list:
             return
 
-        if self.selected_thumbnail:
-            current_index = self.image_list.index(self.selected_thumbnail.image_path)
-            new_index = (current_index + 1) % len(self.image_list)
+        if self.selected_row is not None:
+            new_row = (self.selected_row + 1) % len(self.image_list)
         else:
-            new_index = 0
+            new_row = 0
 
-        new_thumbnail = self.find_thumbnail_by_image_path(self.image_list[new_index])
-        if new_thumbnail:
-            self.load_image(new_thumbnail)
-
-
-class ThumbnailLoader(QRunnable):
-    def __init__(self, thumbnail_window, image_path):
-        super().__init__()
-        self.thumbnail_window = thumbnail_window
-        self.image_path = image_path
-
-    def run(self):
-        image = QImage(self.image_path)
-        self.thumbnail_window.add_image(self.image_path)
+        self.tableWidget.selectRow(new_row)
+        self.load_image(new_row, 0)
 
 
 class AddLabelDialog(QDialog):
