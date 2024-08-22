@@ -370,8 +370,8 @@ class AnnotationSamplingDialog(QDialog):
 
         if self.apply_to_next:
             current_image_path = self.annotation_window.current_image_path
-            current_image_index = self.image_window.image_list.index(current_image_path)
-            image_paths = self.image_window.image_list[current_image_index:]
+            current_image_index = self.image_window.image_paths.index(current_image_path)
+            image_paths = self.image_window.image_paths[current_image_index:]
         elif self.apply_to_all:
             image_paths = list(self.annotation_window.loaded_image_paths)
         else:
@@ -1635,7 +1635,7 @@ class MainWindow(QMainWindow):
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageDeleted signal to delete_image in AnnotationWindow
-        self.image_window.imageDeleted.connect(self.annotation_window.delete_image)
+        # self.image_window.imageDeleted.connect(self.annotation_window.delete_image)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
 
@@ -2149,7 +2149,7 @@ class Annotation(QObject):
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
-    imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
+    # imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
@@ -2757,7 +2757,7 @@ class AnnotationWindow(QGraphicsView):
             self.image_item = None
             self.active_image = False  # Reset image_set flag
 
-        self.imageDeleted.emit(image_path)
+        # self.imageDeleted.emit(image_path)
 
     def delete_annotations_for_label(self, label):
         for annotation in list(self.annotations_dict.values()):
@@ -2777,6 +2777,16 @@ class ImageWindow(QWidget):
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
+
+        # Create a horizontal layout for the search bar
+        self.search_layout = QHBoxLayout()
+        self.layout.addLayout(self.search_layout)
+
+        # Add a search bar
+        self.search_bar = QLineEdit(self)
+        self.search_bar.setPlaceholderText("Search images...")
+        self.search_bar.textChanged.connect(self.filter_images)
+        self.search_layout.addWidget(self.search_bar)
 
         # Create a horizontal layout for the labels
         self.info_layout = QHBoxLayout()
@@ -2950,6 +2960,14 @@ class ImageWindow(QWidget):
 
         self.tableWidget.selectRow(new_row)
         self.load_image(new_row, 0)
+
+    def filter_images(self, text):
+        for row in range(self.tableWidget.rowCount()):
+            item = self.tableWidget.item(row, 0)
+            if text.lower() in item.text().lower():
+                self.tableWidget.setRowHidden(row, False)
+            else:
+                self.tableWidget.setRowHidden(row, True)
 
 
 class AddLabelDialog(QDialog):
