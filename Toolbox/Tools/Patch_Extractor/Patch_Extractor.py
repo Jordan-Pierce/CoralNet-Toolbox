@@ -803,32 +803,50 @@ class CreateDatasetDialog(QDialog):
         super().accept()
 
     def process_annotations(self, annotations, split_dir, split):
+
+        # Organize based on image
+        image_paths = set(a.image_path for a in annotations)
+
         progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
         progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
 
-        progress_bar.start_progress(len(annotations))
+        # Store the image
+        image_item = None
 
-        for annotation in annotations:
+        for image_path in image_paths:
+
             if progress_bar.wasCanceled():
                 break
 
-            if not annotation.cropped_image:
-                image = self.image_window.images[annotation.image_path]
-                image_item = QGraphicsPixmapItem(QPixmap(image))
-                annotation.create_cropped_image(image_item)
+            # Get the image annotations
+            image_annotations = [a for a in annotations if a.image_path == image_path]
 
-            cropped_image = annotation.cropped_image
+            for image_annotation in image_annotations:
 
-            if cropped_image:
-                if self.get_selected_label_code_type() == "Short Label Codes":
-                    label_code = annotation.label.short_label_code
-                else:
-                    label_code = annotation.label.long_label_code
+                if not image_annotation.cropped_image:
+                    if not image_item:
+                        # Get the image item once
+                        image_item = QGraphicsPixmapItem(QPixmap(QImage(image_path)))
 
-                output_path = os.path.join(split_dir, label_code)
-                output_filename = f"{label_code}_{annotation.id}.jpg"
-                cropped_image.save(os.path.join(output_path, output_filename))
+                    image_annotation.create_cropped_image(image_item)
 
+                cropped_image = image_annotation.cropped_image
+
+                if cropped_image:
+                    if self.get_selected_label_code_type() == "Short Label Codes":
+                        label_code = image_annotation.label.short_label_code
+                    else:
+                        label_code = image_annotation.label.long_label_code
+
+                    output_path = os.path.join(split_dir, label_code)
+                    output_filename = f"{label_code}_{image_annotation.id}.jpg"
+                    cropped_image.save(os.path.join(output_path, output_filename))
+
+            # Reset the image item
+            image_item = None
+
+            # Update the progress bar
             progress_bar.update_progress()
             QApplication.processEvents()  # Update GUI
 
@@ -839,6 +857,7 @@ class CreateDatasetDialog(QDialog):
         super().showEvent(event)
         self.populate_class_filter_list()
         self.update_summary_statistics()
+
 
 
 class TrainModelDialog(QDialog):
