@@ -5,25 +5,18 @@ import random
 
 import pandas as pd
 
-from QtLabel import Label
-from QtProgressBar import ProgressBar
+from coralnet_toolbox.QtLabel import Label
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
-                             QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
-                             QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
-                             QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
-                             QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QRadioButton, QTableWidget,
-                             QTableWidgetItem)
+from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
+                             QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
+                             QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog)
 
-from PyQt5.QtGui import (QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont,
-                         QCursor, QMovie)
-
-from PyQt5.QtCore import (Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF,
-                          QThread)
+from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
 
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 

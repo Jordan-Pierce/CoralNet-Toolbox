@@ -5,19 +5,14 @@ import datetime
 import numpy as np
 from ultralytics import YOLO
 
-from QtProgressBar import ProgressBar
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
-                             QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
-                             QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
-                             QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
-                             QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QRadioButton, QTableWidget,
-                             QTableWidgetItem)
+from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
+                             QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
+                             QGraphicsPixmapItem, QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
+                             QGroupBox, QListWidget, QListWidgetItem)
 
 from PyQt5.QtGui import QImage, QPixmap
-
 from PyQt5.QtCore import Qt
 
 import warnings

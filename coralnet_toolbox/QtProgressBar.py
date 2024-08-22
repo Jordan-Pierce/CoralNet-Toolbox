@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton
 
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 

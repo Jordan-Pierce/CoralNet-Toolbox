@@ -1,17 +1,9 @@
-from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
-                             QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
-                             QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
-                             QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
-                             QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QRadioButton, QTableWidget,
-                             QTableWidgetItem)
-
+from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
-
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF
 
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 

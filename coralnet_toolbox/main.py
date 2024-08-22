@@ -2,7 +2,7 @@
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
 
-from QtMain import MainWindow
+from coralnet_toolbox.QtMain import MainWindow
 from PyQt5.QtWidgets import QApplication
 
 

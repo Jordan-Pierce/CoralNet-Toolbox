@@ -1,35 +1,27 @@
-from QtImage import ImageWindow
-from QtLabel import LabelWindow
-from QtAnnotation import AnnotationWindow
-from QtAnnotation import AnnotationSamplingDialog
-from QtConfidence import ConfidenceWindow
+from coralnet_toolbox.QtImage import ImageWindow
+from coralnet_toolbox.QtLabel import LabelWindow
+from coralnet_toolbox.QtAnnotation import AnnotationWindow
+from coralnet_toolbox.QtAnnotation import AnnotationSamplingDialog
+from coralnet_toolbox.QtConfidence import ConfidenceWindow
 
-from QtMachineLearning import CreateDatasetDialog
-from QtMachineLearning import TrainModelDialog
-from QtMachineLearning import OptimizeModelDialog
-from QtMachineLearning import DeployModelDialog
+from coralnet_toolbox.QtMachineLearning import CreateDatasetDialog
+from coralnet_toolbox.QtMachineLearning import TrainModelDialog
+from coralnet_toolbox.QtMachineLearning import OptimizeModelDialog
+from coralnet_toolbox.QtMachineLearning import DeployModelDialog
 
-from QtProgressBar import ProgressBar
-from QtEventFilter import GlobalEventFilter
+from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 
-from utilities import get_icon_path
+from coralnet_toolbox.utilities import get_icon_path
 
-from PyQt5.QtWidgets import (QProgressBar, QMainWindow, QFileDialog, QApplication, QGridLayout, QGraphicsView,
-                             QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem, QToolBar, QAction, QScrollArea,
-                             QSizePolicy, QMessageBox, QCheckBox, QDialog, QHBoxLayout, QWidget, QVBoxLayout, QLabel,
-                             QPushButton, QColorDialog, QMenu, QLineEdit, QSpinBox, QDialog, QHBoxLayout, QTextEdit,
-                             QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem, QSlider,
-                             QFormLayout, QInputDialog, QFrame, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QPlainTextEdit, QRadioButton, QTableWidget,
-                             QTableWidgetItem)
+from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider)
 
-from PyQt5.QtGui import (QMouseEvent, QIcon, QImage, QPixmap, QColor, QPainter, QPen, QBrush, QFontMetrics, QFont,
-                         QCursor, QMovie)
-
-from PyQt5.QtCore import (Qt, pyqtSignal, QSize, QObject, QThreadPool, QRunnable, QTimer, QEvent, QPointF, QRectF,
-                          QThread)
+from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -45,7 +37,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # Define the icon path
-        self.setWindowTitle("CoralNet-Toolbox")
+        self.setWindowTitle("CoralNet Toolbox")
         # Set the window icon
         main_window_icon_path = get_icon_path("toolbox.png")
         self.setWindowIcon(QIcon(main_window_icon_path))
