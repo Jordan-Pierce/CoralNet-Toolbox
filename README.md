@@ -70,8 +70,7 @@ Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
 - `Windows 10`
 - `Python 3.8`
 - `Torch 2.0.0 + CUDA 11.8`
-- `Metashape Professional 2.0.X`
-- `Google Chrome 114`
+
 
 ### **Conclusion**
 In summary, this repository provides a range of tools that can assist with interacting with 
