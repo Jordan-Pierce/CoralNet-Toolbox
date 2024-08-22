@@ -1445,8 +1445,10 @@ class DeployModelDialog(QDialog):
                 missing_labels = []
 
                 for class_name in class_names:
-                    class_names_str += f"{class_name} \n"
-                    if not self.label_window.get_label_by_long_code(class_name):
+                    if self.label_window.get_label_by_long_code(class_name):
+                        class_names_str += f"✅ {class_name} \n"
+                    else:
+                        class_names_str += f"❌ {class_name} \n"
                         missing_labels.append(class_name)
 
                 self.classification_text_area.setText(class_names_str)
@@ -1634,8 +1636,6 @@ class MainWindow(QMainWindow):
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
         # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
-        # Connect the imageDeleted signal to delete_image in AnnotationWindow
-        # self.image_window.imageDeleted.connect(self.annotation_window.delete_image)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
 
@@ -2149,7 +2149,6 @@ class Annotation(QObject):
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
-    # imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
@@ -2744,6 +2743,7 @@ class AnnotationWindow(QGraphicsView):
             self.delete_annotation(annotation_id)
 
     def delete_image(self, image_path):
+        # Called by ImageWindow
         annotation_ids_to_delete = [i for i, a in self.annotations_dict.items() if a.image_path == image_path]
 
         for annotation_id in annotation_ids_to_delete:
@@ -2757,8 +2757,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_item = None
             self.active_image = False  # Reset image_set flag
 
-        # self.imageDeleted.emit(image_path)
-
     def delete_annotations_for_label(self, label):
         for annotation in list(self.annotations_dict.values()):
             if annotation.label.id == label.id:
@@ -2768,7 +2766,6 @@ class AnnotationWindow(QGraphicsView):
 
 class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)
-    imageDeleted = pyqtSignal(str)
 
     def __init__(self, main_window):
         super().__init__()
@@ -2822,17 +2819,23 @@ class ImageWindow(QWidget):
         self.layout.addWidget(self.tableWidget)
 
         self.image_paths = []  # Store only image paths
+        self.filtered_image_paths = []  # Subset of images based on search
         self.selected_row = None
         self.show_confirmation_dialog = True
         self.images = {}  # Dictionary to store images and their paths
 
     def add_image(self, image_path):
+
+        # Clear the search bar text
+        self.search_bar.clear()
+
         if image_path not in self.main_window.imported_image_paths:
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
             self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(image_path)))
 
             self.image_paths.append(image_path)
+            self.filtered_image_paths.append(image_path)
 
             # Select and set the first image
             if row_position == 0:
@@ -2846,7 +2849,7 @@ class ImageWindow(QWidget):
             self.update_image_count_label()
 
     def load_image(self, row, column):
-        image_path = self.image_paths[row]
+        image_path = self.filtered_image_paths[row]
         self.load_image_by_path(image_path)
 
     def load_image_by_path(self, image_path):
@@ -2854,12 +2857,12 @@ class ImageWindow(QWidget):
             self.tableWidget.item(self.selected_row, 0).setSelected(False)
 
         # Clear the previous image from memory
-        if self.selected_row is not None and self.image_paths[self.selected_row] in self.images:
-            del self.images[self.image_paths[self.selected_row]]
+        if self.selected_row is not None and self.filtered_image_paths[self.selected_row] in self.images:
+            del self.images[self.filtered_image_paths[self.selected_row]]
 
         image = QImage(image_path)  # Load the image only when needed
         self.images[image_path] = image  # Store the image in the dictionary
-        self.selected_row = self.image_paths.index(image_path)
+        self.selected_row = self.filtered_image_paths.index(image_path)
         self.tableWidget.selectRow(self.selected_row)
         self.annotation_window.set_image(image, image_path)
         self.imageSelected.emit(image_path)
@@ -2873,9 +2876,10 @@ class ImageWindow(QWidget):
             if result == QMessageBox.No:
                 return
 
-        image_path = self.image_paths[row]
+        image_path = self.filtered_image_paths[row]
         self.tableWidget.removeRow(row)
         self.image_paths.remove(image_path)
+        self.filtered_image_paths.remove(image_path)
         self.main_window.imported_image_paths.discard(image_path)
 
         # Remove the image from the dictionary
@@ -2886,11 +2890,11 @@ class ImageWindow(QWidget):
         self.update_image_count_label()
 
         # Update the selected row and load another image if possible
-        if self.image_paths:
-            if row < len(self.image_paths):
+        if self.filtered_image_paths:
+            if row < len(self.filtered_image_paths):
                 self.selected_row = row
             else:
-                self.selected_row = len(self.image_paths) - 1
+                self.selected_row = len(self.filtered_image_paths) - 1
             self.load_image(self.selected_row, 0)
         else:
             self.selected_row = None
@@ -2928,7 +2932,7 @@ class ImageWindow(QWidget):
                 self.delete_image(row)
 
     def update_image_count_label(self):
-        total_images = len(self.image_paths)
+        total_images = len(self.filtered_image_paths)
         self.image_count_label.setText(f"Total Images: {total_images}")
 
     def update_current_image_index_label(self):
@@ -2938,11 +2942,11 @@ class ImageWindow(QWidget):
             self.current_image_index_label.setText("Current Image: None")
 
     def cycle_previous_image(self):
-        if not self.image_paths:
+        if not self.filtered_image_paths:
             return
 
         if self.selected_row is not None:
-            new_row = (self.selected_row - 1) % len(self.image_paths)
+            new_row = (self.selected_row - 1) % len(self.filtered_image_paths)
         else:
             new_row = 0
 
@@ -2950,11 +2954,11 @@ class ImageWindow(QWidget):
         self.load_image(new_row, 0)
 
     def cycle_next_image(self):
-        if not self.image_paths:
+        if not self.filtered_image_paths:
             return
 
         if self.selected_row is not None:
-            new_row = (self.selected_row + 1) % len(self.image_paths)
+            new_row = (self.selected_row + 1) % len(self.filtered_image_paths)
         else:
             new_row = 0
 
@@ -2962,12 +2966,20 @@ class ImageWindow(QWidget):
         self.load_image(new_row, 0)
 
     def filter_images(self, text):
-        for row in range(self.tableWidget.rowCount()):
-            item = self.tableWidget.item(row, 0)
-            if text.lower() in item.text().lower():
-                self.tableWidget.setRowHidden(row, False)
-            else:
-                self.tableWidget.setRowHidden(row, True)
+        self.filtered_image_paths = [path for path in self.image_paths if text.lower() in os.path.basename(path).lower()]
+        self.tableWidget.setRowCount(0)  # Clear the table
+        for path in self.filtered_image_paths:
+            row_position = self.tableWidget.rowCount()
+            self.tableWidget.insertRow(row_position)
+            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(path)))
+
+        # Update the image count label
+        self.update_image_count_label()
+
+        # If the selected row is no longer valid, reset it
+        if self.selected_row is not None and self.selected_row >= len(self.filtered_image_paths):
+            self.selected_row = None
+            self.update_current_image_index_label()
 
 
 class AddLabelDialog(QDialog):
