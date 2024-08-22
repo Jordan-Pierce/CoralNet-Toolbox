@@ -1508,7 +1508,7 @@ class DeployModelDialog(QDialog):
         selected_annotation = self.annotation_window.selected_annotation
 
         if selected_annotation:
-            # Make predictions on specific annotation
+            # Make predictions on a single, specific annotation
             self.predict_annotation(selected_annotation)
             # Update everything (essentially)
             self.main_window.annotation_window.unselect_annotation()
@@ -1516,7 +1516,7 @@ class DeployModelDialog(QDialog):
         else:
             # Run predictions on multiple annotations
             if not annotations:
-                # If not supplied with annotations, get those for current image
+                # If not supplied with annotations, get all of those for current image
                 annotations = self.annotation_window.get_image_annotations()
 
             # Filter annotations to only include those with 'Review' label
@@ -1530,7 +1530,11 @@ class DeployModelDialog(QDialog):
                 results = self.loaded_model(images_np)
 
                 for annotation, result in zip(review_annotations, results):
+                    # Process the results
                     self.process_prediction_result(annotation, result)
+
+                # Show last in the confidence window
+                self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -2577,6 +2581,9 @@ class AnnotationWindow(QGraphicsView):
                         break
 
             elif self.selected_tool == "annotate" and event.button() == Qt.LeftButton:
+                # Annotation cannot be selected in annotate mode
+                self.unselect_annotation()
+                # Add annotation to the scene
                 self.add_annotation(self.mapToScene(event.pos()))
 
         super().mousePressEvent(event)
@@ -2880,6 +2887,7 @@ class ImageWindow(QWidget):
         self.tableWidget.removeRow(row)
         self.image_paths.remove(image_path)
         self.filtered_image_paths.remove(image_path)
+        self.annotation_window.delete_image(image_path)
         self.main_window.imported_image_paths.discard(image_path)
 
         # Remove the image from the dictionary
@@ -2898,7 +2906,6 @@ class ImageWindow(QWidget):
             self.load_image(self.selected_row, 0)
         else:
             self.selected_row = None
-            self.annotation_window.delete_image(image_path)
 
         # Update the current image index label
         self.update_current_image_index_label()
@@ -3573,8 +3580,10 @@ class LabelWindow(QWidget):
 class ConfidenceBar(QFrame):
     barClicked = pyqtSignal(object)  # Define a signal that takes an object (label)
 
-    def __init__(self, label, confidence, parent=None):
+    def __init__(self, confidence_window, label, confidence, parent=None):
         super().__init__(parent)
+        self.confidence_window = confidence_window
+
         self.label = label
         self.confidence = confidence
         self.color = label.color
@@ -3599,16 +3608,22 @@ class ConfidenceBar(QFrame):
             self.handle_click()
 
     def handle_click(self):
-        # Emit the signal with the label object
-        self.barClicked.emit(self.label)
+        # Check if the Selector tool is active
+        if self.confidence_window.main_window.annotation_window.selected_tool == "select":
+            # Emit the signal with the label object
+            self.barClicked.emit(self.label)
 
     def enterEvent(self, event):
         super().enterEvent(event)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
+        # Change cursor based on the active tool
+        if self.confidence_window.main_window.annotation_window.selected_tool == "select":
+            self.setCursor(QCursor(Qt.PointingHandCursor))
+        else:
+            self.setCursor(QCursor(Qt.ForbiddenCursor))  # Use a forbidden cursor icon
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
-        self.setCursor(QCursor(Qt.ArrowCursor))
+        self.setCursor(QCursor(Qt.ArrowCursor))  # Reset to the default cursor
 
 
 class ConfidenceWindow(QWidget):
@@ -3688,7 +3703,7 @@ class ConfidenceWindow(QWidget):
         self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
 
         for label, confidence in zip(labels, confidences):
-            bar_widget = ConfidenceBar(label, confidence, self.bar_chart_widget)
+            bar_widget = ConfidenceBar(self, label, confidence, self.bar_chart_widget)
             bar_widget.barClicked.connect(self.handle_bar_click)  # Connect the signal to the slot
             self.add_bar_to_layout(bar_widget, label, confidence)
 
