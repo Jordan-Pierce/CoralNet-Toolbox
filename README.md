@@ -17,53 +17,33 @@ CoralNet allows users to upload photos of coral reefs and annotate them with det
 about the coral species and other features present in the images. The platform also provides tools 
 for analyzing the annotated images, and create patch-based image classifiers. 
 
-### [**Tools**](./Toolbox/README.md#coralnet-toolbox)
+### [**Tools**](Toolbox/README.md#coralnet-toolbox)
 
-<p align="center">
-  <img src="Figures/toolbox_qt.PNG" alt="CoralNet-Toolbox-Features">
-</p>
-
-The `CoralNet-Toolbox` is an **unofficial** codebase that can be used to augment processes associated
+The `CoralNet Toolbox` is an **unofficial** codebase that can be used to augment processes associated
 with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
 a GUI; these scripts currently include the following:
 
 - `API`: Use the CoralNet API to get predictions from any source model
 - `Download`: Download all data associated with a source
 - `Upload`: Upload images, annotations, and labelsets to a source
-- `Labelset`: Create a custom labelset on CoralNet
-- `Classification Pretrain`: Pretrain an encoder on unlabeled data before training with labeled data
 - `Classification`: Create your own patch-based image classifier, locally
 - `Classification Inf.`: Perform inference using a locally trained classification model
-- `Viscore Inf.`: Perform inference using a locally trained model on Viscore VPI points
 - `Annotate`: Create your own patches from annotations, locally
 - `Visualize`: Visualize points/patches superimposed on images
 - `Patches`: Extract patches from images given an annotation file
 - `Points`: Sample points from images (Uniform, Random, Stratified)
-- `Projector`: Display model predictions in feature space using Tensorboard
-- `Spotlight`: Display model predictions in feature space using [Spotlight](https://www.youtube.com/watch?v=zj2JgBi7VeM)
-- `SAM`: Create segmentation masks for each image using labeled points and SAM
-- `Segmentation`: Create your own semantic segmentation model, locally
-- `Segmentation Inf.`: Perform inference using a locally trained segmentation model
-- `SfM`: Use Metashape to create 3D models (sure, why not)
-- `Segmentation3D`: Use masks and SfM to create classified 3D models
-- `Annotate`: [Check it out](Figures/toolbox_qt.PNG) 🤠 (beta)
-
 
 <p align="center">
-  <img src="Figures/toolbox_gooey.PNG" alt="CoralNet-Toolbox-Features">
+  <img src="Figures/toolbox_qt.PNG" alt="CoralNet-Toolbox-Features">
 </p>
-
-#### **Future Features**
-- `Analysis`: Calculate CPCe statistics from locally trained model's predictions
-- `Clean`: Use `CleanLab.ai` to identify potentially incorrectly labeled patches
 
 #### **How to use**
 To use these tools, you should have access to the CoralNet platform. Once you have an account, 
 you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
 various other tasks locally.
 
-To install on `Windows`, use the `install.py` script within an `Anaconda` environment:
-```python
+To install, do the following (preferably) within an `Anaconda` environment:
+```bash
 # cmd
 
 # Create an environment
@@ -72,11 +52,18 @@ conda create --name coralnet_toolbox python=3.8 -y
 # Activate the environment
 conda activate coralnet_toolbox
 
-# Run the install script
-python install.py
+# Install
+pip install coralnet-toolbox
 
-# Run the toolbox script
-python toolbox.py
+# Run
+coralnet-toolbox
+```
+
+Or, if you want the latest and greatest, you can build from source:
+```bash
+# cmd
+
+pip install .
 ```
 
 Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
