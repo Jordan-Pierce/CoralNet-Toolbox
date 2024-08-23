@@ -1,6 +1,8 @@
 import os
 import random
 import datetime
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from ultralytics import YOLO
@@ -375,10 +377,7 @@ class CreateDatasetDialog(QDialog):
         super().accept()
 
     def process_annotations(self, annotations, split_dir, split):
-
-        # Organize based on image
         image_paths = list(set(a.image_path for a in annotations))
-
         if not image_paths:
             return
 
@@ -386,35 +385,29 @@ class CreateDatasetDialog(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
-        for image_path in image_paths:
-
+        def process_image(image_path):
             if progress_bar.wasCanceled():
-                break
+                return
 
-            # Get pixmap once
             image_item = QImage(image_path)
             pixmap = QPixmap(image_item)
-
-            # Get the image annotations
             image_annotations = [a for a in annotations if a.image_path == image_path]
 
             for image_annotation in image_annotations:
                 if not image_annotation.cropped_image:
                     image_annotation.create_cropped_image(pixmap)
 
-                # Collect the cropped image, label
                 cropped_image = image_annotation.cropped_image
                 label_code = image_annotation.label.short_label_code
-
-                # Split directory / label directory / image file
                 output_path = os.path.join(split_dir, label_code)
                 os.makedirs(output_path, exist_ok=True)
                 output_filename = f"{label_code}_{image_annotation.id}.jpg"
                 cropped_image.save(os.path.join(output_path, output_filename))
 
-            # Update the progress bar
+        for image_path in image_paths:
+            process_image(image_path)
             progress_bar.update_progress()
-            QApplication.processEvents()  # Update GUI
+            QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()

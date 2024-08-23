@@ -53,7 +53,7 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Left:
                     self.annotation_window.cycle_annotations(-1)
                     return True
-                elif event.key() == Qt.Key_Right:
+                if event.key() == Qt.Key_Right:
                     self.annotation_window.cycle_annotations(1)
                     return True
 
@@ -61,7 +61,7 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Up:
                     self.image_window.cycle_previous_image()
                     return True
-                elif event.key() == Qt.Key_Down:
+                if event.key() == Qt.Key_Down:
                     self.image_window.cycle_next_image()
                     return True
 

@@ -84,7 +84,7 @@ class Annotation(QObject):
 
     def delete(self):
         self.annotation_deleted.emit(self)
-        if self.graphics_item:
+        if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
 

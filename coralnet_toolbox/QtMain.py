@@ -269,10 +269,6 @@ class MainWindow(QMainWindow):
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
 
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self.close()
-
     def toggle_tool(self, state):
         action = self.sender()
         if action == self.select_tool_action:
