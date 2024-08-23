@@ -1,6 +1,9 @@
 # TODO
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
+#   - progress bar for exporting annotations JSON
+#   - Deploy model after training?
+#   - Short or Long code for ML?
 
 from coralnet_toolbox.QtMain import MainWindow
 from PyQt5.QtWidgets import QApplication

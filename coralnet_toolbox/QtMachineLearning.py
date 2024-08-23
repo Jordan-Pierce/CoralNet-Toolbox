@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox
                              QGroupBox, QListWidget, QListWidgetItem)
 
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -313,15 +313,17 @@ class CreateDatasetDialog(QDialog):
             if progress_bar.wasCanceled():
                 break
 
-            # Get the image item once
-            image_item = QGraphicsPixmapItem(QPixmap(QImage(image_path)))
+            # Get pixmap once
+            image_item = QImage(image_path)
+            pixmap = QPixmap(image_item)
 
             # Get the image annotations
             image_annotations = [a for a in annotations if a.image_path == image_path]
 
             for image_annotation in image_annotations:
+
                 if not image_annotation.cropped_image:
-                    image_annotation.create_cropped_image(image_item)
+                    image_annotation.create_cropped_image(pixmap)
 
                 cropped_image = image_annotation.cropped_image
 
@@ -332,6 +334,7 @@ class CreateDatasetDialog(QDialog):
                         label_code = image_annotation.label.long_label_code
 
                     output_path = os.path.join(split_dir, label_code)
+                    os.makedirs(output_path, exist_ok=True)
                     output_filename = f"{label_code}_{image_annotation.id}.jpg"
                     cropped_image.save(os.path.join(output_path, output_filename))
 
@@ -348,12 +351,41 @@ class CreateDatasetDialog(QDialog):
         self.update_summary_statistics()
 
 
+class TrainModelWorker(QThread):
+    training_started = pyqtSignal()
+    training_completed = pyqtSignal()
+    training_error = pyqtSignal(str)
+
+    def __init__(self, params):
+        super().__init__()
+        self.params = params
+
+    def run(self):
+        try:
+            self.training_started.emit()
+
+            # Initialize the model
+            model_path = self.params.pop('model', None)
+            target_model = YOLO(model_path)
+
+            # Train the model
+            results = target_model.train(**self.params)
+
+            self.training_completed.emit()
+
+        except Exception as e:
+            self.training_error.emit(str(e))
+
+
 class TrainModelDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.main_window = main_window
 
         # For holding parameters
         self.custom_params = []
+        # Best model weights
+        self.model_path = None
 
         self.setWindowTitle("Train Model")
 
@@ -384,7 +416,6 @@ class TrainModelDialog(QDialog):
         self.layout().addWidget(scroll_area)
 
     def setup_ui(self):
-
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Details on different hyperparameters can be found "
                             "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
@@ -567,6 +598,7 @@ class TrainModelDialog(QDialog):
         if file_path:
             self.model_edit.setText(file_path)
 
+
     def setup_classification_tab(self):
         layout = QVBoxLayout()
 
@@ -653,6 +685,9 @@ class TrainModelDialog(QDialog):
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = now
 
+        # Provided model path, or default model
+        params['model'] = params['model'] if params['model'] else self.classification_model_combo.currentText()
+
         # Add custom parameters
         for param_name, param_value in self.custom_params:
             name = param_name.text().strip()
@@ -675,7 +710,6 @@ class TrainModelDialog(QDialog):
         return params
 
     def train_classification_model(self):
-
         message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
 
@@ -686,32 +720,25 @@ class TrainModelDialog(QDialog):
         # Get training parameters
         params = self.get_training_parameters()
 
-        try:
-            # Initialize the model
-            params['task'] = 'classify'
-            model_path = params.pop('model', None)
-            if not model_path:
-                model_path = self.classification_model_combo.currentText()
+        # Create and start the worker thread
+        self.worker = TrainModelWorker(params)
+        self.worker.training_started.connect(self.on_training_started)
+        self.worker.training_completed.connect(self.on_training_completed)
+        self.worker.training_error.connect(self.on_training_error)
+        self.worker.start()
 
-            self.target_model = YOLO(model_path)
+    def on_training_started(self):
+        pass
 
-            # Train the model
-            results = self.target_model.train(**params)
+    def on_training_completed(self):
+        self.showNormal()
+        message = "Model training has successfully been completed."
+        QMessageBox.information(self, "Model Training Status", message)
 
-            # Restore the window after training is complete
-            self.showNormal()
-
-            message = "Model training has successfully been completed."
-            QMessageBox.information(self, "Model Training Status", message)
-
-        except Exception as e:
-            # Restore the window after training is complete
-            self.showNormal()
-
-            # Display an error message box to the user
-            error_message = f"An error occurred during model training: {e}"
-            QMessageBox.critical(self, "Error", error_message)
-            print(error_message)
+    def on_training_error(self, error_message):
+        self.showNormal()
+        QMessageBox.critical(self, "Error", error_message)
+        print(error_message)
 
 
 class OptimizeModelDialog(QDialog):

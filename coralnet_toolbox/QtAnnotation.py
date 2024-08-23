@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphics
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog)
 
-from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
+from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush, QPixmapCache
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
 
 import warnings
@@ -88,9 +88,7 @@ class Annotation(QObject):
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
 
-    def create_cropped_image(self, image_item: QGraphicsPixmapItem):
-
-        pixmap = image_item.pixmap()
+    def create_cropped_image(self, pixmap: QPixmap):
         half_size = self.annotation_size / 2
         rect = QRectF(self.center_xy.x() - half_size,
                       self.center_xy.y() - half_size,
@@ -252,7 +250,7 @@ class AnnotationWindow(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.NoDrag)  # Disable default drag mode
 
-        self.image_item = None
+        self.image_pixmap = None
         self.active_image = False  # Flag to check if the image has been set
         self.current_image_path = None
 
@@ -269,18 +267,22 @@ class AnnotationWindow(QGraphicsView):
                                                    options=options)
         if file_path:
             try:
+
+                total_annotations = len(list(self.annotations_dict.values()))
+
+                progress_bar = ProgressBar(self, title="Exporting Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(total_annotations)
+
                 export_dict = {}
-                total_annotations = 0
                 for annotation in self.annotations_dict.values():
                     image_path = annotation.image_path
                     if image_path not in export_dict:
                         export_dict[image_path] = []
                     export_dict[image_path].append(annotation.to_dict())
-                    total_annotations += 1
 
-                progress_bar = ProgressBar(self, title="Exporting Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(total_annotations)
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
 
                 with open(file_path, 'w') as file:
                     json.dump(export_dict, file, indent=4)
@@ -289,7 +291,8 @@ class AnnotationWindow(QGraphicsView):
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-                QMessageBox.information(self, "Annotations Exported",
+                QMessageBox.information(self,
+                                        "Annotations Exported",
                                         "Annotations have been successfully exported.")
 
             except Exception as e:
@@ -523,7 +526,7 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_annotation:
             if self.selected_annotation.label.id != label.id:
                 self.selected_annotation.update_label(self.selected_label)
-                self.selected_annotation.create_cropped_image(self.image_item)
+                self.selected_annotation.create_cropped_image(self.image_pixmap)
                 # Notify ConfidenceWindow the selected annotation has changed
                 self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
@@ -540,7 +543,7 @@ class AnnotationWindow(QGraphicsView):
 
         if self.selected_annotation:
             self.selected_annotation.update_annotation_size(self.annotation_size)
-            self.selected_annotation.create_cropped_image(self.image_item)
+            self.selected_annotation.create_cropped_image(self.image_pixmap)
             # Notify ConfidenceWindow the selected annotation has changed
             self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
@@ -587,18 +590,21 @@ class AnnotationWindow(QGraphicsView):
 
     def set_image(self, image, image_path):
 
+        # Clean up
         self.unselect_annotation()
+        self.scene.clear()
+        QPixmapCache.clear()
 
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        self.image_item = QGraphicsPixmapItem(QPixmap(image))
+        self.image_pixmap = QPixmap(image)
         self.current_image_path = image_path
         self.active_image = True
 
         self.imageLoaded.emit(image.width(), image.height())
 
-        self.scene.addItem(self.image_item)
+        self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
 
@@ -664,11 +670,11 @@ class AnnotationWindow(QGraphicsView):
                 delta = current_pos - self.drag_start_pos
                 new_center = self.selected_annotation.center_xy + delta
                 self.set_annotation_location(self.selected_annotation.id, new_center)
-                self.selected_annotation.create_cropped_image(self.image_item)
+                self.selected_annotation.create_cropped_image(self.image_pixmap)
                 self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
                 self.drag_start_pos = current_pos  # Update the start position for smooth dragging
         elif (self.selected_tool == "annotate" and
-              self.active_image and self.image_item and
+              self.active_image and self.image_pixmap and
               self.cursorInWindow(event.pos())):
             self.toggle_cursor_annotation(self.mapToScene(event.pos()))
         else:
@@ -694,8 +700,8 @@ class AnnotationWindow(QGraphicsView):
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
 
     def cursorInWindow(self, pos, mapped=False):
-        if self.image_item:
-            image_rect = self.image_item.boundingRect()
+        if self.image_pixmap:
+            image_rect = QGraphicsPixmapItem(self.image_pixmap).boundingRect()
             if not mapped:
                 pos = self.mapToScene(pos)
             return image_rect.contains(pos)
@@ -729,7 +735,7 @@ class AnnotationWindow(QGraphicsView):
             self.labelSelected.emit(annotation.label.id)
             # Crop the image from annotation using current image item
             if not self.selected_annotation.cropped_image:
-                self.selected_annotation.create_cropped_image(self.image_item)
+                self.selected_annotation.create_cropped_image(self.image_pixmap)
             # Display the selected annotation in confidence window
             self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
@@ -751,7 +757,7 @@ class AnnotationWindow(QGraphicsView):
         for annotation_id, annotation in self.annotations_dict.items():
             if annotation.image_path == self.current_image_path:
                 annotation.create_graphics_item(self.scene)
-                annotation.create_cropped_image(self.image_item)
+                annotation.create_cropped_image(self.image_pixmap)
 
                 # Connect update signals
                 annotation.selected.connect(self.select_annotation)
@@ -774,7 +780,7 @@ class AnnotationWindow(QGraphicsView):
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
             return
 
-        if not self.active_image or not self.image_item or not self.cursorInWindow(scene_pos, mapped=True):
+        if not self.active_image or not self.image_pixmap or not self.cursorInWindow(scene_pos, mapped=True):
             return
 
         if annotation is None:
@@ -788,7 +794,7 @@ class AnnotationWindow(QGraphicsView):
                                     transparency=self.transparency)
 
         annotation.create_graphics_item(self.scene)
-        annotation.create_cropped_image(self.image_item)
+        annotation.create_cropped_image(self.image_pixmap)
 
         # Connect update signals
         annotation.selected.connect(self.select_annotation)
@@ -828,7 +834,7 @@ class AnnotationWindow(QGraphicsView):
         if self.current_image_path == image_path:
             self.scene.clear()
             self.current_image_path = None
-            self.image_item = None
+            self.image_pixmap = None
             self.active_image = False  # Reset image_set flag
 
     def delete_annotations_for_label(self, label):
@@ -1032,8 +1038,8 @@ class AnnotationSamplingDialog(QDialog):
                                                            num_annotations,
                                                            annotation_size,
                                                            margins,
-                                                           self.annotation_window.image_item.pixmap().width(),
-                                                           self.annotation_window.image_item.pixmap().height())
+                                                           self.annotation_window.image_pixmap.width(),
+                                                           self.annotation_window.image_pixmap.height())
 
         self.draw_annotation_previews(margins)
 
@@ -1042,7 +1048,7 @@ class AnnotationSamplingDialog(QDialog):
         margin_x_min, margin_y_min, margin_x_max, margin_y_max = margins
 
         self.preview_scene.clear()
-        pixmap = self.annotation_window.image_item.pixmap()
+        pixmap = self.annotation_window.image_pixmap
         if pixmap:
             # Add the image to the scene
             self.preview_scene.addItem(QGraphicsPixmapItem(pixmap))
@@ -1142,17 +1148,18 @@ class AnnotationSamplingDialog(QDialog):
         progress_bar.start_progress(num_annotations)
 
         for image_path in image_paths:
+            # Load the QImage
             image = QImage(image_path)
-            image_width = image.width()
-            image_height = image.height()
-            image_item = QGraphicsPixmapItem(QPixmap(image))
+            # Get the pixmap once
+            image_pixmap = QPixmap(image)
+
             # Sample the annotation, given params
             annotations = self.sample_annotations(method,
                                                   num_annotations,
                                                   annotation_size,
                                                   margins,
-                                                  image_width,
-                                                  image_height)
+                                                  image_pixmap.width(),
+                                                  image_pixmap.height())
 
             for annotation in annotations:
                 x, y, size = annotation
@@ -1167,7 +1174,7 @@ class AnnotationSamplingDialog(QDialog):
 
                 if self.make_predictions:
                     # Create the cropped image now
-                    new_annotation.create_cropped_image(image_item)
+                    new_annotation.create_cropped_image(image_pixmap)
 
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation

@@ -3,7 +3,7 @@ import os
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QMenu, QLineEdit,
                              QHBoxLayout, QTableWidget, QTableWidgetItem)
 
-from PyQt5.QtGui import QImage
+from PyQt5.QtGui import QImage, QPixmapCache
 from PyQt5.QtCore import Qt, pyqtSignal
 
 import warnings
@@ -110,6 +110,7 @@ class ImageWindow(QWidget):
 
         # Clear the previous image from memory
         if self.selected_row is not None and self.filtered_image_paths[self.selected_row] in self.images:
+            self.images[self.filtered_image_paths[self.selected_row]] = None
             del self.images[self.filtered_image_paths[self.selected_row]]
 
         image = QImage(image_path)  # Load the image only when needed
