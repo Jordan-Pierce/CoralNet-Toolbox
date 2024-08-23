@@ -2,7 +2,7 @@
 
 
 <p align="center">
-  <img src="./Figures/CoralNet-Toolbox.png" alt="CoralNet-Toolbox">
+  <img src="figures/CoralNet-Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
 ---
@@ -34,7 +34,7 @@ a GUI; these scripts currently include the following:
 - `Points`: Sample points from images (Uniform, Random, Stratified)
 
 <p align="center">
-  <img src="Figures/toolbox_qt.PNG" alt="CoralNet-Toolbox-Features">
+  <img src="figures/toolbox_qt.PNG" alt="CoralNet-Toolbox-Features">
 </p>
 
 #### **How to use**
