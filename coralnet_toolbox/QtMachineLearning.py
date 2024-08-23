@@ -278,7 +278,6 @@ class CreateDatasetDialog(QDialog):
         if self.updating_summary_statistics:
             return
 
-        # Allow for updating
         self.updating_summary_statistics = True
 
         # Split the data by images
@@ -303,21 +302,20 @@ class CreateDatasetDialog(QDialog):
         for row in range(self.label_counts_table.rowCount()):
             include_checkbox = self.label_counts_table.cellWidget(row, 0)
             label = self.label_counts_table.item(row, 1).text()
+            total_count = sum(1 for a in annotations if a.label.short_label_code == label)
             if include_checkbox.isChecked():
-                total_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
                 train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
                 val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
                 test_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
-
-                self.label_counts_table.item(row, 2).setText(str(total_count))
-                self.label_counts_table.item(row, 3).setText(str(train_count))
-                self.label_counts_table.item(row, 4).setText(str(val_count))
-                self.label_counts_table.item(row, 5).setText(str(test_count))
             else:
-                self.label_counts_table.item(row, 2).setText("0")
-                self.label_counts_table.item(row, 3).setText("0")
-                self.label_counts_table.item(row, 4).setText("0")
-                self.label_counts_table.item(row, 5).setText("0")
+                train_count = 0
+                val_count = 0
+                test_count = 0
+
+            self.label_counts_table.item(row, 2).setText(str(total_count))
+            self.label_counts_table.item(row, 3).setText(str(train_count))
+            self.label_counts_table.item(row, 4).setText(str(val_count))
+            self.label_counts_table.item(row, 5).setText(str(test_count))
 
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
