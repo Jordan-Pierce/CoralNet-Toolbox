@@ -152,7 +152,10 @@ class ImageWindow(QWidget):
         image_path = self.filtered_image_paths[row]
         self.tableWidget.removeRow(row)
         self.image_paths.remove(image_path)
-        self.filtered_image_paths.remove(image_path)
+
+        if image_path in self.filtered_image_paths:
+            self.filtered_image_paths.remove(image_path)
+
         self.annotation_window.delete_image(image_path)
         self.main_window.imported_image_paths.discard(image_path)
 
