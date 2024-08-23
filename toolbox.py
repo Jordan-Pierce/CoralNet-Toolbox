@@ -11,6 +11,7 @@ from Toolbox.Tools.Upload import upload
 
 from Toolbox.Tools.Patches import patches
 from Toolbox.Tools.Visualize import visualize
+from Toolbox.Tools.ToYOLO import to_yolo
 from Toolbox.Tools.Points import points
 from Toolbox.Tools.Projector import projector
 from Toolbox.Tools.Spotlight import spotlight
@@ -40,8 +41,8 @@ from Toolbox.Tools.Segmentation import get_segmentation_optimizers
 
 from Toolbox.Tools.Common import console_user
 from Toolbox.Tools.Common import DATA_DIR
-from Toolbox.Tools.Common import PATCH_EXTRACTOR
 from Toolbox.Tools.Common import FUNC_GROUPS_LIST
+from Toolbox.Tools.Common import PATCH_EXTRACTOR
 
 from Toolbox.Tools.Patch_Extractor.Patch_Extractor import patch_extractor
 
@@ -507,6 +508,37 @@ def main():
                                           help='Percentage of samples to use.',
                                           widget='Slider',
                                           gooey_options={'min': 0, 'max': 100, 'increment': 1})
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # ToYOLO
+    # ------------------------------------------------------------------------------------------------------------------
+    toyolo_parser = subs.add_parser('ToYOLO')
+
+    # Panel 1
+    toyolo_parser_panel_1 = toyolo_parser.add_argument_group('To YOLO',
+                                                             'Convert Patch files to YOLO format',
+                                                             gooey_options={'show_border': True})
+
+    toyolo_parser_panel_1.add_argument('--patches', required=True, nargs="+",
+                                       metavar="Patch Data",
+                                       help='Patches dataframe file(s)',
+                                       widget="MultiFileChooser")
+
+    toyolo_parser_panel_1.add_argument('--output_dir', required=True,
+                                       metavar='Output Directory',
+                                       default=DATA_DIR,
+                                       help='Root directory where output will be saved',
+                                       widget="DirChooser")
+
+    toyolo_parser_panel_1.add_argument('--even_dist',
+                                       metavar="Even Distribution",
+                                       help='Downsample majority classes to be +/- N% of minority',
+                                       action="store_true",
+                                       widget='BlockCheckbox')
+
+    toyolo_parser_panel_1.add_argument('--about', type=float, default=0.25,
+                                       metavar="About",
+                                       help='Downsample majority classes by "about" +/- N% of minority class')
 
     # ------------------------------------------------------------------------------------------------------------------
     # Points
@@ -1139,6 +1171,9 @@ def main():
 
         if args.command == 'Points':
             points(args)
+
+        if args.command == 'ToYOLO':
+            to_yolo(args)
 
         if args.command == 'Classification':
             classification(args)

@@ -288,7 +288,8 @@ def plot_matrix(ax, matrix, class_names, title):
     ax.set_yticks(np.arange(len(class_names)))
     ax.set_xticklabels(class_names)
     ax.set_yticklabels(class_names)
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
     ax.set_title(title)
     ax.figure.colorbar(im, ax=ax)
     plt.subplots_adjust(bottom=0.2)
@@ -439,7 +440,6 @@ class Epoch:
         """
         # Calculate each of the metrics
         for metric_fn in self.metrics:
-
             # Micro averaged (classes are weighted based on frequency)
             micro_value = metric_fn(self.all_preds,
                                     self.all_labels,
@@ -640,6 +640,7 @@ class Dataset(BaseDataset):
     """
 
     """
+
     def __init__(
             self,
             dataframe,
@@ -791,6 +792,115 @@ def classification(args):
     # If the user provides multiple patch dataframes
     patches_df = pd.DataFrame()
 
+    args.patches = [r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_R3-3_2022-06-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_R3-1_2022-06-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_R2-2_2022-08-25\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_CC-4_2023-05-04\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_R4-1_2022-05-05\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_CD-1_2022-06-21\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R8-3_2021-12-08\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R5-5_2023-05-19\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R5-4_2022-04-18\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R5-3_2021-12-08\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R1-2_2022-04-04\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CE-4_2023-06-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CE-2_2022-05-06\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R7-1_2023-03-08\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R5-4_2023-01-12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R7-3_2023-01-11\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_R3-2_2022-06-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\NFH_CD-1_2022-06-10\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R3-3_2022-04-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R3-2_2022_08_15\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R1-3_2022-06-23\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_CB-4_2023-05-04\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_R2-1_2022-06-23\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_R1-1_2022-05-05\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R5-3_2023-06-15\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R5-2_2021-12-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R5-1_2021-12-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R1-5_2024-04-25\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R1-5_2023-05-17\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R1-4_2022-04-04\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CE-3_2022-05-06\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CC-4_2023-03-07\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CA-5_2023-06-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_CB-1_2024-05-21\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R6-1_2023-03-13\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R5-3_2023_01_12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R3-4_2022-06-23\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R1-1_2022-07-06\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CF-1_2023-05-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CC-3_2023-05-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_CE-3_2023-05-18\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_R2-1_2022-06-30\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_CB-1_2022-06-28\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\NFH_R3-1_2022-05-13\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\NFH_CB-1_2022-06-10\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R4-3_2022-04-28\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R3-4_2022-04-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_CC-3_2023-06-28\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_R5-1_2022-06-02\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_R3-1_2022-06-13\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_CB-1_2022-05-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R8-5_2023-05-19\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R8-4_2022-05-06\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R1-1_2023-05-19\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_R5-1_2024-05-17\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R3-5_2023-01-12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_R3-3_2023-03-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R9-1_2023-03-08\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R7-4_2022-07-06\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R7-1_2023-05-22\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_CE-4_2023-04-14\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_CB-2_2022-06-28\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_CA-3_2022_08_12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\SOMB_CA-2_2022-08-15\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\NFH_R2-1_2022-05-12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\NFH_CA-1_2022-05-12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R6-2_2023-06-28\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R6-1_2023-02-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R4-4_2022-04-28\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R4-2_2022-05-05\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R1-2_2023-05-04\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_R1-1_2022-06-23\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_CE-1_2022-05-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R8-2_2021-12-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_R1-3_2022-02-08\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CC-3_2023-06-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CC-2_2023-06-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CA-4_2023-03-07\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\EDR_CA-3_2023-06-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_R6-1_2024-05-17\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_CC-1_2024-05-21\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CE-1_2023-04-14\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CD-1_2023-04-14\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CC-2_2023-05-11\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R7-2_2023-06-02\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R6-3_2023_01-10\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R10-1_2023-01-05\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_CD-3_2023-04-14\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_CC-1_2023-04-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\NFH_R1-1_2022-05-12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\LOOE_CB-3_2022-04-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_CC-1_2024-04-19\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\HSHOE_CA-1_2023-01-10\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_R6-1_2022-06-20\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_R5-1_2023-01-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_R3-1_2022-06-28\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_R1-1_2023-01-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_CE-1_2023-01-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_CD-1_2022_06-20\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_CC-1_2022-06-20\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CHCA_CB-1_2022-06-20\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CB-5_2023_01_12\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CB-4_2023-03-29\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFS_CA-1_2023-04-13\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_R6-4_2023-01-05\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_CD-4_2023-04-27\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_CB-1_2023-05-09\patches.csv",
+                    r"B:\CoralNet-Toolbox\Data\MIR_AI\patches\CFN_CA-1_2023-04-13\patches.csv"]
+
     for patches_path in args.patches:
         if os.path.exists(patches_path):
             # Patch dataframe
@@ -846,7 +956,7 @@ def classification(args):
 
         # Freezing percentage of the encoder
         if type(args.freeze_encoder) == int:
-                args.freeze_encoder = args.freeze_encoder / 100
+            args.freeze_encoder = args.freeze_encoder / 100
 
         num_params = len(list(model.encoder.parameters()))
         freeze_params = int(num_params * args.freeze_encoder)
@@ -909,8 +1019,13 @@ def classification(args):
     print("\n###############################################")
     print("Creating Datasets")
     print("###############################################\n")
+    site_names = [os.path.dirname(p) for p in patches_df['Image Path'].values]
+    patches_df['Site Name'] = site_names
+
+    var = 'Image Name'
+
     # Names of all images; sets to be split based on images
-    image_names = patches_df['Image Name'].unique()
+    image_names = patches_df[var].unique()
 
     # Split the Images into training, validation, and test sets (70/20/10)
     # We split based on the image names, so that we don't have the same image in multiple sets.
@@ -918,9 +1033,9 @@ def classification(args):
     validation_images, testing_images = train_test_split(temp_images, test_size=0.33, random_state=42)
 
     # Create training, validation, and test dataframes
-    train_df = patches_df[patches_df['Image Name'].isin(training_images)]
-    valid_df = patches_df[patches_df['Image Name'].isin(validation_images)]
-    test_df = patches_df[patches_df['Image Name'].isin(testing_images)]
+    train_df = patches_df[patches_df[var].isin(training_images)]
+    valid_df = patches_df[patches_df[var].isin(validation_images)]
+    test_df = patches_df[patches_df[var].isin(testing_images)]
 
     if args.even_dist:
         # Downsample majority classes to make even distribution (+/- N%)
@@ -966,7 +1081,7 @@ def classification(args):
     # Data Exploration
     # ------------------------------------------------------------------------------------------------------------------
 
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(int(10 + num_classes * 0.5), 15))
 
     # Set the same y-axis limits for all subplots
     ymin = 0
@@ -1040,7 +1155,6 @@ def classification(args):
 
     # Loop through a few samples
     for idx, save_path in enumerate(sample_dataset.plot_samples(n=10)):
-
         # Write to tensorboard
         train_writer.add_image(f'Training_Samples',
                                np.array(Image.open(save_path)),
