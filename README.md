@@ -17,21 +17,12 @@ pip install coralnet-toolbox
 coralnet-toolbox
 ```
 
-### [**About CoralNet**](https://coralnet.ucsd.edu/source/)
-Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 
-benefits to humans. However, they are under threat due to climate change, pollution, overfishing, 
-and other factors. CoralNet is a platform designed to aid researchers and scientists in studying 
-these important ecosystems and their inhabitants.
-
-CoralNet allows users to upload photos of coral reefs and annotate them with detailed information 
-about the coral species and other features present in the images. The platform also provides tools 
-for analyzing the annotated images, and create patch-based image classifiers. 
+For information on how to use, check out the [docs](./docs)
 
 ### [**Tools**](Toolbox/README.md#coralnet-toolbox)
 
 The `CoralNet Toolbox` is an **unofficial** codebase that can be used to augment processes associated
-with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
-a GUI; these scripts currently include the following:
+with those on CoralNet. The toolbox includes the following:
 
 - `API`: Use the CoralNet API to get predictions from any source model
 - `Download`: Download all data associated with a source
@@ -47,10 +38,7 @@ a GUI; these scripts currently include the following:
   <img src="figures/toolbox_qt.PNG" alt="CoralNet-Toolbox-Features">
 </p>
 
-#### **How to use**
-To use these tools, you should have access to the CoralNet platform. Once you have an account, 
-you can use the `CoralNet-Toolbox` codebase to programmatically interact with the platform and perform 
-various other tasks locally.
+#### **How to Install**
 
 To install, do the following (preferably) within an `Anaconda` environment:
 ```bash
@@ -82,11 +70,26 @@ Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
 - `Torch 2.0.0 + CUDA 11.8`
 
 
+### [**About CoralNet**](https://coralnet.ucsd.edu/source/)
+Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 
+benefits to humans. However, they are under threat due to climate change, pollution, overfishing, 
+and other factors. CoralNet is a platform designed to aid researchers and scientists in studying 
+these important ecosystems and their inhabitants.
+
+CoralNet allows users to upload photos of coral reefs and annotate them with detailed information 
+about the coral species and other features present in the images. The platform also provides tools 
+for analyzing the annotated images, and create patch-based image classifiers. 
+
+The CoralNet Toolbox is an unofficial tool developed to augment processes associated with analyses that 
+use CoralNet and Coral Point Count (CPCe).
+
+
 ### **Conclusion**
 In summary, this repository provides a range of tools that can assist with interacting with 
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be 
 useful for researchers and scientists working with coral reefs, as well as for students and
 hobbyists interested in learning more about these important ecosystems.
+
 
 ### Citation
 
