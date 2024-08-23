@@ -1145,7 +1145,7 @@ class AnnotationSamplingDialog(QDialog):
         # Create and show the progress bar
         progress_bar = ProgressBar(self, title="Sampling Annotations")
         progress_bar.show()
-        progress_bar.start_progress(num_annotations)
+        progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
             # Load the QImage
@@ -1179,9 +1179,9 @@ class AnnotationSamplingDialog(QDialog):
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
 
-                # Update the progress bar
-                progress_bar.update_progress()
-                QApplication.processEvents()  # Update GUI
+            # Update the progress bar
+            progress_bar.update_progress()
+            QApplication.processEvents()  # Update GUI
 
         # Stop the progress bar
         progress_bar.stop_progress()
