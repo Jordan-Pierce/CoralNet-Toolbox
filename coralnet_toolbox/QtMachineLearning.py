@@ -10,7 +10,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem)
+                             QGroupBox, QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem)
 
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -58,7 +58,7 @@ class CreateDatasetDialog(QDialog):
         self.train_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
         self.val_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
         self.test_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
-        self.class_filter_list.itemChanged.connect(self.update_summary_statistics)
+        self.label_counts_table.cellChanged.connect(self.update_summary_statistics)
 
         self.selected_labels = []
         self.selected_annotations = []
@@ -105,26 +105,16 @@ class CreateDatasetDialog(QDialog):
 
         layout.addLayout(split_layout)
 
-        # Label Code Selection
-        self.label_code_combo = QComboBox()
-        self.label_code_combo.addItems(["Short Label Codes", "Long Label Codes"])
-        self.label_code_combo.currentTextChanged.connect(self.update_class_filter_list)
-        self.label_code_combo.currentTextChanged.connect(self.update_summary_statistics)
-        self.label_code_combo.setCurrentText("Short Label Codes")
-        layout.addWidget(QLabel("Select Label Code Type:"))
-        layout.addWidget(self.label_code_combo)
-
         # Class Filtering
         self.class_filter_group = QGroupBox("Class Filtering")
         self.class_filter_layout = QVBoxLayout()
-        self.class_filter_list = QListWidget()
-        self.class_filter_layout.addWidget(self.class_filter_list)
+
+        # Label Counts Table
+        self.label_counts_table = QTableWidget(0, 6)
+        self.label_counts_table.setHorizontalHeaderLabels(["Include", "Label", "Total", "Train", "Val", "Test"])
+        self.class_filter_layout.addWidget(self.label_counts_table)
         self.class_filter_group.setLayout(self.class_filter_layout)
         layout.addWidget(self.class_filter_group)
-
-        # Summary Statistics
-        self.summary_label = QLabel()
-        layout.addWidget(self.summary_label)
 
         # Ready Status
         self.ready_label = QLabel()
@@ -148,27 +138,39 @@ class CreateDatasetDialog(QDialog):
         if dir_path:
             self.output_dir_edit.setText(dir_path)
 
-    def get_selected_label_code_type(self):
-        return self.label_code_combo.currentText()
-
-    def update_class_filter_list(self):
-        self.populate_class_filter_list()
-
     def populate_class_filter_list(self):
-        self.class_filter_list.clear()
-        label_code_type = self.get_selected_label_code_type()
+        self.label_counts_table.setRowCount(0)
 
-        if label_code_type == 'Short Label Codes':
-            unique_labels = set(a.label.short_label_code for a in self.annotation_window.annotations_dict.values())
-        else:
-            unique_labels = set(a.label.long_label_code for a in self.annotation_window.annotations_dict.values())
-
-        for label in unique_labels:
+        # Create a dictionary to count occurrences of each label
+        label_counts = {}
+        for annotation in self.annotation_window.annotations_dict.values():
+            label = annotation.label.short_label_code
             if label != 'Review':
-                item = QListWidgetItem(label)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                item.setCheckState(Qt.Checked)
-                self.class_filter_list.addItem(item)
+                if label in label_counts:
+                    label_counts[label] += 1
+                else:
+                    label_counts[label] = 1
+
+        # Populate the label counts table with labels and their counts
+        row = 0
+        for label, count in label_counts.items():
+            include_checkbox = QCheckBox()
+            include_checkbox.setChecked(True)
+            label_item = QTableWidgetItem(label)
+            total_item = QTableWidgetItem(str(count))
+            train_item = QTableWidgetItem("0")
+            val_item = QTableWidgetItem("0")
+            test_item = QTableWidgetItem("0")
+
+            self.label_counts_table.insertRow(row)
+            self.label_counts_table.setCellWidget(row, 0, include_checkbox)
+            self.label_counts_table.setItem(row, 1, label_item)
+            self.label_counts_table.setItem(row, 2, total_item)
+            self.label_counts_table.setItem(row, 3, train_item)
+            self.label_counts_table.setItem(row, 4, val_item)
+            self.label_counts_table.setItem(row, 5, test_item)
+
+            row += 1
 
     def split_data(self):
         self.train_ratio = self.train_ratio_spinbox.value()
@@ -181,9 +183,18 @@ class CreateDatasetDialog(QDialog):
         train_split = int(len(images) * self.train_ratio)
         val_split = int(len(images) * (self.train_ratio + self.val_ratio))
 
-        self.train_images = images[:train_split]
-        self.val_images = images[train_split:val_split]
-        self.test_images = images[val_split:]
+        # Initialize splits
+        self.train_images = []
+        self.val_images = []
+        self.test_images = []
+
+        # Assign images to splits based on ratios
+        if self.train_ratio > 0:
+            self.train_images = images[:train_split]
+        if self.val_ratio > 0:
+            self.val_images = images[train_split:val_split]
+        if self.test_ratio > 0:
+            self.test_images = images[val_split:]
 
     def determine_splits(self):
         self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
@@ -191,18 +202,48 @@ class CreateDatasetDialog(QDialog):
         self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
 
     def check_label_distribution(self):
-        for label in self.selected_labels:
-            if self.get_selected_label_code_type() == "Short Label Codes":
-                train_label_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
-                val_label_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
-                test_label_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
-            else:
-                train_label_count = sum(1 for a in self.train_annotations if a.label.long_label_code == label)
-                val_label_count = sum(1 for a in self.val_annotations if a.label.long_label_code == label)
-                test_label_count = sum(1 for a in self.test_annotations if a.label.long_label_code == label)
+        # Check if the train ratio is greater than 0
+        train_ratio = self.train_ratio_spinbox.value()
+        val_ratio = self.val_ratio_spinbox.value()
+        test_ratio = self.test_ratio_spinbox.value()
 
-            if train_label_count == 0 or val_label_count == 0 or test_label_count == 0:
+        # Ensure there is at least one train set
+        if train_ratio == 0:
+            return False
+
+        # Initialize dictionaries to store label counts for each split
+        train_label_counts = {}
+        val_label_counts = {}
+        test_label_counts = {}
+
+        # Count annotations for each label in each split
+        for annotation in self.train_annotations:
+            label = annotation.label.short_label_code
+            train_label_counts[label] = train_label_counts.get(label, 0) + 1
+
+        for annotation in self.val_annotations:
+            label = annotation.label.short_label_code
+            val_label_counts[label] = val_label_counts.get(label, 0) + 1
+
+        for annotation in self.test_annotations:
+            label = annotation.label.short_label_code
+            test_label_counts[label] = test_label_counts.get(label, 0) + 1
+
+        # Check the conditions for each split
+        for label in self.selected_labels:
+            if train_ratio > 0 and (label not in train_label_counts or train_label_counts[label] == 0):
                 return False
+            if val_ratio > 0 and (label not in val_label_counts or val_label_counts[label] == 0):
+                return False
+            if test_ratio > 0 and (label not in test_label_counts or test_label_counts[label] == 0):
+                return False
+
+        # Check if there are any labels in splits with a ratio of 0
+        if val_ratio == 0 and len(val_label_counts) > 0:
+            return False
+        if test_ratio == 0 and len(test_label_counts) > 0:
+            return False
+
         return True
 
     def update_summary_statistics(self):
@@ -210,16 +251,16 @@ class CreateDatasetDialog(QDialog):
         self.split_data()
 
         # Selected labels based on user's selection
-        matching_items = self.class_filter_list.findItems("", Qt.MatchContains)
-        self.selected_labels = [item.text() for item in matching_items if item.checkState() == Qt.Checked]
+        self.selected_labels = []
+        for row in range(self.label_counts_table.rowCount()):
+            include_checkbox = self.label_counts_table.cellWidget(row, 0)
+            if include_checkbox.isChecked():
+                label = self.label_counts_table.item(row, 1).text()
+                self.selected_labels.append(label)
 
         # All annotations in project
         annotations = list(self.annotation_window.annotations_dict.values())
-
-        if self.get_selected_label_code_type() == "Short Label Codes":
-            self.selected_annotations = [a for a in annotations if a.label.short_label_code in self.selected_labels]
-        else:
-            self.selected_annotations = [a for a in annotations if a.label.long_label_code in self.selected_labels]
+        self.selected_annotations = [a for a in annotations if a.label.short_label_code in self.selected_labels]
 
         total_annotations = len(self.selected_annotations)
         total_classes = len(self.selected_labels)
@@ -231,11 +272,18 @@ class CreateDatasetDialog(QDialog):
         val_count = len(self.val_annotations)
         test_count = len(self.test_annotations)
 
-        self.summary_label.setText(f"Total Annotations: {total_annotations}\n"
-                                   f"Total Classes: {total_classes}\n"
-                                   f"Train Samples: {train_count}\n"
-                                   f"Validation Samples: {val_count}\n"
-                                   f"Test Samples: {test_count}")
+        # Update the label counts table
+        for row in range(self.label_counts_table.rowCount()):
+            label = self.label_counts_table.item(row, 1).text()
+            total_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
+            train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
+            val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
+            test_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
+
+            self.label_counts_table.item(row, 2).setText(str(total_count))
+            self.label_counts_table.item(row, 3).setText(str(train_count))
+            self.label_counts_table.item(row, 4).setText(str(val_count))
+            self.label_counts_table.item(row, 5).setText(str(test_count))
 
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
@@ -249,7 +297,8 @@ class CreateDatasetDialog(QDialog):
         test_ratio = self.test_ratio_spinbox.value()
 
         if not self.ready_status:
-            QMessageBox.warning(self, "Dataset Not Ready",
+            QMessageBox.warning(self,
+                                "Dataset Not Ready",
                                 "Not all labels are present in all sets.\n"
                                 "Please adjust your selections or sample more data.")
             return
@@ -275,14 +324,6 @@ class CreateDatasetDialog(QDialog):
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'val')
         test_dir = os.path.join(output_dir_path, 'test')
-        os.makedirs(train_dir, exist_ok=True)
-        os.makedirs(val_dir, exist_ok=True)
-        os.makedirs(test_dir, exist_ok=True)
-
-        for label in self.selected_labels:
-            os.makedirs(os.path.join(train_dir, label), exist_ok=True)
-            os.makedirs(os.path.join(val_dir, label), exist_ok=True)
-            os.makedirs(os.path.join(test_dir, label), exist_ok=True)
 
         # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -303,6 +344,9 @@ class CreateDatasetDialog(QDialog):
 
         # Organize based on image
         image_paths = list(set(a.image_path for a in annotations))
+
+        if not image_paths:
+            return
 
         progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
         progress_bar.show()
@@ -333,6 +377,7 @@ class CreateDatasetDialog(QDialog):
                     else:
                         label_code = image_annotation.label.long_label_code
 
+                    # Split directory / label directory / image file
                     output_path = os.path.join(split_dir, label_code)
                     os.makedirs(output_path, exist_ok=True)
                     output_filename = f"{label_code}_{image_annotation.id}.jpg"
@@ -471,14 +516,14 @@ class TrainModelDialog(QDialog):
         self.batch_spinbox.setMinimum(-1)
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(16)
-        self.form_layout.addRow("Batch:", self.batch_spinbox)
+        self.form_layout.addRow("Batch Size:", self.batch_spinbox)
 
         # Imgsz
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(224)
-        self.form_layout.addRow("Imgsz:", self.imgsz_spinbox)
+        self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Save
         self.save_checkbox = QCheckBox()
@@ -499,11 +544,6 @@ class TrainModelDialog(QDialog):
         self.workers_spinbox.setValue(8)
         self.form_layout.addRow("Workers:", self.workers_spinbox)
 
-        # Exist Ok
-        self.exist_ok_checkbox = QCheckBox()
-        self.exist_ok_checkbox.setChecked(False)
-        self.form_layout.addRow("Exist Ok:", self.exist_ok_checkbox)
-
         # Pretrained
         self.pretrained_checkbox = QCheckBox()
         self.pretrained_checkbox.setChecked(True)
@@ -515,28 +555,16 @@ class TrainModelDialog(QDialog):
         self.optimizer_combo.setCurrentText("auto")
         self.form_layout.addRow("Optimizer:", self.optimizer_combo)
 
-        # Verbose
-        self.verbose_checkbox = QCheckBox()
-        self.verbose_checkbox.setChecked(True)
-        self.form_layout.addRow("Verbose:", self.verbose_checkbox)
-
-        # Fraction
-        self.fraction_spinbox = QDoubleSpinBox()
-        self.fraction_spinbox.setMinimum(0.1)
-        self.fraction_spinbox.setMaximum(1.0)
-        self.fraction_spinbox.setValue(1.0)
-        self.form_layout.addRow("Fraction:", self.fraction_spinbox)
-
         # Freeze
         self.freeze_edit = QLineEdit()
-        self.form_layout.addRow("Freeze:", self.freeze_edit)
+        self.form_layout.addRow("Freeze Layers:", self.freeze_edit)
 
         # Lr0
         self.lr0_spinbox = QDoubleSpinBox()
         self.lr0_spinbox.setMinimum(0.0001)
         self.lr0_spinbox.setMaximum(1.0)
         self.lr0_spinbox.setValue(0.01)
-        self.form_layout.addRow("Lr0:", self.lr0_spinbox)
+        self.form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
 
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
@@ -545,10 +573,22 @@ class TrainModelDialog(QDialog):
         self.dropout_spinbox.setValue(0.0)
         self.form_layout.addRow("Dropout:", self.dropout_spinbox)
 
+        # Fraction
+        self.fraction_spinbox = QDoubleSpinBox()
+        self.fraction_spinbox.setMinimum(0.1)
+        self.fraction_spinbox.setMaximum(1.0)
+        self.fraction_spinbox.setValue(1.0)
+        self.form_layout.addRow("Fraction:", self.fraction_spinbox)
+
         # Val
         self.val_checkbox = QCheckBox()
         self.val_checkbox.setChecked(True)
-        self.form_layout.addRow("Val:", self.val_checkbox)
+        self.form_layout.addRow("Validation:", self.val_checkbox)
+
+        # Verbose
+        self.verbose_checkbox = QCheckBox()
+        self.verbose_checkbox.setChecked(True)
+        self.form_layout.addRow("Verbose:", self.verbose_checkbox)
 
         # Add custom parameters section
         self.custom_params_layout = QVBoxLayout()
@@ -597,7 +637,6 @@ class TrainModelDialog(QDialog):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
             self.model_edit.setText(file_path)
-
 
     def setup_classification_tab(self):
         layout = QVBoxLayout()
@@ -670,7 +709,6 @@ class TrainModelDialog(QDialog):
             'save': self.save_checkbox.isChecked(),
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
-            'exist_ok': self.exist_ok_checkbox.isChecked(),
             'pretrained': self.pretrained_checkbox.isChecked(),
             'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_checkbox.isChecked(),
@@ -713,10 +751,6 @@ class TrainModelDialog(QDialog):
         message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
 
-        # Minimization of windows
-        self.showMinimized()
-        self.parent().showMinimized()
-
         # Get training parameters
         params = self.get_training_parameters()
 
@@ -731,12 +765,10 @@ class TrainModelDialog(QDialog):
         pass
 
     def on_training_completed(self):
-        self.showNormal()
         message = "Model training has successfully been completed."
         QMessageBox.information(self, "Model Training Status", message)
 
     def on_training_error(self, error_message):
-        self.showNormal()
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
 

@@ -4,6 +4,10 @@
 #   - progress bar for exporting annotations JSON
 #   - Deploy model after training?
 #   - Short or Long code for ML?
+#   - if import labels are too long, add "..."
+#   - filter images that contain annotations
+#   - show a distribution of data in the create dataset
+#   - allow only training dataset
 
 from coralnet_toolbox.QtMain import MainWindow
 from PyQt5.QtWidgets import QApplication
