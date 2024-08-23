@@ -3,7 +3,7 @@ import os
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QMenu, QLineEdit,
                              QHBoxLayout, QTableWidget, QTableWidgetItem)
 
-from PyQt5.QtGui import QImage, QPixmapCache
+from PyQt5.QtGui import QImage
 from PyQt5.QtCore import Qt, pyqtSignal
 
 import warnings
@@ -26,6 +26,26 @@ class ImageWindow(QWidget):
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
+
+        # Create a horizontal layout for the checkboxes
+        self.checkbox_layout = QHBoxLayout()
+        self.layout.addLayout(self.checkbox_layout)
+
+        # Add checkboxes for filtering images based on annotations
+        self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
+        self.has_annotations_checkbox.stateChanged.connect(self.update_has_annotations_checkbox)
+        self.has_annotations_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_layout.addWidget(self.has_annotations_checkbox)
+
+        self.needs_review_checkbox = QCheckBox("Needs Review", self)
+        self.needs_review_checkbox.stateChanged.connect(self.update_needs_review_checkbox)
+        self.needs_review_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_layout.addWidget(self.needs_review_checkbox)
+
+        self.no_annotations_checkbox = QCheckBox("No Annotations", self)
+        self.no_annotations_checkbox.stateChanged.connect(self.update_no_annotations_checkbox)
+        self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_layout.addWidget(self.no_annotations_checkbox)
 
         # Create a horizontal layout for the search bar
         self.search_layout = QHBoxLayout()
@@ -219,7 +239,31 @@ class ImageWindow(QWidget):
         self.load_image(new_row, 0)
 
     def filter_images(self, text):
-        self.filtered_image_paths = [path for path in self.image_paths if text.lower() in os.path.basename(path).lower()]
+        # Clear the text in the search bar if any checkbox is checked
+        if self.has_annotations_checkbox.isChecked() or self.needs_review_checkbox.isChecked() or self.no_annotations_checkbox.isChecked():
+            self.search_bar.clear()
+            text = ""  # Ensure the text filter is reset
+
+        # Start with the full list of image paths
+        self.filtered_image_paths = self.image_paths
+
+        # Apply the annotation filter based on the checkbox states
+        has_annotations = self.has_annotations_checkbox.isChecked()
+        needs_review = self.needs_review_checkbox.isChecked()
+        no_annotations = self.no_annotations_checkbox.isChecked()
+
+        if has_annotations or needs_review or no_annotations:
+            self.filtered_image_paths = [p for p in self.filtered_image_paths if
+                                         (has_annotations and self.annotation_window.get_image_annotations(p)) or
+                                         (needs_review and self.annotation_window.get_image_review_annotations(p)) or
+                                         (no_annotations and not self.annotation_window.get_image_annotations(p))]
+
+        # Apply the text filter if text is provided
+        if isinstance(text, str) and text:
+            self.filtered_image_paths = [p for p in self.filtered_image_paths if
+                                         text.lower() in os.path.basename(p).lower()]
+
+        # Update the table widget with the filtered image paths
         self.tableWidget.setRowCount(0)  # Clear the table
         for path in self.filtered_image_paths:
             row_position = self.tableWidget.rowCount()
@@ -233,3 +277,36 @@ class ImageWindow(QWidget):
         if self.selected_row is not None and self.selected_row >= len(self.filtered_image_paths):
             self.selected_row = None
             self.update_current_image_index_label()
+
+    def update_has_annotations_checkbox(self):
+        if self.has_annotations_checkbox.isChecked():
+            self.has_annotations_checkbox.setChecked(True)
+            self.needs_review_checkbox.setChecked(False)
+            self.no_annotations_checkbox.setChecked(False)
+            return
+
+        if not self.has_annotations_checkbox.isChecked():
+            self.has_annotations_checkbox.setChecked(False)
+            return
+
+    def update_needs_review_checkbox(self):
+        if self.needs_review_checkbox.isChecked():
+            self.needs_review_checkbox.setChecked(True)
+            self.has_annotations_checkbox.setChecked(False)
+            self.no_annotations_checkbox.setChecked(False)
+            return
+
+        if not self.needs_review_checkbox.isChecked():
+            self.needs_review_checkbox.setChecked(False)
+            return
+
+    def update_no_annotations_checkbox(self):
+        if self.no_annotations_checkbox.isChecked():
+            self.no_annotations_checkbox.setChecked(True)
+            self.has_annotations_checkbox.setChecked(False)
+            self.needs_review_checkbox.setChecked(False)
+            return
+
+        if not self.no_annotations_checkbox.isChecked():
+            self.no_annotations_checkbox.setChecked(False)
+            return

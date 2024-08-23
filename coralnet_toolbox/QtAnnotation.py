@@ -775,6 +775,17 @@ class AnnotationWindow(QGraphicsView):
 
         return annotations
 
+    def get_image_review_annotations(self, image_path=None):
+        if not image_path:
+            image_path = self.current_image_path
+
+        annotations = []
+        for annotation_id, annotation in self.annotations_dict.items():
+            if annotation.image_path == image_path and annotation.label.id == '-1':
+                annotations.append(annotation)
+
+        return annotations
+
     def add_annotation(self, scene_pos: QPointF, annotation=None):
         if not self.selected_label:
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
