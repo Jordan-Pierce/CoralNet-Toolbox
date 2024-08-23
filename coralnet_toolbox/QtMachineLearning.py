@@ -30,6 +30,12 @@ class CreateDatasetDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
+        self.selected_labels = []
+        self.selected_annotations = []
+
+        # Flag to prevent recursive calls
+        self.updating_summary_statistics = False
+
         self.setWindowTitle("Create Dataset")
         self.layout = QVBoxLayout(self)
 
@@ -59,9 +65,6 @@ class CreateDatasetDialog(QDialog):
         self.val_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
         self.test_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
         self.label_counts_table.cellChanged.connect(self.update_summary_statistics)
-
-        self.selected_labels = []
-        self.selected_annotations = []
 
     def setup_classification_tab(self):
         layout = QVBoxLayout()
@@ -139,6 +142,13 @@ class CreateDatasetDialog(QDialog):
             self.output_dir_edit.setText(dir_path)
 
     def populate_class_filter_list(self):
+        try:
+            # Temporarily disconnect the cellChanged signal
+            self.label_counts_table.cellChanged.disconnect()
+        except TypeError:
+            # Ignore the error if the signal was not connected
+            pass
+
         self.label_counts_table.setRowCount(0)
 
         # Create a dictionary to count occurrences of each label
@@ -156,6 +166,7 @@ class CreateDatasetDialog(QDialog):
         for label, count in label_counts.items():
             include_checkbox = QCheckBox()
             include_checkbox.setChecked(True)
+            include_checkbox.stateChanged.connect(self.on_include_checkbox_state_changed)
             label_item = QTableWidgetItem(label)
             total_item = QTableWidgetItem(str(count))
             train_item = QTableWidgetItem("0")
@@ -171,6 +182,15 @@ class CreateDatasetDialog(QDialog):
             self.label_counts_table.setItem(row, 5, test_item)
 
             row += 1
+
+        # Reconnect the cellChanged signal
+        self.label_counts_table.cellChanged.connect(self.update_summary_statistics)
+
+    def on_include_checkbox_state_changed(self, state):
+        if state == Qt.Checked:
+            self.update_summary_statistics()
+        elif state == Qt.Unchecked:
+            self.update_summary_statistics()
 
     def split_data(self):
         self.train_ratio = self.train_ratio_spinbox.value()
@@ -244,9 +264,23 @@ class CreateDatasetDialog(QDialog):
         if test_ratio == 0 and len(test_label_counts) > 0:
             return False
 
+        # Additional checks to ensure no empty splits
+        if train_ratio > 0 and len(self.train_annotations) == 0:
+            return False
+        if val_ratio > 0 and len(self.val_annotations) == 0:
+            return False
+        if test_ratio > 0 and len(self.test_annotations) == 0:
+            return False
+
         return True
 
     def update_summary_statistics(self):
+        if self.updating_summary_statistics:
+            return
+
+        # Allow for updating
+        self.updating_summary_statistics = True
+
         # Split the data by images
         self.split_data()
 
@@ -262,32 +296,34 @@ class CreateDatasetDialog(QDialog):
         annotations = list(self.annotation_window.annotations_dict.values())
         self.selected_annotations = [a for a in annotations if a.label.short_label_code in self.selected_labels]
 
-        total_annotations = len(self.selected_annotations)
-        total_classes = len(self.selected_labels)
-
         # Split the data by annotations
         self.determine_splits()
 
-        train_count = len(self.train_annotations)
-        val_count = len(self.val_annotations)
-        test_count = len(self.test_annotations)
-
         # Update the label counts table
         for row in range(self.label_counts_table.rowCount()):
+            include_checkbox = self.label_counts_table.cellWidget(row, 0)
             label = self.label_counts_table.item(row, 1).text()
-            total_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
-            train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
-            val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
-            test_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
+            if include_checkbox.isChecked():
+                total_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
+                train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
+                val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
+                test_count = sum(1 for a in self.test_annotations if a.label.short_label_code == label)
 
-            self.label_counts_table.item(row, 2).setText(str(total_count))
-            self.label_counts_table.item(row, 3).setText(str(train_count))
-            self.label_counts_table.item(row, 4).setText(str(val_count))
-            self.label_counts_table.item(row, 5).setText(str(test_count))
+                self.label_counts_table.item(row, 2).setText(str(total_count))
+                self.label_counts_table.item(row, 3).setText(str(train_count))
+                self.label_counts_table.item(row, 4).setText(str(val_count))
+                self.label_counts_table.item(row, 5).setText(str(test_count))
+            else:
+                self.label_counts_table.item(row, 2).setText("0")
+                self.label_counts_table.item(row, 3).setText("0")
+                self.label_counts_table.item(row, 4).setText("0")
+                self.label_counts_table.item(row, 5).setText("0")
 
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
-        self.ready_label.setText("Ready" if (self.ready_status and self.split_status) else "Not Ready")
+        self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
+
+        self.updating_summary_statistics = False
 
     def accept(self):
         dataset_name = self.dataset_name_edit.text()
@@ -365,23 +401,18 @@ class CreateDatasetDialog(QDialog):
             image_annotations = [a for a in annotations if a.image_path == image_path]
 
             for image_annotation in image_annotations:
-
                 if not image_annotation.cropped_image:
                     image_annotation.create_cropped_image(pixmap)
 
+                # Collect the cropped image, label
                 cropped_image = image_annotation.cropped_image
+                label_code = image_annotation.label.short_label_code
 
-                if cropped_image:
-                    if self.get_selected_label_code_type() == "Short Label Codes":
-                        label_code = image_annotation.label.short_label_code
-                    else:
-                        label_code = image_annotation.label.long_label_code
-
-                    # Split directory / label directory / image file
-                    output_path = os.path.join(split_dir, label_code)
-                    os.makedirs(output_path, exist_ok=True)
-                    output_filename = f"{label_code}_{image_annotation.id}.jpg"
-                    cropped_image.save(os.path.join(output_path, output_filename))
+                # Split directory / label directory / image file
+                output_path = os.path.join(split_dir, label_code)
+                os.makedirs(output_path, exist_ok=True)
+                output_filename = f"{label_code}_{image_annotation.id}.jpg"
+                cropped_image.save(os.path.join(output_path, output_filename))
 
             # Update the progress bar
             progress_bar.update_progress()

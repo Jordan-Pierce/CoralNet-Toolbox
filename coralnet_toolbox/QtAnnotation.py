@@ -591,12 +591,7 @@ class AnnotationWindow(QGraphicsView):
     def set_image(self, image, image_path):
 
         # Clean up
-        self.unselect_annotation()
-        self.scene.clear()
-        QPixmapCache.clear()
-
-        self.scene = QGraphicsScene(self)
-        self.setScene(self.scene)
+        self.clear_scene()
 
         self.image_pixmap = QPixmap(image)
         self.current_image_path = image_path
@@ -829,19 +824,14 @@ class AnnotationWindow(QGraphicsView):
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
 
-    def clear_annotations(self):
-        for annotation_id in list(self.annotations_dict.keys()):
-            self.delete_annotation(annotation_id)
+    def delete_annotations(self, annotations):
+        for annotation in annotations:
+            self.delete_annotation(annotation.id)
 
     def delete_image(self, image_path):
-        # Called by ImageWindow
-        annotation_ids_to_delete = [i for i, a in self.annotations_dict.items() if a.image_path == image_path]
-
-        for annotation_id in annotation_ids_to_delete:
-            annotation = self.annotations_dict[annotation_id]
-            annotation.delete()
-            del self.annotations_dict[annotation_id]
-
+        # Delete all annotations associated with image path
+        self.delete_annotations(self.get_image_annotations(image_path))
+        # Delete the image
         if self.current_image_path == image_path:
             self.scene.clear()
             self.current_image_path = None
@@ -853,6 +843,19 @@ class AnnotationWindow(QGraphicsView):
             if annotation.label.id == label.id:
                 annotation.delete()
                 del self.annotations_dict[annotation.id]
+
+    def clear_scene(self):
+        # Clean up
+        self.unselect_annotation()
+
+        # Clear the previous scene and delete its items
+        if self.scene:
+            for item in self.scene.items():
+                self.scene.removeItem(item)
+                del item
+            self.scene.deleteLater()
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
 
 
 class AnnotationSamplingDialog(QDialog):
