@@ -7,6 +7,16 @@
 
 ---
 
+### Quick Start
+
+```bash
+# Install
+pip install coralnet-toolbox
+
+# Run
+coralnet-toolbox
+```
+
 ### [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing, 
@@ -63,7 +73,7 @@ Or, if you want the latest and greatest, you can build from source:
 ```bash
 # cmd
 
-pip install .
+pip install -e .
 ```
 
 Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
