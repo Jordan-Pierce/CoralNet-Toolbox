@@ -1,5 +1,7 @@
 import os
 
+import rasterio
+
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QMenu, QLineEdit,
                              QHBoxLayout, QTableWidget, QTableWidgetItem)
 
@@ -94,7 +96,8 @@ class ImageWindow(QWidget):
         self.filtered_image_paths = []  # Subset of images based on search
         self.selected_row = None
         self.show_confirmation_dialog = True
-        self.images = {}  # Dictionary to store images and their paths
+        self.images = {}  # Dictionary to store image paths and their QImage representation
+        self.rasterio_images = {} # Dictionary to store image paths and their Rasterio representation
 
     def add_image(self, image_path):
 
@@ -132,16 +135,29 @@ class ImageWindow(QWidget):
         if self.selected_row is not None and self.filtered_image_paths[self.selected_row] in self.images:
             self.images[self.filtered_image_paths[self.selected_row]] = None
             del self.images[self.filtered_image_paths[self.selected_row]]
+            # self.rasterio_close(image_path)
 
         image = QImage(image_path)  # Load the image only when needed
         self.images[image_path] = image  # Store the image in the dictionary
+
+        rasterio_image = self.rasterio_open(image_path)
+        self.rasterio_images[image_path] = rasterio_image
+
         self.selected_row = self.filtered_image_paths.index(image_path)
         self.tableWidget.selectRow(self.selected_row)
-        self.annotation_window.set_image(image, image_path)
+        self.annotation_window.set_image(image, image_path) # TODO remove image, just keep image path
         self.imageSelected.emit(image_path)
 
         # Update the current image index label
         self.update_current_image_index_label()
+
+    def rasterio_open(self, image_path):
+        self.src = rasterio.open(image_path)
+        return self.src
+
+    def rasterio_close(self, image_path):
+        self.rasterio_images[image_path].close()
+        self.rasterio_images[image_path] = None
 
     def delete_image(self, row):
         if self.show_confirmation_dialog:
@@ -243,7 +259,9 @@ class ImageWindow(QWidget):
 
     def filter_images(self, text):
         # Clear the text in the search bar if any checkbox is checked
-        if self.has_annotations_checkbox.isChecked() or self.needs_review_checkbox.isChecked() or self.no_annotations_checkbox.isChecked():
+        if (self.has_annotations_checkbox.isChecked() or
+                self.needs_review_checkbox.isChecked() or
+                self.no_annotations_checkbox.isChecked()):
             self.search_bar.clear()
             text = ""  # Ensure the text filter is reset
 
@@ -286,6 +304,7 @@ class ImageWindow(QWidget):
             self.has_annotations_checkbox.setChecked(True)
             self.needs_review_checkbox.setChecked(False)
             self.no_annotations_checkbox.setChecked(False)
+            self.load_first_filtered_image()
             return
 
         if not self.has_annotations_checkbox.isChecked():
@@ -297,6 +316,7 @@ class ImageWindow(QWidget):
             self.needs_review_checkbox.setChecked(True)
             self.has_annotations_checkbox.setChecked(False)
             self.no_annotations_checkbox.setChecked(False)
+            self.load_first_filtered_image()
             return
 
         if not self.needs_review_checkbox.isChecked():
@@ -308,8 +328,13 @@ class ImageWindow(QWidget):
             self.no_annotations_checkbox.setChecked(True)
             self.has_annotations_checkbox.setChecked(False)
             self.needs_review_checkbox.setChecked(False)
+            self.load_first_filtered_image()
             return
 
         if not self.no_annotations_checkbox.isChecked():
             self.no_annotations_checkbox.setChecked(False)
             return
+
+    def load_first_filtered_image(self):
+        if self.filtered_image_paths:
+            self.load_image_by_path(self.filtered_image_paths[0])

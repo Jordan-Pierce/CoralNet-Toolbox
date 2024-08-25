@@ -3,7 +3,12 @@ import uuid
 import json
 import random
 
+import numpy as np
 import pandas as pd
+
+import rasterio
+from rasterio.windows import Window
+
 
 from coralnet_toolbox.QtLabel import Label
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -88,13 +93,59 @@ class Annotation(QObject):
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
 
-    def create_cropped_image(self, pixmap: QPixmap):
+    # def create_cropped_image(self, pixmap: QPixmap):
+    #     half_size = self.annotation_size / 2
+    #     rect = QRectF(self.center_xy.x() - half_size,
+    #                   self.center_xy.y() - half_size,
+    #                   self.annotation_size,
+    #                   self.annotation_size).toRect()
+    #     self.cropped_image = pixmap.copy(rect)
+    #     self.annotation_updated.emit(self)  # Notify update
+
+    def create_cropped_image(self, rasterio_src):
         half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size).toRect()
-        self.cropped_image = pixmap.copy(rect)
+
+        # Convert center coordinates to pixel coordinates
+        pixel_x = int(self.center_xy.x())
+        pixel_y = int(self.center_xy.y())
+
+        # Calculate the window for rasterio
+        window = Window(
+            col_off=max(0, pixel_x - half_size),
+            row_off=max(0, pixel_y - half_size),
+            width=min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
+            height=min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
+        )
+
+        # Read the data from rasterio
+        data = rasterio_src.read(window=window)
+
+        # Ensure the data is in the correct format for QImage
+        if data.shape[0] == 3:  # RGB image
+            data = np.transpose(data, (1, 2, 0))
+        elif data.shape[0] == 1:  # Grayscale image
+            data = np.squeeze(data)
+
+        # Normalize data to 0-255 range if it's not already
+        if data.dtype != np.uint8:
+            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
+
+        # Convert numpy array to QImage
+        height, width = data.shape[:2]
+        bytes_per_line = 3 * width if len(data.shape) == 3 else width
+        image_format = QImage.Format_RGB888 if len(data.shape) == 3 else QImage.Format_Grayscale8
+
+        # Convert numpy array to bytes
+        if len(data.shape) == 3:
+            data = data.tobytes()
+        else:
+            data = np.expand_dims(data, -1).tobytes()
+
+        q_image = QImage(data, width, height, bytes_per_line, image_format)
+
+        # Convert QImage to QPixmap
+        self.cropped_image = QPixmap.fromImage(q_image)
+
         self.annotation_updated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
@@ -251,6 +302,7 @@ class AnnotationWindow(QGraphicsView):
         self.setDragMode(QGraphicsView.NoDrag)  # Disable default drag mode
 
         self.image_pixmap = None
+        self.rasterio_image = None
         self.active_image = False  # Flag to check if the image has been set
         self.current_image_path = None
 
@@ -526,7 +578,7 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_annotation:
             if self.selected_annotation.label.id != label.id:
                 self.selected_annotation.update_label(self.selected_label)
-                self.selected_annotation.create_cropped_image(self.image_pixmap)
+                self.selected_annotation.create_cropped_image(self.rasterio_image)
                 # Notify ConfidenceWindow the selected annotation has changed
                 self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
@@ -543,7 +595,7 @@ class AnnotationWindow(QGraphicsView):
 
         if self.selected_annotation:
             self.selected_annotation.update_annotation_size(self.annotation_size)
-            self.selected_annotation.create_cropped_image(self.image_pixmap)
+            self.selected_annotation.create_cropped_image(self.rasterio_image)
             # Notify ConfidenceWindow the selected annotation has changed
             self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
@@ -594,6 +646,7 @@ class AnnotationWindow(QGraphicsView):
         self.clear_scene()
 
         self.image_pixmap = QPixmap(image)
+        self.rasterio_image = self.main_window.image_window.rasterio_images[image_path]
         self.current_image_path = image_path
         self.active_image = True
 
@@ -665,7 +718,7 @@ class AnnotationWindow(QGraphicsView):
                 delta = current_pos - self.drag_start_pos
                 new_center = self.selected_annotation.center_xy + delta
                 self.set_annotation_location(self.selected_annotation.id, new_center)
-                self.selected_annotation.create_cropped_image(self.image_pixmap)
+                self.selected_annotation.create_cropped_image(self.rasterio_image)
                 self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
                 self.drag_start_pos = current_pos  # Update the start position for smooth dragging
         elif (self.selected_tool == "annotate" and
@@ -730,7 +783,7 @@ class AnnotationWindow(QGraphicsView):
             self.labelSelected.emit(annotation.label.id)
             # Crop the image from annotation using current image item
             if not self.selected_annotation.cropped_image:
-                self.selected_annotation.create_cropped_image(self.image_pixmap)
+                self.selected_annotation.create_cropped_image(self.rasterio_image)
             # Display the selected annotation in confidence window
             self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
@@ -752,7 +805,7 @@ class AnnotationWindow(QGraphicsView):
         for annotation_id, annotation in self.annotations_dict.items():
             if annotation.image_path == self.current_image_path:
                 annotation.create_graphics_item(self.scene)
-                annotation.create_cropped_image(self.image_pixmap)
+                annotation.create_cropped_image(self.rasterio_image)
 
                 # Connect update signals
                 annotation.selected.connect(self.select_annotation)
@@ -800,7 +853,7 @@ class AnnotationWindow(QGraphicsView):
                                     transparency=self.transparency)
 
         annotation.create_graphics_item(self.scene)
-        annotation.create_cropped_image(self.image_pixmap)
+        annotation.create_cropped_image(self.rasterio_image)
 
         # Connect update signals
         annotation.selected.connect(self.select_annotation)
@@ -1167,13 +1220,16 @@ class AnnotationSamplingDialog(QDialog):
             # Get the pixmap once
             image_pixmap = QPixmap(image)
 
+            rasterio_image = self.image_window.rasterio_images[image_path]
+            height, width = rasterio_image.shape[0:2]
+
             # Sample the annotation, given params
             annotations = self.sample_annotations(method,
                                                   num_annotations,
                                                   annotation_size,
                                                   margins,
-                                                  image_pixmap.width(),
-                                                  image_pixmap.height())
+                                                  width,
+                                                  height)
 
             for annotation in annotations:
                 x, y, size = annotation
@@ -1188,7 +1244,7 @@ class AnnotationSamplingDialog(QDialog):
 
                 if self.make_predictions:
                     # Create the cropped image now
-                    new_annotation.create_cropped_image(image_pixmap)
+                    new_annotation.create_cropped_image(rasterio_image)
 
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation

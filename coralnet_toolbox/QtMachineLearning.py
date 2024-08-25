@@ -389,14 +389,16 @@ class CreateDatasetDialog(QDialog):
             if progress_bar.wasCanceled():
                 return
 
-            image_item = QImage(image_path)
-            pixmap = QPixmap(image_item)
-            image_annotations = [a for a in annotations if a.image_path == image_path]
+            # Get the Rasterio representation
+            rasterio_image = self.image_window.rasterio_open(image_path)
+            # Find all annotations for this image
+            image_annotations = self.annotation_window.get_image_annotations(image_path)
 
             for image_annotation in image_annotations:
                 if not image_annotation.cropped_image:
-                    image_annotation.create_cropped_image(pixmap)
+                    image_annotation.create_cropped_image(rasterio_image)
 
+                # Save the crop in the correct folder
                 cropped_image = image_annotation.cropped_image
                 label_code = image_annotation.label.short_label_code
                 output_path = os.path.join(split_dir, label_code)

@@ -1,6 +1,7 @@
-setuptools
 wheel
+setuptools
 twine
 PyQt5
 ultralytics
+rasterio
 dill

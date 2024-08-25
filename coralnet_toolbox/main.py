@@ -1,13 +1,10 @@
 # TODO
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
-#   - progress bar for exporting annotations JSON
-#   - Deploy model after training?
 #   - Short or Long code for ML?
 #   - if import labels are too long, add "..."
-#   - filter images that contain annotations
-#   - show a distribution of data in the create dataset
-#   - allow only training dataset
+#   - don't crash when importing the same image twice
+#   - Clean up QImage, Rasterio Image, PixMap
 
 from coralnet_toolbox.QtMain import MainWindow
 from PyQt5.QtWidgets import QApplication
