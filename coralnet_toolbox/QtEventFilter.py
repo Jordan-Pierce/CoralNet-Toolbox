@@ -39,11 +39,6 @@ class GlobalEventFilter(QObject):
                     self.label_window.handle_wasd_key(event.key())
                     return True
 
-                # Handle Delete key for Deleting selected annotation
-                if event.key() == Qt.Key_Delete:
-                    self.annotation_window.delete_selected_annotation()
-                    return True
-
                 # Handle hotkey for prediction
                 if event.key() == Qt.Key_Z:
                     self.deploy_model_dialog.predict()
@@ -64,6 +59,16 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Down:
                     self.image_window.cycle_next_image()
                     return True
+
+                # Handle Delete key for Deleting selected annotations or images
+                if event.key() == Qt.Key_Delete:
+                    if self.annotation_window.selected_annotation:
+                        self.annotation_window.delete_selected_annotation()
+                        return True
+
+                    if self.image_window.selected_image_row:
+                        self.image_window.delete_selected_image()
+                        return True
 
             # Handle Escape key for exiting program
             if event.key() == Qt.Key_Escape:
