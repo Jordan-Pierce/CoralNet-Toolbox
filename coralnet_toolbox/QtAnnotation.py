@@ -681,9 +681,10 @@ class AnnotationWindow(QGraphicsView):
                 self.pan_start = event.pos()
                 self.setCursor(Qt.ClosedHandCursor)  # Change cursor to indicate panning
 
-            elif self.selected_tool == "select" and event.button() == Qt.LeftButton:
+            if event.button() == Qt.LeftButton and self.selected_tool == "select" and self.selected_annotation:
                 position = self.mapToScene(event.pos())
                 items = self.scene.items(position)
+                self.drag_start_pos = position
 
                 rect_items = [item for item in items if isinstance(item, QGraphicsRectItem)]
                 rect_items.sort(key=lambda item: item.zValue(), reverse=True)
