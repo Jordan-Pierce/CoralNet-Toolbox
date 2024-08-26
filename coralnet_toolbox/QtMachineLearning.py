@@ -553,10 +553,10 @@ class TrainModelDialog(QDialog):
         self.form_layout.addRow("Patience:", self.patience_spinbox)
 
         # Batch
-        self.batch_spinbox = QSpinBox()
-        self.batch_spinbox.setMinimum(-1)
-        self.batch_spinbox.setMaximum(1024)
-        self.batch_spinbox.setValue(16)
+        self.batch_spinbox = QDoubleSpinBox()
+        self.batch_spinbox.setMinimum(-1.0)
+        self.batch_spinbox.setMaximum(1024.0)
+        self.batch_spinbox.setValue(-1)
         self.form_layout.addRow("Batch Size:", self.batch_spinbox)
 
         # Imgsz

@@ -95,13 +95,11 @@ class Label(QWidget):
             painter.drawRect(5, (self.height() - rectangle_height) // 2, rectangle_width, rectangle_height)
 
         # Draw the text
-        if self.is_selected:
-            painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
-            painter.setFont(QFont(painter.font().family(), painter.font().pointSize(), QFont.Bold))
-        else:
-            painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
+        painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
 
-        painter.drawText(12, 0, self.width() - 30, self.height(), Qt.AlignVCenter, self.short_label_code)
+        # Truncate the text if it exceeds the width
+        elided_text = font_metrics.elidedText(self.short_label_code, Qt.ElideRight, self.width() - 30)
+        painter.drawText(12, 0, self.width() - 30, self.height(), Qt.AlignVCenter, elided_text)
 
         super().paintEvent(event)
 
@@ -528,7 +526,9 @@ class EditLabelDialog(QDialog):
 
         self.short_label_input = QLineEdit(self.label.short_label_code, self)
         self.short_label_input.setPlaceholderText("Short Label (max 10 characters)")
-        self.short_label_input.setMaxLength(10)
+        # Allow existing longer short codes
+        if len(self.label.short_label_code) <= 10:
+            self.short_label_input.setMaxLength(10)
         self.layout.addWidget(self.short_label_input)
 
         self.long_label_input = QLineEdit(self.label.long_label_code, self)
