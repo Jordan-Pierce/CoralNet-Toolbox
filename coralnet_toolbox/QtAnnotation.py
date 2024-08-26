@@ -709,13 +709,17 @@ class AnnotationWindow(QGraphicsView):
             self.pan(event.pos())
         elif self.selected_tool == "select" and self.selected_annotation:
             current_pos = self.mapToScene(event.pos())
-            if hasattr(self, 'drag_start_pos'):
-                delta = current_pos - self.drag_start_pos
-                new_center = self.selected_annotation.center_xy + delta
-                self.set_annotation_location(self.selected_annotation.id, new_center)
-                self.selected_annotation.create_cropped_image(self.rasterio_image)
-                self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
-                self.drag_start_pos = current_pos  # Update the start position for smooth dragging
+            try:
+                if self.drag_start_pos is not None:
+                    delta = current_pos - self.drag_start_pos
+                    new_center = self.selected_annotation.center_xy + delta
+                    self.set_annotation_location(self.selected_annotation.id, new_center)
+                    self.selected_annotation.create_cropped_image(self.rasterio_image)
+                    self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+                    self.drag_start_pos = current_pos  # Update the start position for smooth dragging
+            except TypeError as e:
+                print(f"Error during mouse move event: {e}")
+                self.drag_start_pos = current_pos
         elif (self.selected_tool == "annotate" and
               self.active_image and self.image_pixmap and
               self.cursorInWindow(event.pos())):
