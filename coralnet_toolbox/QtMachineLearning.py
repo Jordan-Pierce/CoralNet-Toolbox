@@ -1,8 +1,11 @@
 import os
+import gc
 import random
 import datetime
 
 import numpy as np
+
+import torch
 from ultralytics import YOLO
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -453,6 +456,10 @@ class TrainModelWorker(QThread):
         except Exception as e:
             self.training_error.emit(str(e))
 
+        del target_model
+        gc.collect()
+        torch.cuda.empty_cache()
+
 
 class TrainModelDialog(QDialog):
     def __init__(self, main_window, parent=None):
@@ -554,9 +561,9 @@ class TrainModelDialog(QDialog):
 
         # Batch
         self.batch_spinbox = QSpinBox()
-        self.batch_spinbox.setMinimum(-1)
+        self.batch_spinbox.setMinimum(1)
         self.batch_spinbox.setMaximum(1024)
-        self.batch_spinbox.setValue(-1)
+        self.batch_spinbox.setValue(512)
         self.form_layout.addRow("Batch Size:", self.batch_spinbox)
 
         # Imgsz
