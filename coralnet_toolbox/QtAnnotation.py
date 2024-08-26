@@ -2,6 +2,7 @@ import os
 import uuid
 import json
 import random
+from multiprocessing import Pool, cpu_count
 
 import numpy as np
 import pandas as pd
@@ -92,15 +93,6 @@ class Annotation(QObject):
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
-
-    # def create_cropped_image(self, pixmap: QPixmap):
-    #     half_size = self.annotation_size / 2
-    #     rect = QRectF(self.center_xy.x() - half_size,
-    #                   self.center_xy.y() - half_size,
-    #                   self.annotation_size,
-    #                   self.annotation_size).toRect()
-    #     self.cropped_image = pixmap.copy(rect)
-    #     self.annotation_updated.emit(self)  # Notify update
 
     def create_cropped_image(self, rasterio_src):
         half_size = self.annotation_size / 2
@@ -640,17 +632,20 @@ class AnnotationWindow(QGraphicsView):
                 self.cursor_annotation.delete()
                 self.cursor_annotation = None
 
-    def set_image(self, image, image_path):
+    def set_image(self, image_path):
 
         # Clean up
         self.clear_scene()
 
-        self.image_pixmap = QPixmap(image)
+        # Set the image representations
+        self.image_pixmap = QPixmap(self.main_window.image_window.images[image_path])
         self.rasterio_image = self.main_window.image_window.rasterio_images[image_path]
+
         self.current_image_path = image_path
         self.active_image = True
 
-        self.imageLoaded.emit(image.width(), image.height())
+        # Set the image dimensions in status bar
+        self.imageLoaded.emit(self.image_pixmap.width(), self.image_pixmap.height())
 
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
@@ -802,15 +797,18 @@ class AnnotationWindow(QGraphicsView):
                 annotation.update_transparency(transparency)
 
     def load_annotations(self):
-        for annotation_id, annotation in self.annotations_dict.items():
-            if annotation.image_path == self.current_image_path:
-                annotation.create_graphics_item(self.scene)
-                annotation.create_cropped_image(self.rasterio_image)
+        # Crop all the annotations for current image (if not already cropped)
+        annotations = self.crop_image_annotations(return_annotations=True)
 
-                # Connect update signals
-                annotation.selected.connect(self.select_annotation)
-                annotation.annotation_deleted.connect(self.delete_annotation)
-                annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+        # Connect update signals for all the annotations
+        for annotation in annotations:
+            # Create the graphics item (scene previously cleared)
+            annotation.create_graphics_item(self.scene)
+
+            # Connect update signals
+            annotation.selected.connect(self.select_annotation)
+            annotation.annotation_deleted.connect(self.delete_annotation)
+            annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
 
     def get_image_annotations(self, image_path=None):
         if not image_path:
@@ -833,6 +831,24 @@ class AnnotationWindow(QGraphicsView):
                 annotations.append(annotation)
 
         return annotations
+
+    def crop_image_annotations(self, image_path=None, return_annotations=False):
+        if not image_path:
+            image_path = self.current_image_path
+
+        # Get the rasterio representation
+        rasterio_image = self.main_window.image_window.rasterio_open(image_path)
+        # Create cropped images for each annotation
+        annotations = self.get_image_annotations(image_path)
+
+        for annotation in annotations:
+            # Will skip if image previously loaded
+            if not annotation.cropped_image:
+                annotation.create_cropped_image(rasterio_image)
+
+        # Skips a for loop for calling function
+        if return_annotations:
+            return annotations
 
     def add_annotation(self, scene_pos: QPointF, annotation=None):
         if not self.selected_label:
@@ -889,6 +905,7 @@ class AnnotationWindow(QGraphicsView):
             self.scene.clear()
             self.current_image_path = None
             self.image_pixmap = None
+            self.rasterio_image = None
             self.active_image = False  # Reset image_set flag
 
     def delete_annotations_for_label(self, label):
@@ -935,8 +952,8 @@ class AnnotationSamplingDialog(QDialog):
         # Number of Annotations
         self.num_annotations_label = QLabel("Number of Annotations:")
         self.num_annotations_spinbox = QSpinBox()
-        self.num_annotations_spinbox.setMinimum(1)
-        self.num_annotations_spinbox.setMaximum(10000)  # Arbitrary large number for "infinite"
+        self.num_annotations_spinbox.setMinimum(0)
+        self.num_annotations_spinbox.setMaximum(1000)
         self.layout.addWidget(self.num_annotations_label)
         self.layout.addWidget(self.num_annotations_spinbox)
 
@@ -1215,12 +1232,8 @@ class AnnotationSamplingDialog(QDialog):
         progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
-            # Load the QImage
-            image = QImage(image_path)
-            # Get the pixmap once
-            image_pixmap = QPixmap(image)
-
-            rasterio_image = self.image_window.rasterio_images[image_path]
+            # Load the rasterio representation
+            rasterio_image = self.image_window.rasterio_open(image_path)
             height, width = rasterio_image.shape[0:2]
 
             # Sample the annotation, given params
@@ -1242,12 +1255,12 @@ class AnnotationSamplingDialog(QDialog):
                                             review_label.id,
                                             transparency=self.annotation_window.transparency)
 
-                if self.make_predictions:
-                    # Create the cropped image now
-                    new_annotation.create_cropped_image(rasterio_image)
-
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
+
+            if self.make_predictions:
+                # Create the cropped image for all
+                self.annotation_window.crop_image_annotations(image_path)
 
             # Update the progress bar
             progress_bar.update_progress()
@@ -1279,7 +1292,7 @@ class AnnotationSamplingDialog(QDialog):
         progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
-            annotations = self.annotation_window.get_image_annotations(image_path)
+            annotations = self.annotation_window.get_image_review_annotations(image_path)
             self.deploy_model_dialog.predict(annotations)
 
             # Update the progress bar

@@ -1,8 +1,6 @@
 import os
 import random
 import datetime
-import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from ultralytics import YOLO
@@ -11,10 +9,10 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
-                             QGraphicsPixmapItem, QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem)
+                             QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
+                             QTableWidgetItem)
 
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtGui import QImage, QBrush, QColor
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 import warnings
@@ -142,6 +140,11 @@ class CreateDatasetDialog(QDialog):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_path:
             self.output_dir_edit.setText(dir_path)
+
+    def set_cell_color(self, row, column, color):
+        item = self.label_counts_table.item(row, column)
+        if item is not None:
+            item.setBackground(QBrush(color))
 
     def populate_class_filter_list(self):
         try:
@@ -319,6 +322,16 @@ class CreateDatasetDialog(QDialog):
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
+            # Set cell colors based on the counts
+            if include_checkbox.isChecked():
+                self.set_cell_color(row, 3, QColor(255, 0, 0) if train_count == 0 else QColor(255, 255, 255))
+                self.set_cell_color(row, 4, QColor(255, 0, 0) if val_count == 0 else QColor(255, 255, 255))
+                self.set_cell_color(row, 5, QColor(255, 0, 0) if test_count == 0 else QColor(255, 255, 255))
+            else:
+                self.set_cell_color(row, 3, QColor(255, 255, 255))
+                self.set_cell_color(row, 4, QColor(255, 255, 255))
+                self.set_cell_color(row, 5, QColor(255, 255, 255))
+
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
@@ -389,15 +402,10 @@ class CreateDatasetDialog(QDialog):
             if progress_bar.wasCanceled():
                 return
 
-            # Get the Rasterio representation
-            rasterio_image = self.image_window.rasterio_open(image_path)
-            # Find all annotations for this image
-            image_annotations = self.annotation_window.get_image_annotations(image_path)
+            # Crop all image annotations
+            image_annotations = self.annotation_window.crop_image_annotations(image_path, return_annotations=True)
 
             for image_annotation in image_annotations:
-                if not image_annotation.cropped_image:
-                    image_annotation.create_cropped_image(rasterio_image)
-
                 # Save the crop in the correct folder
                 cropped_image = image_annotation.cropped_image
                 label_code = image_annotation.label.short_label_code
@@ -488,11 +496,8 @@ class TrainModelDialog(QDialog):
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Details on different hyperparameters can be found "
                             "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
-
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
-
-        # Add the label to the main layout
         self.main_layout.addWidget(info_label)
 
         # Create tabs
@@ -506,13 +511,25 @@ class TrainModelDialog(QDialog):
         # Setup tabs
         self.setup_classification_tab()
         self.setup_segmentation_tab()
-        # Add to main layout
         self.main_layout.addWidget(self.tabs)
 
         # Parameters Form
         self.form_layout = QFormLayout()
 
-        # Model
+        # Project
+        self.project_edit = QLineEdit()
+        self.project_button = QPushButton("Browse...")
+        self.project_button.clicked.connect(self.browse_project_dir)
+        project_layout = QHBoxLayout()
+        project_layout.addWidget(self.project_edit)
+        project_layout.addWidget(self.project_button)
+        self.form_layout.addRow("Project:", project_layout)
+
+        # Name
+        self.name_edit = QLineEdit()
+        self.form_layout.addRow("Name:", self.name_edit)
+
+        # Existing Model
         self.model_edit = QLineEdit()
         self.model_button = QPushButton("Browse...")
         self.model_button.clicked.connect(self.browse_model_file)
@@ -657,6 +674,11 @@ class TrainModelDialog(QDialog):
         if file_path:
             self.dataset_yaml_edit.setText(file_path)
 
+    def browse_project_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Project Directory")
+        if dir_path:
+            self.project_edit.setText(dir_path)
+
     def browse_model_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
@@ -724,6 +746,8 @@ class TrainModelDialog(QDialog):
     def get_training_parameters(self):
         # Extract values from dialog widgets
         params = {
+            'project': self.project_edit.text(),
+            'name': self.name_edit.text(),
             'model': self.model_edit.text(),
             'data': self.dataset_dir_edit.text(),
             'epochs': self.epochs_spinbox.value(),
@@ -741,13 +765,15 @@ class TrainModelDialog(QDialog):
             'lr0': self.lr0_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_checkbox.isChecked(),
-            'project': "Data/Training",
         }
+        # Default project folder
+        project = 'Data/Training'
+        params['project'] = params['project'] if params['project'] else project
+        # Default project name
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
-        params['name'] = now
-
-        # Provided model path, or default model
+        params['name'] = params['name'] if params['name'] else now
+        # Provided model path, else use default model
         params['model'] = params['model'] if params['model'] else self.classification_model_combo.currentText()
 
         # Add custom parameters
@@ -1109,19 +1135,15 @@ class DeployModelDialog(QDialog):
                 # If not supplied with annotations, get all of those for current image
                 annotations = self.annotation_window.get_image_annotations()
 
-            # Filter annotations to only include those with 'Review' label
-            review_annotations = [annotation for annotation in annotations if annotation.label.id == "-1"]
+            # Convert QImages to numpy arrays
+            images_np = [self.pixmap_to_numpy(annotation.cropped_image) for annotation in annotations]
 
-            if review_annotations:
-                # Convert QImages to numpy arrays
-                images_np = [self.pixmap_to_numpy(annotation.cropped_image) for annotation in review_annotations]
+            # Perform batch prediction
+            results = self.loaded_model(images_np)
 
-                # Perform batch prediction
-                results = self.loaded_model(images_np)
-
-                for annotation, result in zip(review_annotations, results):
-                    # Process the results
-                    self.process_prediction_result(annotation, result)
+            for annotation, result in zip(annotations, results):
+                # Process the results
+                self.process_prediction_result(annotation, result)
 
                 # Show last in the confidence window
                 self.main_window.confidence_window.display_cropped_image(annotation)

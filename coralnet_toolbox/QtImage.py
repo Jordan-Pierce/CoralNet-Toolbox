@@ -137,15 +137,18 @@ class ImageWindow(QWidget):
             del self.images[self.filtered_image_paths[self.selected_row]]
             # self.rasterio_close(image_path)
 
-        image = QImage(image_path)  # Load the image only when needed
-        self.images[image_path] = image  # Store the image in the dictionary
-
+        # Load the QImage
+        image = QImage(image_path)
+        self.images[image_path] = image
+        # Load the Rasterio
         rasterio_image = self.rasterio_open(image_path)
         self.rasterio_images[image_path] = rasterio_image
 
+        # Make the image row selected in the ImageWindow
         self.selected_row = self.filtered_image_paths.index(image_path)
         self.tableWidget.selectRow(self.selected_row)
-        self.annotation_window.set_image(image, image_path) # TODO remove image, just keep image path
+        # Pass to the AnnotationWindow to be displayed / selected
+        self.annotation_window.set_image(image_path)
         self.imageSelected.emit(image_path)
 
         # Update the current image index label

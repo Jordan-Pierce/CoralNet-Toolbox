@@ -5,6 +5,7 @@
 #   - if import labels are too long, add "..."
 #   - don't crash when importing the same image twice
 #   - Clean up QImage, Rasterio Image, PixMap
+#   - Update labels found with model deploy
 
 from coralnet_toolbox.QtMain import MainWindow
 from PyQt5.QtWidgets import QApplication
