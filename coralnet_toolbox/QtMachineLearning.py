@@ -554,8 +554,8 @@ class TrainModelDialog(QDialog):
 
         # Batch
         self.batch_spinbox = QDoubleSpinBox()
-        self.batch_spinbox.setMinimum(-1.0)
-        self.batch_spinbox.setMaximum(1024.0)
+        self.batch_spinbox.setMinimum(-1)
+        self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(-1)
         self.form_layout.addRow("Batch Size:", self.batch_spinbox)
 
