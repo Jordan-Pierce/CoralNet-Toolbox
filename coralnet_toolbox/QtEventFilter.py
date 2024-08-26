@@ -62,6 +62,7 @@ class GlobalEventFilter(QObject):
 
                 # Handle Delete key for Deleting selected annotations or images
                 if event.key() == Qt.Key_Delete:
+
                     if self.annotation_window.selected_annotation:
                         self.annotation_window.delete_selected_annotation()
                         return True
