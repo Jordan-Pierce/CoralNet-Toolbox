@@ -10,7 +10,6 @@ import pandas as pd
 import rasterio
 from rasterio.windows import Window
 
-
 from toolbox.QtLabel import Label
 from toolbox.QtProgressBar import ProgressBar
 
@@ -268,6 +267,7 @@ class AnnotationWindow(QGraphicsView):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
+
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
@@ -297,8 +297,6 @@ class AnnotationWindow(QGraphicsView):
         self.rasterio_image = None
         self.active_image = False  # Flag to check if the image has been set
         self.current_image_path = None
-
-        self.loaded_image_paths = set()  # Initialize the set to store loaded image paths
 
         self.toolChanged.connect(self.set_selected_tool)
 
@@ -362,15 +360,15 @@ class AnnotationWindow(QGraphicsView):
         if file_path:
             try:
                 with open(file_path, 'r') as file:
-                    imported_annotations = json.load(file)
+                    annotations = json.load(file)
 
-                total_annotations = sum(len(annotations) for annotations in imported_annotations.values())
+                filtered_annotations = {p: a for p, a in annotations.items()
+                                        if p in self.main_window.image_window.image_paths}
+                total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
 
                 progress_bar = ProgressBar(self, title="Importing Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
-
-                filtered_annotations = {p: a for p, a in imported_annotations.items() if p in self.loaded_image_paths}
 
                 updated_annotations = False
                 for image_path, annotations in filtered_annotations.items():
@@ -485,7 +483,7 @@ class AnnotationWindow(QGraphicsView):
                 if not ok:
                     return
 
-                loaded_image_names = [os.path.basename(path) for path in list(self.loaded_image_paths)]
+                loaded_image_names = [os.path.basename(path) for path in self.main_window.image_window.image_paths]
                 df = df[df['Name'].isin(loaded_image_names)]
 
                 total_annotations = len(df)
@@ -504,7 +502,7 @@ class AnnotationWindow(QGraphicsView):
                     label_code = row['Label']
 
                     image_path = None
-                    for loaded_image_path in self.loaded_image_paths:
+                    for loaded_image_path in self.main_window.image_window.image_paths:
                         if os.path.basename(loaded_image_path) == image_name:
                             image_path = loaded_image_path
                             break
@@ -651,8 +649,8 @@ class AnnotationWindow(QGraphicsView):
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
 
+        # Load all associated annotations
         self.load_annotations()
-        self.loaded_image_paths.add(image_path)
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
@@ -852,6 +850,17 @@ class AnnotationWindow(QGraphicsView):
         # Skips a for loop for calling function
         if return_annotations:
             return annotations
+
+    def crop_these_image_annotations(self, image_path, annotations):
+        # Get the rasterio representation
+        rasterio_image = self.main_window.image_window.rasterio_open(image_path)
+
+        for annotation in annotations:
+            # Crop the image if not already cropped
+            if not annotation.cropped_image:
+                annotation.create_cropped_image(rasterio_image)
+
+        return annotations
 
     def add_annotation(self, scene_pos: QPointF, annotation=None):
         if not self.selected_label:
@@ -1225,8 +1234,9 @@ class AnnotationSamplingDialog(QDialog):
             current_image_index = self.image_window.image_paths.index(current_image_path)
             image_paths = self.image_window.image_paths[current_image_index:]
         elif self.apply_to_all:
-            image_paths = list(self.annotation_window.loaded_image_paths)
+            image_paths = self.image_window.image_paths
         else:
+            # Only apply to the current image
             image_paths = [self.annotation_window.current_image_path]
 
         # Create and show the progress bar

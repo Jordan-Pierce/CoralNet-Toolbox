@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # Define the icon path
-        self.setWindowTitle("CoralNet src")
+        self.setWindowTitle("CoralNet Toolbox")
         # Set the window icon
         main_window_icon_path = get_icon_path("toolbox.png")
         self.setWindowIcon(QIcon(main_window_icon_path))
@@ -89,7 +89,7 @@ class MainWindow(QMainWindow):
         self.import_menu = self.menu_bar.addMenu("Import")
 
         self.import_images_action = QAction("Import Images", self)
-        self.import_images_action.triggered.connect(self.import_images)
+        self.import_images_action.triggered.connect(self.image_window.import_images)
         self.import_menu.addAction(self.import_images_action)
 
         self.import_labels_action = QAction("Import Labels (JSON)", self)
@@ -225,8 +225,6 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
         self.status_bar_layout.addWidget(self.annotation_size_spinbox)
 
-        self.imported_image_paths = set()  # Set to keep track of imported image paths
-
         # Create the main layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -305,38 +303,13 @@ class MainWindow(QMainWindow):
         if self.annotation_window.selected_label:
             self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
 
-    def import_images(self):
-        file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
-        if file_names:
-            progress_bar = ProgressBar(self, title="Importing Images")
-            progress_bar.show()
-            progress_bar.start_progress(len(file_names))
-
-            for i, file_name in enumerate(file_names):
-                if file_name not in self.imported_image_paths:
-                    self.image_window.add_image(file_name)
-                    self.imported_image_paths.add(file_name)
-                    self.annotation_window.loaded_image_paths.add(file_name)
-                    progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
-
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-            if file_names:
-                # Load the last image
-                image_path = file_names[-1]
-                self.image_window.load_image_by_path(image_path)
-
-            QMessageBox.information(self,
-                                    "Image(s) Imported",
-                                    "Image(s) have been successfully exported.")
+    def open_import_images_dialog(self):
+        self.image_window.import_images()
 
     def open_annotation_sampling_dialog(self):
 
-        # Check if there are any loaded images
-        if not self.annotation_window.loaded_image_paths:
-            # Show a message box if no images are loaded
+        if not self.image_window.image_paths:
+            # Check if there are any images in the project
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
@@ -350,7 +323,7 @@ class MainWindow(QMainWindow):
 
     def open_create_dataset_dialog(self):
         # Check if there are loaded images
-        if not len(self.annotation_window.loaded_image_paths):
+        if not self.image_window.image_paths:
             QMessageBox.warning(self,
                                 "Create Dataset",
                                 "No images are present in the project.")

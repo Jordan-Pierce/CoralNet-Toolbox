@@ -205,7 +205,7 @@ class CreateDatasetDialog(QDialog):
         self.val_ratio = self.val_ratio_spinbox.value()
         self.test_ratio = self.test_ratio_spinbox.value()
 
-        images = list(self.annotation_window.loaded_image_paths)
+        images = self.image_window.image_paths
         random.shuffle(images)
 
         train_split = int(len(images) * self.train_ratio)
@@ -401,12 +401,13 @@ class CreateDatasetDialog(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
-        def process_image(image_path):
+        for image_path in image_paths:
             if progress_bar.wasCanceled():
                 return
 
-            # Crop all image annotations
-            image_annotations = self.annotation_window.crop_image_annotations(image_path, return_annotations=True)
+            # Special case to handle selected labels (do not use get_image_annotations)
+            image_annotations = [a for a in annotations if a.image_path == image_path]
+            image_annotations = self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
 
             for image_annotation in image_annotations:
                 # Save the crop in the correct folder
@@ -417,8 +418,6 @@ class CreateDatasetDialog(QDialog):
                 output_filename = f"{label_code}_{image_annotation.id}.jpg"
                 cropped_image.save(os.path.join(output_path, output_filename))
 
-        for image_path in image_paths:
-            process_image(image_path)
             progress_bar.update_progress()
             QApplication.processEvents()
 

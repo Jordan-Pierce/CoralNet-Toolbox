@@ -1,16 +1,20 @@
 # TODO
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
-#   - Short or Long code for ML?
-#   - if import labels are too long, add "..."
-#   - don't crash when importing the same image twice
 #   - Clean up QImage, Rasterio Image, PixMap
-#   - Update labels found with model deploy
+#   - Write Class Mapping JSON when creating a dataset
+#   - Read Class Mapping JSON when training a model, stash
+#   - Add labels when importing a model for deployment
 
 import traceback
 from PyQt5.QtWidgets import QApplication
 from toolbox.QtMain import MainWindow
 from toolbox.utilities import console_user
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Main Function
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 def run():

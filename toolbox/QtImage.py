@@ -2,8 +2,10 @@ import os
 
 import rasterio
 
-from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QMenu, QLineEdit,
-                             QHBoxLayout, QTableWidget, QTableWidgetItem)
+from toolbox.QtProgressBar import ProgressBar
+
+from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
+                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication)
 
 from PyQt5.QtGui import QImage
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -96,23 +98,40 @@ class ImageWindow(QWidget):
         self.selected_image_row = None
 
         self.images = {}  # Dictionary to store image paths and their QImage representation
-        self.rasterio_images = {} # Dictionary to store image paths and their Rasterio representation
+        self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
 
         self.show_confirmation_dialog = True
 
-    def tableWidget_keyPressEvent(self, event):
-        if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
-            # Ignore up and down arrow keys
-            return
-        else:
-            # Call the base class method for other keys
-            super(QTableWidget, self.tableWidget).keyPressEvent(event)
+    def import_images(self):
+        file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
+        if file_names:
+            progress_bar = ProgressBar(self, title="Importing Images")
+            progress_bar.show()
+            progress_bar.start_progress(len(file_names))
+
+            for i, file_name in enumerate(file_names):
+                if file_name not in set(self.image_paths):
+                    self.add_image(file_name)
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
+
+            progress_bar.stop_progress()
+            progress_bar.close()
+
+            if file_names:
+                # Load the last image
+                image_path = file_names[-1]
+                self.load_image_by_path(image_path)
+
+            QMessageBox.information(self,
+                                    "Image(s) Imported",
+                                    "Image(s) have been successfully exported.")
 
     def add_image(self, image_path):
         # Clear the search bar text
         self.search_bar.clear()
 
-        if image_path not in self.main_window.imported_image_paths:
+        if image_path not in self.image_paths:
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
             self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(image_path)))
@@ -125,17 +144,16 @@ class ImageWindow(QWidget):
                 self.tableWidget.selectRow(0)
                 self.load_image(0, 0)
 
-            # Add to main window imported path
-            self.main_window.imported_image_paths.add(image_path)
-
             # Update the image count label
             self.update_image_count_label()
 
     def load_image(self, row, column):
+        # Get the image path associated with the selected row, load
         image_path = self.filtered_image_paths[row]
         self.load_image_by_path(image_path)
 
     def load_image_by_path(self, image_path):
+        # Clear the currently selected row
         if self.selected_image_row is not None:
             self.tableWidget.item(self.selected_image_row, 0).setSelected(False)
 
@@ -157,31 +175,32 @@ class ImageWindow(QWidget):
         self.update_current_image_index_label()
 
     def rasterio_open(self, image_path):
+        # Open the image with Rasterio
         self.src = rasterio.open(image_path)
         return self.src
 
     def rasterio_close(self, image_path):
+        # Close the image with Rasterio
         self.rasterio_images[image_path].close()
         self.rasterio_images[image_path] = None
 
     def delete_image(self, row):
+        # Get the image path associated
         image_path = self.filtered_image_paths[row]
+        # Remove the row from the table
         self.tableWidget.removeRow(row)
+        # Remove the image path from the list
         self.image_paths.remove(image_path)
-
+        # Remove the image path from the filtered list
         if image_path in self.filtered_image_paths:
             self.filtered_image_paths.remove(image_path)
-
+        # Remove the image's annotations
         self.annotation_window.delete_image(image_path)
-        self.main_window.imported_image_paths.discard(image_path)
-
         # Remove the image from the dictionary
         if image_path in self.images:
             del self.images[image_path]
-
         # Update the image count label
         self.update_image_count_label()
-
         # Update the selected row and load another image if possible
         if self.filtered_image_paths:
             if row < len(self.filtered_image_paths):
@@ -191,7 +210,6 @@ class ImageWindow(QWidget):
             self.load_image(self.selected_image_row, 0)
         else:
             self.selected_image_row = None
-
         # Update the current image index label
         self.update_current_image_index_label()
 
@@ -227,6 +245,14 @@ class ImageWindow(QWidget):
             self.current_image_index_label.setText(f"Current Image: {self.selected_image_row + 1}")
         else:
             self.current_image_index_label.setText("Current Image: None")
+
+    def tableWidget_keyPressEvent(self, event):
+        if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
+            # Ignore up and down arrow keys
+            return
+        else:
+            # Call the base class method for other keys
+            super(QTableWidget, self.tableWidget).keyPressEvent(event)
 
     def cycle_previous_image(self):
         if not self.filtered_image_paths:
