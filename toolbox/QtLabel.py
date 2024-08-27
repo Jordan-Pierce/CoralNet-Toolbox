@@ -152,8 +152,9 @@ class LabelWindow(QWidget):
 
     def __init__(self, main_window, label_width=100):
         super().__init__()
-
+        self.main_window = main_window
         self.annotation_window = main_window.annotation_window
+
         self.label_width = label_width
         self.labels_per_row = 1  # Initial value, will be updated
 

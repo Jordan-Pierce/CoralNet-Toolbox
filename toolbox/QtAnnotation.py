@@ -854,7 +854,7 @@ class AnnotationWindow(QGraphicsView):
     def crop_these_image_annotations(self, image_path, annotations):
         # Get the rasterio representation
         rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-
+        # Loop through the annotations
         for annotation in annotations:
             # Crop the image if not already cropped
             if not annotation.cropped_image:

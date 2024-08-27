@@ -1,12 +1,13 @@
 import os
 import gc
+import json
 import random
 import datetime
 
 import numpy as np
 
-import torch
 from ultralytics import YOLO
+from torch.cuda import empty_cache
 
 from toolbox.QtProgressBar import ProgressBar
 
@@ -30,6 +31,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class CreateDatasetDialog(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.main_window = main_window
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
@@ -341,6 +343,20 @@ class CreateDatasetDialog(QDialog):
 
         self.updating_summary_statistics = False
 
+    def save_class_mapping_json(self, output_dir_path):
+        # Get the label objects for the selected labels
+        labels = [l for l in self.main_window.label_window.labels if l.short_label_code in self.selected_labels]
+
+        class_mapping = {}
+        for label in labels:
+            # Assuming each label has attributes short_label_code, long_label_code, and label_id
+            class_mapping[label.short_label_code] = label.to_dict()
+
+        # Save the class_mapping dictionary as a JSON file
+        class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
+        with open(class_mapping_path, 'w') as json_file:
+            json.dump(class_mapping, json_file, indent=4)
+
     def accept(self):
         dataset_name = self.dataset_name_edit.text()
         output_dir = self.output_dir_edit.text()
@@ -373,6 +389,10 @@ class CreateDatasetDialog(QDialog):
                 return
 
         os.makedirs(output_dir_path, exist_ok=True)
+
+        # Save the class mapping JSON file
+        self.save_class_mapping_json(output_dir_path)
+
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'val')
         test_dir = os.path.join(output_dir_path, 'test')
@@ -457,7 +477,7 @@ class TrainModelWorker(QThread):
 
         del target_model
         gc.collect()
-        torch.cuda.empty_cache()
+        empty_cache()
 
 
 class TrainModelDialog(QDialog):
