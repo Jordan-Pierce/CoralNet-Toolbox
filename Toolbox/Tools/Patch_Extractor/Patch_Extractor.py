@@ -370,8 +370,8 @@ class AnnotationSamplingDialog(QDialog):
 
         if self.apply_to_next:
             current_image_path = self.annotation_window.current_image_path
-            current_image_index = self.image_window.image_list.index(current_image_path)
-            image_paths = self.image_window.image_list[current_image_index:]
+            current_image_index = self.image_window.image_paths.index(current_image_path)
+            image_paths = self.image_window.image_paths[current_image_index:]
         elif self.apply_to_all:
             image_paths = list(self.annotation_window.loaded_image_paths)
         else:
@@ -525,371 +525,6 @@ class GlobalEventFilter(QObject):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             QApplication.quit()
-
-
-class MainWindow(QMainWindow):
-    toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
-
-    def __init__(self):
-        super().__init__()
-
-        root = os.path.dirname(os.path.abspath(__file__))
-
-        # Define the icon path
-        self.setWindowTitle("CoralNet Toolbox")
-        # Set the window icon
-        main_window_icon_path = f"{root}/icons/toolbox.png"
-        self.setWindowIcon(QIcon(main_window_icon_path))
-
-        # Set window flags for resizing, minimize, maximize, and customizing
-        self.setWindowFlags(Qt.Window |
-                            Qt.WindowCloseButtonHint |
-                            Qt.WindowMinimizeButtonHint |
-                            Qt.WindowMaximizeButtonHint |
-                            Qt.WindowTitleHint)
-
-        self.annotation_window = AnnotationWindow(self)
-        self.label_window = LabelWindow(self)
-        self.image_window = ImageWindow(self)
-        self.confidence_window = ConfidenceWindow(self)
-
-        self.create_dataset_dialog = CreateDatasetDialog(self)
-        self.train_model_dialog = TrainModelDialog(self)
-        self.optimize_model_dialog = OptimizeModelDialog(self)
-        self.deploy_model_dialog = DeployModelDialog(self)
-
-        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
-
-        # Connect signals to update status bar
-        self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
-        self.annotation_window.mouseMoved.connect(self.update_mouse_position)
-
-        # Connect the toolChanged signal (to the AnnotationWindow)
-        self.toolChanged.connect(self.annotation_window.set_selected_tool)
-        # Connect the toolChanged signal (to the Toolbar)
-        self.annotation_window.toolChanged.connect(self.handle_tool_changed)
-        # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
-        self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
-        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
-        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
-        # Connect the imageDeleted signal to delete_image in AnnotationWindow
-        self.image_window.imageDeleted.connect(self.annotation_window.delete_image)
-        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
-        self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
-
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
-
-        self.left_layout = QVBoxLayout()
-        self.right_layout = QVBoxLayout()
-
-        # Menu bar
-        self.menu_bar = self.menuBar()
-
-        self.import_menu = self.menu_bar.addMenu("Import")
-
-        self.import_images_action = QAction("Import Images", self)
-        self.import_images_action.triggered.connect(self.import_images)
-        self.import_menu.addAction(self.import_images_action)
-
-        self.import_labels_action = QAction("Import Labels (JSON)", self)
-        self.import_labels_action.triggered.connect(self.label_window.import_labels)
-        self.import_menu.addAction(self.import_labels_action)
-
-        self.import_annotations_action = QAction("Import Annotations (JSON)", self)
-        self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
-        self.import_menu.addAction(self.import_annotations_action)
-
-        self.import_coralnet_annotations_action = QAction("Import Annotations (CoralNet)", self)
-        self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
-        self.import_menu.addAction(self.import_coralnet_annotations_action)
-
-        self.export_menu = self.menu_bar.addMenu("Export")
-
-        self.export_labels_action = QAction("Export Labels (JSON)", self)
-        self.export_labels_action.triggered.connect(self.label_window.export_labels)
-        self.export_menu.addAction(self.export_labels_action)
-
-        self.export_annotations_action = QAction("Export Annotations (JSON)", self)
-        self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
-        self.export_menu.addAction(self.export_annotations_action)
-
-        self.export_coralnet_annotations_action = QAction("Export Annotations (CoralNet)", self)
-        self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
-        self.export_menu.addAction(self.export_coralnet_annotations_action)
-
-        self.annotation_sampling_action = QAction("Sample Annotations", self)
-        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
-        self.menu_bar.addAction(self.annotation_sampling_action)
-
-        # CoralNet menu
-        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
-
-        self.coralnet_authenticate_action = QAction("Authenticate", self)
-        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
-
-        self.coralnet_upload_action = QAction("Upload", self)
-        self.coralnet_menu.addAction(self.coralnet_upload_action)
-
-        self.coralnet_download_action = QAction("Download", self)
-        self.coralnet_menu.addAction(self.coralnet_download_action)
-
-        self.coralnet_model_api_action = QAction("Model API", self)
-        self.coralnet_menu.addAction(self.coralnet_model_api_action)
-
-        # Machine Learning menu
-        self.ml_menu = self.menu_bar.addMenu("Machine Learning")
-
-        self.ml_create_dataset_action = QAction("Create Dataset", self)
-        self.ml_create_dataset_action.triggered.connect(self.open_create_dataset_dialog)
-        self.ml_menu.addAction(self.ml_create_dataset_action)
-
-        self.ml_train_model_action = QAction("Train Model", self)
-        self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
-        self.ml_menu.addAction(self.ml_train_model_action)
-
-        self.ml_optimize_model_action = QAction("Optimize Model", self)
-        self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
-        self.ml_menu.addAction(self.ml_optimize_model_action)
-
-        self.ml_deploy_model_action = QAction("Deploy Model", self)
-        self.ml_deploy_model_action.triggered.connect(self.open_deploy_model_dialog)
-        self.ml_menu.addAction(self.ml_deploy_model_action)
-
-        # Create and add the toolbar
-        self.toolbar = QToolBar("Tools", self)
-        self.toolbar.setOrientation(Qt.Vertical)
-        self.toolbar.setFixedWidth(40)
-        self.toolbar.setMovable(False)  # Lock the toolbar in place
-        self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
-
-        # Add a spacer before the first tool with a fixed height
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        spacer.setFixedHeight(10)  # Set a fixed height for the spacer
-        self.toolbar.addWidget(spacer)
-
-        # Define icon paths
-        select_icon_path = f"{root}/icons/select.png"
-        annotate_icon_path = f"{root}/icons/annotate.png"
-        polygon_icon_path = f"{root}/icons/polygon.png"
-
-        # Add tools here with icons
-        self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
-        self.select_tool_action.setCheckable(True)
-        self.select_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.select_tool_action)
-
-        self.annotate_tool_action = QAction(QIcon(annotate_icon_path), "Annotate", self)
-        self.annotate_tool_action.setCheckable(True)
-        self.annotate_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.annotate_tool_action)
-
-        self.polygon_tool_action = QAction(QIcon(polygon_icon_path), "Polygon", self)
-        self.polygon_tool_action.setCheckable(False)
-        self.polygon_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.polygon_tool_action)
-
-        # Create status bar layout
-        self.status_bar_layout = QHBoxLayout()
-
-        # Labels for image dimensions and mouse position
-        self.image_dimensions_label = QLabel("Image: 0 x 0")
-        self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-
-        # Set fixed width for labels to prevent them from resizing
-        self.image_dimensions_label.setFixedWidth(150)
-        self.mouse_position_label.setFixedWidth(150)
-
-        # Transparency slider
-        self.transparency_slider = QSlider(Qt.Horizontal)
-        self.transparency_slider.setRange(0, 255)
-        self.transparency_slider.setValue(128)  # Default transparency
-        self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
-
-        # Spin box for annotation size control
-        self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(1000)  # Adjust as needed
-        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
-        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
-        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
-
-        # Add widgets to status bar layout
-        self.status_bar_layout.addWidget(self.image_dimensions_label)
-        self.status_bar_layout.addWidget(self.mouse_position_label)
-        self.status_bar_layout.addStretch()
-        self.status_bar_layout.addWidget(QLabel("Transparency:"))
-        self.status_bar_layout.addWidget(self.transparency_slider)
-        self.status_bar_layout.addStretch()
-        self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
-        self.status_bar_layout.addWidget(self.annotation_size_spinbox)
-
-        self.imported_image_paths = set()  # Set to keep track of imported image paths
-
-        # Create the main layout
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
-
-        # Create left and right layouts
-        self.left_layout = QVBoxLayout()
-        self.right_layout = QVBoxLayout()
-
-        # Add status bar layout to left layout above the AnnotationWindow
-        self.left_layout.addLayout(self.status_bar_layout)
-        self.left_layout.addWidget(self.annotation_window, 85)
-        self.left_layout.addWidget(self.label_window, 15)
-
-        # Add widgets to right layout
-        self.right_layout.addWidget(self.image_window, 54)
-        self.right_layout.addWidget(self.confidence_window, 46)
-
-        # Add left and right layouts to main layout
-        self.main_layout.addLayout(self.left_layout, 85)
-        self.main_layout.addLayout(self.right_layout, 15)
-
-        # Set up global event filter
-        self.global_event_filter = GlobalEventFilter(self)
-        QApplication.instance().installEventFilter(self.global_event_filter)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-
-    def changeEvent(self, event):
-        super().changeEvent(event)
-        if event.type() == QEvent.WindowStateChange:
-            if self.windowState() & Qt.WindowMinimized:
-                # Allow minimizing
-                pass
-            elif self.windowState() & Qt.WindowMaximized:
-                # Window is maximized, do nothing
-                pass
-            else:
-                # Restore to normal state
-                pass  # Do nothing, let the OS handle the restore
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self.close()
-
-    def toggle_tool(self, state):
-        action = self.sender()
-        if action == self.select_tool_action:
-            if state:
-                self.annotate_tool_action.setChecked(False)
-                self.toolChanged.emit("select")
-            else:
-                self.toolChanged.emit(None)
-        elif action == self.annotate_tool_action:
-            if state:
-                self.select_tool_action.setChecked(False)
-                self.toolChanged.emit("annotate")
-            else:
-                self.toolChanged.emit(None)
-
-    def handle_tool_changed(self, tool):
-        if tool == "select":
-            self.select_tool_action.setChecked(True)
-            self.annotate_tool_action.setChecked(False)
-        elif tool == "annotate":
-            self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(True)
-        else:
-            self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(False)
-
-    def update_image_dimensions(self, width, height):
-        self.image_dimensions_label.setText(f"Image: {width} x {height}")
-
-    def update_mouse_position(self, x, y):
-        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
-
-    def update_annotation_transparency(self, value):
-        if self.annotation_window.selected_label:
-            self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
-
-    def import_images(self):
-        file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
-        if file_names:
-            progress_bar = ProgressBar(self, title="Importing Images")
-            progress_bar.show()
-            progress_bar.start_progress(len(file_names))
-
-            for i, file_name in enumerate(file_names):
-                if file_name not in self.imported_image_paths:
-                    self.image_window.add_image(file_name)
-                    self.imported_image_paths.add(file_name)
-                    self.annotation_window.loaded_image_paths.add(file_name)
-                    progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
-
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-            if file_names:
-                # Load the last image
-                image_path = file_names[-1]
-                self.image_window.load_image_by_path(image_path)
-
-            QMessageBox.information(self,
-                                    "Image(s) Imported",
-                                    "Image(s) have been successfully exported.")
-
-    def open_annotation_sampling_dialog(self):
-
-        # Check if there are any loaded images
-        if not self.annotation_window.loaded_image_paths:
-            # Show a message box if no images are loaded
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before sampling annotations.")
-            return
-
-        try:
-            # Proceed to open the dialog if images are loaded
-            self.annotation_sampling_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_create_dataset_dialog(self):
-        # Check if there are loaded images
-        if not len(self.annotation_window.loaded_image_paths):
-            QMessageBox.warning(self,
-                                "Create Dataset",
-                                "No images are present in the project.")
-            return
-
-        # Check if there are annotations
-        if not len(self.annotation_window.annotations_dict):
-            QMessageBox.warning(self,
-                                "Create Dataset",
-                                "No annotations are present in the project.")
-            return
-
-        try:
-            self.create_dataset_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_train_model_dialog(self):
-        try:
-            self.train_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_optimize_model_dialog(self):
-        try:
-            self.optimize_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_deploy_model_dialog(self):
-        try:
-            self.deploy_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
 
 
 class CreateDatasetDialog(QDialog):
@@ -1168,32 +803,50 @@ class CreateDatasetDialog(QDialog):
         super().accept()
 
     def process_annotations(self, annotations, split_dir, split):
+
+        # Organize based on image
+        image_paths = set(a.image_path for a in annotations)
+
         progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
         progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
 
-        progress_bar.start_progress(len(annotations))
+        # Store the image
+        image_item = None
 
-        for annotation in annotations:
+        for image_path in image_paths:
+
             if progress_bar.wasCanceled():
                 break
 
-            if not annotation.cropped_image:
-                image = self.image_window.images[annotation.image_path]
-                image_item = QGraphicsPixmapItem(QPixmap(image))
-                annotation.create_cropped_image(image_item)
+            # Get the image annotations
+            image_annotations = [a for a in annotations if a.image_path == image_path]
 
-            cropped_image = annotation.cropped_image
+            for image_annotation in image_annotations:
 
-            if cropped_image:
-                if self.get_selected_label_code_type() == "Short Label Codes":
-                    label_code = annotation.label.short_label_code
-                else:
-                    label_code = annotation.label.long_label_code
+                if not image_annotation.cropped_image:
+                    if not image_item:
+                        # Get the image item once
+                        image_item = QGraphicsPixmapItem(QPixmap(QImage(image_path)))
 
-                output_path = os.path.join(split_dir, label_code)
-                output_filename = f"{label_code}_{annotation.id}.jpg"
-                cropped_image.save(os.path.join(output_path, output_filename))
+                    image_annotation.create_cropped_image(image_item)
 
+                cropped_image = image_annotation.cropped_image
+
+                if cropped_image:
+                    if self.get_selected_label_code_type() == "Short Label Codes":
+                        label_code = image_annotation.label.short_label_code
+                    else:
+                        label_code = image_annotation.label.long_label_code
+
+                    output_path = os.path.join(split_dir, label_code)
+                    output_filename = f"{label_code}_{image_annotation.id}.jpg"
+                    cropped_image.save(os.path.join(output_path, output_filename))
+
+            # Reset the image item
+            image_item = None
+
+            # Update the progress bar
             progress_bar.update_progress()
             QApplication.processEvents()  # Update GUI
 
@@ -1204,6 +857,7 @@ class CreateDatasetDialog(QDialog):
         super().showEvent(event)
         self.populate_class_filter_list()
         self.update_summary_statistics()
+
 
 
 class TrainModelDialog(QDialog):
@@ -1810,8 +1464,10 @@ class DeployModelDialog(QDialog):
                 missing_labels = []
 
                 for class_name in class_names:
-                    class_names_str += f"{class_name} \n"
-                    if not self.label_window.get_label_by_long_code(class_name):
+                    if self.label_window.get_label_by_long_code(class_name):
+                        class_names_str += f"✅ {class_name} \n"
+                    else:
+                        class_names_str += f"❌ {class_name} \n"
                         missing_labels.append(class_name)
 
                 self.classification_text_area.setText(class_names_str)
@@ -1871,7 +1527,7 @@ class DeployModelDialog(QDialog):
         selected_annotation = self.annotation_window.selected_annotation
 
         if selected_annotation:
-            # Make predictions on specific annotation
+            # Make predictions on a single, specific annotation
             self.predict_annotation(selected_annotation)
             # Update everything (essentially)
             self.main_window.annotation_window.unselect_annotation()
@@ -1879,7 +1535,7 @@ class DeployModelDialog(QDialog):
         else:
             # Run predictions on multiple annotations
             if not annotations:
-                # If not supplied with annotations, get those for current image
+                # If not supplied with annotations, get all of those for current image
                 annotations = self.annotation_window.get_image_annotations()
 
             # Filter annotations to only include those with 'Review' label
@@ -1893,7 +1549,11 @@ class DeployModelDialog(QDialog):
                 results = self.loaded_model(images_np)
 
                 for annotation, result in zip(review_annotations, results):
+                    # Process the results
                     self.process_prediction_result(annotation, result)
+
+                # Show last in the confidence window
+                self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -1952,6 +1612,369 @@ class DeployModelDialog(QDialog):
         if predictions:
             # Update the machine confidence
             annotation.update_machine_confidence(predictions)
+
+
+class MainWindow(QMainWindow):
+    toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
+
+    def __init__(self):
+        super().__init__()
+
+        root = os.path.dirname(os.path.abspath(__file__))
+
+        # Define the icon path
+        self.setWindowTitle("CoralNet Toolbox")
+        # Set the window icon
+        main_window_icon_path = f"{root}/icons/toolbox.png"
+        self.setWindowIcon(QIcon(main_window_icon_path))
+
+        # Set window flags for resizing, minimize, maximize, and customizing
+        self.setWindowFlags(Qt.Window |
+                            Qt.WindowCloseButtonHint |
+                            Qt.WindowMinimizeButtonHint |
+                            Qt.WindowMaximizeButtonHint |
+                            Qt.WindowTitleHint)
+
+        self.annotation_window = AnnotationWindow(self)
+        self.label_window = LabelWindow(self)
+        self.image_window = ImageWindow(self)
+        self.confidence_window = ConfidenceWindow(self)
+
+        self.create_dataset_dialog = CreateDatasetDialog(self)
+        self.train_model_dialog = TrainModelDialog(self)
+        self.optimize_model_dialog = OptimizeModelDialog(self)
+        self.deploy_model_dialog = DeployModelDialog(self)
+
+        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
+
+        # Connect signals to update status bar
+        self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
+        self.annotation_window.mouseMoved.connect(self.update_mouse_position)
+
+        # Connect the toolChanged signal (to the AnnotationWindow)
+        self.toolChanged.connect(self.annotation_window.set_selected_tool)
+        # Connect the toolChanged signal (to the Toolbar)
+        self.annotation_window.toolChanged.connect(self.handle_tool_changed)
+        # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
+        self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
+        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
+        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
+        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
+        self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
+
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QHBoxLayout(self.central_widget)
+
+        self.left_layout = QVBoxLayout()
+        self.right_layout = QVBoxLayout()
+
+        # Menu bar
+        self.menu_bar = self.menuBar()
+
+        self.import_menu = self.menu_bar.addMenu("Import")
+
+        self.import_images_action = QAction("Import Images", self)
+        self.import_images_action.triggered.connect(self.import_images)
+        self.import_menu.addAction(self.import_images_action)
+
+        self.import_labels_action = QAction("Import Labels (JSON)", self)
+        self.import_labels_action.triggered.connect(self.label_window.import_labels)
+        self.import_menu.addAction(self.import_labels_action)
+
+        self.import_annotations_action = QAction("Import Annotations (JSON)", self)
+        self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
+        self.import_menu.addAction(self.import_annotations_action)
+
+        self.import_coralnet_annotations_action = QAction("Import Annotations (CoralNet)", self)
+        self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
+        self.import_menu.addAction(self.import_coralnet_annotations_action)
+
+        self.export_menu = self.menu_bar.addMenu("Export")
+
+        self.export_labels_action = QAction("Export Labels (JSON)", self)
+        self.export_labels_action.triggered.connect(self.label_window.export_labels)
+        self.export_menu.addAction(self.export_labels_action)
+
+        self.export_annotations_action = QAction("Export Annotations (JSON)", self)
+        self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
+        self.export_menu.addAction(self.export_annotations_action)
+
+        self.export_coralnet_annotations_action = QAction("Export Annotations (CoralNet)", self)
+        self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
+        self.export_menu.addAction(self.export_coralnet_annotations_action)
+
+        self.annotation_sampling_action = QAction("Sample Annotations", self)
+        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
+        self.menu_bar.addAction(self.annotation_sampling_action)
+
+        # CoralNet menu
+        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+
+        self.coralnet_authenticate_action = QAction("Authenticate", self)
+        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
+
+        self.coralnet_upload_action = QAction("Upload", self)
+        self.coralnet_menu.addAction(self.coralnet_upload_action)
+
+        self.coralnet_download_action = QAction("Download", self)
+        self.coralnet_menu.addAction(self.coralnet_download_action)
+
+        self.coralnet_model_api_action = QAction("Model API", self)
+        self.coralnet_menu.addAction(self.coralnet_model_api_action)
+
+        # Machine Learning menu
+        self.ml_menu = self.menu_bar.addMenu("Machine Learning")
+
+        self.ml_create_dataset_action = QAction("Create Dataset", self)
+        self.ml_create_dataset_action.triggered.connect(self.open_create_dataset_dialog)
+        self.ml_menu.addAction(self.ml_create_dataset_action)
+
+        self.ml_train_model_action = QAction("Train Model", self)
+        self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
+        self.ml_menu.addAction(self.ml_train_model_action)
+
+        self.ml_optimize_model_action = QAction("Optimize Model", self)
+        self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
+        self.ml_menu.addAction(self.ml_optimize_model_action)
+
+        self.ml_deploy_model_action = QAction("Deploy Model", self)
+        self.ml_deploy_model_action.triggered.connect(self.open_deploy_model_dialog)
+        self.ml_menu.addAction(self.ml_deploy_model_action)
+
+        # Create and add the toolbar
+        self.toolbar = QToolBar("Tools", self)
+        self.toolbar.setOrientation(Qt.Vertical)
+        self.toolbar.setFixedWidth(40)
+        self.toolbar.setMovable(False)  # Lock the toolbar in place
+        self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
+
+        # Add a spacer before the first tool with a fixed height
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        spacer.setFixedHeight(10)  # Set a fixed height for the spacer
+        self.toolbar.addWidget(spacer)
+
+        # Define icon paths
+        select_icon_path = f"{root}/icons/select.png"
+        annotate_icon_path = f"{root}/icons/annotate.png"
+        polygon_icon_path = f"{root}/icons/polygon.png"
+
+        # Add tools here with icons
+        self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
+        self.select_tool_action.setCheckable(True)
+        self.select_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.select_tool_action)
+
+        self.annotate_tool_action = QAction(QIcon(annotate_icon_path), "Annotate", self)
+        self.annotate_tool_action.setCheckable(True)
+        self.annotate_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.annotate_tool_action)
+
+        self.polygon_tool_action = QAction(QIcon(polygon_icon_path), "Polygon", self)
+        self.polygon_tool_action.setCheckable(False)
+        self.polygon_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.polygon_tool_action)
+
+        # Create status bar layout
+        self.status_bar_layout = QHBoxLayout()
+
+        # Labels for image dimensions and mouse position
+        self.image_dimensions_label = QLabel("Image: 0 x 0")
+        self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
+
+        # Set fixed width for labels to prevent them from resizing
+        self.image_dimensions_label.setFixedWidth(150)
+        self.mouse_position_label.setFixedWidth(150)
+
+        # Transparency slider
+        self.transparency_slider = QSlider(Qt.Horizontal)
+        self.transparency_slider.setRange(0, 255)
+        self.transparency_slider.setValue(128)  # Default transparency
+        self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
+
+        # Spin box for annotation size control
+        self.annotation_size_spinbox = QSpinBox()
+        self.annotation_size_spinbox.setMinimum(1)
+        self.annotation_size_spinbox.setMaximum(1000)  # Adjust as needed
+        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
+        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
+
+        # Add widgets to status bar layout
+        self.status_bar_layout.addWidget(self.image_dimensions_label)
+        self.status_bar_layout.addWidget(self.mouse_position_label)
+        self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("Transparency:"))
+        self.status_bar_layout.addWidget(self.transparency_slider)
+        self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
+        self.status_bar_layout.addWidget(self.annotation_size_spinbox)
+
+        self.imported_image_paths = set()  # Set to keep track of imported image paths
+
+        # Create the main layout
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QHBoxLayout(self.central_widget)
+
+        # Create left and right layouts
+        self.left_layout = QVBoxLayout()
+        self.right_layout = QVBoxLayout()
+
+        # Add status bar layout to left layout above the AnnotationWindow
+        self.left_layout.addLayout(self.status_bar_layout)
+        self.left_layout.addWidget(self.annotation_window, 85)
+        self.left_layout.addWidget(self.label_window, 15)
+
+        # Add widgets to right layout
+        self.right_layout.addWidget(self.image_window, 54)
+        self.right_layout.addWidget(self.confidence_window, 46)
+
+        # Add left and right layouts to main layout
+        self.main_layout.addLayout(self.left_layout, 85)
+        self.main_layout.addLayout(self.right_layout, 15)
+
+        # Set up global event filter
+        self.global_event_filter = GlobalEventFilter(self)
+        QApplication.instance().installEventFilter(self.global_event_filter)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            if self.windowState() & Qt.WindowMinimized:
+                # Allow minimizing
+                pass
+            elif self.windowState() & Qt.WindowMaximized:
+                # Window is maximized, do nothing
+                pass
+            else:
+                # Restore to normal state
+                pass  # Do nothing, let the OS handle the restore
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+
+    def toggle_tool(self, state):
+        action = self.sender()
+        if action == self.select_tool_action:
+            if state:
+                self.annotate_tool_action.setChecked(False)
+                self.toolChanged.emit("select")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.annotate_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.toolChanged.emit("annotate")
+            else:
+                self.toolChanged.emit(None)
+
+    def handle_tool_changed(self, tool):
+        if tool == "select":
+            self.select_tool_action.setChecked(True)
+            self.annotate_tool_action.setChecked(False)
+        elif tool == "annotate":
+            self.select_tool_action.setChecked(False)
+            self.annotate_tool_action.setChecked(True)
+        else:
+            self.select_tool_action.setChecked(False)
+            self.annotate_tool_action.setChecked(False)
+
+    def update_image_dimensions(self, width, height):
+        self.image_dimensions_label.setText(f"Image: {width} x {height}")
+
+    def update_mouse_position(self, x, y):
+        self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
+
+    def update_annotation_transparency(self, value):
+        if self.annotation_window.selected_label:
+            self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
+
+    def import_images(self):
+        file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
+        if file_names:
+            progress_bar = ProgressBar(self, title="Importing Images")
+            progress_bar.show()
+            progress_bar.start_progress(len(file_names))
+
+            for i, file_name in enumerate(file_names):
+                if file_name not in self.imported_image_paths:
+                    self.image_window.add_image(file_name)
+                    self.imported_image_paths.add(file_name)
+                    self.annotation_window.loaded_image_paths.add(file_name)
+                    progress_bar.update_progress()
+                    QApplication.processEvents()  # Update GUI
+
+            progress_bar.stop_progress()
+            progress_bar.close()
+
+            if file_names:
+                # Load the last image
+                image_path = file_names[-1]
+                self.image_window.load_image_by_path(image_path)
+
+            QMessageBox.information(self,
+                                    "Image(s) Imported",
+                                    "Image(s) have been successfully exported.")
+
+    def open_annotation_sampling_dialog(self):
+
+        # Check if there are any loaded images
+        if not self.annotation_window.loaded_image_paths:
+            # Show a message box if no images are loaded
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+
+        try:
+            # Proceed to open the dialog if images are loaded
+            self.annotation_sampling_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_create_dataset_dialog(self):
+        # Check if there are loaded images
+        if not len(self.annotation_window.loaded_image_paths):
+            QMessageBox.warning(self,
+                                "Create Dataset",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Create Dataset",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.create_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_train_model_dialog(self):
+        try:
+            self.train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_optimize_model_dialog(self):
+        try:
+            self.optimize_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_deploy_model_dialog(self):
+        try:
+            self.deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
 
 class Annotation(QObject):
@@ -2149,7 +2172,6 @@ class Annotation(QObject):
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
-    imageDeleted = pyqtSignal(str)  # Signal to emit when an image is deleted
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
@@ -2578,6 +2600,9 @@ class AnnotationWindow(QGraphicsView):
                         break
 
             elif self.selected_tool == "annotate" and event.button() == Qt.LeftButton:
+                # Annotation cannot be selected in annotate mode
+                self.unselect_annotation()
+                # Add annotation to the scene
                 self.add_annotation(self.mapToScene(event.pos()))
 
         super().mousePressEvent(event)
@@ -2744,6 +2769,7 @@ class AnnotationWindow(QGraphicsView):
             self.delete_annotation(annotation_id)
 
     def delete_image(self, image_path):
+        # Called by ImageWindow
         annotation_ids_to_delete = [i for i, a in self.annotations_dict.items() if a.image_path == image_path]
 
         for annotation_id in annotation_ids_to_delete:
@@ -2757,8 +2783,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_item = None
             self.active_image = False  # Reset image_set flag
 
-        self.imageDeleted.emit(image_path)
-
     def delete_annotations_for_label(self, label):
         for annotation in list(self.annotations_dict.values()):
             if annotation.label.id == label.id:
@@ -2768,7 +2792,6 @@ class AnnotationWindow(QGraphicsView):
 
 class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)
-    imageDeleted = pyqtSignal(str)
 
     def __init__(self, main_window):
         super().__init__()
@@ -2777,6 +2800,16 @@ class ImageWindow(QWidget):
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
+
+        # Create a horizontal layout for the search bar
+        self.search_layout = QHBoxLayout()
+        self.layout.addLayout(self.search_layout)
+
+        # Add a search bar
+        self.search_bar = QLineEdit(self)
+        self.search_bar.setPlaceholderText("Search images...")
+        self.search_bar.textChanged.connect(self.filter_images)
+        self.search_layout.addWidget(self.search_bar)
 
         # Create a horizontal layout for the labels
         self.info_layout = QHBoxLayout()
@@ -2811,20 +2844,24 @@ class ImageWindow(QWidget):
 
         self.layout.addWidget(self.tableWidget)
 
-        self.images = {}
-        self.image_list = []
+        self.image_paths = []  # Store only image paths
+        self.filtered_image_paths = []  # Subset of images based on search
         self.selected_row = None
         self.show_confirmation_dialog = True
+        self.images = {}  # Dictionary to store images and their paths
 
     def add_image(self, image_path):
+
+        # Clear the search bar text
+        self.search_bar.clear()
+
         if image_path not in self.main_window.imported_image_paths:
-            image = QImage(image_path)
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
             self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(image_path)))
 
-            self.images[image_path] = image
-            self.image_list.append(image_path)
+            self.image_paths.append(image_path)
+            self.filtered_image_paths.append(image_path)
 
             # Select and set the first image
             if row_position == 0:
@@ -2838,16 +2875,22 @@ class ImageWindow(QWidget):
             self.update_image_count_label()
 
     def load_image(self, row, column):
-        image_path = self.image_list[row]
+        image_path = self.filtered_image_paths[row]
         self.load_image_by_path(image_path)
 
     def load_image_by_path(self, image_path):
         if self.selected_row is not None:
             self.tableWidget.item(self.selected_row, 0).setSelected(False)
 
-        self.selected_row = self.image_list.index(image_path)
+        # Clear the previous image from memory
+        if self.selected_row is not None and self.filtered_image_paths[self.selected_row] in self.images:
+            del self.images[self.filtered_image_paths[self.selected_row]]
+
+        image = QImage(image_path)  # Load the image only when needed
+        self.images[image_path] = image  # Store the image in the dictionary
+        self.selected_row = self.filtered_image_paths.index(image_path)
         self.tableWidget.selectRow(self.selected_row)
-        self.annotation_window.set_image(self.images[image_path], image_path)
+        self.annotation_window.set_image(image, image_path)
         self.imageSelected.emit(image_path)
 
         # Update the current image index label
@@ -2859,25 +2902,29 @@ class ImageWindow(QWidget):
             if result == QMessageBox.No:
                 return
 
-        image_path = self.image_list[row]
+        image_path = self.filtered_image_paths[row]
         self.tableWidget.removeRow(row)
-        del self.images[image_path]
-        self.image_list.remove(image_path)
+        self.image_paths.remove(image_path)
+        self.filtered_image_paths.remove(image_path)
+        self.annotation_window.delete_image(image_path)
         self.main_window.imported_image_paths.discard(image_path)
+
+        # Remove the image from the dictionary
+        if image_path in self.images:
+            del self.images[image_path]
 
         # Update the image count label
         self.update_image_count_label()
 
         # Update the selected row and load another image if possible
-        if self.image_list:
-            if row < len(self.image_list):
+        if self.filtered_image_paths:
+            if row < len(self.filtered_image_paths):
                 self.selected_row = row
             else:
-                self.selected_row = len(self.image_list) - 1
-            self.load_image_by_path(self.image_list[self.selected_row])
+                self.selected_row = len(self.filtered_image_paths) - 1
+            self.load_image(self.selected_row, 0)
         else:
             self.selected_row = None
-            self.annotation_window.clear_image()  # Clear the annotation window if no images are left
 
         # Update the current image index label
         self.update_current_image_index_label()
@@ -2911,7 +2958,7 @@ class ImageWindow(QWidget):
                 self.delete_image(row)
 
     def update_image_count_label(self):
-        total_images = len(self.images)
+        total_images = len(self.filtered_image_paths)
         self.image_count_label.setText(f"Total Images: {total_images}")
 
     def update_current_image_index_label(self):
@@ -2921,11 +2968,11 @@ class ImageWindow(QWidget):
             self.current_image_index_label.setText("Current Image: None")
 
     def cycle_previous_image(self):
-        if not self.image_list:
+        if not self.filtered_image_paths:
             return
 
         if self.selected_row is not None:
-            new_row = (self.selected_row - 1) % len(self.image_list)
+            new_row = (self.selected_row - 1) % len(self.filtered_image_paths)
         else:
             new_row = 0
 
@@ -2933,16 +2980,32 @@ class ImageWindow(QWidget):
         self.load_image(new_row, 0)
 
     def cycle_next_image(self):
-        if not self.image_list:
+        if not self.filtered_image_paths:
             return
 
         if self.selected_row is not None:
-            new_row = (self.selected_row + 1) % len(self.image_list)
+            new_row = (self.selected_row + 1) % len(self.filtered_image_paths)
         else:
             new_row = 0
 
         self.tableWidget.selectRow(new_row)
         self.load_image(new_row, 0)
+
+    def filter_images(self, text):
+        self.filtered_image_paths = [path for path in self.image_paths if text.lower() in os.path.basename(path).lower()]
+        self.tableWidget.setRowCount(0)  # Clear the table
+        for path in self.filtered_image_paths:
+            row_position = self.tableWidget.rowCount()
+            self.tableWidget.insertRow(row_position)
+            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(path)))
+
+        # Update the image count label
+        self.update_image_count_label()
+
+        # If the selected row is no longer valid, reset it
+        if self.selected_row is not None and self.selected_row >= len(self.filtered_image_paths):
+            self.selected_row = None
+            self.update_current_image_index_label()
 
 
 class AddLabelDialog(QDialog):
@@ -3536,8 +3599,10 @@ class LabelWindow(QWidget):
 class ConfidenceBar(QFrame):
     barClicked = pyqtSignal(object)  # Define a signal that takes an object (label)
 
-    def __init__(self, label, confidence, parent=None):
+    def __init__(self, confidence_window, label, confidence, parent=None):
         super().__init__(parent)
+        self.confidence_window = confidence_window
+
         self.label = label
         self.confidence = confidence
         self.color = label.color
@@ -3562,16 +3627,22 @@ class ConfidenceBar(QFrame):
             self.handle_click()
 
     def handle_click(self):
-        # Emit the signal with the label object
-        self.barClicked.emit(self.label)
+        # Check if the Selector tool is active
+        if self.confidence_window.main_window.annotation_window.selected_tool == "select":
+            # Emit the signal with the label object
+            self.barClicked.emit(self.label)
 
     def enterEvent(self, event):
         super().enterEvent(event)
-        self.setCursor(QCursor(Qt.PointingHandCursor))
+        # Change cursor based on the active tool
+        if self.confidence_window.main_window.annotation_window.selected_tool == "select":
+            self.setCursor(QCursor(Qt.PointingHandCursor))
+        else:
+            self.setCursor(QCursor(Qt.ForbiddenCursor))  # Use a forbidden cursor icon
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
-        self.setCursor(QCursor(Qt.ArrowCursor))
+        self.setCursor(QCursor(Qt.ArrowCursor))  # Reset to the default cursor
 
 
 class ConfidenceWindow(QWidget):
@@ -3651,7 +3722,7 @@ class ConfidenceWindow(QWidget):
         self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
 
         for label, confidence in zip(labels, confidences):
-            bar_widget = ConfidenceBar(label, confidence, self.bar_chart_widget)
+            bar_widget = ConfidenceBar(self, label, confidence, self.bar_chart_widget)
             bar_widget.barClicked.connect(self.handle_bar_click)  # Connect the signal to the slot
             self.add_bar_to_layout(bar_widget, label, confidence)
 
