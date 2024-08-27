@@ -1,7 +1,5 @@
 # CoralNet Toolshed  
 
----
-
 ### [**Tools**](src/README.md#coralnet-toolbox)
 
 **The `CoralNet-Toolshed` is and older version of the `CoralNet-Toolbox`.**
