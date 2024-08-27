@@ -40,34 +40,24 @@ with those on CoralNet. The toolbox includes the following:
 
 #### **How to Install**
 
-To install, do the following (preferably) within an `Anaconda` environment:
+First, clone the repo and set up an `Anaconda` environment:
 ```bash
 # cmd
 
-# Create an environment
-conda create --name coralnet_toolbox python=3.8 -y
+# Clone and enter the repository
+git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
+cd CoralNet-Toolbox
 
-# Activate the environment
-conda activate coralnet_toolbox
+# Create and activate an environment
+conda create --name coralnet-toolbox python=3.8 -y
+conda activate coralnet-toolbox
 
 # Install
-pip install coralnet-toolbox
+pip install -e .
 
 # Run
 coralnet-toolbox
 ```
-
-Or, if you want the latest and greatest, you can build from source:
-```bash
-# cmd
-
-pip install -e .
-```
-
-Note that the `CoralNet-Toolbox` has ***only*** been tested on the following:
-- `Windows 10`
-- `Python 3.8`
-- `Torch 2.0.0 + CUDA 11.8`
 
 
 ### [**About CoralNet**](https://coralnet.ucsd.edu/source/)

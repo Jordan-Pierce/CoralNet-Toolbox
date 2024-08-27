@@ -1,6 +1,5 @@
 wheel
 setuptools
-twine
 PyQt5
 ultralytics
 rasterio

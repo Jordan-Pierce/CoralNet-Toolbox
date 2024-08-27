@@ -1,14 +1,14 @@
 import os
-import sys
-import subprocess
 from setuptools import setup, find_packages
-from setuptools.command.install import install
 
+# Check if requirements.txt exists
+assert os.path.exists("requirements.txt"), print("ERROR: Cannot find requirements.txt")
 
 # Read requirements from requirements.txt
 with open('requirements.txt') as f:
     required_packages = f.read().splitlines()
 
+# Setup
 setup(
     name='coralnet-toolbox',
     version='0.0.1',
@@ -21,10 +21,10 @@ setup(
     python_requires='>=3.8',
     entry_points={
         "console_scripts": [
-            "coralnet-toolbox = coralnet_toolbox:run"
+            "coralnet-toolbox = toolbox:run"
         ]
     },
     package_data={
-        'coralnet_toolbox': ['icons/*']
+        'toolbox': ['icons/*']
     },
 )
