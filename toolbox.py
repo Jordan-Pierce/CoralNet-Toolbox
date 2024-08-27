@@ -524,21 +524,35 @@ def main():
                                        help='Patches dataframe file(s)',
                                        widget="MultiFileChooser")
 
-    toyolo_parser_panel_1.add_argument('--output_dir', required=True,
-                                       metavar='Output Directory',
-                                       default=DATA_DIR,
-                                       help='Root directory where output will be saved',
-                                       widget="DirChooser")
+    # Panel 2
+    toyolo_parser_panel_2 = toyolo_parser.add_argument_group('Parameters',
+                                                             'Specify the parameters',
+                                                             gooey_options={'show_border': True})
 
-    toyolo_parser_panel_1.add_argument('--even_dist',
+    toyolo_parser_panel_2.add_argument('--even_dist',
                                        metavar="Even Distribution",
                                        help='Downsample majority classes to be +/- N% of minority',
                                        action="store_true",
                                        widget='BlockCheckbox')
 
-    toyolo_parser_panel_1.add_argument('--about', type=float, default=0.25,
+    toyolo_parser_panel_2.add_argument('--about', type=float, default=0.25,
                                        metavar="About",
                                        help='Downsample majority classes by "about" +/- N% of minority class')
+
+    # Panel 3
+    toyolo_parser_panel_3 = toyolo_parser.add_argument_group('Output',
+                                                             'Specify the output',
+                                                             gooey_options={'show_border': True})
+
+    toyolo_parser_panel_3.add_argument('--output_name', type=str, required=False,
+                                       metavar='Output Name',
+                                       help='Name for Output Directory (optional)')
+
+    toyolo_parser_panel_3.add_argument('--output_dir', required=True,
+                                       metavar='Output Directory',
+                                       default=DATA_DIR,
+                                       help='Root directory where output will be saved',
+                                       widget="DirChooser")
 
     # ------------------------------------------------------------------------------------------------------------------
     # Points

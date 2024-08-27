@@ -16,6 +16,7 @@ from Classification import downsample_majority_classes
 from Common import get_now
 from Common import console_user
 
+
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
@@ -46,8 +47,12 @@ def to_yolo(args):
     :param args:
     :return:
     """
+    print("\n###############################################")
+    print("To YOLO")
+    print("###############################################\n")
     # Create the output directories
-    output_dir = f"{args.output_dir}/yolo/{get_now()}"
+    name = args.output_name if args.output_name else get_now()
+    output_dir = f"{args.output_dir}/yolo/{name}"
 
     train_dir = f"{output_dir}/train"
     val_dir = f"{output_dir}/val"
@@ -55,6 +60,8 @@ def to_yolo(args):
 
     for directory in [train_dir, val_dir, test_dir]:
         os.makedirs(directory, exist_ok=True)
+
+    print(f"NOTE: Found {len(args.patches)} patch files")
 
     # If the user provides multiple patch dataframes
     patches_df = pd.DataFrame()
@@ -85,7 +92,7 @@ def to_yolo(args):
 
     # Split the Images into training, validation, and test sets (70/20/10)
     # We split based on the image names, so that we don't have the same image in multiple sets.
-    training_images, temp_images = train_test_split(image_names, test_size=0.3, random_state=42)
+    training_images, temp_images = train_test_split(image_names, test_size=0.2, random_state=42)
     validation_images, testing_images = train_test_split(temp_images, test_size=0.33, random_state=42)
 
     # Create training, validation, and test dataframes
@@ -124,9 +131,9 @@ def to_yolo(args):
     test_df.reset_index(drop=True, inplace=True)
 
     # Output to logs
-    train_df.to_csv(f"{output_dir}Training_Set.csv", index=False)
-    valid_df.to_csv(f"{output_dir}Validation_Set.csv", index=False)
-    test_df.to_csv(f"{output_dir}Testing_Set.csv", index=False)
+    train_df.to_csv(f"{output_dir}/Training_Set.csv", index=False)
+    valid_df.to_csv(f"{output_dir}/Validation_Set.csv", index=False)
+    test_df.to_csv(f"{output_dir}/Testing_Set.csv", index=False)
 
     # The number of class categories
     print(f"NOTE: Number of classes in training set is {len(train_df['Label'].unique())}, N={len(train_df)}")
@@ -161,10 +168,10 @@ def to_yolo(args):
     ax.set_ylim([ymin, ymax])
 
     # Saving and displaying the figure
-    plt.savefig(output_dir + "DatasetSplit.jpg")
+    plt.savefig(f"{output_dir}/DatasetSplit.jpg")
     plt.close()
 
-    if os.path.exists(output_dir + "DatasetSplit.jpg"):
+    if os.path.exists(f"{output_dir}/DatasetSplit.jpg"):
         print(f"NOTE: Data split Figure saved in {output_dir}")
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -207,6 +214,9 @@ def main():
 
     parser.add_argument('--about', type=float, default=0.25,
                         help='Downsample majority classes by "about" +/- N% of minority class')
+
+    parser.add_argument('--output_name', type=str, required=False,
+                        help='Name to provide output directory (optional)')
 
     parser.add_argument('--output_dir', type=str, required=True,
                         help='Directory to save updated label csv file.')
