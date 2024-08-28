@@ -2,12 +2,11 @@ import os
 import uuid
 import json
 import random
-from multiprocessing import Pool, cpu_count
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
 
-import rasterio
 from rasterio.windows import Window
 
 from toolbox.QtLabel import Label
@@ -846,32 +845,27 @@ class AnnotationWindow(QGraphicsView):
 
     def crop_image_annotations(self, image_path=None, return_annotations=False):
         if not image_path:
+            # Set the image path if not provided
             image_path = self.current_image_path
-
-        # Get the rasterio representation
-        rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-        # Create cropped images for each annotation
+        # Get the annotations for the image
         annotations = self.get_image_annotations(image_path)
-
-        for annotation in annotations:
-            # Will skip if image previously loaded
-            if not annotation.cropped_image:
-                annotation.create_cropped_image(rasterio_image)
-
-        # Skips a for loop for calling function
+        self._crop_annotations_batch(image_path, annotations)
+        # Return the annotations if flag is set
         if return_annotations:
             return annotations
 
     def crop_these_image_annotations(self, image_path, annotations):
+        # Crop these annotations for this image
+        self._crop_annotations_batch(image_path, annotations)
+        return annotations
+
+    def _crop_annotations_batch(self, image_path, annotations):
         # Get the rasterio representation
         rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-        # Loop through the annotations
+        # Loop through the annotations, crop the image if not already cropped
         for annotation in annotations:
-            # Crop the image if not already cropped
             if not annotation.cropped_image:
                 annotation.create_cropped_image(rasterio_image)
-
-        return annotations
 
     def add_annotation(self, scene_pos: QPointF, annotation=None):
         if not self.selected_label:

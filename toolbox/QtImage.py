@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 
 import rasterio
 
@@ -99,6 +100,7 @@ class ImageWindow(QWidget):
 
         self.images = {}  # Dictionary to store image paths and their QImage representation
         self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
+        self.image_cache = {}  # Cache for images
 
         self.show_confirmation_dialog = True
 
@@ -174,6 +176,7 @@ class ImageWindow(QWidget):
         # Update the current image index label
         self.update_current_image_index_label()
 
+    @lru_cache(maxsize=32)
     def rasterio_open(self, image_path):
         # Open the image with Rasterio
         self.src = rasterio.open(image_path)
