@@ -32,23 +32,16 @@ def create_class_mapping(labels, output_dir):
     :param output_dir:
     :return:
     """
-    result = [
-        {
-            "id": "-1",
-            "short_label_code": "Review",
-            "long_label_code": "Review",
-            "color": [255, 255, 255, 255]
-        }
-    ]
+    result = {}
 
     for label in labels:
         color = [random.randint(0, 255) for _ in range(3)] + [255]  # RGBA with A=255
-        result.append({
+        result[label] = {
             "id": str(uuid.uuid4()),
             "short_label_code": label,
             "long_label_code": label,
             "color": color
-        })
+        }
 
     # Ensure the output directory exists
     if not os.path.exists(output_dir):
