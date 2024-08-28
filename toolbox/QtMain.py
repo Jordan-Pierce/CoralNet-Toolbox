@@ -1,3 +1,5 @@
+from torch.cuda import is_available
+
 from toolbox.QtImage import ImageWindow
 from toolbox.QtLabel import LabelWindow
 from toolbox.QtAnnotation import AnnotationWindow
@@ -37,9 +39,9 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         # Define the icon path
-        self.setWindowTitle("CoralNet Toolbox")
+        self.setWindowTitle("CoralNet-Toolbox")
         # Set the window icon
-        main_window_icon_path = get_icon_path("toolbox.png")
+        main_window_icon_path = get_icon_path("coral.png")
         self.setWindowIcon(QIcon(main_window_icon_path))
 
         # Set window flags for resizing, minimize, maximize, and customizing
@@ -173,6 +175,8 @@ class MainWindow(QMainWindow):
         select_icon_path = get_icon_path("select.png")
         annotate_icon_path = get_icon_path("annotate.png")
         polygon_icon_path = get_icon_path("polygon.png")
+        turtle_icon_path = get_icon_path("turtle.png")
+        rabbit_icon_path = get_icon_path("rabbit.png")
 
         # Add tools here with icons
         self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
@@ -189,6 +193,23 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setCheckable(False)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
+
+        # Add a spacer to push the device label to the bottom
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.toolbar.addWidget(spacer)
+
+        # Add the device label widget as an action in the toolbar
+        self.device = 'cuda' if is_available() else 'cpu'
+        device_icon = QIcon(rabbit_icon_path) if self.device != 'cpu' else QIcon(turtle_icon_path)
+
+        # Create the device action with the appropriate icon
+        device_action = QAction(device_icon, "", self)  # Empty string for the text
+        self.device_tool_action = device_action
+        self.device_tool_action.setCheckable(False)
+        # Set the tooltip to show the value of self.device
+        self.device_tool_action.setToolTip(self.device)
+        self.toolbar.addAction(self.device_tool_action)
 
         # Create status bar layout
         self.status_bar_layout = QHBoxLayout()

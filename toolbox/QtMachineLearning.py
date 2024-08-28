@@ -3,6 +3,7 @@ import gc
 import json
 import random
 import datetime
+import shutil
 
 import numpy as np
 
@@ -16,7 +17,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
                              QTableWidgetItem)
 
-from PyQt5.QtGui import QImage, QBrush, QColor
+from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 import warnings
@@ -34,6 +35,8 @@ class CreateDatasetDialog(QDialog):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
+
+        self.resize(1000, 600)
 
         self.selected_labels = []
         self.selected_annotations = []
@@ -127,6 +130,11 @@ class CreateDatasetDialog(QDialog):
         # Ready Status
         self.ready_label = QLabel()
         layout.addWidget(self.ready_label)
+
+        # Randomize Button
+        self.randomize_button = QPushButton("Randomize")
+        self.randomize_button.clicked.connect(self.update_summary_statistics)
+        layout.addWidget(self.randomize_button)
 
         # Add the layout
         self.tab_classification.setLayout(layout)
@@ -327,15 +335,18 @@ class CreateDatasetDialog(QDialog):
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
 
-            # Set cell colors based on the counts
+            # Set cell colors based on the counts and ratios
+            red = QColor(255, 0, 0)
+            green = QColor(0, 255, 0)
+
             if include_checkbox.isChecked():
-                self.set_cell_color(row, 3, QColor(255, 0, 0) if train_count == 0 else QColor(255, 255, 255))
-                self.set_cell_color(row, 4, QColor(255, 0, 0) if val_count == 0 else QColor(255, 255, 255))
-                self.set_cell_color(row, 5, QColor(255, 0, 0) if test_count == 0 else QColor(255, 255, 255))
+                self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
+                self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
+                self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
             else:
-                self.set_cell_color(row, 3, QColor(255, 255, 255))
-                self.set_cell_color(row, 4, QColor(255, 255, 255))
-                self.set_cell_color(row, 5, QColor(255, 255, 255))
+                self.set_cell_color(row, 3, green)
+                self.set_cell_color(row, 4, green)
+                self.set_cell_color(row, 5, green)
 
         self.ready_status = self.check_label_distribution()
         self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
@@ -343,7 +354,7 @@ class CreateDatasetDialog(QDialog):
 
         self.updating_summary_statistics = False
 
-    def save_class_mapping_json(self, output_dir_path):
+    def get_class_mapping(self):
         # Get the label objects for the selected labels
         labels = [l for l in self.main_window.label_window.labels if l.short_label_code in self.selected_labels]
 
@@ -352,10 +363,22 @@ class CreateDatasetDialog(QDialog):
             # Assuming each label has attributes short_label_code, long_label_code, and label_id
             class_mapping[label.short_label_code] = label.to_dict()
 
+        return class_mapping
+
+    def save_class_mapping_json(self, class_mapping, output_dir_path):
         # Save the class_mapping dictionary as a JSON file
         class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
         with open(class_mapping_path, 'w') as json_file:
             json.dump(class_mapping, json_file, indent=4)
+
+    def merge_class_mappings(self, existing_mapping, new_mapping):
+        # Merge the new class mappings with the existing ones without duplicates
+        merged_mapping = existing_mapping.copy()
+        for key, value in new_mapping.items():
+            if key not in merged_mapping:
+                merged_mapping[key] = value
+
+        return merged_mapping
 
     def accept(self):
         dataset_name = self.dataset_name_edit.text()
@@ -380,6 +403,7 @@ class CreateDatasetDialog(QDialog):
             return
 
         output_dir_path = os.path.join(output_dir, dataset_name)
+        # Check if the output directory exists
         if os.path.exists(output_dir_path):
             reply = QMessageBox.question(self,
                                          "Directory Exists",
@@ -388,11 +412,25 @@ class CreateDatasetDialog(QDialog):
             if reply == QMessageBox.No:
                 return
 
-        os.makedirs(output_dir_path, exist_ok=True)
+            # Read the existing class_mapping.json file if it exists
+            class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
+            if os.path.exists(class_mapping_path):
+                with open(class_mapping_path, 'r') as json_file:
+                    existing_class_mapping = json.load(json_file)
+            else:
+                existing_class_mapping = {}
 
-        # Save the class mapping JSON file
-        self.save_class_mapping_json(output_dir_path)
+            # Merge the new class mappings with the existing ones
+            new_class_mapping = self.get_class_mapping()
+            merged_class_mapping = self.merge_class_mappings(existing_class_mapping, new_class_mapping)
+            self.save_class_mapping_json(merged_class_mapping, output_dir_path)
+        else:
+            # Save the class mapping JSON file
+            os.makedirs(output_dir_path, exist_ok=True)
+            class_mapping = self.get_class_mapping()
+            self.save_class_mapping_json(class_mapping, output_dir_path)
 
+        # Create the train, val, and test directories
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'val')
         test_dir = os.path.join(output_dir_path, 'test')
@@ -459,23 +497,26 @@ class TrainModelWorker(QThread):
         super().__init__()
         self.params = params
 
+        self.target_model = None
+
     def run(self):
         try:
+            # Emit the signal for training start
             self.training_started.emit()
 
             # Initialize the model
             model_path = self.params.pop('model', None)
-            target_model = YOLO(model_path)
+            self.target_model = YOLO(model_path)
 
             # Train the model
-            results = target_model.train(**self.params)
-
+            results = self.target_model.train(**self.params)
+            # Emit the signal for training completion
             self.training_completed.emit()
 
         except Exception as e:
             self.training_error.emit(str(e))
 
-        del target_model
+        del self.target_model
         gc.collect()
         empty_cache()
 
@@ -486,9 +527,12 @@ class TrainModelDialog(QDialog):
         self.main_window = main_window
 
         # For holding parameters
+        self.params = {}
         self.custom_params = []
         # Best model weights
         self.model_path = None
+        # Class mapping
+        self.class_mapping = {}
 
         self.setWindowTitle("Train Model")
 
@@ -691,6 +735,19 @@ class TrainModelDialog(QDialog):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
             self.dataset_dir_edit.setText(dir_path)
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping_edit.setText(class_mapping_path)
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+
+    def browse_class_mapping_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Class Mapping File",
+                                                   "",
+                                                   "JSON Files (*.json)")
+        if file_path:
+            self.class_mapping_edit.setText(file_path)
+            self.class_mapping = json.load(open(file_path, 'r'))
 
     def browse_dataset_yaml(self):
         file_path, _ = QFileDialog.getOpenFileName(self,
@@ -723,6 +780,17 @@ class TrainModelDialog(QDialog):
         dataset_dir_layout.addWidget(self.dataset_dir_edit)
         dataset_dir_layout.addWidget(self.dataset_dir_button)
         layout.addLayout(dataset_dir_layout)
+
+        # Class Mapping
+        self.class_mapping_edit = QLineEdit()
+        self.class_mapping_button = QPushButton("Browse...")
+        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
+        class_mapping_layout.addWidget(self.class_mapping_edit)
+        class_mapping_layout.addWidget(self.class_mapping_button)
+        layout.addLayout(class_mapping_layout)
 
         # Classification Model Dropdown
         self.classification_model_combo = QComboBox()
@@ -770,6 +838,7 @@ class TrainModelDialog(QDialog):
         super().accept()
 
     def get_training_parameters(self):
+
         # Extract values from dialog widgets
         params = {
             'project': self.project_edit.text(),
@@ -829,19 +898,24 @@ class TrainModelDialog(QDialog):
         QMessageBox.information(self, "Model Training Status", message)
 
         # Get training parameters
-        params = self.get_training_parameters()
+        self.params = self.get_training_parameters()
 
         # Create and start the worker thread
-        self.worker = TrainModelWorker(params)
+        self.worker = TrainModelWorker(self.params)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
         self.worker.start()
 
     def on_training_started(self):
+        # Do nothing for now
         pass
 
     def on_training_completed(self):
+        # Save the class mapping JSON file
+        output_dir_path = os.path.join(self.params['project'], self.params['name'])
+        shutil.copyfile(self.class_mapping_edit.text(), f"{output_dir_path}/class_mapping.json")
+
         message = "Model training has successfully been completed."
         QMessageBox.information(self, "Model Training Status", message)
 
@@ -996,6 +1070,7 @@ class DeployModelDialog(QDialog):
 
         self.model_path = None
         self.loaded_model = None
+        self.class_mapping = {}
 
         self.tab_widget = QTabWidget()
         self.layout.addWidget(self.tab_widget)
@@ -1014,6 +1089,10 @@ class DeployModelDialog(QDialog):
 
         self.setLayout(self.layout)
 
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        self.check_and_display_class_names()
+
     def init_classification_tab(self):
         layout = QVBoxLayout()
 
@@ -1021,9 +1100,13 @@ class DeployModelDialog(QDialog):
         self.classification_text_area.setReadOnly(True)
         layout.addWidget(self.classification_text_area)
 
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self.browse_file)
-        layout.addWidget(browse_button)
+        browse_model_button = QPushButton("Browse Model")
+        browse_model_button.clicked.connect(self.browse_file)
+        layout.addWidget(browse_model_button)
+
+        browse_class_mapping_button = QPushButton("Browse Class Mapping")
+        browse_class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        layout.addWidget(browse_class_mapping_button)
 
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
@@ -1073,36 +1156,40 @@ class DeployModelDialog(QDialog):
             else:
                 self.segmentation_file_path.setText("Model file selected")
 
+    def browse_class_mapping_file(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Open Class Mapping File", "",
+                                                   "JSON Files (*.json)",
+                                                   options=options)
+        if file_path:
+            self.load_class_mapping(file_path)
+
+    def load_class_mapping(self, file_path):
+        try:
+            with open(file_path, 'r') as f:
+                self.class_mapping = json.load(f)
+            self.classification_text_area.append("Class mapping file selected")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load class mapping file: {str(e)}")
+
     def load_model(self):
         if self.model_path:
             try:
                 # Set the cursor to waiting (busy) cursor
                 QApplication.setOverrideCursor(Qt.WaitCursor)
-
+                # Load the model, and run a dummy prediction to build the graph
                 self.loaded_model = YOLO(self.model_path, task='classify')
                 self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
 
-                # Get the class names the model can predict
-                class_names = list(self.loaded_model.names.values())
-                class_names_str = "Class Names: \n"
-                missing_labels = []
+                try:
+                    # Add the labels to the LabelWindow if they don't already exist
+                    self.add_labels_to_label_window()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to add labels: {str(e)}")
 
-                for class_name in class_names:
-                    if self.label_window.get_label_by_long_code(class_name):
-                        class_names_str += f"✅ {class_name} \n"
-                    else:
-                        class_names_str += f"❌ {class_name} \n"
-                        missing_labels.append(class_name)
-
-                self.classification_text_area.setText(class_names_str)
-                self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
-
-                if missing_labels:
-                    missing_labels_str = "\n".join(missing_labels)
-                    QMessageBox.warning(self,
-                                        "Warning",
-                                        f"The following classes are missing and cannot be predicted:"
-                                        f"\n{missing_labels_str}")
+                # Check and display class names
+                self.check_and_display_class_names()
 
                 QMessageBox.information(self, "Model Loaded", "Model weights loaded successfully.")
             except Exception as e:
@@ -1113,9 +1200,42 @@ class DeployModelDialog(QDialog):
         else:
             QMessageBox.warning(self, "Warning", "No model file selected")
 
+    def add_labels_to_label_window(self):
+        for label in self.class_mapping.values():
+            self.label_window.add_label_if_not_exists(label['short_label_code'],
+                                                      label['long_label_code'],
+                                                      QColor(*label['color']))
+
+    def check_and_display_class_names(self):
+        if self.loaded_model:
+            # Get the class names the model can predict
+            class_names = list(self.loaded_model.names.values())
+            class_names_str = "Class Names: \n"
+            missing_labels = []
+
+            for class_name in class_names:
+                label = self.label_window.get_label_by_short_code(class_name)
+                if label:
+                    class_names_str += f"✅ {label.short_label_code}: {label.long_label_code} \n"
+                else:
+                    class_names_str += f"❌ {class_name} \n"
+                    missing_labels.append(class_name)
+
+            self.classification_text_area.setText(class_names_str)
+            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
+
+            if missing_labels:
+                missing_labels_str = "\n".join(missing_labels)
+                QMessageBox.warning(self,
+                                    "Warning",
+                                    f"The following short labels are missing and "
+                                    f"cannot be predicted until added manually:"
+                                    f"\n{missing_labels_str}")
+
     def deactivate_model(self):
         self.loaded_model = None
         self.model_path = None
+        self.class_mapping = {}
         self.status_bar.setText("No model loaded")
         if self.tab_widget.currentIndex() == 0:
             self.classification_text_area.setText("No model file selected")
@@ -1198,7 +1318,7 @@ class DeployModelDialog(QDialog):
         # Iterate over the top 5 predictions
         for idx, conf in zip(top5, top5conf):
             class_name = class_names[idx]
-            label = self.label_window.get_label_by_long_code(class_name)
+            label = self.label_window.get_label_by_short_code(class_name)
 
             if label:
                 predictions[label] = float(conf)
@@ -1222,7 +1342,7 @@ class DeployModelDialog(QDialog):
         # Iterate over the top 5 predictions
         for idx, conf in zip(top5, top5conf):
             class_name = class_names[idx]
-            label = self.label_window.get_label_by_long_code(class_name)
+            label = self.label_window.get_label_by_short_code(class_name)
 
             if label:
                 predictions[label] = float(conf)

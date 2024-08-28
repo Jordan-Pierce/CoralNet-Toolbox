@@ -56,6 +56,7 @@ class Annotation(QObject):
         self.transparency = transparency
         self.user_confidence = {self.label: 1.0}
         self.machine_confidence = {}
+        self.data = {}
         self.cropped_image = None
 
         self.show_message = show_msg
@@ -222,6 +223,14 @@ class Annotation(QObject):
             self.graphics_item.setBrush(brush)
             self.graphics_item.update()
 
+    def to_coralnet_format(self):
+        return [os.path.basename(self.image_path),
+                int(self.center_xy.y()),
+                int(self.center_xy.x()),
+                self.label.short_label_code,
+                self.label.long_label_code,
+                self.annotation_size]
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -231,30 +240,29 @@ class Annotation(QObject):
             'label_long_code': self.label.long_label_code,
             'annotation_color': self.label.color.getRgb(),
             'image_path': self.image_path,
-            'label_id': self.label.id
+            'label_id': self.label.id,
+            'data': self.data
         }
 
     @classmethod
     def from_dict(cls, data):
-        return cls(QPointF(*data['center_xy']),
-                   data['annotation_size'],
-                   data['label_short_code'],
-                   data['label_long_code'],
-                   QColor(*data['annotation_color']),
-                   data['image_path'],
-                   data['label_id'])
-
-    def to_coralnet_format(self):
-        return [os.path.basename(self.image_path), int(self.center_xy.y()),
-                int(self.center_xy.x()), self.label.short_label_code,
-                self.label.long_label_code, self.annotation_size]
+        annotation = cls(QPointF(*data['center_xy']),
+                         data['annotation_size'],
+                         data['label_short_code'],
+                         data['label_long_code'],
+                         QColor(*data['annotation_color']),
+                         data['image_path'],
+                         data['label_id'])
+        annotation.data = data.get('data', {})
+        return annotation
 
     def __repr__(self):
         return (f"Annotation(id={self.id}, center_xy={self.center_xy}, "
                 f"annotation_size={self.annotation_size}, "
                 f"annotation_color={self.label.color.name()}, "
                 f"image_path={self.image_path}, "
-                f"label={self.label.short_label_code})")
+                f"label={self.label.short_label_code}, "
+                f"data={self.data})")
 
 
 class AnnotationWindow(QGraphicsView):
@@ -360,30 +368,32 @@ class AnnotationWindow(QGraphicsView):
         if file_path:
             try:
                 with open(file_path, 'r') as file:
-                    annotations = json.load(file)
+                    data = json.load(file)
 
-                filtered_annotations = {p: a for p, a in annotations.items()
-                                        if p in self.main_window.image_window.image_paths}
+                # Filter out annotations that are not associated with any loaded images
+                filtered_annotations = {p: a for p, a in data.items() if p in self.main_window.image_window.image_paths}
                 total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
 
                 progress_bar = ProgressBar(self, title="Importing Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
 
+                # Check to see if any imported annotations have a label that matches an existing label
                 updated_annotations = False
+
                 for image_path, annotations in filtered_annotations.items():
                     for annotation_data in annotations:
-                        short_label_code = annotation_data['label_short_code']
-                        long_label_code = annotation_data['label_long_code']
+                        short_label = annotation_data['label_short_code']
+                        long_label = annotation_data['label_long_code']
                         color = QColor(*annotation_data['annotation_color'])
                         label_id = annotation_data['label_id']
-                        self.main_window.label_window.add_label_if_not_exists(short_label_code,
-                                                                              long_label_code,
+                        self.main_window.label_window.add_label_if_not_exists(short_label,
+                                                                              long_label,
                                                                               color,
                                                                               label_id)
 
-                        existing_color = self.main_window.label_window.get_label_color(short_label_code,
-                                                                                       long_label_code)
+                        # Check if the imported annotation has a label color that matches an existing label
+                        existing_color = self.main_window.label_window.get_label_color(short_label, long_label)
                         if existing_color != color:
                             annotation_data['annotation_color'] = existing_color.getRgb()
                             updated_annotations = True
@@ -392,16 +402,17 @@ class AnnotationWindow(QGraphicsView):
                         QApplication.processEvents()  # Update GUI
 
                 if updated_annotations:
+                    # Inform the user that some annotations have been updated
                     QMessageBox.information(self,
                                             "Annotations Updated",
                                             "Some annotations have been updated to match the "
                                             "color of the labels already in the project.")
 
+                # Add annotations to the AnnotationWindow dict
                 for image_path, annotations in filtered_annotations.items():
                     for annotation_data in annotations:
                         annotation = Annotation.from_dict(annotation_data)
                         self.annotations_dict[annotation.id] = annotation
-
                         progress_bar.update_progress()
                         QApplication.processEvents()  # Update GUI
 

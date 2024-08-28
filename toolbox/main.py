@@ -2,9 +2,8 @@
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
 #   - Clean up QImage, Rasterio Image, PixMap
-#   - Write Class Mapping JSON when creating a dataset
-#   - Read Class Mapping JSON when training a model, stash
-#   - Add labels when importing a model for deployment
+#   - Give Annotation an External ID (data dict)
+#   - Make sure cuda is working, documented properly
 
 import traceback
 from PyQt5.QtWidgets import QApplication

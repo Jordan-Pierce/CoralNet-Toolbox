@@ -222,11 +222,13 @@ class LabelWindow(QWidget):
                 with open(file_path, 'w') as file:
                     json.dump(labels_data, file, indent=4)
 
-                QMessageBox.information(self, "Labels Exported",
+                QMessageBox.information(self, ""
+                                              "Labels Exported",
                                         "Labels have been successfully exported.")
 
             except Exception as e:
-                QMessageBox.warning(self, "Error Importing Labels",
+                QMessageBox.warning(self,
+                                    "Error Importing Labels",
                                     f"An error occurred while importing labels: {str(e)}")
 
     def import_labels(self):
@@ -249,11 +251,13 @@ class LabelWindow(QWidget):
                 # Set the Review label as active
                 self.set_active_label(self.get_label_by_long_code("Review"))
 
-                QMessageBox.information(self, "Labels Imported",
+                QMessageBox.information(self,
+                                        "Labels Imported",
                                         "Annotations have been successfully imported.")
 
             except Exception as e:
-                QMessageBox.warning(self, "Error Importing Labels",
+                QMessageBox.warning(self,
+                                    "Error Importing Labels",
                                     f"An error occurred while importing Labels: {str(e)}")
 
     def resizeEvent(self, event):
@@ -284,7 +288,7 @@ class LabelWindow(QWidget):
 
     def open_edit_label_dialog(self):
         if self.active_label:
-            dialog = EditLabelDialog(self.active_label, self)
+            dialog = EditLabelDialog(self, self.active_label)
             if dialog.exec_() == QDialog.Accepted:
                 # Update the tooltip with the new long label code
                 self.active_label.setToolTip(self.active_label.long_label_code)
@@ -345,6 +349,12 @@ class LabelWindow(QWidget):
                 return label
         return None
 
+    def get_label_by_short_code(self, short_label_code):
+        for label in self.labels:
+            if short_label_code == label.short_label_code:
+                return label
+        return None
+
     def get_label_by_long_code(self, long_label_code):
         for label in self.labels:
             if long_label_code == label.long_label_code:
@@ -355,7 +365,9 @@ class LabelWindow(QWidget):
         for label in self.labels:
             if label_id is not None and label.id == label_id:
                 return True
-            if label.short_label_code == short_label_code and label.long_label_code == long_label_code:
+            if label.short_label_code == short_label_code:
+                return True
+            if label.long_label_code == long_label_code:
                 return True
         return False
 
@@ -457,8 +469,10 @@ class LabelWindow(QWidget):
 
 
 class AddLabelDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, label_window, parent=None):
         super().__init__(parent)
+        self.label_window = label_window
+
         self.setWindowTitle("Add Label")
         self.setObjectName("AddLabelDialog")
 
@@ -510,17 +524,23 @@ class AddLabelDialog(QDialog):
         short_label_code = self.short_label_input.text().strip()
         long_label_code = self.long_label_input.text().strip()
 
+        # Check if the label already exists
+        label_exists = self.label_window.label_exists(short_label_code, long_label_code)
+
         if not short_label_code or not long_label_code:
             QMessageBox.warning(self, "Input Error", "Both short and long label codes are required.")
+        elif label_exists:
+            QMessageBox.warning(self, "Label Exists", "A label with the same short and long name already exists.")
         else:
             self.accept()
 
 
 class EditLabelDialog(QDialog):
-    def __init__(self, label, label_window, parent=None):
+    def __init__(self, label_window, label, parent=None):
         super().__init__(parent)
-        self.label = label
         self.label_window = label_window
+        self.label = label
+
         self.setWindowTitle("Edit Label")
 
         self.layout = QVBoxLayout(self)

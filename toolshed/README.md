@@ -2,7 +2,7 @@
 
 ### [**Tools**](src/README.md#coralnet-toolbox)
 
-**The `CoralNet-Toolshed` is and older version of the `CoralNet-Toolbox`.**
+**The `CoralNet-Toolshed` is an older version of the `CoralNet-Toolbox`.**
 
 The `CoralNet-Toolbox` is an **unofficial** codebase that can be used to augment processes associated
 with those on CoralNet. The following scripts allow a user to run processes programmatically, or through 
