@@ -1,4 +1,7 @@
 import os
+import uuid
+import json
+import random
 import shutil
 import argparse
 import traceback
@@ -20,6 +23,45 @@ from Common import console_user
 # ------------------------------------------------------------------------------------------------------------------
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
+
+
+def create_class_mapping(labels, output_dir):
+    """
+
+    :param labels:
+    :param output_dir:
+    :return:
+    """
+    result = [
+        {
+            "id": "-1",
+            "short_label_code": "Review",
+            "long_label_code": "Review",
+            "color": [255, 255, 255, 255]
+        }
+    ]
+
+    for label in labels:
+        color = [random.randint(0, 255) for _ in range(3)] + [255]  # RGBA with A=255
+        result.append({
+            "id": str(uuid.uuid4()),
+            "short_label_code": label,
+            "long_label_code": label,
+            "color": color
+        })
+
+    # Ensure the output directory exists
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Construct the full file path
+    file_path = os.path.join(output_dir, "class_mapping.json")
+
+    # Write the JSON to the file
+    with open(file_path, 'w') as f:
+        json.dump(result, f, indent=4)
+
+    print(f"Class mapping saved to {file_path}")
 
 
 def copy_file(row, dataset, output_dir):
@@ -73,10 +115,13 @@ def to_yolo(args):
             patches = patches.dropna()
             patches_df = pd.concat((patches_df, patches))
         else:
-            raise Exception(f"ERROR: Patches dataframe {patches_path} does not exist")
+            print(f"WARNING: Patches dataframe {patches_path} does not exist")
 
     class_names = sorted(patches_df['Label'].unique())
     num_classes = len(class_names)
+
+    # Create class mapping
+    create_class_mapping(class_names, output_dir)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Loading data, creating datasets
@@ -92,7 +137,7 @@ def to_yolo(args):
 
     # Split the Images into training, validation, and test sets (70/20/10)
     # We split based on the image names, so that we don't have the same image in multiple sets.
-    training_images, temp_images = train_test_split(image_names, test_size=0.2, random_state=42)
+    training_images, temp_images = train_test_split(image_names, test_size=0.1, random_state=42)
     validation_images, testing_images = train_test_split(temp_images, test_size=0.33, random_state=42)
 
     # Create training, validation, and test dataframes
