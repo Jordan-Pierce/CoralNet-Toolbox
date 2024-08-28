@@ -106,6 +106,10 @@ class MainWindow(QMainWindow):
         self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
         self.import_menu.addAction(self.import_coralnet_annotations_action)
 
+        self.import_viscore_annotations_action = QAction("Import Viscore Annotations (CSV)", self)
+        self.import_viscore_annotations_action.triggered.connect(self.annotation_window.import_viscore_annotations)
+        self.import_menu.addAction(self.import_viscore_annotations_action)
+
         self.export_menu = self.menu_bar.addMenu("Export")
 
         self.export_labels_action = QAction("Export Labels (JSON)", self)
@@ -120,6 +124,11 @@ class MainWindow(QMainWindow):
         self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
         self.export_menu.addAction(self.export_coralnet_annotations_action)
 
+        self.export_viscore_annotations_action = QAction("Export Viscore Annotations (JSON)", self)
+        self.export_viscore_annotations_action.triggered.connect(self.annotation_window.export_viscore_annotations)
+        self.export_menu.addAction(self.export_viscore_annotations_action)
+
+        # Sampling Annotations
         self.annotation_sampling_action = QAction("Sample Annotations", self)
         self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)

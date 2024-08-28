@@ -962,7 +962,8 @@ class TrainModelDialog(QDialog):
     def on_training_completed(self):
         # Save the class mapping JSON file
         output_dir_path = os.path.join(self.params['project'], self.params['name'])
-        shutil.copyfile(self.class_mapping_edit.text(), f"{output_dir_path}/class_mapping.json")
+        if os.path.exists(self.class_mapping_edit.text()):
+            shutil.copyfile(self.class_mapping_edit.text(), f"{output_dir_path}/class_mapping.json")
 
         message = "Model training has successfully been completed."
         QMessageBox.information(self, "Model Training Status", message)

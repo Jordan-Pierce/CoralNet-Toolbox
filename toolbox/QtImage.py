@@ -14,6 +14,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

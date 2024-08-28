@@ -14,7 +14,8 @@ from toolbox.QtProgressBar import ProgressBar
 
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog)
+                             QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
+                             QDialogButtonBox)
 
 from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush, QPixmapCache
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
@@ -307,6 +308,13 @@ class AnnotationWindow(QGraphicsView):
 
         self.toolChanged.connect(self.set_selected_tool)
 
+    def browse_csv_file(self, file_path_input):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select CSV File", "", "CSV Files (*.csv);;All Files (*)",
+                                                   options=options)
+        if file_path:
+            file_path_input.setText(file_path)
+
     def export_annotations(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
@@ -559,6 +567,151 @@ class AnnotationWindow(QGraphicsView):
             except Exception as e:
                 QMessageBox.warning(self, "Error Importing Annotations",
                                     f"An error occurred while importing annotations: {str(e)}")
+
+    def export_viscore_annotations(self):
+        pass
+
+    def import_viscore_annotations(self):
+        self.set_selected_tool(None)
+        self.toolChanged.emit(None)
+
+        # Create a dialog to get the CSV file path and additional values
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Import Viscore Annotations")
+
+        layout = QVBoxLayout(dialog)
+
+        # CSV file path
+        file_path_label = QLabel("CSV File Path:")
+        file_path_input = QLineEdit()
+        file_path_button = QPushButton("Browse")
+        file_path_button.clicked.connect(lambda: self.browse_csv_file(file_path_input))
+        file_path_layout = QHBoxLayout()
+        file_path_layout.addWidget(file_path_input)
+        file_path_layout.addWidget(file_path_button)
+        layout.addWidget(file_path_label)
+        layout.addLayout(file_path_layout)
+
+        # ReprojectionError
+        reprojection_error_label = QLabel("ReprojectionError (float):")
+        reprojection_error_input = QLineEdit()
+        layout.addWidget(reprojection_error_label)
+        layout.addWidget(reprojection_error_input)
+
+        # ViewIndex
+        view_index_label = QLabel("ViewIndex (int):")
+        view_index_input = QLineEdit()
+        layout.addWidget(view_index_label)
+        layout.addWidget(view_index_input)
+
+        # ViewCount
+        view_count_label = QLabel("ViewCount (int):")
+        view_count_input = QLineEdit()
+        layout.addWidget(view_count_label)
+        layout.addWidget(view_count_input)
+
+        # RandSubCeil
+        rand_sub_ceil_label = QLabel("RandSubCeil (float):")
+        rand_sub_ceil_input = QLineEdit()
+        layout.addWidget(rand_sub_ceil_label)
+        layout.addWidget(rand_sub_ceil_input)
+
+        # OK and Cancel buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        if dialog.exec_() == QDialog.Accepted:
+            file_path = file_path_input.text()
+            reprojection_error = float(reprojection_error_input.text())
+            view_index = int(view_index_input.text())
+            view_count = int(view_count_input.text())
+            rand_sub_ceil = float(rand_sub_ceil_input.text())
+
+            try:
+                # Read the CSV file using pandas
+                df = pd.read_csv(file_path)
+
+                if df.empty:
+                    QMessageBox.warning(self, "Empty CSV", "The CSV file is empty.")
+                    return
+
+                # Apply filters
+                df_filtered = df.dropna(how='any')
+                df_filtered['Row'] = df_filtered['Row'].astype(int)
+                df_filtered['Column'] = df_filtered['Column'].astype(int)
+
+                # Check if 'Name' exists as a path and create a unique list
+                unique_paths = df_filtered['Name'].apply(
+                    lambda x: x if os.path.exists(x) else None).dropna().unique().tolist()
+
+                if not unique_paths and not self.active_image:
+                    QMessageBox.warning(self,
+                                        "No Images Found",
+                                        "Please load an image before importing annotations.")
+                    return
+
+                filtered_df = df_filtered[
+                    (df_filtered['RandSubCeil'] <= rand_sub_ceil) &
+                    (df_filtered['ReprojectionError'] <= reprojection_error) &
+                    (df_filtered['ViewIndex'] <= view_index) &
+                    (df_filtered['ViewCount'] >= view_count)
+                    ]
+
+                # Process the filtered CSV data and import the annotations
+                for index, row in filtered_df.iterrows():
+                    # Extract necessary data from the row
+                    center_xy = QPointF(row['X'], row['Y'])
+                    annotation_size = row['Size']
+                    short_label_code = row['ShortLabel']
+                    long_label_code = row['LongLabel']
+                    color = QColor(row['Color'])
+                    image_path = row['Name']
+
+                    # Create and add the annotation
+                    annotation = Annotation(center_xy,
+                                            annotation_size,
+                                            short_label_code,
+                                            long_label_code,
+                                            color,
+                                            image_path,
+                                            label_id="-1")
+
+                    # Add additional data to the annotation
+                    annotation.data = {
+                        'Dot': row['Dot'],
+                        'X': row['X'],
+                        'Y': row['Y'],
+                        'Z': row['Z'],
+                        'ReprojectionError': row['ReprojectionError'],
+                        'ViewIndex': row['ViewIndex'],
+                        'ViewCount': row['ViewCount'],
+                        'RandSubCeil': row['RandSubCeil']
+                    }
+
+                    self.add_annotation(center_xy, annotation)
+
+                if unique_paths:
+                    # Import images to project
+                    progress_bar = ProgressBar(self, title="Importing Images")
+                    progress_bar.show()
+                    progress_bar.start_progress(len(unique_paths))
+
+                    for i, file_name in enumerate(unique_paths):
+                        if file_name not in set(self.main_window.image_window.image_paths):
+                            self.main_window.image_window.add_image(file_name)
+                            progress_bar.update_progress()
+                            QApplication.processEvents()  # Update GUI
+
+                    progress_bar.stop_progress()
+                    progress_bar.close()
+
+                    # Load the last image
+                    self.main_window.image_window.load_image_by_path(unique_paths[-1])
+
+            except Exception as e:
+                QMessageBox.critical(self, "Critical Error", f"Failed to import annotations: {e}")
 
     def set_selected_tool(self, tool):
         self.selected_tool = tool
@@ -1037,11 +1190,6 @@ class AnnotationSamplingDialog(QDialog):
         spinbox.setMaximum(1000)
         layout.addRow(label, spinbox)
         return spinbox
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.showMaximized()  # Maximize the dialog when it is shown
-        self.reset_defaults()  # Reset settings to defaults
 
     def reset_defaults(self):
         self.preview_scene.clear()
