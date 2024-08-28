@@ -501,7 +501,13 @@ class CreateDatasetDialog(QDialog):
 
         def save_images(cropped_images):
             for pixmap, path in cropped_images:
-                pixmap.save(path, "JPG")
+                try:
+                    pixmap.save(path, "JPG", quality=100)
+                except Exception as e:
+                    print(f"ERROR: Issue saving image {path}: {e}")
+                    # Optionally, save as PNG if JPG fails
+                    png_path = path.replace(".jpg", ".png")
+                    pixmap.save(png_path, "PNG")
 
         # Group annotations by image path
         grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
