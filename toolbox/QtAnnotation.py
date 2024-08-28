@@ -1109,6 +1109,7 @@ class AnnotationSamplingDialog(QDialog):
         self.deploy_model_dialog = main_window.deploy_model_dialog
 
         self.setWindowTitle("Sample Annotations")
+        self.setWindowState(Qt.WindowMaximized)  # Ensure the dialog is maximized
 
         self.layout = QVBoxLayout(self)
 
