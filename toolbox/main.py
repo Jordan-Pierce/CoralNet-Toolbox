@@ -4,6 +4,11 @@
 #   - Clean up QImage, Rasterio Image, PixMap
 #   - Give Annotation an External ID (data dict)
 #   - Make sure cuda is working, documented properly
+#   - add tensorboard option for modeling training
+#   - deal with the sampling annotation window
+#   - file explorer for annotations to edit, delete in batches
+#   - master transparency for all annotations / classes
+#   - restart training from yaml file
 
 import traceback
 from PyQt5.QtWidgets import QApplication

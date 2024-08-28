@@ -4,6 +4,9 @@ import json
 import random
 import datetime
 import shutil
+from itertools import groupby
+from operator import attrgetter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
@@ -122,7 +125,7 @@ class CreateDatasetDialog(QDialog):
 
         # Label Counts Table
         self.label_counts_table = QTableWidget(0, 6)
-        self.label_counts_table.setHorizontalHeaderLabels(["Include", "Label", "Total", "Train", "Val", "Test"])
+        self.label_counts_table.setHorizontalHeaderLabels(["Include", "Label", "Annotations", "Train", "Val", "Test"])
         self.class_filter_layout.addWidget(self.label_counts_table)
         self.class_filter_group.setLayout(self.class_filter_layout)
         layout.addWidget(self.class_filter_group)
@@ -167,37 +170,58 @@ class CreateDatasetDialog(QDialog):
             # Ignore the error if the signal was not connected
             pass
 
+        # Set the row count to 0
         self.label_counts_table.setRowCount(0)
 
-        # Create a dictionary to count occurrences of each label
         label_counts = {}
+        label_image_counts = {}
+        # Count the occurrences of each label and unique images per label
         for annotation in self.annotation_window.annotations_dict.values():
             label = annotation.label.short_label_code
+            image_path = annotation.image_path
             if label != 'Review':
                 if label in label_counts:
                     label_counts[label] += 1
+                    if image_path not in label_image_counts[label]:
+                        label_image_counts[label].add(image_path)
                 else:
                     label_counts[label] = 1
+                    label_image_counts[label] = {image_path}
+
+        # Sort the labels by their counts in descending order
+        sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
+
+        # Populate the label counts table with labels and their counts
+        self.label_counts_table.setColumnCount(7)
+        self.label_counts_table.setHorizontalHeaderLabels(["Include",
+                                                           "Label",
+                                                           "Annotations",
+                                                           "Train",
+                                                           "Val",
+                                                           "Test",
+                                                           "Images"])
 
         # Populate the label counts table with labels and their counts
         row = 0
-        for label, count in label_counts.items():
+        for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
             include_checkbox.setChecked(True)
             include_checkbox.stateChanged.connect(self.on_include_checkbox_state_changed)
             label_item = QTableWidgetItem(label)
-            total_item = QTableWidgetItem(str(count))
+            anno_count = QTableWidgetItem(str(count))
             train_item = QTableWidgetItem("0")
             val_item = QTableWidgetItem("0")
             test_item = QTableWidgetItem("0")
+            images_item = QTableWidgetItem(str(len(label_image_counts[label])))
 
             self.label_counts_table.insertRow(row)
             self.label_counts_table.setCellWidget(row, 0, include_checkbox)
             self.label_counts_table.setItem(row, 1, label_item)
-            self.label_counts_table.setItem(row, 2, total_item)
+            self.label_counts_table.setItem(row, 2, anno_count)
             self.label_counts_table.setItem(row, 3, train_item)
             self.label_counts_table.setItem(row, 4, val_item)
             self.label_counts_table.setItem(row, 5, test_item)
+            self.label_counts_table.setItem(row, 6, images_item)
 
             row += 1
 
@@ -320,7 +344,7 @@ class CreateDatasetDialog(QDialog):
         for row in range(self.label_counts_table.rowCount()):
             include_checkbox = self.label_counts_table.cellWidget(row, 0)
             label = self.label_counts_table.item(row, 1).text()
-            total_count = sum(1 for a in annotations if a.label.short_label_code == label)
+            anno_count = sum(1 for a in annotations if a.label.short_label_code == label)
             if include_checkbox.isChecked():
                 train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
                 val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
@@ -330,7 +354,7 @@ class CreateDatasetDialog(QDialog):
                 val_count = 0
                 test_count = 0
 
-            self.label_counts_table.item(row, 2).setText(str(total_count))
+            self.label_counts_table.item(row, 2).setText(str(anno_count))
             self.label_counts_table.item(row, 3).setText(str(train_count))
             self.label_counts_table.item(row, 4).setText(str(val_count))
             self.label_counts_table.item(row, 5).setText(str(test_count))
@@ -451,6 +475,7 @@ class CreateDatasetDialog(QDialog):
         super().accept()
 
     def process_annotations(self, annotations, split_dir, split):
+        # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
             return
@@ -459,25 +484,42 @@ class CreateDatasetDialog(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
-        for image_path in image_paths:
-            if progress_bar.wasCanceled():
-                return
-
-            # Special case to handle selected labels (do not use get_image_annotations)
-            image_annotations = [a for a in annotations if a.image_path == image_path]
+        def process_image_annotations(image_path, image_annotations):
+            # Crop the image based on the annotations
             image_annotations = self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
-
-            for image_annotation in image_annotations:
-                # Save the crop in the correct folder
-                cropped_image = image_annotation.cropped_image
-                label_code = image_annotation.label.short_label_code
+            cropped_images = []
+            for annotation in image_annotations:
+                label_code = annotation.label.short_label_code
                 output_path = os.path.join(split_dir, label_code)
+                # Create a split / label directory if it does not exist
                 os.makedirs(output_path, exist_ok=True)
-                output_filename = f"{label_code}_{image_annotation.id}.jpg"
-                cropped_image.save(os.path.join(output_path, output_filename))
+                output_filename = f"{label_code}_{annotation.id}.jpg"
+                full_output_path = os.path.join(output_path, output_filename)
+                # Add the cropped image and its output path to the list
+                cropped_images.append((annotation.cropped_image, full_output_path))
+            return cropped_images
 
-            progress_bar.update_progress()
-            QApplication.processEvents()
+        def save_images(cropped_images):
+            for pixmap, path in cropped_images:
+                pixmap.save(path, "JPG")
+
+        # Group annotations by image path
+        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+
+        with ThreadPoolExecutor() as executor:
+            future_to_image = {executor.submit(process_image_annotations, image_path, list(group)): image_path
+                               for image_path, group in grouped_annotations}
+
+            for future in as_completed(future_to_image):
+                image_path = future_to_image[future]
+                try:
+                    cropped_images = future.result()
+                    save_images(cropped_images)
+                except Exception as exc:
+                    print(f'{image_path} generated an exception: {exc}')
+                finally:
+                    progress_bar.update_progress()
+                    QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()
