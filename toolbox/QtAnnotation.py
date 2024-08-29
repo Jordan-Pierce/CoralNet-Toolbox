@@ -751,17 +751,22 @@ class AnnotationWindow(QGraphicsView):
 
                 # Update user_data with the mode label codes
                 for index in range(len(user_data['cl'])):
-                    # Get the Label id from the dot_labels
-                    label_id = dot_labels.get(index)
-                    label = self.main_window.label_window.get_label_by_id(label_id)
-                    # Try to map the long code
-                    updated_label = qclasses_mapping_long.get(label.long_label_code)
-                    # If long code is not found, try mapping the short code
-                    if updated_label is None:
-                        updated_label = qclasses_mapping_short.get(label.short_label_code)
-                    # If neither long nor short code is found, set it to 0
-                    if updated_label is None:
-                        updated_label = 0
+                    try:
+                        # Get the Label id from the dot_labels
+                        label_id = dot_labels.get(index)
+                        label = self.main_window.label_window.get_label_by_id(label_id)
+                        # Try to map the long code
+                        updated_label = qclasses_mapping_long.get(label.long_label_code)
+                        # If long code is not found, try mapping the short code
+                        if updated_label is None:
+                            updated_label = qclasses_mapping_short.get(label.short_label_code)
+                        # If neither long nor short code is found, set it to 0
+                        if updated_label is None:
+                            updated_label = 0
+                    except Exception as e:
+                        updated_label = -1
+                        print(f"Error updating label for Dot ID {index}: {e}")
+
                     # Update the label in the user_data
                     user_data['cl'][index] = updated_label
 
