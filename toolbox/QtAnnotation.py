@@ -719,8 +719,8 @@ class AnnotationWindow(QGraphicsView):
 
                 # Apply filters
                 df_filtered = df.dropna(how='any')
-                df_filtered['Row'] = df_filtered['Row'].astype(int)
-                df_filtered['Column'] = df_filtered['Column'].astype(int)
+                df_filtered = df_filtered.assign(Row=df_filtered['Row'].astype(int))
+                df_filtered = df_filtered.assign(Column=df_filtered['Column'].astype(int))
 
                 # Check if 'Name' exists as a path (or just basename) and create a unique list
                 image_paths = df_filtered['Name'].apply(
@@ -754,6 +754,10 @@ class AnnotationWindow(QGraphicsView):
 
                 # Create a dictionary mapping basenames to full paths
                 image_path_map = {os.path.basename(path): path for path in self.main_window.image_window.image_paths}
+
+                progress_bar = ProgressBar(self, title="Importing Viscore Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(len(filtered_df['Name'].unique()))
 
                 # Process the filtered CSV data and import the annotations
                 for image_name, group in filtered_df.groupby('Name'):
@@ -802,6 +806,12 @@ class AnnotationWindow(QGraphicsView):
                         # Add to the AnnotationWindow dictionary
                         self.annotations_dict[annotation.id] = annotation
 
+                    progress_bar.update_progress()
+                    QApplication.processEvents() # Update GUI
+
+                progress_bar.stop_progress()
+                progress_bar.close()
+
                 if image_paths:
                     # Import images to project
                     progress_bar = ProgressBar(self, title="Importing Images")
@@ -811,6 +821,7 @@ class AnnotationWindow(QGraphicsView):
                     for i, image_path in enumerate(image_paths):
                         if image_path not in set(self.main_window.image_window.image_paths):
                             self.main_window.image_window.add_image(image_path)
+
                             progress_bar.update_progress()
                             QApplication.processEvents()  # Update GUI
 
@@ -822,6 +833,10 @@ class AnnotationWindow(QGraphicsView):
 
                 # Load annotations for current image
                 self.load_annotations()
+
+                QMessageBox.information(self,
+                                        "Annotations Imported",
+                                        "Annotations have been successfully imported.")
 
             except Exception as e:
                 QMessageBox.critical(self, "Critical Error", f"Failed to import annotations: {e}")

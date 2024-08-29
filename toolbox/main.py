@@ -8,6 +8,7 @@
 #   - master transparency for all annotations / classes
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
+#   - merge dataset tool
 
 import traceback
 from PyQt5.QtWidgets import QApplication
