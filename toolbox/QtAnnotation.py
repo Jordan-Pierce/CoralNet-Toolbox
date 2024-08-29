@@ -599,6 +599,16 @@ class AnnotationWindow(QGraphicsView):
 
     def export_viscore_annotations(self):
 
+        def get_qclass_mapping(qclasses_data, use_short_code=True):
+            qclass_mapping = {}
+            for item in qclasses_data['classlist']:
+                id_number, short_code, long_code = item
+                if use_short_code:
+                    qclass_mapping[short_code] = id_number
+                else:
+                    qclass_mapping[long_code] = id_number
+            return qclass_mapping
+
         def browse_user_file(user_file_input):
             options = QFileDialog.Options()
             file_path, _ = QFileDialog.getOpenFileName(self,
@@ -704,7 +714,6 @@ class AnnotationWindow(QGraphicsView):
                 QMessageBox.warning(self, "Directory Not Found", f"Output directory not found: {output_directory}")
                 return
 
-
             try:
                 # Set the cursor to waiting (busy) cursor
                 QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -718,6 +727,10 @@ class AnnotationWindow(QGraphicsView):
 
                 with open(qclasses_file_path, 'r') as qclasses_file:
                     qclasses_data = json.load(qclasses_file)
+
+                # Get the QClasses mapping
+                qclasses_mapping_short = get_qclass_mapping(qclasses_data, use_short_code=True)
+                qclasses_mapping_long = get_qclass_mapping(qclasses_data, use_short_code=False)
 
                 # Get all annotations with Dot data
                 annotations = [a for a in self.annotations_dict.values() if "Dot" in a.data]
@@ -738,18 +751,17 @@ class AnnotationWindow(QGraphicsView):
 
                 # Update user_data with the mode label codes
                 for index in range(len(user_data['cl'])):
-                    updated_label = -1  # Default to Review
-                    try:
-                        label_id = dot_labels.get(index)
-                        if label_id is not None:
-                            label = self.main_window.label_window.get_label_by_id(label_id)
-                            if label.long_label_code in qclasses_data:
-                                updated_label = qclasses_data[label.long_label_code]
-                            else:
-                                updated_label = -1  # Review
-                    except Exception as e:
-                        pass
-
+                    # Get the Label id from the dot_labels
+                    label_id = dot_labels.get(index)
+                    label = self.main_window.label_window.get_label_by_id(label_id)
+                    # Try to map the long code
+                    updated_label = qclasses_mapping_long.get(label.long_label_code)
+                    # If long code is not found, try mapping the short code
+                    if updated_label is None:
+                        updated_label = qclasses_mapping_short.get(label.short_label_code)
+                    # If neither long nor short code is found, set it to 0
+                    if updated_label is None:
+                        updated_label = 0
                     # Update the label in the user_data
                     user_data['cl'][index] = updated_label
 
