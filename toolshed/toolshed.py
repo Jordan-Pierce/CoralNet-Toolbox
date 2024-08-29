@@ -12,6 +12,7 @@ from src.Upload import upload
 from src.Annotate import annotate
 from src.Patches import patches
 from src.Visualize import visualize
+from src.ToYOLO import to_yolo
 from src.Points import points
 from src.Projector import projector
 from src.Spotlight import spotlight
@@ -509,6 +510,51 @@ def main():
                                           gooey_options={'min': 0, 'max': 100, 'increment': 1})
 
     # ------------------------------------------------------------------------------------------------------------------
+    # ToYOLO
+    # ------------------------------------------------------------------------------------------------------------------
+    toyolo_parser = subs.add_parser('ToYOLO')
+
+    # Panel 1
+    toyolo_parser_panel_1 = toyolo_parser.add_argument_group('To YOLO',
+                                                             'Convert Patch files to YOLO format',
+                                                             gooey_options={'show_border': True})
+
+    toyolo_parser_panel_1.add_argument('--patches', required=True, nargs="+",
+                                       metavar="Patch Data",
+                                       help='Patches dataframe file(s)',
+                                       widget="MultiFileChooser")
+
+    # Panel 2
+    toyolo_parser_panel_2 = toyolo_parser.add_argument_group('Parameters',
+                                                             'Specify the parameters',
+                                                             gooey_options={'show_border': True})
+
+    toyolo_parser_panel_2.add_argument('--even_dist',
+                                       metavar="Even Distribution",
+                                       help='Downsample majority classes to be +/- N% of minority',
+                                       action="store_true",
+                                       widget='BlockCheckbox')
+
+    toyolo_parser_panel_2.add_argument('--about', type=float, default=0.25,
+                                       metavar="About",
+                                       help='Downsample majority classes by "about" +/- N% of minority class')
+
+    # Panel 3
+    toyolo_parser_panel_3 = toyolo_parser.add_argument_group('Output',
+                                                             'Specify the output',
+                                                             gooey_options={'show_border': True})
+
+    toyolo_parser_panel_3.add_argument('--output_name', type=str, required=False,
+                                       metavar='Output Name',
+                                       help='Name for Output Directory (optional)')
+
+    toyolo_parser_panel_3.add_argument('--output_dir', required=True,
+                                       metavar='Output Directory',
+                                       default=DATA_DIR,
+                                       help='Root directory where output will be saved',
+                                       widget="DirChooser")
+
+    # ------------------------------------------------------------------------------------------------------------------
     # Points
     # ------------------------------------------------------------------------------------------------------------------
     points_parser = subs.add_parser('Points')
@@ -670,6 +716,16 @@ def main():
                                                metavar="Loss Function",
                                                help='Loss function for training model',
                                                widget='Dropdown', choices=get_classifier_losses())
+
+    classification_parser_panel_2.add_argument('--even_dist',
+                                               metavar="Even Distribution",
+                                               help='Downsample majority classes to be +/- N% of minority',
+                                               action="store_true",
+                                               widget='BlockCheckbox')
+
+    classification_parser_panel_2.add_argument('--about', type=float, default=0.25,
+                                               metavar="About",
+                                               help='Downsample majority classes by "about" +/- N% of minority class')
 
     classification_parser_panel_2.add_argument('--weighted_loss', default=True,
                                                metavar="Weighted Loss Function",
@@ -1129,6 +1185,9 @@ def main():
 
         if args.command == 'Points':
             points(args)
+
+        if args.command == 'ToYOLO':
+            to_yolo(args)
 
         if args.command == 'Classification':
             classification(args)
