@@ -943,10 +943,10 @@ class AnnotationWindow(QGraphicsView):
                     (df_filtered['ViewCount'] >= view_count)
                     ]
 
-                # Check if 'Name' contains full paths or just basenames
                 if not image_paths:
+                    # Update the DataFrame to only include annotations for loaded images
                     loaded_images = {os.path.basename(path) for path in self.main_window.image_window.image_paths}
-                    filtered_df['Name'] = filtered_df['Name'].apply(os.path.basename)
+                    filtered_df.loc[:, 'Name'] = filtered_df['Name'].apply(os.path.basename)
                     filtered_df = filtered_df[filtered_df['Name'].isin(loaded_images)]
 
                     if filtered_df.empty:
