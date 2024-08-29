@@ -317,9 +317,12 @@ class AnnotationWindow(QGraphicsView):
                                                    options=options)
         if file_path:
             try:
+                # Set the cursor to waiting (busy) cursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
 
+                # Get the total number of annotations
                 total_annotations = len(list(self.annotations_dict.values()))
-
+                # Show a progress bar
                 progress_bar = ProgressBar(self, title="Exporting Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
@@ -349,6 +352,9 @@ class AnnotationWindow(QGraphicsView):
                 QMessageBox.warning(self, "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+
     def import_annotations(self):
         self.set_selected_tool(None)
         self.toolChanged.emit(None)
@@ -367,6 +373,10 @@ class AnnotationWindow(QGraphicsView):
                                                    options=options)
         if file_path:
             try:
+                # Set the cursor to waiting (busy) cursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+
+                # Load the JSON file
                 with open(file_path, 'r') as file:
                     data = json.load(file)
 
@@ -428,6 +438,9 @@ class AnnotationWindow(QGraphicsView):
                 QMessageBox.warning(self, "Error Importing Annotations",
                                     f"An error occurred while importing annotations: {str(e)}")
 
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+
     def export_coralnet_annotations(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
@@ -437,6 +450,9 @@ class AnnotationWindow(QGraphicsView):
                                                    options=options)
         if file_path:
             try:
+                # Set the cursor to waiting (busy) cursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+
                 data = []
                 total_annotations = len(self.annotations_dict)
 
@@ -446,6 +462,7 @@ class AnnotationWindow(QGraphicsView):
 
                 for annotation in self.annotations_dict.values():
                     data.append(annotation.to_coralnet_format())
+
                     progress_bar.update_progress()
                     QApplication.processEvents()  # Update GUI
 
@@ -461,6 +478,9 @@ class AnnotationWindow(QGraphicsView):
             except Exception as e:
                 QMessageBox.warning(self, "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
 
     def import_coralnet_annotations(self):
         self.set_selected_tool(None)
@@ -478,6 +498,7 @@ class AnnotationWindow(QGraphicsView):
             return
 
         try:
+            # Read the CSV file using pandas
             df = pd.read_csv(file_path)
 
             required_columns = ['Name', 'Row', 'Column', 'Label']
@@ -503,10 +524,15 @@ class AnnotationWindow(QGraphicsView):
             if df.empty:
                 raise Exception("No annotations found for loaded images.")
 
+            # Get the total number of annotations
             total_annotations = len(df)
+
             progress_bar = ProgressBar(self, title="Importing CoralNet Annotations")
             progress_bar.show()
             progress_bar.start_progress(total_annotations)
+
+            # Set the cursor to waiting (busy) cursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
             # Iterate through the DataFrame and create annotations, group by image name
             for image_name, group in df.groupby('Name'):
@@ -567,6 +593,9 @@ class AnnotationWindow(QGraphicsView):
             QMessageBox.warning(self,
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations: {str(e)}")
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
 
     def export_viscore_annotations(self):
         pass
@@ -752,6 +781,9 @@ class AnnotationWindow(QGraphicsView):
                                             "None of the image names in the CSV match loaded images.")
                         return
 
+                # Set the cursor to waiting (busy) cursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+
                 # Create a dictionary mapping basenames to full paths
                 image_path_map = {os.path.basename(path): path for path in self.main_window.image_window.image_paths}
 
@@ -840,6 +872,9 @@ class AnnotationWindow(QGraphicsView):
 
             except Exception as e:
                 QMessageBox.critical(self, "Critical Error", f"Failed to import annotations: {e}")
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
 
     def set_selected_tool(self, tool):
         self.selected_tool = tool
