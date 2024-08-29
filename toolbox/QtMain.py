@@ -88,21 +88,24 @@ class MainWindow(QMainWindow):
         # Menu bar
         self.menu_bar = self.menuBar()
 
+        # Import menu
         self.import_menu = self.menu_bar.addMenu("Import")
 
         self.import_images_action = QAction("Import Images", self)
         self.import_images_action.triggered.connect(self.image_window.import_images)
         self.import_menu.addAction(self.import_images_action)
+        self.import_menu.addSeparator()
 
         self.import_labels_action = QAction("Import Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.label_window.import_labels)
         self.import_menu.addAction(self.import_labels_action)
+        self.import_menu.addSeparator()
 
         self.import_annotations_action = QAction("Import Annotations (JSON)", self)
         self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
         self.import_menu.addAction(self.import_annotations_action)
 
-        self.import_coralnet_annotations_action = QAction("Import Annotations (CoralNet)", self)
+        self.import_coralnet_annotations_action = QAction("Import CoralNet Annotations (CSV)", self)
         self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
         self.import_menu.addAction(self.import_coralnet_annotations_action)
 
@@ -110,17 +113,19 @@ class MainWindow(QMainWindow):
         self.import_viscore_annotations_action.triggered.connect(self.annotation_window.import_viscore_annotations)
         self.import_menu.addAction(self.import_viscore_annotations_action)
 
+        # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")
 
         self.export_labels_action = QAction("Export Labels (JSON)", self)
         self.export_labels_action.triggered.connect(self.label_window.export_labels)
         self.export_menu.addAction(self.export_labels_action)
+        self.export_menu.addSeparator()
 
         self.export_annotations_action = QAction("Export Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
         self.export_menu.addAction(self.export_annotations_action)
 
-        self.export_coralnet_annotations_action = QAction("Export Annotations (CoralNet)", self)
+        self.export_coralnet_annotations_action = QAction("Export CoralNet Annotations (CSV)", self)
         self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
         self.export_menu.addAction(self.export_coralnet_annotations_action)
 
@@ -128,7 +133,7 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations_action.triggered.connect(self.annotation_window.export_viscore_annotations)
         self.export_menu.addAction(self.export_viscore_annotations_action)
 
-        # Sampling Annotations
+        # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample Annotations", self)
         self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
@@ -255,7 +260,9 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
         self.status_bar_layout.addWidget(self.annotation_size_spinbox)
 
+        # --------------------------------------------------
         # Create the main layout
+        # --------------------------------------------------
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget)

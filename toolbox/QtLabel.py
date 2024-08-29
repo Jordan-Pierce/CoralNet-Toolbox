@@ -467,6 +467,37 @@ class LabelWindow(QWidget):
         if 0 <= new_index < len(self.labels):
             self.set_active_label(self.labels[new_index])
 
+            # Adjust the scrollbar if necessary
+            self.adjust_scrollbar_for_active_label()
+
+    def adjust_scrollbar_for_active_label(self):
+        if not self.active_label:
+            return
+
+        # Get the geometry of the active label and the scroll area's viewport
+        label_geometry = self.active_label.geometry()
+        viewport_geometry = self.scroll_area.viewport().geometry()
+
+        # Calculate the vertical scrollbar position to keep the active label in view
+        if label_geometry.top() < viewport_geometry.top():
+            # Scroll up
+            self.scroll_area.verticalScrollBar().setValue(
+                self.scroll_area.verticalScrollBar().value() - label_geometry.height())
+        elif label_geometry.bottom() > viewport_geometry.bottom():
+            # Scroll down
+            self.scroll_area.verticalScrollBar().setValue(
+                self.scroll_area.verticalScrollBar().value() + label_geometry.height())
+
+        # Calculate the horizontal scrollbar position to keep the active label in view
+        if label_geometry.left() < viewport_geometry.left():
+            # Scroll left
+            self.scroll_area.horizontalScrollBar().setValue(
+                self.scroll_area.horizontalScrollBar().value() - label_geometry.width())
+        elif label_geometry.right() > viewport_geometry.right():
+            # Scroll right
+            self.scroll_area.horizontalScrollBar().setValue(
+                self.scroll_area.horizontalScrollBar().value() + label_geometry.width())
+
 
 class AddLabelDialog(QDialog):
     def __init__(self, label_window, parent=None):

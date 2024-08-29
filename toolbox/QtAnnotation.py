@@ -308,13 +308,6 @@ class AnnotationWindow(QGraphicsView):
 
         self.toolChanged.connect(self.set_selected_tool)
 
-    def browse_csv_file(self, file_path_input):
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select CSV File", "", "CSV Files (*.csv);;All Files (*)",
-                                                   options=options)
-        if file_path:
-            file_path_input.setText(file_path)
-
     def export_annotations(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
@@ -474,75 +467,79 @@ class AnnotationWindow(QGraphicsView):
         self.toolChanged.emit(None)
 
         if not self.active_image:
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images first before importing annotations.")
+            QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
             return
 
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Import CoralNet Annotations",
-                                                   "",
-                                                   "CSV Files (*.csv);;All Files (*)",
-                                                   options=options)
-        if file_path:
-            try:
-                df = pd.read_csv(file_path)
-                if not all(col in df.columns for col in ['Name', 'Row', 'Column', 'Label']):
-                    QMessageBox.warning(self,
-                                        "Invalid CSV Format",
-                                        "The selected CSV file does not match the expected CoralNet format.")
-                    return
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import CoralNet Annotations", "",
+                                                   "CSV Files (*.csv);;All Files (*)", options=options)
 
-                annotation_size, ok = QInputDialog.getInt(self,
-                                                          "Annotation Size",
-                                                          "Enter the annotation size for all imported annotations:",
-                                                          224, 1, 10000, 1)
-                if not ok:
-                    return
+        if not file_path:
+            return
 
-                loaded_image_names = [os.path.basename(path) for path in self.main_window.image_window.image_paths]
-                df = df[df['Name'].isin(loaded_image_names)]
+        try:
+            df = pd.read_csv(file_path)
 
-                total_annotations = len(df)
+            required_columns = ['Name', 'Row', 'Column', 'Label']
+            if not all(col in df.columns for col in required_columns):
+                QMessageBox.warning(self,
+                                    "Invalid CSV Format",
+                                    "The selected CSV file does not match the expected CoralNet format.")
+                return
 
-                if not total_annotations:
-                    raise Exception("No annotations found for loaded images.")
+            annotation_size, ok = QInputDialog.getInt(self,
+                                                      "Annotation Size",
+                                                      "Enter the annotation size for all imported annotations:",
+                                                      224, 1, 10000, 1)
+            if not ok:
+                return
 
-                progress_bar = ProgressBar(self, title="Importing CoralNet Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(total_annotations)
+            # Create a dictionary mapping image basenames to their full paths
+            image_path_map = {os.path.basename(path): path for path in self.main_window.image_window.image_paths}
 
-                for index, row in df.iterrows():
-                    image_name = row['Name']
+            # Filter out annotations that are not associated with any loaded images
+            df = df[df['Name'].isin(image_path_map.keys())]
+
+            if df.empty:
+                raise Exception("No annotations found for loaded images.")
+
+            total_annotations = len(df)
+            progress_bar = ProgressBar(self, title="Importing CoralNet Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(total_annotations)
+
+            # Iterate through the DataFrame and create annotations, group by image name
+            for image_name, group in df.groupby('Name'):
+                image_path = image_path_map.get(image_name)
+                if not image_path:
+                    continue
+
+                for index, row in group.iterrows():
                     row_coord = row['Row']
                     col_coord = row['Column']
                     label_code = row['Label']
 
-                    image_path = None
-                    for loaded_image_path in self.main_window.image_window.image_paths:
-                        if os.path.basename(loaded_image_path) == image_name:
-                            image_path = loaded_image_path
-                            break
+                    short_label_code = long_label_code = label_code
+                    existing_label = self.main_window.label_window.get_label_by_codes(short_label_code,
+                                                                                      long_label_code)
 
-                    if image_path is None:
-                        continue
-
-                    short_label_code = label_code
-                    long_label_code = label_code
-
-                    existing_label = self.main_window.label_window.get_label_by_codes(short_label_code, long_label_code)
                     if existing_label:
+                        # Use the existing label if it exists
                         color = existing_label.color
                         label_id = existing_label.id
                     else:
+                        # Create a new label if it doesn't exist
+                        label_id = str(uuid.uuid4())
                         color = QColor(random.randint(0, 255),
                                        random.randint(0, 255),
                                        random.randint(0, 255))
 
-                        label_id = str(uuid.uuid4())
-                        self.main_window.label_window.add_label(short_label_code, long_label_code, color, label_id)
-
+                        # Add the new label to the LabelWindow
+                        self.main_window.label_window.add_label_if_not_exists(short_label_code,
+                                                                              long_label_code,
+                                                                              color,
+                                                                              label_id)
+                    # Create the annotation
                     annotation = Annotation(QPointF(col_coord, row_coord),
                                             annotation_size,
                                             short_label_code,
@@ -551,33 +548,48 @@ class AnnotationWindow(QGraphicsView):
                                             image_path,
                                             label_id)
 
+                    # Add to the AnnotationWindow dictionary
                     self.annotations_dict[annotation.id] = annotation
 
                     progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
+                    QApplication.processEvents()
 
-                progress_bar.stop_progress()
-                progress_bar.close()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
-                self.load_annotations()
+            self.load_annotations()
 
-                QMessageBox.information(self, "Annotations Imported",
-                                        "Annotations have been successfully imported.")
+            QMessageBox.information(self,
+                                    "Annotations Imported",
+                                    "Annotations have been successfully imported.")
 
-            except Exception as e:
-                QMessageBox.warning(self, "Error Importing Annotations",
-                                    f"An error occurred while importing annotations: {str(e)}")
+        except Exception as e:
+            QMessageBox.warning(self,
+                                "Error Importing Annotations",
+                                f"An error occurred while importing annotations: {str(e)}")
 
     def export_viscore_annotations(self):
         pass
 
     def import_viscore_annotations(self):
+
+        def browse_csv_file(file_path_input):
+            options = QFileDialog.Options()
+            file_path, _ = QFileDialog.getOpenFileName(self,
+                                                       "Import Viscore Annotations",
+                                                       "",
+                                                       "CSV Files (*.csv);;All Files (*)",
+                                                       options=options)
+            if file_path:
+                file_path_input.setText(file_path)
+
         self.set_selected_tool(None)
         self.toolChanged.emit(None)
 
         # Create a dialog to get the CSV file path and additional values
         dialog = QDialog(self)
         dialog.setWindowTitle("Import Viscore Annotations")
+        dialog.resize(500, 200)
 
         layout = QVBoxLayout(dialog)
 
@@ -585,7 +597,7 @@ class AnnotationWindow(QGraphicsView):
         file_path_label = QLabel("CSV File Path:")
         file_path_input = QLineEdit()
         file_path_button = QPushButton("Browse")
-        file_path_button.clicked.connect(lambda: self.browse_csv_file(file_path_input))
+        file_path_button.clicked.connect(lambda: browse_csv_file(file_path_input))
         file_path_layout = QHBoxLayout()
         file_path_layout.addWidget(file_path_input)
         file_path_layout.addWidget(file_path_button)
@@ -593,26 +605,30 @@ class AnnotationWindow(QGraphicsView):
         layout.addLayout(file_path_layout)
 
         # ReprojectionError
-        reprojection_error_label = QLabel("ReprojectionError (float):")
+        reprojection_error_label = QLabel("ReprojectionError (Default: 0.01, float):")
         reprojection_error_input = QLineEdit()
+        reprojection_error_input.setPlaceholderText("Error between an image point, reprojected to its 3D dot location")
         layout.addWidget(reprojection_error_label)
         layout.addWidget(reprojection_error_input)
 
         # ViewIndex
-        view_index_label = QLabel("ViewIndex (int):")
+        view_index_label = QLabel("ViewIndex (Default: 10, int):")
         view_index_input = QLineEdit()
+        view_index_input.setPlaceholderText("The image's index in VPI view (includes a form pre-filtering)")
         layout.addWidget(view_index_label)
         layout.addWidget(view_index_input)
 
         # ViewCount
-        view_count_label = QLabel("ViewCount (int):")
+        view_count_label = QLabel("ViewCount (Default: 5, int):")
         view_count_input = QLineEdit()
+        view_count_input.setPlaceholderText("The number of images the dot has been seen in")
         layout.addWidget(view_count_label)
         layout.addWidget(view_count_input)
 
         # RandSubCeil
-        rand_sub_ceil_label = QLabel("RandSubCeil (float):")
+        rand_sub_ceil_label = QLabel("RandSubCeil (Default: 1.0, float, [0-1]):")
         rand_sub_ceil_input = QLineEdit()
+        rand_sub_ceil_input.setPlaceholderText("Randomly sample a subset of the data")
         layout.addWidget(rand_sub_ceil_label)
         layout.addWidget(rand_sub_ceil_input)
 
@@ -624,10 +640,51 @@ class AnnotationWindow(QGraphicsView):
 
         if dialog.exec_() == QDialog.Accepted:
             file_path = file_path_input.text()
-            reprojection_error = float(reprojection_error_input.text())
-            view_index = int(view_index_input.text())
-            view_count = int(view_count_input.text())
-            rand_sub_ceil = float(rand_sub_ceil_input.text())
+
+            # Set default values if the input fields are empty
+            reprojection_error = reprojection_error_input.text()
+            if not reprojection_error:
+                reprojection_error = "0.01"
+            try:
+                reprojection_error = float(reprojection_error)
+                if reprojection_error < 0:
+                    raise ValueError("ReprojectionError must be a non-negative float.")
+            except ValueError as e:
+                QMessageBox.warning(self, "Invalid Input", f"Invalid ReprojectionError: {e}")
+                return
+
+            view_index = view_index_input.text()
+            if not view_index:
+                view_index = "10"
+            try:
+                view_index = int(view_index)
+                if view_index < 0:
+                    raise ValueError("ViewIndex must be a non-negative integer.")
+            except ValueError as e:
+                QMessageBox.warning(self, "Invalid Input", f"Invalid ViewIndex: {e}")
+                return
+
+            view_count = view_count_input.text()
+            if not view_count:
+                view_count = "5"
+            try:
+                view_count = int(view_count)
+                if view_count < 0:
+                    raise ValueError("ViewCount must be a non-negative integer.")
+            except ValueError as e:
+                QMessageBox.warning(self, "Invalid Input", f"Invalid ViewCount: {e}")
+                return
+
+            rand_sub_ceil = rand_sub_ceil_input.text()
+            if not rand_sub_ceil:
+                rand_sub_ceil = "1.0"
+            try:
+                rand_sub_ceil = float(rand_sub_ceil)
+                if not (0 <= rand_sub_ceil <= 1):
+                    raise ValueError("RandSubCeil must be a float between 0 and 1.")
+            except ValueError as e:
+                QMessageBox.warning(self, "Invalid Input", f"Invalid RandSubCeil: {e}")
+                return
 
             try:
                 # Read the CSV file using pandas
@@ -637,21 +694,45 @@ class AnnotationWindow(QGraphicsView):
                     QMessageBox.warning(self, "Empty CSV", "The CSV file is empty.")
                     return
 
+                required_columns = ['Name',
+                                    'Row',
+                                    'Column',
+                                    'Label',
+                                    'Dot',
+                                    'RandSubCeil',
+                                    'ReprojectionError',
+                                    'ViewIndex',
+                                    'ViewCount']
+
+                if not all(col in df.columns for col in required_columns):
+                    QMessageBox.warning(self,
+                                        "Invalid CSV Format",
+                                        "The selected CSV file does not match the expected Viscore format.")
+                    return
+
+                annotation_size, ok = QInputDialog.getInt(self,
+                                                          "Annotation Size",
+                                                          "Enter the annotation size for all imported annotations:",
+                                                          224, 1, 10000, 1)
+                if not ok:
+                    return
+
                 # Apply filters
                 df_filtered = df.dropna(how='any')
                 df_filtered['Row'] = df_filtered['Row'].astype(int)
                 df_filtered['Column'] = df_filtered['Column'].astype(int)
 
-                # Check if 'Name' exists as a path and create a unique list
-                unique_paths = df_filtered['Name'].apply(
+                # Check if 'Name' exists as a path (or just basename) and create a unique list
+                image_paths = df_filtered['Name'].apply(
                     lambda x: x if os.path.exists(x) else None).dropna().unique().tolist()
 
-                if not unique_paths and not self.active_image:
+                if not image_paths and not self.active_image:
                     QMessageBox.warning(self,
                                         "No Images Found",
                                         "Please load an image before importing annotations.")
                     return
 
+                # Filter the DataFrame based on the input values
                 filtered_df = df_filtered[
                     (df_filtered['RandSubCeil'] <= rand_sub_ceil) &
                     (df_filtered['ReprojectionError'] <= reprojection_error) &
@@ -659,48 +740,77 @@ class AnnotationWindow(QGraphicsView):
                     (df_filtered['ViewCount'] >= view_count)
                     ]
 
+                # Check if 'Name' contains full paths or just basenames
+                if not image_paths:
+                    loaded_images = {os.path.basename(path) for path in self.main_window.image_window.image_paths}
+                    filtered_df['Name'] = filtered_df['Name'].apply(os.path.basename)
+                    filtered_df = filtered_df[filtered_df['Name'].isin(loaded_images)]
+
+                    if filtered_df.empty:
+                        QMessageBox.warning(self,
+                                            "No Matching Images",
+                                            "None of the image names in the CSV match loaded images.")
+                        return
+
+                # Create a dictionary mapping basenames to full paths
+                image_path_map = {os.path.basename(path): path for path in self.main_window.image_window.image_paths}
+
                 # Process the filtered CSV data and import the annotations
-                for index, row in filtered_df.iterrows():
-                    # Extract necessary data from the row
-                    center_xy = QPointF(row['X'], row['Y'])
-                    annotation_size = row['Size']
-                    short_label_code = row['ShortLabel']
-                    long_label_code = row['LongLabel']
-                    color = QColor(row['Color'])
-                    image_path = row['Name']
+                for image_name, group in filtered_df.groupby('Name'):
+                    image_path = image_path_map.get(image_name)
+                    if not image_path:
+                        continue
 
-                    # Create and add the annotation
-                    annotation = Annotation(center_xy,
-                                            annotation_size,
-                                            short_label_code,
-                                            long_label_code,
-                                            color,
-                                            image_path,
-                                            label_id="-1")
+                    for index, row in group.iterrows():
+                        row_coord = row['Row']
+                        col_coord = row['Column']
+                        label_code = row['Label']
 
-                    # Add additional data to the annotation
-                    annotation.data = {
-                        'Dot': row['Dot'],
-                        'X': row['X'],
-                        'Y': row['Y'],
-                        'Z': row['Z'],
-                        'ReprojectionError': row['ReprojectionError'],
-                        'ViewIndex': row['ViewIndex'],
-                        'ViewCount': row['ViewCount'],
-                        'RandSubCeil': row['RandSubCeil']
-                    }
+                        # Check if the label exists in the LabelWindow
+                        short_label_code = long_label_code = label_code
+                        existing_label = self.main_window.label_window.get_label_by_codes(short_label_code,
+                                                                                          long_label_code)
 
-                    self.add_annotation(center_xy, annotation)
+                        if existing_label:
+                            # Use the existing label if it exists
+                            color = existing_label.color
+                            label_id = existing_label.id
+                        else:
+                            # Create a new label if it doesn't exist
+                            label_id = str(uuid.uuid4())
+                            color = QColor(random.randint(0, 255),
+                                           random.randint(0, 255),
+                                           random.randint(0, 255))
 
-                if unique_paths:
+                            # Add the new label to the LabelWindow
+                            self.main_window.label_window.add_label_if_not_exists(short_label_code,
+                                                                                  long_label_code,
+                                                                                  color,
+                                                                                  label_id)
+                        # Create the annotation
+                        annotation = Annotation(QPointF(col_coord, row_coord),
+                                                annotation_size,
+                                                short_label_code,
+                                                long_label_code,
+                                                color,
+                                                image_path,
+                                                label_id)
+
+                        # Add additional data to the annotation
+                        annotation.data['Dot'] = row['Dot']
+
+                        # Add to the AnnotationWindow dictionary
+                        self.annotations_dict[annotation.id] = annotation
+
+                if image_paths:
                     # Import images to project
                     progress_bar = ProgressBar(self, title="Importing Images")
                     progress_bar.show()
-                    progress_bar.start_progress(len(unique_paths))
+                    progress_bar.start_progress(len(image_paths))
 
-                    for i, file_name in enumerate(unique_paths):
-                        if file_name not in set(self.main_window.image_window.image_paths):
-                            self.main_window.image_window.add_image(file_name)
+                    for i, image_path in enumerate(image_paths):
+                        if image_path not in set(self.main_window.image_window.image_paths):
+                            self.main_window.image_window.add_image(image_path)
                             progress_bar.update_progress()
                             QApplication.processEvents()  # Update GUI
 
@@ -708,7 +818,10 @@ class AnnotationWindow(QGraphicsView):
                     progress_bar.close()
 
                     # Load the last image
-                    self.main_window.image_window.load_image_by_path(unique_paths[-1])
+                    self.main_window.image_window.load_image_by_path(image_paths[-1])
+
+                # Load annotations for current image
+                self.load_annotations()
 
             except Exception as e:
                 QMessageBox.critical(self, "Critical Error", f"Failed to import annotations: {e}")
