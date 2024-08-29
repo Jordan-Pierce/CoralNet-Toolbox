@@ -209,7 +209,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Add the device label widget as an action in the toolbar
-        self.device = 'cuda' if is_available() else 'cpu'
+        self.device = 'cuda:0' if is_available() else 'cpu'
         device_icon = QIcon(rabbit_icon_path) if self.device != 'cpu' else QIcon(turtle_icon_path)
 
         # Create the device action with the appropriate icon

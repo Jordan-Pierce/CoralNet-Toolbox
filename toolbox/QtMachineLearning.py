@@ -544,26 +544,34 @@ class TrainModelWorker(QThread):
     def __init__(self, params):
         super().__init__()
         self.params = params
-
         self.target_model = None
 
     def run(self):
         try:
-            # Emit the signal for training start
             self.training_started.emit()
-
-            # Initialize the model
             model_path = self.params.pop('model', None)
             self.target_model = YOLO(model_path)
-
-            # Train the model
-            results = self.target_model.train(**self.params)
-            # Emit the signal for training completion
+            self.target_model.train(**self.params)
+            self._evaluate_model()
             self.training_completed.emit()
-
         except Exception as e:
             self.training_error.emit(str(e))
+        finally:
+            self._cleanup()
 
+    def _evaluate_model(self):
+        try:
+            self.target_model.val(
+                data=self.params['data'],
+                batch=self.params['batch'],
+                imgsz=self.params['imgsz'],
+                split='test',
+                plots=True
+            )
+        except:
+            pass
+
+    def _cleanup(self):
         del self.target_model
         gc.collect()
         empty_cache()
@@ -667,8 +675,15 @@ class TrainModelDialog(QDialog):
         self.patience_spinbox = QSpinBox()
         self.patience_spinbox.setMinimum(1)
         self.patience_spinbox.setMaximum(1000)
-        self.patience_spinbox.setValue(100)
+        self.patience_spinbox.setValue(30)
         self.form_layout.addRow("Patience:", self.patience_spinbox)
+
+        # Imgsz
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setMinimum(16)
+        self.imgsz_spinbox.setMaximum(4096)
+        self.imgsz_spinbox.setValue(224)
+        self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Batch
         self.batch_spinbox = QSpinBox()
@@ -677,12 +692,12 @@ class TrainModelDialog(QDialog):
         self.batch_spinbox.setValue(512)
         self.form_layout.addRow("Batch Size:", self.batch_spinbox)
 
-        # Imgsz
-        self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setMinimum(16)
-        self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(224)
-        self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
+        # Workers
+        self.workers_spinbox = QSpinBox()
+        self.workers_spinbox.setMinimum(1)
+        self.workers_spinbox.setMaximum(64)
+        self.workers_spinbox.setValue(8)
+        self.form_layout.addRow("Workers:", self.workers_spinbox)
 
         # Save
         self.save_checkbox = QCheckBox()
@@ -696,34 +711,14 @@ class TrainModelDialog(QDialog):
         self.save_period_spinbox.setValue(-1)
         self.form_layout.addRow("Save Period:", self.save_period_spinbox)
 
-        # Workers
-        self.workers_spinbox = QSpinBox()
-        self.workers_spinbox.setMinimum(1)
-        self.workers_spinbox.setMaximum(64)
-        self.workers_spinbox.setValue(8)
-        self.form_layout.addRow("Workers:", self.workers_spinbox)
-
         # Pretrained
         self.pretrained_checkbox = QCheckBox()
         self.pretrained_checkbox.setChecked(True)
         self.form_layout.addRow("Pretrained:", self.pretrained_checkbox)
 
-        # Optimizer
-        self.optimizer_combo = QComboBox()
-        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
-        self.optimizer_combo.setCurrentText("auto")
-        self.form_layout.addRow("Optimizer:", self.optimizer_combo)
-
         # Freeze
         self.freeze_edit = QLineEdit()
         self.form_layout.addRow("Freeze Layers:", self.freeze_edit)
-
-        # Lr0
-        self.lr0_spinbox = QDoubleSpinBox()
-        self.lr0_spinbox.setMinimum(0.0001)
-        self.lr0_spinbox.setMaximum(1.0)
-        self.lr0_spinbox.setValue(0.01)
-        self.form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
 
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
@@ -732,17 +727,30 @@ class TrainModelDialog(QDialog):
         self.dropout_spinbox.setValue(0.0)
         self.form_layout.addRow("Dropout:", self.dropout_spinbox)
 
+        # Optimizer
+        self.optimizer_combo = QComboBox()
+        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
+        self.optimizer_combo.setCurrentText("auto")
+        self.form_layout.addRow("Optimizer:", self.optimizer_combo)
+
+        # Lr0
+        self.lr0_spinbox = QDoubleSpinBox()
+        self.lr0_spinbox.setMinimum(0.0001)
+        self.lr0_spinbox.setMaximum(1.0)
+        self.lr0_spinbox.setValue(0.01)
+        self.form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
+
+        # Val
+        self.val_checkbox = QCheckBox()
+        self.val_checkbox.setChecked(True)
+        self.form_layout.addRow("Validation:", self.val_checkbox)
+
         # Fraction
         self.fraction_spinbox = QDoubleSpinBox()
         self.fraction_spinbox.setMinimum(0.1)
         self.fraction_spinbox.setMaximum(1.0)
         self.fraction_spinbox.setValue(1.0)
         self.form_layout.addRow("Fraction:", self.fraction_spinbox)
-
-        # Val
-        self.val_checkbox = QCheckBox()
-        self.val_checkbox.setChecked(True)
-        self.form_layout.addRow("Validation:", self.val_checkbox)
 
         # Verbose
         self.verbose_checkbox = QCheckBox()
@@ -908,6 +916,7 @@ class TrainModelDialog(QDialog):
             'lr0': self.lr0_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_checkbox.isChecked(),
+            'exist_ok': True,
             'plots': True,
         }
         # Default project folder
