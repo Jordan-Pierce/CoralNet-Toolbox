@@ -160,6 +160,10 @@ class MainWindow(QMainWindow):
         self.ml_create_dataset_action.triggered.connect(self.open_create_dataset_dialog)
         self.ml_menu.addAction(self.ml_create_dataset_action)
 
+        self.ml_merge_datasets_action = QAction("Merge Datasets", self)
+        self.ml_merge_datasets_action.triggered.connect(self.open_merge_datasets_dialog)
+        self.ml_menu.addAction(self.ml_merge_datasets_action)
+
         self.ml_train_model_action = QAction("Train Model", self)
         self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
         self.ml_menu.addAction(self.ml_train_model_action)
@@ -171,6 +175,10 @@ class MainWindow(QMainWindow):
         self.ml_deploy_model_action = QAction("Deploy Model", self)
         self.ml_deploy_model_action.triggered.connect(self.open_deploy_model_dialog)
         self.ml_menu.addAction(self.ml_deploy_model_action)
+
+        self.ml_batch_inference_action = QAction("Batch Inference", self)
+        self.ml_batch_inference_action.triggered.connect(self.open_batch_inference_dialog)
+        self.ml_menu.addAction(self.ml_batch_inference_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -378,6 +386,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
+    def open_merge_datasets_dialog(self):
+        try:
+            pass
+            # self.merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
     def open_train_model_dialog(self):
         try:
             self.train_model_dialog.exec_()
@@ -393,5 +408,12 @@ class MainWindow(QMainWindow):
     def open_deploy_model_dialog(self):
         try:
             self.deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_batch_inference_dialog(self):
+        try:
+            pass
+            # self.batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")

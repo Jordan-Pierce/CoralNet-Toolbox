@@ -343,6 +343,12 @@ class LabelWindow(QWidget):
                 return label.color
         return None
 
+    def get_label_by_id(self, label_id):
+        for label in self.labels:
+            if label.id == label_id:
+                return label
+        return None
+
     def get_label_by_codes(self, short_label_code, long_label_code):
         for label in self.labels:
             if short_label_code == label.short_label_code and long_label_code == label.long_label_code:

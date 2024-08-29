@@ -598,7 +598,181 @@ class AnnotationWindow(QGraphicsView):
         QApplication.restoreOverrideCursor()
 
     def export_viscore_annotations(self):
-        pass
+
+        def browse_user_file(user_file_input):
+            options = QFileDialog.Options()
+            file_path, _ = QFileDialog.getOpenFileName(self,
+                                                       "Select User File",
+                                                       "",
+                                                       "JSON Files (*.json);;All Files (*)",
+                                                       options=options)
+            if file_path:
+                user_file_input.setText(file_path)
+
+        def browse_qclasses_file(qclasses_file_input):
+            options = QFileDialog.Options()
+            file_path, _ = QFileDialog.getOpenFileName(self,
+                                                       "Select QClasses File",
+                                                       "",
+                                                       "JSON Files (*.json);;All Files (*)",
+                                                       options=options)
+            if file_path:
+                qclasses_file_input.setText(file_path)
+
+        def browse_output_directory(output_directory_input):
+            options = QFileDialog.Options()
+            directory = QFileDialog.getExistingDirectory(self,
+                                                         "Select Output Directory",
+                                                         "",
+                                                         options=options)
+            if directory:
+                output_directory_input.setText(directory)
+
+        # Create a dialog to get the required inputs
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export Viscore Annotations")
+        dialog.resize(400, 300)
+
+        layout = QVBoxLayout(dialog)
+
+        # User File (JSON)
+        user_file_label = QLabel("User File (JSON):")
+        user_file_input = QLineEdit()
+        user_file_button = QPushButton("Browse")
+        user_file_button.clicked.connect(lambda: browse_user_file(user_file_input))
+        user_file_layout = QHBoxLayout()
+        user_file_layout.addWidget(user_file_input)
+        user_file_layout.addWidget(user_file_button)
+        layout.addWidget(user_file_label)
+        layout.addLayout(user_file_layout)
+
+        # QClasses File (JSON)
+        qclasses_file_label = QLabel("QClasses File (JSON):")
+        qclasses_file_input = QLineEdit()
+        qclasses_file_button = QPushButton("Browse")
+        qclasses_file_button.clicked.connect(lambda: browse_qclasses_file(qclasses_file_input))
+        qclasses_file_layout = QHBoxLayout()
+        qclasses_file_layout.addWidget(qclasses_file_input)
+        qclasses_file_layout.addWidget(qclasses_file_button)
+        layout.addWidget(qclasses_file_label)
+        layout.addLayout(qclasses_file_layout)
+
+        # Username
+        username_label = QLabel("Username:")
+        username_input = QLineEdit()
+        username_input.setPlaceholderText("robot")
+        layout.addWidget(username_label)
+        layout.addWidget(username_input)
+
+        # Output Directory
+        output_directory_label = QLabel("Output Directory:")
+        output_directory_input = QLineEdit()
+        output_directory_button = QPushButton("Browse")
+        output_directory_button.clicked.connect(lambda: browse_output_directory(output_directory_input))
+        output_directory_layout = QHBoxLayout()
+        output_directory_layout.addWidget(output_directory_input)
+        output_directory_layout.addWidget(output_directory_button)
+        layout.addWidget(output_directory_label)
+        layout.addLayout(output_directory_layout)
+
+        # OK and Cancel buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        if dialog.exec_() == QDialog.Accepted:
+            user_file_path = user_file_input.text()
+            qclasses_file_path = qclasses_file_input.text()
+            username = username_input.text()
+            output_directory = output_directory_input.text()
+
+            # Set default username if empty
+            if not username:
+                username = "robot"
+
+            # Check if the files exist
+            if not os.path.exists(user_file_path):
+                QMessageBox.warning(self, "File Not Found", f"User file not found: {user_file_path}")
+                return
+
+            if not os.path.exists(qclasses_file_path):
+                QMessageBox.warning(self, "File Not Found", f"QClasses file not found: {qclasses_file_path}")
+                return
+
+            if not os.path.exists(output_directory):
+                QMessageBox.warning(self, "Directory Not Found", f"Output directory not found: {output_directory}")
+                return
+
+
+            try:
+                # Set the cursor to waiting (busy) cursor
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                # Show a progress bar
+                progress_bar = ProgressBar(self, title="Exporting Viscore Annotations")
+                progress_bar.show()
+
+                # Open and load the JSON files
+                with open(user_file_path, 'r') as user_file:
+                    user_data = json.load(user_file)
+
+                with open(qclasses_file_path, 'r') as qclasses_file:
+                    qclasses_data = json.load(qclasses_file)
+
+                # Get all annotations with Dot data
+                annotations = [a for a in self.annotations_dict.values() if "Dot" in a.data]
+
+                # Group annotations by Dot ID
+                dot_annotations = {}
+                for annotation in annotations:
+                    dot_id = annotation.data["Dot"]
+                    dot_annotations.setdefault(dot_id, []).append(annotation)
+
+                # Function to get the mode label ID from annotations
+                def get_mode_label_id(annotations):
+                    labels = [a.label.id for a in annotations]
+                    return max(set(labels), key=labels.count)
+
+                # Map Dot IDs to their mode label IDs
+                dot_labels = {d_id: get_mode_label_id(anns) for d_id, anns in dot_annotations.items()}
+
+                # Update user_data with the mode label codes
+                for index in range(len(user_data['cl'])):
+                    updated_label = -1  # Default to Review
+                    try:
+                        label_id = dot_labels.get(index)
+                        if label_id is not None:
+                            label = self.main_window.label_window.get_label_by_id(label_id)
+                            if label.long_label_code in qclasses_data:
+                                updated_label = qclasses_data[label.long_label_code]
+                            else:
+                                updated_label = -1  # Review
+                    except Exception as e:
+                        pass
+
+                    # Update the label in the user_data
+                    user_data['cl'][index] = updated_label
+
+                # Create the output file path
+                output_file_path = os.path.join(output_directory, f"samples.cl.user.{username}.json")
+
+                # Write the output data to the file
+                with open(output_file_path, 'w') as output_file:
+                    json.dump(user_data, output_file, indent=4)
+
+                # Close progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
+
+                QMessageBox.information(self,
+                                        "Export Successful",
+                                        f"Annotations have been successfully exported to {output_file_path}")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Export Failed", f"An error occurred while exporting annotations: {e}")
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
 
     def import_viscore_annotations(self):
 

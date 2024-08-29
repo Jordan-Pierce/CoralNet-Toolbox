@@ -9,6 +9,7 @@
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
 #   - merge dataset tool
+#   - batch inference tool
 
 import traceback
 from PyQt5.QtWidgets import QApplication
