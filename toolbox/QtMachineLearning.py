@@ -562,6 +562,7 @@ class TrainModelWorker(QThread):
     def _evaluate_model(self):
         try:
             self.target_model.val(
+                name=f"{self.params['name']}/eval",
                 data=self.params['data'],
                 batch=self.params['batch'],
                 imgsz=self.params['imgsz'],
