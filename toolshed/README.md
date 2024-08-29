@@ -34,36 +34,47 @@ a GUI; these scripts currently include the following:
 
 #### **How to Install**
 
-First, clone the repo and set up an `Anaconda` environment:
+##### GitHub Repository
+First, clone the repo:
 ```bash
 # cmd
 
 # Clone and enter the repository
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
 cd CoralNet-Toolbox/toolshed
+```
+##### Anaconda
+Then set up an `Anaconda` environment:
+```bash
+# cmd
 
 # Create and activate an environment
-conda create --name coralnet-toolshed python=3.8 -y
-conda activate coralnet-toolshed
+conda create --name coralnet-toolbox python=3.8 -y
+conda activate coralnet-toolbox
 ```
-Once this has finished, you will need to install `CUDA 11.8` and `Torch 2.0.0`:
+##### CUDA
+Once this has finished, if you have CUDA, you can install the versions of `cuda-nvcc` and `cudatoolkit` that you need,
+and then install the corresponding versions `torch` and `torchvision`:
 ```bash
 # cmd
 
-# Install CUDA 11.8 and Torch 2.0.0
+# Example for CUDA 11.8
 conda install cuda-nvcc -c nvidia/label/cuda-11.8.0 -y
 conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
-pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 
-# Run the setup script
-pip install -e .
+# Example for torch 2.0.0 and torchvision 0.15.1 w/ CUDA 11.8
+pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 ```
-Finally, to run the `CoralNet-Toolshed`, enter the following command:
+See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
+##### Install
+Finally, run the setup script to install the toolshed:
 ```bash
 # cmd
 
+pip install -e .
+
 coralnet-toolshed
-````
+```
 
 Note that the `CoralNet-Toolshed` has ***only*** been tested on the following:
 - `Windows 10`
