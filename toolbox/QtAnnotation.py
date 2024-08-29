@@ -349,7 +349,8 @@ class AnnotationWindow(QGraphicsView):
                                         "Annotations have been successfully exported.")
 
             except Exception as e:
-                QMessageBox.warning(self, "Error Exporting Annotations",
+                QMessageBox.warning(self,
+                                    "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
         # Restore the cursor to the default cursor
@@ -472,11 +473,13 @@ class AnnotationWindow(QGraphicsView):
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-                QMessageBox.information(self, "Annotations Exported",
+                QMessageBox.information(self,
+                                        "Annotations Exported",
                                         "Annotations have been successfully exported.")
 
             except Exception as e:
-                QMessageBox.warning(self, "Error Exporting Annotations",
+                QMessageBox.warning(self,
+                                    "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
         # Restore the cursor to the default cursor
@@ -498,8 +501,13 @@ class AnnotationWindow(QGraphicsView):
             return
 
         try:
+            # Show a progress bar
+            progress_bar = ProgressBar(self, title="Importing Annotations")
+            progress_bar.show()
             # Read the CSV file using pandas
             df = pd.read_csv(file_path)
+            # Close the progress bar
+            progress_bar.close()
 
             required_columns = ['Name', 'Row', 'Column', 'Label']
             if not all(col in df.columns for col in required_columns):
@@ -783,7 +791,7 @@ class AnnotationWindow(QGraphicsView):
 
                 QMessageBox.information(self,
                                         "Export Successful",
-                                        f"Annotations have been successfully exported to {output_file_path}")
+                                        f"Annotations have been successfully exported.")
 
             except Exception as e:
                 QMessageBox.critical(self, "Export Failed", f"An error occurred while exporting annotations: {e}")
@@ -907,8 +915,13 @@ class AnnotationWindow(QGraphicsView):
                 return
 
             try:
+                # Show a progress bar
+                progress_bar = ProgressBar(self, title="Importing Annotations")
+                progress_bar.show()
                 # Read the CSV file using pandas
                 df = pd.read_csv(file_path)
+                # Close the progress bar
+                progress_bar.close()
 
                 if df.empty:
                     QMessageBox.warning(self, "Empty CSV", "The CSV file is empty.")
@@ -1227,7 +1240,7 @@ class AnnotationWindow(QGraphicsView):
             if hasattr(self, 'drag_start_pos'):
                 if not self.drag_start_pos:
                     self.drag_start_pos = current_pos
-
+                # TODO Bug: Dragging causes crash
                 delta = current_pos - self.drag_start_pos
                 new_center = self.selected_annotation.center_xy + delta
                 self.set_annotation_location(self.selected_annotation.id, new_center)

@@ -10,6 +10,7 @@
 #   - add importing of coralnet predictions / output
 #   - merge dataset tool
 #   - batch inference tool
+#   - dragging causes crash
 
 import traceback
 from PyQt5.QtWidgets import QApplication
