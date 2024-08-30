@@ -1,7 +1,7 @@
 # CoralNet-Toolbox
 
 <p align="center">
-  <img src="figures/CoralNet-Toolbox.png" alt="CoralNet-Toolbox">
+  <img src="figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
 ## Quick Start
