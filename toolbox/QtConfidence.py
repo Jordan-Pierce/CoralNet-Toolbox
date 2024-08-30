@@ -121,14 +121,18 @@ class ConfidenceWindow(QWidget):
             self.chart_dict = self.machine_confidence if self.machine_confidence else self.user_confidence
 
     def display_cropped_image(self, annotation):
-        self.clear_display()  # Clear the current display before updating
-        self.update_annotation(annotation)
-        if self.cropped_image:  # Ensure cropped_image is not None
-            self.scene.addPixmap(self.cropped_image)
-            self.scene.setSceneRect(QRectF(self.cropped_image.rect()))
-            self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-            self.graphics_view.centerOn(self.scene.sceneRect().center())
-            self.create_bar_chart()
+        try:
+            self.clear_display()  # Clear the current display before updating
+            self.update_annotation(annotation)
+            if self.cropped_image:  # Ensure cropped_image is not None
+                self.scene.addPixmap(self.cropped_image)
+                self.scene.setSceneRect(QRectF(self.cropped_image.rect()))
+                self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+                self.graphics_view.centerOn(self.scene.sceneRect().center())
+                self.create_bar_chart()
+        except:
+            # Cropped image is None or some other error occurred
+            pass
 
     def create_bar_chart(self):
         self.clear_layout(self.bar_chart_layout)

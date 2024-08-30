@@ -1412,3 +1412,7 @@ class DeployModelDialog(QDialog):
         if predictions:
             # Update the machine confidence
             annotation.update_machine_confidence(predictions)
+
+
+class BatchInferenceDialog:
+    pass

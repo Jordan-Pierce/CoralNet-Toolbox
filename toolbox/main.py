@@ -11,6 +11,7 @@
 #   - merge dataset tool
 #   - batch inference tool
 #   - dragging causes crash
+#   - speed up searching
 
 import traceback
 from PyQt5.QtWidgets import QApplication

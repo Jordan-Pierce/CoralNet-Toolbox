@@ -4,6 +4,11 @@
   <img src="figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
+The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on
+[CoralNet](https://coralnet.ucsd.edu/). It uses ✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a 
+base, which is an open-source library for computer vision and deep learning built in `PyTorch`. For more information on
+their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE).
+
 ## Quick Start
 
 Running the following command will install the `coralnet-toolbox`, which you can then run from the command line:
@@ -17,9 +22,9 @@ pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
 coralnet-toolbox
 ```
 
-For further instructions, see [How to Install](); for information on how to use, check out the [docs](./docs)
+For further instructions, see [How to Install](); for information on how to use, check out the [docs](./docs).
 
-## [**Tools**](Toolbox/README.md#coralnet-toolbox)
+## Tools
 
 Enhance your CoralNet experience with these tools:  
 - 🔍 API: Get predictions from any CoralNet source model  
@@ -46,7 +51,7 @@ Enhance your CoralNet experience with these tools:
 
 ### Anaconda
 
-It's recommended to use `Anaconda` to create an environment for the toolbox:
+It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 ```bash
 # cmd
 
@@ -67,7 +72,8 @@ conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
 # Example for torch 2.0.0 and torchvision 0.15.1 w/ CUDA 11.8
 pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 ```
-If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `rabbit` icon in the `toolbox` instead of a `turtle`.
+If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `rabbit` icon in the 
+`toolbox` instead of a `turtle`.
 
 See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
 
@@ -105,8 +111,8 @@ coralnet-toolbox
 ### What Happened to the Old Repository?
 
 The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
-running the `toolshed` are the same as above; after creating a `Anaconda` environment, you can install the `toolshed` with
-the following:
+running the `toolshed` are the same as above; after creating a `Anaconda` environment, you can install the `toolshed` 
+with the following:
 
 ```bash
 # cmd

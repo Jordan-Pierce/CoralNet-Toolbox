@@ -1234,21 +1234,26 @@ class AnnotationWindow(QGraphicsView):
         if self.pan_active:
             self.pan(event.pos())
         elif self.selected_tool == "select" and self.selected_annotation:
-            try:
+            # Check if the left mouse button is pressed, then drag the annotation
+            if event.buttons() & Qt.LeftButton:
+                # Get the current position of the mouse in the scene
                 current_pos = self.mapToScene(event.pos())
+                # Check that it's not the first time dragging
                 if hasattr(self, 'drag_start_pos'):
                     if not self.drag_start_pos:
+                        # Start the dragging
                         self.drag_start_pos = current_pos
-                    # TODO Bug: Dragging causes crash
+                    # Continue the dragging
                     delta = current_pos - self.drag_start_pos
                     new_center = self.selected_annotation.center_xy + delta
-                    self.set_annotation_location(self.selected_annotation.id, new_center)
-                    self.selected_annotation.create_cropped_image(self.rasterio_image)
-                    self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
-                    self.drag_start_pos = current_pos  # Update the start position for smooth dragging
-            except Exception as e:
-                print("Error dragging annotation:", e)
-                pass
+                    # Check if the new center is within the image bounds using cursorInWindow
+                    if self.cursorInWindow(current_pos, mapped=True):
+                        self.set_annotation_location(self.selected_annotation.id, new_center)
+                        self.selected_annotation.create_cropped_image(self.rasterio_image)
+                        self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+                        self.drag_start_pos = current_pos  # Update the start position for smooth dragging
+
+        # Normal movement with annotation tool selected
         elif (self.selected_tool == "annotate" and
               self.active_image and self.image_pixmap and
               self.cursorInWindow(event.pos())):
@@ -1266,7 +1271,8 @@ class AnnotationWindow(QGraphicsView):
             self.setCursor(Qt.ArrowCursor)
         self.toggle_cursor_annotation()
         if hasattr(self, 'drag_start_pos'):
-            del self.drag_start_pos  # Clean up the drag start position
+            # Clean up the drag start position
+            del self.drag_start_pos
         super().mouseReleaseEvent(event)
 
     def pan(self, pos):

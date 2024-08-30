@@ -7,15 +7,15 @@ from setuptools import setup, find_packages
 from src.Common import console_user
 
 
-# Check if requirements.txt exists
-if not os.path.exists("requirements.txt"):
-    raise FileNotFoundError("ERROR: Cannot find requirements.txt")
-
-# Read requirements from requirements.txt
-with open('requirements.txt') as f:
-    required_packages = f.read().splitlines()
-
 try:
+    # Check if requirements.txt exists
+    if not os.path.exists("requirements.txt"):
+        raise FileNotFoundError("ERROR: Cannot find requirements.txt")
+
+    # Read requirements from requirements.txt
+    with open('requirements.txt') as f:
+        required_packages = f.read().splitlines()
+
     # Setup
     setup(
         name='coralnet-toolshed',
@@ -36,12 +36,14 @@ try:
     # Install Metashape
     this_dir = os.path.dirname(os.path.realpath(__file__))
     whl_path = f'{this_dir}/Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl'
-    assert os.path.exists(whl_path), "ERROR: Cannot find Metashape wheel file"
+    if not os.path.exists(whl_path):
+        raise FileNotFoundError("ERROR: Cannot find Metashape wheel file; please install from Metashape website.")
 
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', whl_path],
                           stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE)
 
     print("Metashape installation completed successfully.")
+
 except Exception as e:
     console_user(f"{e}\n{traceback.format_exc()}")

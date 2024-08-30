@@ -324,6 +324,14 @@ class ImageWindow(QWidget):
             self.selected_image_row = None
             self.update_current_image_index_label()
 
+        # Load the first filtered image, clearing the previous
+        self.load_first_filtered_image()
+
+    def load_first_filtered_image(self):
+        if self.filtered_image_paths:
+            self.annotation_window.clear_scene()
+            self.load_image_by_path(self.filtered_image_paths[0])
+
     def update_has_annotations_checkbox(self):
         if self.has_annotations_checkbox.isChecked():
             self.has_annotations_checkbox.setChecked(True)
@@ -332,8 +340,6 @@ class ImageWindow(QWidget):
 
         if not self.has_annotations_checkbox.isChecked():
             self.has_annotations_checkbox.setChecked(False)
-
-        self.load_first_filtered_image()
 
     def update_needs_review_checkbox(self):
         if self.needs_review_checkbox.isChecked():
@@ -344,8 +350,6 @@ class ImageWindow(QWidget):
         if not self.needs_review_checkbox.isChecked():
             self.needs_review_checkbox.setChecked(False)
 
-        self.load_first_filtered_image()
-
     def update_no_annotations_checkbox(self):
         if self.no_annotations_checkbox.isChecked():
             self.no_annotations_checkbox.setChecked(True)
@@ -354,9 +358,3 @@ class ImageWindow(QWidget):
 
         if not self.no_annotations_checkbox.isChecked():
             self.no_annotations_checkbox.setChecked(False)
-
-        self.load_first_filtered_image()
-
-    def load_first_filtered_image(self):
-        if self.filtered_image_paths:
-            self.load_image_by_path(self.filtered_image_paths[0])
