@@ -79,7 +79,7 @@ See here for more details on [PyTorch](https://pytorch.org/get-started/locally/)
 
 ### Install
 
-Finally, install and run the toolbox:
+Finally, install and run the `toolbox`:
 ```bash
 # cmd
 
@@ -112,7 +112,7 @@ coralnet-toolbox
 
 The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
 running the `toolshed` are the same as above; after creating a `Anaconda` environment, you can install the `toolshed` 
-with the following:
+with the following link:
 
 ```bash
 # cmd
