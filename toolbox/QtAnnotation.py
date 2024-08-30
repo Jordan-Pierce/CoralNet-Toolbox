@@ -759,24 +759,22 @@ class AnnotationWindow(QGraphicsView):
 
                 # Update user_data with the mode label codes
                 for index in range(len(user_data['cl'])):
-                    try:
-                        # Get the Label id from the dot_labels
-                        label_id = dot_labels.get(index)
+                    # Get the Label id from the dot_labels
+                    label_id = dot_labels.get(index)
+                    # If it doesn't exist, then the filtering process has removed all views; skip
+                    if label_id is not None:
+                        # Get the label from the LabelWindow
                         label = self.main_window.label_window.get_label_by_id(label_id)
                         # Try to map the long code
                         updated_label = qclasses_mapping_long.get(label.long_label_code)
                         # If long code is not found, try mapping the short code
                         if updated_label is None:
                             updated_label = qclasses_mapping_short.get(label.short_label_code)
-                        # If neither long nor short code is found, set it to 0
+                        # If neither long nor short code is found, set it to -1
                         if updated_label is None:
-                            updated_label = 0
-                    except Exception as e:
-                        updated_label = -1
-                        print(f"Error updating label for Dot ID {index}: {e}")
-
-                    # Update the label in the user_data
-                    user_data['cl'][index] = updated_label
+                            updated_label = -1
+                        # Update the label in the user_data
+                        user_data['cl'][index] = updated_label
 
                 # Create the output file path
                 output_file_path = os.path.join(output_directory, f"samples.cl.user.{username}.json")
@@ -1236,17 +1234,21 @@ class AnnotationWindow(QGraphicsView):
         if self.pan_active:
             self.pan(event.pos())
         elif self.selected_tool == "select" and self.selected_annotation:
-            current_pos = self.mapToScene(event.pos())
-            if hasattr(self, 'drag_start_pos'):
-                if not self.drag_start_pos:
-                    self.drag_start_pos = current_pos
-                # TODO Bug: Dragging causes crash
-                delta = current_pos - self.drag_start_pos
-                new_center = self.selected_annotation.center_xy + delta
-                self.set_annotation_location(self.selected_annotation.id, new_center)
-                self.selected_annotation.create_cropped_image(self.rasterio_image)
-                self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
-                self.drag_start_pos = current_pos  # Update the start position for smooth dragging
+            try:
+                current_pos = self.mapToScene(event.pos())
+                if hasattr(self, 'drag_start_pos'):
+                    if not self.drag_start_pos:
+                        self.drag_start_pos = current_pos
+                    # TODO Bug: Dragging causes crash
+                    delta = current_pos - self.drag_start_pos
+                    new_center = self.selected_annotation.center_xy + delta
+                    self.set_annotation_location(self.selected_annotation.id, new_center)
+                    self.selected_annotation.create_cropped_image(self.rasterio_image)
+                    self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+                    self.drag_start_pos = current_pos  # Update the start position for smooth dragging
+            except Exception as e:
+                print("Error dragging annotation:", e)
+                pass
         elif (self.selected_tool == "annotate" and
               self.active_image and self.image_pixmap and
               self.cursorInWindow(event.pos())):
