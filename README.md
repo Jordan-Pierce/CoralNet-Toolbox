@@ -1,15 +1,13 @@
-# CoralNet Toolbox  
+# CoralNet-Toolbox  
 
 
 <p align="center">
   <img src="figures/CoralNet-Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
----
-
 ## Quick Start
 
-Running the following command will install the CoralNet Toolbox, which you can then run from the command line:
+Running the following command will install the `coralnet-toolbox`, which you can then run from the command line:
 ```bash
 # cmd
 
