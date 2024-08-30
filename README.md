@@ -7,40 +7,49 @@
 
 ---
 
-For information on how to use, check out the [docs](./docs)
+## Quick Start
 
-### [**Tools**](Toolbox/README.md#coralnet-toolbox)
-
-The `CoralNet Toolbox` is an **unofficial** codebase that can be used to augment processes associated
-with those on CoralNet. The toolbox includes the following:
-
-- `API`: Use the CoralNet API to get predictions from any source model
-- `Download`: Download all data associated with a source
-- `Upload`: Upload images, annotations, and labelsets to a source
-- `Classification`: Create your own patch-based image classifier, locally
-- `Classification Inf.`: Perform inference using a locally trained classification model
-- `Annotate`: Create your own patches from annotations, locally
-- `Visualize`: Visualize points/patches superimposed on images
-- `Patches`: Extract patches from images given an annotation file
-- `Points`: Sample points from images (Uniform, Random, Stratified)
-
-<p align="center">
-  <img src="figures/toolbox_qt.PNG" alt="CoralNet-Toolbox-Features">
-</p>
-
-### **How to Install**
-
-##### GitHub Repository
-First, clone the repo:
+Running the following command will install the CoralNet Toolbox, which you can then run from the command line:
 ```bash
 # cmd
 
-# Clone and enter the repository
-git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
-cd CoralNet-Toolbox/toolshed
+# Install
+pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
+
+# Run 
+coralnet-toolbox
 ```
-##### Anaconda
-Then set up an `Anaconda` environment:
+
+For further instructions, see [How to Install](); for information on how to use, check out the [docs](./docs)
+
+## [**Tools**](Toolbox/README.md#coralnet-toolbox)
+
+Enhance your CoralNet experience with these tools:  
+- 🔍 API: Get predictions from any CoralNet source model  
+- 📥 Download: Retrieve source data from CoralNet 
+- 📤 Upload: Add images and annotations to CoralNet
+- ✏️ Annotate: Create patches manually or from annotations  
+- 👁️ Visualize: See points/patches on images  
+- 🧩 Patches: Extract from annotated images  
+- 📍 Points: Sample using various methods (Uniform, Random, Stratified  
+- 🧠 Classification: Build local patch-based classifiers  
+- 🔮 Inference: Use trained models for predictions
+
+
+<details>
+  <summary>Watch the Video</summary>
+  <p align="center">
+    <a href="https://youtu.be/LwSvgFtmUAA">
+      <img src="http://img.youtube.com/vi/LwSvgFtmUAA/0.jpg" alt="Video Title">
+    </a>
+  </p>
+</details>
+
+## **How to Install**
+
+### Anaconda
+
+It's recommended to use `Anaconda` to create an environment for the toolbox:
 ```bash
 # cmd
 
@@ -48,9 +57,9 @@ Then set up an `Anaconda` environment:
 conda create --name coralnet-toolbox python=3.8 -y
 conda activate coralnet-toolbox
 ```
-##### CUDA
-Once this has finished, if you have CUDA, you can install the versions of `cuda-nvcc` and `cudatoolkit` that you need,
-and then install the corresponding versions `torch` and `torchvision`:
+### CUDA
+Once this has finished, if you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you 
+need, and then install the corresponding versions `torch` and `torchvision`:
 ```bash
 # cmd
 
@@ -61,15 +70,55 @@ conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
 # Example for torch 2.0.0 and torchvision 0.15.1 w/ CUDA 11.8
 pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 ```
+If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `rabbit` icon in the `toolbox` instead of a `turtle`.
+
 See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
-##### Install
-Finally, run the setup script to install the toolbox:
+
+### Install
+
+Finally, install and run the toolbox:
 ```bash
 # cmd
 
+# Install
+pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
+
+# Run
+coralnet-toolbox
+```
+
+## GitHub Repository
+
+If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following:
+
+```bash
+# cmd
+
+# Clone and enter the repository
+git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
+cd CoralNet-Toolbox/toolbox
+
+# Install the latest
 pip install -e .
 
+# Run
 coralnet-toolbox
+```
+
+### What Happened to the Old Repository?
+
+The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
+running the `toolshed` are the same as above; after creating a `Anaconda` environment, you can install the `toolshed` with
+the following:
+
+```bash
+# cmd
+
+# Install
+pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox/toolshed.git"
+
+# Run
+coralnet-toolshed
 ```
 
 

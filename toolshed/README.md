@@ -32,49 +32,6 @@ a GUI; these scripts currently include the following:
   <img src="Figures/toolshed_gooey.PNG" alt="CoralNet-Toolbox-Features">
 </p>
 
-#### **How to Install**
-
-##### GitHub Repository
-First, clone the repo:
-```bash
-# cmd
-
-# Clone and enter the repository
-git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
-cd CoralNet-Toolbox/toolshed
-```
-##### Anaconda
-Then set up an `Anaconda` environment:
-```bash
-# cmd
-
-# Create and activate an environment
-conda create --name coralnet-toolbox python=3.8 -y
-conda activate coralnet-toolbox
-```
-##### CUDA
-Once this has finished, if you have CUDA, you can install the versions of `cuda-nvcc` and `cudatoolkit` that you need,
-and then install the corresponding versions `torch` and `torchvision`:
-```bash
-# cmd
-
-# Example for CUDA 11.8
-conda install cuda-nvcc -c nvidia/label/cuda-11.8.0 -y
-conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
-
-# Example for torch 2.0.0 and torchvision 0.15.1 w/ CUDA 11.8
-pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-```
-See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
-##### Install
-Finally, run the setup script to install the toolshed:
-```bash
-# cmd
-
-pip install -e .
-
-coralnet-toolshed
-```
 
 Note that the `CoralNet-Toolshed` has ***only*** been tested on the following:
 - `Windows 10`
