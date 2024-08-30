@@ -1,5 +1,4 @@
-# CoralNet-Toolbox  
-
+# CoralNet-Toolbox
 
 <p align="center">
   <img src="figures/CoralNet-Toolbox.png" alt="CoralNet-Toolbox">
