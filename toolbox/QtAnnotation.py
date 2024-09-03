@@ -1499,14 +1499,14 @@ class AnnotationSamplingDialog(QDialog):
         self.num_annotations_label = QLabel("Number of Annotations:")
         self.num_annotations_spinbox = QSpinBox()
         self.num_annotations_spinbox.setMinimum(0)
-        self.num_annotations_spinbox.setMaximum(1000)
+        self.num_annotations_spinbox.setMaximum(10000)
         self.layout.addWidget(self.num_annotations_label)
         self.layout.addWidget(self.num_annotations_spinbox)
 
         # Annotation Size
         self.annotation_size_label = QLabel("Annotation Size:")
         self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(32)
+        self.annotation_size_spinbox.setMinimum(0)
         self.annotation_size_spinbox.setMaximum(10000)  # Arbitrary large number for "infinite"
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.layout.addWidget(self.annotation_size_label)
@@ -1520,21 +1520,20 @@ class AnnotationSamplingDialog(QDialog):
         self.margin_y_max_spinbox = self.create_margin_spinbox("Y Max", self.margin_form_layout)
         self.layout.addLayout(self.margin_form_layout)
 
+        # Apply to Previous Images Checkbox
+        self.apply_prev_checkbox = QCheckBox("Apply to previous images")
+        self.layout.addWidget(self.apply_prev_checkbox)
         # Apply to Next Images Checkbox
         self.apply_next_checkbox = QCheckBox("Apply to next images")
         self.layout.addWidget(self.apply_next_checkbox)
         # Apply to All Images Checkbox
         self.apply_all_checkbox = QCheckBox("Apply to all images")
         self.layout.addWidget(self.apply_all_checkbox)
+
         # Ensure only one of the apply checkboxes can be selected at a time
+        self.apply_prev_checkbox.stateChanged.connect(self.update_apply_prev_checkboxes)
         self.apply_next_checkbox.stateChanged.connect(self.update_apply_next_checkboxes)
         self.apply_all_checkbox.stateChanged.connect(self.update_apply_all_checkboxes)
-
-        # Make predictions on sampled annotations checkbox
-        self.apply_predictions_checkbox = QCheckBox("Make predictions on sample annotations")
-        self.layout.addWidget(self.apply_predictions_checkbox)
-        # Ensure checkbox can only be selected if model is loaded
-        self.apply_predictions_checkbox.stateChanged.connect(self.update_apply_predictions_checkboxes)
 
         # Preview Button
         self.preview_button = QPushButton("Preview")
@@ -1559,13 +1558,9 @@ class AnnotationSamplingDialog(QDialog):
 
         self.sampled_annotations = []
 
-    def create_margin_spinbox(self, label_text, layout):
-        label = QLabel(label_text + ":")
-        spinbox = QSpinBox()
-        spinbox.setMinimum(0)
-        spinbox.setMaximum(1000)
-        layout.addRow(label, spinbox)
-        return spinbox
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.reset_defaults()
 
     def reset_defaults(self):
         self.preview_scene.clear()
@@ -1576,13 +1571,34 @@ class AnnotationSamplingDialog(QDialog):
         self.margin_y_min_spinbox.setValue(0)
         self.margin_x_max_spinbox.setValue(0)
         self.margin_y_max_spinbox.setValue(0)
-        self.apply_all_checkbox.setChecked(False)
+        self.apply_prev_checkbox.setChecked(False)
         self.apply_next_checkbox.setChecked(False)
+        self.apply_all_checkbox.setChecked(False)
+
+    def create_margin_spinbox(self, label_text, layout):
+        label = QLabel(label_text + ":")
+        spinbox = QSpinBox()
+        spinbox.setMinimum(0)
+        spinbox.setMaximum(1000)
+        layout.addRow(label, spinbox)
+        return spinbox
+
+    def update_apply_prev_checkboxes(self):
+        if self.apply_prev_checkbox.isChecked():
+            self.apply_prev_checkbox.setChecked(True)
+            self.apply_next_checkbox.setChecked(False)
+            self.apply_all_checkbox.setChecked(False)
+            return
+
+        if not self.apply_prev_checkbox.isChecked():
+            self.apply_prev_checkbox.setChecked(False)
+            return
 
     def update_apply_next_checkboxes(self):
         if self.apply_next_checkbox.isChecked():
             self.apply_next_checkbox.setChecked(True)
             self.apply_all_checkbox.setChecked(False)
+            self.apply_prev_checkbox.setChecked(False)
             return
 
         if not self.apply_next_checkbox.isChecked():
@@ -1593,24 +1609,12 @@ class AnnotationSamplingDialog(QDialog):
         if self.apply_all_checkbox.isChecked():
             self.apply_all_checkbox.setChecked(True)
             self.apply_next_checkbox.setChecked(False)
+            self.apply_prev_checkbox.setChecked(False)
             return
 
         if not self.apply_all_checkbox.isChecked():
             self.apply_all_checkbox.setChecked(False)
             return
-
-    def update_apply_predictions_checkboxes(self):
-        model_loaded = self.deploy_model_dialog.loaded_model is not None
-
-        if not model_loaded:
-            self.apply_predictions_checkbox.setChecked(False)
-            QMessageBox.warning(self, "No model", "No model deployed to apply to predictions")
-            return
-
-        if self.apply_predictions_checkbox.isChecked():
-            self.apply_predictions_checkbox.setChecked(True)
-        else:
-            self.apply_predictions_checkbox.setChecked(False)
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins
@@ -1752,21 +1756,26 @@ class AnnotationSamplingDialog(QDialog):
 
         self.apply_to_next = self.apply_next_checkbox.isChecked()
         self.apply_to_all = self.apply_all_checkbox.isChecked()
-        self.make_predictions = self.apply_predictions_checkbox.isChecked()
+        self.apply_to_prev = self.apply_prev_checkbox.isChecked()
 
         # Sets the LabelWindow and AnnotationWindow to Review
         self.label_window.set_selected_label("-1")
         review_label = self.annotation_window.selected_label
 
-        if self.apply_to_next:
-            current_image_path = self.annotation_window.current_image_path
+        # Current image path showing
+        current_image_path = self.annotation_window.current_image_path
+
+        if self.apply_to_all:
+            image_paths = self.image_window.image_paths
+        elif self.apply_to_prev:
+            current_image_index = self.image_window.image_paths.index(current_image_path)
+            image_paths = self.image_window.image_paths[:current_image_index + 1]
+        elif self.apply_to_next:
             current_image_index = self.image_window.image_paths.index(current_image_path)
             image_paths = self.image_window.image_paths[current_image_index:]
-        elif self.apply_to_all:
-            image_paths = self.image_window.image_paths
         else:
             # Only apply to the current image
-            image_paths = [self.annotation_window.current_image_path]
+            image_paths = [current_image_path]
 
         # Create and show the progress bar
         progress_bar = ProgressBar(self, title="Sampling Annotations")
@@ -1800,10 +1809,6 @@ class AnnotationSamplingDialog(QDialog):
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
 
-            if self.make_predictions:
-                # Create the cropped image for all
-                self.annotation_window.crop_image_annotations(image_path)
-
             # Update the progress bar
             progress_bar.update_progress()
             QApplication.processEvents()  # Update GUI
@@ -1812,35 +1817,11 @@ class AnnotationSamplingDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
-        # If selected, make predictions on all annotations
-        self.make_predictions_on_sampled_annotations(image_paths)
-
         # Set / load the image / annotations of the last image
-        self.image_window.load_image_by_path(image_path)
+        self.image_window.load_image_by_path(current_image_path)
 
         QMessageBox.information(self,
                                 "Annotations Sampled",
                                 "Annotations have been sampled successfully.")
 
         self.reset_defaults()
-
-    def make_predictions_on_sampled_annotations(self, image_paths):
-        if not self.make_predictions:
-            return
-
-        # Create and show the progress bar
-        progress_bar = ProgressBar(self, title="Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
-
-        for image_path in image_paths:
-            annotations = self.annotation_window.get_image_review_annotations(image_path)
-            self.deploy_model_dialog.predict(annotations)
-
-            # Update the progress bar
-            progress_bar.update_progress()
-            QApplication.processEvents()  # Update GUI
-
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()

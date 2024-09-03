@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         self.export_menu.addAction(self.export_viscore_annotations_action)
 
         # Sampling Annotations menu
-        self.annotation_sampling_action = QAction("Sample Annotations", self)
+        self.annotation_sampling_action = QAction("Sample", self)
         self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
 
@@ -369,6 +369,9 @@ class MainWindow(QMainWindow):
             self.annotation_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+
+        self.annotation_sampling_dialog = None
+        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
 
     def open_create_dataset_dialog(self):
         # Check if there are loaded images
