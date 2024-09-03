@@ -7,9 +7,11 @@ from toolbox.QtAnnotation import AnnotationSamplingDialog
 from toolbox.QtConfidence import ConfidenceWindow
 
 from toolbox.QtMachineLearning import CreateDatasetDialog
+from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import TrainModelDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import DeployModelDialog
+from toolbox.QtMachineLearning import BatchInferenceDialog
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.QtEventFilter import GlobalEventFilter
@@ -57,9 +59,11 @@ class MainWindow(QMainWindow):
         self.confidence_window = ConfidenceWindow(self)
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
+        self.merge_datasets_dialog = MergeDatasetsDialog(self)
         self.train_model_dialog = TrainModelDialog(self)
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.deploy_model_dialog = DeployModelDialog(self)
+        self.batch_inference_dialog = BatchInferenceDialog(self)
 
         self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
 
@@ -389,7 +393,7 @@ class MainWindow(QMainWindow):
     def open_merge_datasets_dialog(self):
         try:
             pass
-            # self.merge_datasets_dialog.exec_()
+            self.merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -414,6 +418,6 @@ class MainWindow(QMainWindow):
     def open_batch_inference_dialog(self):
         try:
             pass
-            # self.batch_inference_dialog.exec_()
+            self.batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")

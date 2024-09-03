@@ -134,10 +134,10 @@ class CreateDatasetDialog(QDialog):
         self.ready_label = QLabel()
         layout.addWidget(self.ready_label)
 
-        # Randomize Button
-        self.randomize_button = QPushButton("Randomize")
-        self.randomize_button.clicked.connect(self.update_summary_statistics)
-        layout.addWidget(self.randomize_button)
+        # Shuffle Button
+        self.shuffle_button = QPushButton("Shuffle")
+        self.shuffle_button.clicked.connect(self.update_summary_statistics)
+        layout.addWidget(self.shuffle_button)
 
         # Add the layout
         self.tab_classification.setLayout(layout)
@@ -534,6 +534,164 @@ class CreateDatasetDialog(QDialog):
         super().showEvent(event)
         self.populate_class_filter_list()
         self.update_summary_statistics()
+
+
+class MergeDatasetsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Merge Datasets")
+        self.resize(400, 200)
+
+        self.layout = QVBoxLayout(self)
+
+        # Dataset Name
+        self.dataset_name_edit = QLineEdit()
+        self.layout.addWidget(QLabel("Dataset Name:"))
+        self.layout.addWidget(self.dataset_name_edit)
+
+        # Output Directory Chooser
+        self.output_dir_edit = QLineEdit()
+        self.output_dir_button = QPushButton("Browse...")
+        self.output_dir_button.clicked.connect(self.browse_output_directory)
+        output_dir_layout = QHBoxLayout()
+        output_dir_layout.addWidget(self.output_dir_edit)
+        output_dir_layout.addWidget(self.output_dir_button)
+        self.layout.addWidget(QLabel("Output Directory:"))
+        self.layout.addLayout(output_dir_layout)
+
+        # Create tabs
+        self.tabs = QTabWidget()
+        self.tab_classification = QWidget()
+        self.tab_segmentation = QWidget()
+
+        self.tabs.addTab(self.tab_classification, "Image Classification")
+        self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
+
+        self.layout.addWidget(self.tabs)
+
+        # Setup tabs
+        self.setup_tab(self.tab_classification)
+
+        # OK and Cancel Buttons
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.layout.addWidget(self.buttons)
+
+        # Track valid directories and their class mappings
+        self.valid_directories = []
+
+    def setup_tab(self, tab):
+        layout = QVBoxLayout()
+
+        # Existing Dataset Directories
+        self.existing_dirs_layout = QVBoxLayout()
+        layout.addWidget(QLabel("Existing Dataset Directories:"))
+        layout.addLayout(self.existing_dirs_layout)
+
+        # Add two default directory choosers
+        self.add_directory_chooser()
+        self.add_directory_chooser()
+
+        # Add Directory Button
+        self.add_dir_button = QPushButton("Add Dataset")
+        self.add_dir_button.clicked.connect(self.add_directory_chooser)
+        layout.addWidget(self.add_dir_button)
+
+        tab.setLayout(layout)
+
+    def browse_output_directory(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_path:
+            self.output_dir_edit.setText(dir_path)
+
+    def add_directory_chooser(self):
+        dir_chooser = QWidget()
+        dir_layout = QHBoxLayout(dir_chooser)
+
+        status_label = QLabel()
+        dir_layout.addWidget(status_label)
+
+        dir_edit = QLineEdit()
+        dir_layout.addWidget(dir_edit)
+
+        dir_button = QPushButton("Browse...")
+        dir_button.clicked.connect(lambda: self.browse_existing_directory(dir_edit, status_label))
+        dir_layout.addWidget(dir_button)
+
+        self.existing_dirs_layout.addWidget(dir_chooser)
+
+    def browse_existing_directory(self, dir_edit, status_label):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Existing Dataset Directory")
+        if dir_path:
+            dir_edit.setText(dir_path)
+            self.validate_directory(dir_path, dir_edit, status_label)
+
+    def validate_directory(self, dir_path, dir_edit, status_label):
+        class_mapping_path = os.path.join(dir_path, "class_mapping.json")
+        if os.path.exists(class_mapping_path):
+            status_label.setText("✅")
+            self.valid_directories.append((dir_path, class_mapping_path))
+        else:
+            status_label.setText("❌")
+            self.valid_directories = [(d, c) for d, c in self.valid_directories if d != dir_path]
+
+    def merge_datasets(self):
+        output_dir = self.output_dir_edit.text()
+        if not output_dir:
+            QMessageBox.warning(self, "Input Error", "Output directory must be specified.")
+            return
+
+        dataset_name = self.dataset_name_edit.text()
+        if not dataset_name:
+            QMessageBox.warning(self, "Input Error", "Dataset name must be specified.")
+            return
+
+        output_dir_path = os.path.join(output_dir, dataset_name)
+        os.makedirs(output_dir_path, exist_ok=True)
+
+        merged_class_mapping = {}
+
+        # Create a progress dialog
+        progress_bar = ProgressBar(self, title=f"Merging Datasets")
+        progress_bar.show()
+        progress_bar.start_progress(len(self.valid_directories))
+
+        def copy_directory(src, dest):
+            shutil.copytree(src, dest, dirs_exist_ok=True)
+
+        with ThreadPoolExecutor() as executor:
+            futures = []
+            for dir_path, class_mapping_path in self.valid_directories:
+                with open(class_mapping_path, 'r') as json_file:
+                    class_mapping = json.load(json_file)
+                    merged_class_mapping.update(class_mapping)
+
+                for split in ['train', 'val', 'test']:
+                    src_split_dir = os.path.join(dir_path, split)
+                    dest_split_dir = os.path.join(output_dir_path, split)
+                    if os.path.exists(src_split_dir):
+                        future = executor.submit(copy_directory, src_split_dir, dest_split_dir)
+                        futures.append(future)
+
+            # Wait for all copying tasks to complete
+            for i, future in enumerate(as_completed(futures)):
+                future.result()
+                progress_bar.update_progress()
+                QApplication.processEvents()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        merged_class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
+        with open(merged_class_mapping_path, 'w') as json_file:
+            json.dump(merged_class_mapping, json_file, indent=4)
+
+        QMessageBox.information(self, "Success", "Datasets merged successfully!")
+
+    def accept(self):
+        self.merge_datasets()
+        super().accept()
 
 
 class TrainModelWorker(QThread):
@@ -1414,5 +1572,8 @@ class DeployModelDialog(QDialog):
             annotation.update_machine_confidence(predictions)
 
 
-class BatchInferenceDialog:
-    pass
+class BatchInferenceDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Batch Inference")
+        self.resize(400, 300)
