@@ -108,7 +108,7 @@ pip install -e .
 coralnet-toolbox
 ```
 
-### What Happened to the Old Repository?
+## What Happened to the Old Repository?
 
 The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
 running the `toolshed` are the same as above; after creating a `Anaconda` environment, you can install the `toolshed` 
@@ -125,7 +125,7 @@ coralnet-toolshed
 ```
 
 
-### [**About CoralNet**](https://coralnet.ucsd.edu/source/)
+## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing, 
 and other factors. CoralNet is a platform designed to aid researchers and scientists in studying 
@@ -139,14 +139,14 @@ The CoralNet Toolbox is an unofficial tool developed to augment processes associ
 use CoralNet and Coral Point Count (CPCe).
 
 
-### **Conclusion**
+## **Conclusion**
 In summary, this repository provides a range of tools that can assist with interacting with 
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be 
 useful for researchers and scientists working with coral reefs, as well as for students and
 hobbyists interested in learning more about these important ecosystems.
 
 
-### Citation
+## Citation
 
 If used in project or publication, please attribute your use of this repository with the following:
     
@@ -160,7 +160,7 @@ If used in project or publication, please attribute your use of this repository 
 }
 ```
 
-### References  
+## References  
 
 The following papers inspired this repository:
 ```python
@@ -178,7 +178,7 @@ PLOS ONE, 10(7). https://doi.org/10.1371/journal.pone.0130312
 ```
 ---
 
-### Disclaimer
+## Disclaimer
 
 This repository is a scientific product and is not official communication of the National 
 Oceanic and Atmospheric Administration, or the United States Department of Commerce. All NOAA 
@@ -192,7 +192,7 @@ bureau, shall not be used in any manner to imply endorsement of any commercial p
 by DOC or the United States Government.
 
 
-### License 
+## License 
 
 Software code created by U.S. Government employees is not subject to copyright in the United States 
 (17 U.S.C. §105). The United States/Department of Commerce reserve all rights to seek and obtain 
