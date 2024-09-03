@@ -95,9 +95,9 @@ class ImageWindow(QWidget):
 
         self.layout.addWidget(self.tableWidget)
 
-        self.image_paths = []  # Store only image paths
-        self.filtered_image_paths = []  # Subset of images based on search
-        self.selected_image_row = None
+        self.image_paths = []  # Store all image paths
+        self.filtered_image_paths = []  # Store filtered image paths
+        self.selected_image_path = None
 
         self.images = {}  # Dictionary to store image paths and their QImage representation
         self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
@@ -131,21 +131,14 @@ class ImageWindow(QWidget):
                                     "Image(s) have been successfully exported.")
 
     def add_image(self, image_path):
-        # Clear the search bar text
-        self.search_bar.clear()
-
         if image_path not in self.image_paths:
-            row_position = self.tableWidget.rowCount()
-            self.tableWidget.insertRow(row_position)
-            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(image_path)))
-
             self.image_paths.append(image_path)
             self.filtered_image_paths.append(image_path)
+            self.update_table_widget()
 
             # Select and set the first image
-            if row_position == 0:
-                self.tableWidget.selectRow(0)
-                self.load_image(0, 0)
+            if len(self.image_paths) == 1:
+                self.load_image_by_path(image_path)
 
             # Update the image count label
             self.update_image_count_label()
@@ -156,9 +149,8 @@ class ImageWindow(QWidget):
         self.load_image_by_path(image_path)
 
     def load_image_by_path(self, image_path):
-        # Clear the currently selected row
-        if self.selected_image_row is not None:
-            self.tableWidget.item(self.selected_image_row, 0).setSelected(False)
+        if image_path not in self.image_paths:
+            return
 
         # Load the QImage
         image = QImage(image_path)
@@ -167,9 +159,10 @@ class ImageWindow(QWidget):
         rasterio_image = self.rasterio_open(image_path)
         self.rasterio_images[image_path] = rasterio_image
 
-        # Make the image row selected in the ImageWindow
-        self.selected_image_row = self.filtered_image_paths.index(image_path)
-        self.tableWidget.selectRow(self.selected_image_row)
+        # Update the selected image
+        self.selected_image_path = image_path
+        self.update_table_selection()
+
         # Pass to the AnnotationWindow to be displayed / selected
         self.annotation_window.set_image(image_path)
         self.imageSelected.emit(image_path)
@@ -188,39 +181,44 @@ class ImageWindow(QWidget):
         self.rasterio_images[image_path].close()
         self.rasterio_images[image_path] = None
 
-    def delete_image(self, row):
-        # Get the image path associated
-        image_path = self.filtered_image_paths[row]
-        # Remove the row from the table
-        self.tableWidget.removeRow(row)
-        # Remove the image path from the list
+    def delete_image(self, image_path):
+        if image_path not in self.image_paths:
+            return
+
+        # Remove the image from the lists and dictionaries
         self.image_paths.remove(image_path)
-        # Remove the image path from the filtered list
         if image_path in self.filtered_image_paths:
             self.filtered_image_paths.remove(image_path)
-        # Remove the image's annotations
-        self.annotation_window.delete_image(image_path)
-        # Remove the image from the dictionary
         if image_path in self.images:
             del self.images[image_path]
+        if image_path in self.rasterio_images:
+            self.rasterio_close(image_path)
+            del self.rasterio_images[image_path]
+
+        # Remove the image's annotations
+        self.annotation_window.delete_image(image_path)
+
+        # Update the table widget
+        self.update_table_widget()
+
         # Update the image count label
         self.update_image_count_label()
-        # Update the selected row and load another image if possible
+
+        # Select a new image if available
         if self.filtered_image_paths:
-            if row < len(self.filtered_image_paths):
-                self.selected_image_row = row
-            else:
-                self.selected_image_row = len(self.filtered_image_paths) - 1
-            self.load_image(self.selected_image_row, 0)
+            new_image_path = self.filtered_image_paths[0]
+            self.load_image_by_path(new_image_path)
         else:
-            self.selected_image_row = None
+            self.selected_image_path = None
+            self.annotation_window.clear_scene()
+
         # Update the current image index label
         self.update_current_image_index_label()
 
     def delete_selected_image(self):
-        if self.selected_image_row is not None:
+        if self.selected_image_path:
             if self._confirm_delete() == QMessageBox.Yes:
-                self.delete_image(self.selected_image_row)
+                self.delete_image(self.selected_image_path)
 
     def _confirm_delete(self):
         msg_box = QMessageBox(self)
@@ -245,10 +243,26 @@ class ImageWindow(QWidget):
         self.image_count_label.setText(f"Total Images: {total_images}")
 
     def update_current_image_index_label(self):
-        if self.selected_image_row is not None:
-            self.current_image_index_label.setText(f"Current Image: {self.selected_image_row + 1}")
+        if self.selected_image_path:
+            index = self.filtered_image_paths.index(self.selected_image_path) + 1
+            self.current_image_index_label.setText(f"Current Image: {index}")
         else:
             self.current_image_index_label.setText("Current Image: None")
+
+    def update_table_widget(self):
+        self.tableWidget.setRowCount(0)  # Clear the table
+        for path in self.filtered_image_paths:
+            row_position = self.tableWidget.rowCount()
+            self.tableWidget.insertRow(row_position)
+            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(path)))
+        self.update_table_selection()
+
+    def update_table_selection(self):
+        if self.selected_image_path in self.filtered_image_paths:
+            row = self.filtered_image_paths.index(self.selected_image_path)
+            self.tableWidget.selectRow(row)
+        else:
+            self.tableWidget.clearSelection()
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
@@ -262,70 +276,54 @@ class ImageWindow(QWidget):
         if not self.filtered_image_paths:
             return
 
-        if self.selected_image_row is not None:
-            new_row = (self.selected_image_row - 1) % len(self.filtered_image_paths)
-        else:
-            new_row = 0
-
-        self.tableWidget.selectRow(new_row)
-        self.load_image(new_row, 0)
+        current_index = self.filtered_image_paths.index(self.selected_image_path)
+        new_index = (current_index - 1) % len(self.filtered_image_paths)
+        self.load_image_by_path(self.filtered_image_paths[new_index])
 
     def cycle_next_image(self):
         if not self.filtered_image_paths:
             return
 
-        if self.selected_image_row is not None:
-            new_row = (self.selected_image_row + 1) % len(self.filtered_image_paths)
-        else:
-            new_row = 0
+        current_index = self.filtered_image_paths.index(self.selected_image_path)
+        new_index = (current_index + 1) % len(self.filtered_image_paths)
+        self.load_image_by_path(self.filtered_image_paths[new_index])
 
-        self.tableWidget.selectRow(new_row)
-        self.load_image(new_row, 0)
-
-    def filter_images(self, text):
-        # Clear the text in the search bar if any checkbox is checked
-        if (self.has_annotations_checkbox.isChecked() or
-                self.needs_review_checkbox.isChecked() or
-                self.no_annotations_checkbox.isChecked()):
-            self.search_bar.clear()
-            text = ""  # Ensure the text filter is reset
-
-        # Start with the full list of image paths
-        self.filtered_image_paths = self.image_paths
-
-        # Apply the annotation filter based on the checkbox states
+    def filter_images(self):
+        search_text = self.search_bar.text().lower()
         has_annotations = self.has_annotations_checkbox.isChecked()
         needs_review = self.needs_review_checkbox.isChecked()
         no_annotations = self.no_annotations_checkbox.isChecked()
 
-        if has_annotations or needs_review or no_annotations:
-            self.filtered_image_paths = [p for p in self.filtered_image_paths if
-                                         (has_annotations and self.annotation_window.get_image_annotations(p)) or
-                                         (needs_review and self.annotation_window.get_image_review_annotations(p)) or
-                                         (no_annotations and not self.annotation_window.get_image_annotations(p))]
+        self.filtered_image_paths = []
 
-        # Apply the text filter if text is provided
-        if isinstance(text, str) and text:
-            self.filtered_image_paths = [p for p in self.filtered_image_paths if
-                                         text.lower() in os.path.basename(p).lower()]
+        for path in self.image_paths:
+            filename = os.path.basename(path).lower()
+            annotations = self.annotation_window.get_image_annotations(path)
+            review_annotations = self.annotation_window.get_image_review_annotations(path)
 
-        # Update the table widget with the filtered image paths
-        self.tableWidget.setRowCount(0)  # Clear the table
-        for path in self.filtered_image_paths:
-            row_position = self.tableWidget.rowCount()
-            self.tableWidget.insertRow(row_position)
-            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(path)))
+            if search_text and search_text not in filename:
+                continue
 
-        # Update the image count label
+            if has_annotations and not annotations:
+                continue
+            if needs_review and not review_annotations:
+                continue
+            if no_annotations and annotations:
+                continue
+
+            self.filtered_image_paths.append(path)
+
+        self.update_table_widget()
+
+        # Load the first filtered image if available, otherwise clear the scene
+        if self.filtered_image_paths:
+            self.load_image_by_path(self.filtered_image_paths[0])
+        else:
+            self.selected_image_path = None
+            self.annotation_window.clear_scene()
+
+        self.update_current_image_index_label()
         self.update_image_count_label()
-
-        # If the selected row is no longer valid, reset it
-        if self.selected_image_row is not None and self.selected_image_row >= len(self.filtered_image_paths):
-            self.selected_image_row = None
-            self.update_current_image_index_label()
-
-        # Load the first filtered image, clearing the previous
-        self.load_first_filtered_image()
 
     def load_first_filtered_image(self):
         if self.filtered_image_paths:

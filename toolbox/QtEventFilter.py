@@ -67,7 +67,8 @@ class GlobalEventFilter(QObject):
                         self.annotation_window.delete_selected_annotation()
                         return True
 
-                    if self.image_window.selected_image_row:
+                    # Rows are numbers, 0 indexed
+                    if self.image_window.selected_image_path:
                         self.image_window.delete_selected_image()
                         return True
 
