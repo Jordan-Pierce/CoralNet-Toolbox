@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBox
                              QTableWidget, QTableWidgetItem, QFileDialog, QApplication)
 
 from PyQt5.QtGui import QImage
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 
 import warnings
 
@@ -104,6 +104,11 @@ class ImageWindow(QWidget):
         self.image_cache = {}  # Cache for images
 
         self.show_confirmation_dialog = True
+
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.filter_images)
+        self.search_bar.textChanged.connect(self.debounce_search)
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
@@ -282,6 +287,9 @@ class ImageWindow(QWidget):
         current_index = self.filtered_image_paths.index(self.selected_image_path)
         new_index = (current_index + 1) % len(self.filtered_image_paths)
         self.load_image_by_path(self.filtered_image_paths[new_index])
+
+    def debounce_search(self):
+        self.search_timer.start(500)
 
     def filter_images(self):
         search_text = self.search_bar.text().lower()
