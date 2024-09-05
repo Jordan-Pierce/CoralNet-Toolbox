@@ -916,7 +916,7 @@ class AnnotationWindow(QGraphicsView):
 
             try:
                 # Show a progress bar
-                progress_bar = ProgressBar(self, title="Importing Annotations")
+                progress_bar = ProgressBar(self, title="Reading CSV File")
                 progress_bar.show()
                 # Read the CSV file using pandas
                 df = pd.read_csv(file_path)
@@ -965,6 +965,10 @@ class AnnotationWindow(QGraphicsView):
                                         "Please load an image before importing annotations.")
                     return
 
+
+                # Show a progress bar
+                progress_bar = ProgressBar(self, title="Filtering CSV File")
+                progress_bar.show()
                 # Filter the DataFrame based on the input values
                 filtered_df = df_filtered[
                     (df_filtered['RandSubCeil'] <= rand_sub_ceil) &
@@ -972,6 +976,8 @@ class AnnotationWindow(QGraphicsView):
                     (df_filtered['ViewIndex'] <= view_index) &
                     (df_filtered['ViewCount'] >= view_count)
                     ]
+                # Close the progress bar
+                progress_bar.close()
 
                 if not image_paths:
                     # Update the DataFrame to only include annotations for loaded images
