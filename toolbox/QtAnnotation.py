@@ -978,6 +978,22 @@ class AnnotationWindow(QGraphicsView):
                 progress_bar.set_value(100)
                 progress_bar.close()
 
+                # Calculate the number of unique images and annotations
+                num_images = filtered_df['Name'].nunique()
+                num_annotations = len(filtered_df)
+
+                # Display the number of images and annotations
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Filtered Data Summary")
+                msg_box.setText(f"Number of Images: {num_images}\nNumber of Annotations: {num_annotations}")
+                msg_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+                msg_box.setDefaultButton(QMessageBox.Ok)
+
+                result = msg_box.exec_()
+
+                if result == QMessageBox.Cancel:
+                    return
+
                 annotation_size, ok = QInputDialog.getInt(self,
                                                           "Annotation Size",
                                                           "Enter the annotation size for all imported annotations:",
