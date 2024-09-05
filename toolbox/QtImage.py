@@ -148,11 +148,11 @@ class ImageWindow(QWidget):
         image_path = self.filtered_image_paths[row]
         self.load_image_by_path(image_path)
 
-    def load_image_by_path(self, image_path):
+    def load_image_by_path(self, image_path, force=False):
         if image_path not in self.image_paths:
             return
 
-        if image_path == self.selected_image_path:
+        if image_path == self.selected_image_path and force is False:
             return
 
         # Load the QImage

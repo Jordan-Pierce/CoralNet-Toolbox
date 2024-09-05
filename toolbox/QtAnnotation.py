@@ -1840,7 +1840,7 @@ class AnnotationSamplingDialog(QDialog):
         progress_bar.close()
 
         # Set / load the image / annotations of the last image
-        self.image_window.load_image_by_path(current_image_path)
+        self.image_window.load_image_by_path(current_image_path, force=True)
 
         QMessageBox.information(self,
                                 "Annotations Sampled",
