@@ -960,6 +960,8 @@ class AnnotationWindow(QGraphicsView):
                     QMessageBox.warning(self,
                                         "No Images Found",
                                         "Please load an image before importing annotations.")
+                    # Close the progress bar
+                    progress_bar.close()
                     return
 
                 # Filter the DataFrame based on the input values
@@ -979,7 +981,25 @@ class AnnotationWindow(QGraphicsView):
                 if not ok:
                     return
 
-                if not image_paths:
+                if image_paths:
+                    # Import images to project
+                    progress_bar = ProgressBar(self, title="Importing Images")
+                    progress_bar.show()
+                    progress_bar.start_progress(len(image_paths))
+
+                    for i, image_path in enumerate(image_paths):
+                        if image_path not in set(self.main_window.image_window.image_paths):
+                            self.main_window.image_window.add_image(image_path)
+
+                            progress_bar.update_progress()
+                            QApplication.processEvents()  # Update GUI
+
+                    progress_bar.stop_progress()
+                    progress_bar.close()
+
+                    # Load the last image
+                    self.main_window.image_window.load_image_by_path(image_paths[-1])
+                else:
                     # Update the DataFrame to only include annotations for loaded images
                     loaded_images = {os.path.basename(path) for path in self.main_window.image_window.image_paths}
                     filtered_df.loc[:, 'Name'] = filtered_df['Name'].apply(os.path.basename)
@@ -1049,29 +1069,10 @@ class AnnotationWindow(QGraphicsView):
                         self.annotations_dict[annotation.id] = annotation
 
                     progress_bar.update_progress()
-                    QApplication.processEvents() # Update GUI
+                    QApplication.processEvents()
 
                 progress_bar.stop_progress()
                 progress_bar.close()
-
-                if image_paths:
-                    # Import images to project
-                    progress_bar = ProgressBar(self, title="Importing Images")
-                    progress_bar.show()
-                    progress_bar.start_progress(len(image_paths))
-
-                    for i, image_path in enumerate(image_paths):
-                        if image_path not in set(self.main_window.image_window.image_paths):
-                            self.main_window.image_window.add_image(image_path)
-
-                            progress_bar.update_progress()
-                            QApplication.processEvents()  # Update GUI
-
-                    progress_bar.stop_progress()
-                    progress_bar.close()
-
-                    # Load the last image
-                    self.main_window.image_window.load_image_by_path(image_paths[-1])
 
                 # Load annotations for current image
                 self.load_annotations()
