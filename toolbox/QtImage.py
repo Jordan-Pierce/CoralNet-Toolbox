@@ -116,30 +116,23 @@ class ImageWindow(QWidget):
                 if file_name not in set(self.image_paths):
                     self.add_image(file_name)
                     progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
+                    QApplication.processEvents()
 
             progress_bar.stop_progress()
             progress_bar.close()
 
-            if file_names:
-                # Load the last image
-                image_path = file_names[-1]
-                self.load_image_by_path(image_path)
+            # Show the last image
+            self.load_image_by_path(self.filtered_image_paths[-1])
 
             QMessageBox.information(self,
                                     "Image(s) Imported",
-                                    "Image(s) have been successfully exported.")
+                                    "Image(s) have been successfully imported.")
 
     def add_image(self, image_path):
         if image_path not in self.image_paths:
             self.image_paths.append(image_path)
-            self.filtered_image_paths.append(image_path)
+            self.filter_images()
             self.update_table_widget()
-
-            # Select and set the first image
-            if len(self.image_paths) == 1:
-                self.load_image_by_path(image_path)
-
             # Update the image count label
             self.update_image_count_label()
 
@@ -148,11 +141,11 @@ class ImageWindow(QWidget):
         image_path = self.filtered_image_paths[row]
         self.load_image_by_path(image_path)
 
-    def load_image_by_path(self, image_path, force=False):
+    def load_image_by_path(self, image_path, update=False):
         if image_path not in self.image_paths:
             return
 
-        if image_path == self.selected_image_path and force is False:
+        if image_path == self.selected_image_path and update is False:
             return
 
         # Load the QImage
@@ -181,7 +174,6 @@ class ImageWindow(QWidget):
 
     def rasterio_close(self, image_path):
         # Close the image with Rasterio
-        self.rasterio_images[image_path].close()
         self.rasterio_images[image_path] = None
 
     def delete_image(self, image_path):

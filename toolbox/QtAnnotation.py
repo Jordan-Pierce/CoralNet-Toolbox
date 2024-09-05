@@ -432,11 +432,13 @@ class AnnotationWindow(QGraphicsView):
 
                 self.load_annotations()
 
-                QMessageBox.information(self, "Annotations Imported",
+                QMessageBox.information(self,
+                                        "Annotations Imported",
                                         "Annotations have been successfully imported.")
 
             except Exception as e:
-                QMessageBox.warning(self, "Error Importing Annotations",
+                QMessageBox.warning(self,
+                                    "Error Importing Annotations",
                                     f"An error occurred while importing annotations: {str(e)}")
 
         # Restore the cursor to the default cursor
@@ -1840,10 +1842,6 @@ class AnnotationSamplingDialog(QDialog):
         progress_bar.close()
 
         # Set / load the image / annotations of the last image
-        self.image_window.load_image_by_path(current_image_path, force=True)
-
-        QMessageBox.information(self,
-                                "Annotations Sampled",
-                                "Annotations have been sampled successfully.")
+        self.image_window.load_image_by_path(image_paths[-1], update=True)
 
         self.reset_defaults()
