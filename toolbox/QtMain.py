@@ -395,7 +395,6 @@ class MainWindow(QMainWindow):
 
     def open_merge_datasets_dialog(self):
         try:
-            pass
             self.merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
@@ -419,8 +418,26 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No annotations are present in the project.")
+            return
+
+        if not self.deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
         try:
-            pass
             self.batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")

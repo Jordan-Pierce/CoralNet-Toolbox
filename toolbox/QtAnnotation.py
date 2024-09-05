@@ -1520,6 +1520,9 @@ class AnnotationSamplingDialog(QDialog):
         self.margin_y_max_spinbox = self.create_margin_spinbox("Y Max", self.margin_form_layout)
         self.layout.addLayout(self.margin_form_layout)
 
+        # Apply to Filtered Images Checkbox
+        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.layout.addWidget(self.apply_filtered_checkbox)
         # Apply to Previous Images Checkbox
         self.apply_prev_checkbox = QCheckBox("Apply to previous images")
         self.layout.addWidget(self.apply_prev_checkbox)
@@ -1531,6 +1534,7 @@ class AnnotationSamplingDialog(QDialog):
         self.layout.addWidget(self.apply_all_checkbox)
 
         # Ensure only one of the apply checkboxes can be selected at a time
+        self.apply_filtered_checkbox.stateChanged.connect(self.update_apply_filtered_checkboxes)
         self.apply_prev_checkbox.stateChanged.connect(self.update_apply_prev_checkboxes)
         self.apply_next_checkbox.stateChanged.connect(self.update_apply_next_checkboxes)
         self.apply_all_checkbox.stateChanged.connect(self.update_apply_all_checkboxes)
@@ -1583,9 +1587,22 @@ class AnnotationSamplingDialog(QDialog):
         layout.addRow(label, spinbox)
         return spinbox
 
+    def update_apply_filtered_checkboxes(self):
+        if self.apply_filtered_checkbox.isChecked():
+            self.apply_filtered_checkbox.setChecked(True)
+            self.apply_prev_checkbox.setChecked(False)
+            self.apply_next_checkbox.setChecked(False)
+            self.apply_all_checkbox.setChecked(False)
+            return
+
+        if not self.apply_filtered_checkbox.isChecked():
+            self.apply_filtered_checkbox.setChecked(False)
+            return
+
     def update_apply_prev_checkboxes(self):
         if self.apply_prev_checkbox.isChecked():
             self.apply_prev_checkbox.setChecked(True)
+            self.apply_filtered_checkbox.setChecked(False)
             self.apply_next_checkbox.setChecked(False)
             self.apply_all_checkbox.setChecked(False)
             return
@@ -1597,8 +1614,9 @@ class AnnotationSamplingDialog(QDialog):
     def update_apply_next_checkboxes(self):
         if self.apply_next_checkbox.isChecked():
             self.apply_next_checkbox.setChecked(True)
-            self.apply_all_checkbox.setChecked(False)
+            self.apply_filtered_checkbox.setChecked(False)
             self.apply_prev_checkbox.setChecked(False)
+            self.apply_all_checkbox.setChecked(False)
             return
 
         if not self.apply_next_checkbox.isChecked():
@@ -1608,8 +1626,9 @@ class AnnotationSamplingDialog(QDialog):
     def update_apply_all_checkboxes(self):
         if self.apply_all_checkbox.isChecked():
             self.apply_all_checkbox.setChecked(True)
-            self.apply_next_checkbox.setChecked(False)
+            self.apply_filtered_checkbox.setChecked(False)
             self.apply_prev_checkbox.setChecked(False)
+            self.apply_next_checkbox.setChecked(False)
             return
 
         if not self.apply_all_checkbox.isChecked():
@@ -1754,9 +1773,10 @@ class AnnotationSamplingDialog(QDialog):
 
     def add_sampled_annotations(self, method, num_annotations, annotation_size, margins):
 
+        self.apply_to_filtered = self.apply_filtered_checkbox.isChecked()
+        self.apply_to_prev = self.apply_prev_checkbox.isChecked()
         self.apply_to_next = self.apply_next_checkbox.isChecked()
         self.apply_to_all = self.apply_all_checkbox.isChecked()
-        self.apply_to_prev = self.apply_prev_checkbox.isChecked()
 
         # Sets the LabelWindow and AnnotationWindow to Review
         self.label_window.set_selected_label("-1")
@@ -1765,14 +1785,16 @@ class AnnotationSamplingDialog(QDialog):
         # Current image path showing
         current_image_path = self.annotation_window.current_image_path
 
-        if self.apply_to_all:
-            image_paths = self.image_window.image_paths
+        if self.apply_to_filtered:
+            image_paths = self.image_window.filtered_image_paths
         elif self.apply_to_prev:
             current_image_index = self.image_window.image_paths.index(current_image_path)
             image_paths = self.image_window.image_paths[:current_image_index + 1]
         elif self.apply_to_next:
             current_image_index = self.image_window.image_paths.index(current_image_path)
             image_paths = self.image_window.image_paths[current_image_index:]
+        elif self.apply_to_all:
+            image_paths = self.image_window.image_paths
         else:
             # Only apply to the current image
             image_paths = [current_image_path]

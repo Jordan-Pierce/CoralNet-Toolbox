@@ -21,12 +21,13 @@ from toolbox.QtProgressBar import ProgressBar
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
-                             QTableWidgetItem)
+                             QTableWidgetItem, QSlider, QButtonGroup)
 
 from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -152,7 +153,7 @@ class CreateDatasetDialog(QDialog):
 
     def setup_segmentation_tab(self):
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Instance Segmentation tab (Future Work)"))
+        layout.addWidget(QLabel("Instance Segmentation"))
         self.tab_segmentation.setLayout(layout)
 
     def browse_output_dir(self):
@@ -1563,44 +1564,63 @@ class DeployModelDialog(QDialog):
         return numpy_array
 
     def predict(self, annotations=None):
-        # If model isn't loaded
         if self.loaded_model is None:
             return
 
-        # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Get the selected annotation
         selected_annotation = self.annotation_window.selected_annotation
 
-        if selected_annotation:
+        if selected_annotation and not annotations:
             # Make predictions on a single, specific annotation
             self.predict_annotation(selected_annotation)
-            # Update everything (essentially)
             self.main_window.annotation_window.unselect_annotation()
             self.main_window.annotation_window.select_annotation(selected_annotation)
         else:
-            # Run predictions on multiple annotations
             if not annotations:
-                # If not supplied with annotations, get all of those for current image
+                # Get the annotations for the image with Review label
                 annotations = self.annotation_window.get_image_review_annotations()
 
-            if annotations:
-                # Convert QImages to numpy arrays
-                images_np = [self.pixmap_to_numpy(annotation.cropped_image) for annotation in annotations]
+            # Make predictions on the annotations
+            self.process_annotations(annotations)
 
-                # Perform batch prediction
-                results = self.loaded_model(images_np)
-
-                for annotation, result in zip(annotations, results):
-                    # Process the results
-                    self.process_prediction_result(annotation, result)
-
-                    # Show last in the confidence window
-                    self.main_window.confidence_window.display_cropped_image(annotation)
-
-        # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
+
+    def process_annotations(self, annotations):
+        # Make predictions on annotations
+        progress_bar = ProgressBar(self, title=f"Preparing Images")
+        progress_bar.show()
+        progress_bar.start_progress(len(annotations))
+
+        # Convert QImages to numpy arrays
+        images_np = []
+        for annotation in annotations:
+            images_np.append(self.pixmap_to_numpy(annotation.cropped_image))
+            progress_bar.update_progress()
+            QApplication.processEvents()
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        # Make predictions on annotations
+        progress_bar = ProgressBar(self, title=f"Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(annotations))
+
+        # Perform batch prediction
+        results = self.loaded_model(images_np, stream=True)
+
+        for annotation, result in zip(annotations, results):
+            # Process the results
+            self.process_prediction_result(annotation, result)
+
+            # Show last in the confidence window
+            self.main_window.confidence_window.display_cropped_image(annotation)
+
+            progress_bar.update_progress()
+            QApplication.processEvents()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def predict_annotation(self, annotation):
         # Get the cropped image
@@ -1608,30 +1628,9 @@ class DeployModelDialog(QDialog):
         # Convert QImage to np
         image_np = self.pixmap_to_numpy(image)
         # Perform prediction
-        results = self.loaded_model(image_np)[0]
-
-        # Extract the results
-        class_names = results.names
-        top5 = results.probs.top5
-        top5conf = results.probs.top5conf
-
-        # Initialize an empty dictionary to store the results
-        predictions = {}
-
-        # Iterate over the top 5 predictions
-        for idx, conf in zip(top5, top5conf):
-            class_name = class_names[idx]
-            label = self.label_window.get_label_by_short_code(class_name)
-
-            if label:
-                predictions[label] = float(conf)
-            else:
-                # Users does not have label loaded; skip.
-                pass
-
-        if predictions:
-            # Update the machine confidence
-            annotation.update_machine_confidence(predictions)
+        result = self.loaded_model(image_np)[0]
+        # Process the results
+        self.process_prediction_result(annotation, result)
 
     def process_prediction_result(self, annotation, result):
         # Extract the results
@@ -1659,7 +1658,156 @@ class DeployModelDialog(QDialog):
 
 
 class BatchInferenceDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.image_window = main_window.image_window
+        self.annotation_window = main_window.annotation_window
+        self.deploy_model_dialog = main_window.deploy_model_dialog
+        self.loaded_model = self.deploy_model_dialog.loaded_model
+
         self.setWindowTitle("Batch Inference")
-        self.resize(400, 300)
+        self.resize(400, 100)
+
+        self.layout = QVBoxLayout(self)
+
+        self.tab_widget = QTabWidget()
+        self.layout.addWidget(self.tab_widget)
+
+        self.classification_tab = QWidget()
+        self.segmentation_tab = QWidget()
+
+        self.tab_widget.addTab(self.classification_tab, "Image Classification")
+        self.tab_widget.addTab(self.segmentation_tab, "Instance Segmentation")
+
+        # Make the segmentation tab unclickable
+        self.segmentation_tab.setEnabled(False)
+
+        self.init_classification_tab()
+        self.init_segmentation_tab()
+
+        # Add the "Okay" and "Cancel" buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.on_ok_clicked)
+        self.button_box.rejected.connect(self.reject)
+        self.layout.addWidget(self.button_box)
+
+        self.setLayout(self.layout)
+
+    def update_uncertainty_label(self):
+        # Convert the slider value to a ratio (0-1)
+        value = self.uncertainty_threshold_slider.value() / 100.0
+        self.uncertainty_threshold_label.setText(f"{value:.2f}")
+
+    def init_segmentation_tab(self):
+        pass
+
+    def init_classification_tab(self):
+        layout = QVBoxLayout()
+
+        # Create a button group for the checkboxes
+        self.prediction_options_group = QButtonGroup(self)
+
+        self.classification_review_checkbox = QCheckBox("Predict Review Annotation")
+        self.classification_all_checkbox = QCheckBox("Predict All Annotations")
+
+        # Add the checkboxes to the button group
+        self.prediction_options_group.addButton(self.classification_review_checkbox)
+        self.prediction_options_group.addButton(self.classification_all_checkbox)
+
+        # Ensure only one checkbox can be checked at a time
+        self.prediction_options_group.setExclusive(True)
+
+        # Set the default checkbox
+        self.classification_review_checkbox.setChecked(True)
+
+        layout.addWidget(self.classification_review_checkbox)
+        layout.addWidget(self.classification_all_checkbox)
+
+        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
+        self.uncertainty_threshold_slider.setRange(0, 100)
+        self.uncertainty_threshold_slider.setValue(20)  # Default value set to 0.2 (20/100)
+        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.uncertainty_threshold_slider.setTickInterval(10)
+        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
+
+        self.uncertainty_threshold_label = QLabel("0.2")  # Initial label value
+        layout.addWidget(QLabel("Uncertainty Threshold"))
+        layout.addWidget(self.uncertainty_threshold_slider)
+        layout.addWidget(self.uncertainty_threshold_label)
+
+        self.classification_tab.setLayout(layout)
+
+    def on_ok_clicked(self):
+        if self.classification_all_checkbox.isChecked():
+            reply = QMessageBox.warning(self,
+                                        "Warning",
+                                        "This will overwrite the existing labels. Are you sure?",
+                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                return  # Do not accept the dialog if the user clicks "No"
+
+        self.apply()
+        self.accept()  # Close the dialog after applying the changes
+
+    def apply(self):
+        # Pause the cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        try:
+            annotations = []
+            # Get the Review Annotations
+            if self.classification_review_checkbox.isChecked():
+                for image_path in self.image_window.image_paths:
+                    annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
+            else:
+                # Get all the annotations
+                for image_path in self.image_window.image_paths:
+                    annotations.extend(self.annotation_window.get_image_annotations(image_path))
+
+            # Crop them, if not already cropped
+            self.process_annotations(annotations)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to make predictions: {str(e)}")
+            return
+
+        # Resume the cursor
+        QApplication.restoreOverrideCursor()
+
+    def process_annotations(self, annotations):
+        # Get unique image paths
+        image_paths = list(set(a.image_path for a in annotations))
+        if not image_paths:
+            return
+
+        progress_bar = ProgressBar(self, title=f"Cropping Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+
+        def process_image_annotations(image_path, image_annotations):
+            # Crop the image based on the annotations
+            return self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
+
+        # Initialize a list to store the cropped annotations
+        cropped_annotations = []
+        # Group annotations by image path
+        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+
+        with ThreadPoolExecutor() as executor:
+            future_to_image = {executor.submit(process_image_annotations, image_path, list(group)): image_path
+                               for image_path, group in grouped_annotations}
+
+            for future in as_completed(future_to_image):
+                image_path = future_to_image[future]
+                try:
+                    cropped_annotations.extend(future.result())
+                except Exception as exc:
+                    print(f'{image_path} generated an exception: {exc}')
+                finally:
+                    progress_bar.update_progress()
+                    QApplication.processEvents()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        self.deploy_model_dialog.predict(annotations=cropped_annotations)
