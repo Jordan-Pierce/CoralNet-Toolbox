@@ -44,6 +44,15 @@ class ProgressBar(QDialog):
         self.canceled = False
         self.progress_bar.setRange(0, max_value)
 
+    def set_value(self, value):
+        if 0 <= value <= self.max_value:
+            self.value = value
+            self.progress_bar.setValue(self.value)
+            if self.value >= self.max_value:
+                self.stop_progress()
+        else:
+            raise ValueError(f"Value must be between 0 and {self.max_value}")
+
     def stop_progress(self):
         self.value = self.max_value
         self.progress_bar.setValue(self.value)

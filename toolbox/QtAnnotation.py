@@ -946,32 +946,36 @@ class AnnotationWindow(QGraphicsView):
                 # Show a progress bar
                 progress_bar = ProgressBar(self, title="Filtering CSV File")
                 progress_bar.show()
+                progress_bar.set_value(1)
 
-                # Apply filters
+                # Apply filters more efficiently
                 df_filtered = df.dropna(how='any')
-                df_filtered = df_filtered.assign(Row=df_filtered['Row'].astype(int))
-                df_filtered = df_filtered.assign(Column=df_filtered['Column'].astype(int))
+                df_filtered['Row'] = pd.to_numeric(df_filtered['Row'], errors='coerce').astype('Int64')
+                df_filtered['Column'] = pd.to_numeric(df_filtered['Column'], errors='coerce').astype('Int64')
+
+                progress_bar.setValue(25)
 
                 # Check if 'Name' exists as a path (or just basename) and create a unique list
-                image_paths = df_filtered['Name'].apply(
-                    lambda x: x if os.path.exists(x) else None).dropna().unique().tolist()
+                image_paths = df_filtered['Name'].unique()
+                image_paths = [path for path in image_paths if os.path.exists(path)]
 
                 if not image_paths and not self.active_image:
-                    QMessageBox.warning(self,
-                                        "No Images Found",
-                                        "Please load an image before importing annotations.")
-                    # Close the progress bar
+                    QMessageBox.warning(self, "No Images Found", "Please load an image before importing annotations.")
                     progress_bar.close()
                     return
 
+                progress_bar.setValue(50)
+
                 # Filter the DataFrame based on the input values
-                filtered_df = df_filtered[
-                    (df_filtered['RandSubCeil'] <= rand_sub_ceil) &
-                    (df_filtered['ReprojectionError'] <= reprojection_error) &
-                    (df_filtered['ViewIndex'] <= view_index) &
-                    (df_filtered['ViewCount'] >= view_count)
-                    ]
-                # Close the progress bar
+                mask = (
+                        (df_filtered['RandSubCeil'] <= rand_sub_ceil) &
+                        (df_filtered['ReprojectionError'] <= reprojection_error) &
+                        (df_filtered['ViewIndex'] <= view_index) &
+                        (df_filtered['ViewCount'] >= view_count)
+                )
+                filtered_df = df_filtered[mask]
+
+                progress_bar.setValue(100)
                 progress_bar.close()
 
                 annotation_size, ok = QInputDialog.getInt(self,
