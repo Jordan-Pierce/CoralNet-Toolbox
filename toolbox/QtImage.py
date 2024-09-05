@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBox
                              QTableWidget, QTableWidgetItem, QFileDialog, QApplication)
 
 from PyQt5.QtGui import QImage
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 
 import warnings
 
@@ -103,7 +103,15 @@ class ImageWindow(QWidget):
         self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
         self.image_cache = {}  # Cache for images
 
+        self.image_annotations = {}  # Store annotation status
+        self.image_review_annotations = {}  # Store review annotation status
+
         self.show_confirmation_dialog = True
+
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.filter_images)
+        self.search_bar.textChanged.connect(self.debounce_search)
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
@@ -136,6 +144,10 @@ class ImageWindow(QWidget):
             self.filtered_image_paths.append(image_path)
             self.update_table_widget()
 
+            # Precompute annotations
+            self.image_annotations[image_path] = self.annotation_window.get_image_annotations(image_path)
+            self.image_review_annotations[image_path] = self.annotation_window.get_image_review_annotations(image_path)
+
             # Select and set the first image
             if len(self.image_paths) == 1:
                 self.load_image_by_path(image_path)
@@ -158,6 +170,10 @@ class ImageWindow(QWidget):
         # Load the Rasterio
         rasterio_image = self.rasterio_open(image_path)
         self.rasterio_images[image_path] = rasterio_image
+
+        # Load the annotations for search
+        self.image_annotations[image_path] = self.annotation_window.get_image_annotations(image_path)
+        self.image_review_annotations[image_path] = self.annotation_window.get_image_review_annotations(image_path)
 
         # Update the selected image
         self.selected_image_path = image_path
@@ -288,6 +304,9 @@ class ImageWindow(QWidget):
         new_index = (current_index + 1) % len(self.filtered_image_paths)
         self.load_image_by_path(self.filtered_image_paths[new_index])
 
+    def debounce_search(self):
+        self.search_timer.start(300)  # 300ms delay
+
     def filter_images(self):
         search_text = self.search_bar.text().lower()
         has_annotations = self.has_annotations_checkbox.isChecked()
@@ -298,8 +317,8 @@ class ImageWindow(QWidget):
 
         for path in self.image_paths:
             filename = os.path.basename(path).lower()
-            annotations = self.annotation_window.get_image_annotations(path)
-            review_annotations = self.annotation_window.get_image_review_annotations(path)
+            annotations = self.image_annotations.get(path, [])
+            review_annotations = self.image_review_annotations.get(path, [])
 
             if search_text and search_text not in filename:
                 continue
