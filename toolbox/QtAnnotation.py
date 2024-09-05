@@ -992,6 +992,7 @@ class AnnotationWindow(QGraphicsView):
                 result = msg_box.exec_()
 
                 if result == QMessageBox.Cancel:
+                    self.import_viscore_annotations()
                     return
 
                 annotation_size, ok = QInputDialog.getInt(self,
