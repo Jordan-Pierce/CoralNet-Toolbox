@@ -943,12 +943,9 @@ class AnnotationWindow(QGraphicsView):
                                         "The selected CSV file does not match the expected Viscore format.")
                     return
 
-                annotation_size, ok = QInputDialog.getInt(self,
-                                                          "Annotation Size",
-                                                          "Enter the annotation size for all imported annotations:",
-                                                          224, 1, 10000, 1)
-                if not ok:
-                    return
+                # Show a progress bar
+                progress_bar = ProgressBar(self, title="Filtering CSV File")
+                progress_bar.show()
 
                 # Apply filters
                 df_filtered = df.dropna(how='any')
@@ -965,10 +962,6 @@ class AnnotationWindow(QGraphicsView):
                                         "Please load an image before importing annotations.")
                     return
 
-
-                # Show a progress bar
-                progress_bar = ProgressBar(self, title="Filtering CSV File")
-                progress_bar.show()
                 # Filter the DataFrame based on the input values
                 filtered_df = df_filtered[
                     (df_filtered['RandSubCeil'] <= rand_sub_ceil) &
@@ -978,6 +971,13 @@ class AnnotationWindow(QGraphicsView):
                     ]
                 # Close the progress bar
                 progress_bar.close()
+
+                annotation_size, ok = QInputDialog.getInt(self,
+                                                          "Annotation Size",
+                                                          "Enter the annotation size for all imported annotations:",
+                                                          224, 1, 10000, 1)
+                if not ok:
+                    return
 
                 if not image_paths:
                     # Update the DataFrame to only include annotations for loaded images
