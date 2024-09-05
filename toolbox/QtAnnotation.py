@@ -950,8 +950,8 @@ class AnnotationWindow(QGraphicsView):
 
                 # Apply filters more efficiently
                 df_filtered = df.dropna(how='any')
-                df_filtered['Row'] = pd.to_numeric(df_filtered['Row'], errors='coerce').astype('Int64')
-                df_filtered['Column'] = pd.to_numeric(df_filtered['Column'], errors='coerce').astype('Int64')
+                df_filtered = df_filtered.assign(Row=df_filtered['Row'].astype(int))
+                df_filtered = df_filtered.assign(Column=df_filtered['Column'].astype(int))
 
                 progress_bar.setValue(25)
 
