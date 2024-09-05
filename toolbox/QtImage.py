@@ -122,7 +122,7 @@ class ImageWindow(QWidget):
             progress_bar.close()
 
             # Show the last image
-            self.load_image_by_path(self.filtered_image_paths[-1])
+            self.load_image_by_path(self.image_paths[-1])
 
             QMessageBox.information(self,
                                     "Image(s) Imported",
@@ -288,6 +288,14 @@ class ImageWindow(QWidget):
         has_annotations = self.has_annotations_checkbox.isChecked()
         needs_review = self.needs_review_checkbox.isChecked()
         no_annotations = self.no_annotations_checkbox.isChecked()
+
+        # Return early if none of the search bar or checkboxes are being used
+        if not search_text and not has_annotations and not needs_review and not no_annotations:
+            self.filtered_image_paths = self.image_paths.copy()
+            self.update_table_widget()
+            self.update_current_image_index_label()
+            self.update_image_count_label()
+            return
 
         self.filtered_image_paths = []
 
