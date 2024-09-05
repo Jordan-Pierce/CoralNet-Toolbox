@@ -424,8 +424,12 @@ class AnnotationWindow(QGraphicsView):
                     for annotation_data in annotations:
                         annotation = Annotation.from_dict(annotation_data)
                         self.annotations_dict[annotation.id] = annotation
+
                         progress_bar.update_progress()
-                        QApplication.processEvents()  # Update GUI
+                        QApplication.processEvents()
+
+                    # Update the image window's image dict
+                    self.main_window.image_window.update_image_annotations(image_path)
 
                 progress_bar.stop_progress()
                 progress_bar.close()
@@ -589,6 +593,9 @@ class AnnotationWindow(QGraphicsView):
 
                     progress_bar.update_progress()
                     QApplication.processEvents()
+
+                # Update the image window's image dict
+                self.main_window.image_window.update_image_annotations(image_path)
 
             progress_bar.stop_progress()
             progress_bar.close()
@@ -1040,7 +1047,7 @@ class AnnotationWindow(QGraphicsView):
 
                 progress_bar = ProgressBar(self, title="Importing Viscore Annotations")
                 progress_bar.show()
-                progress_bar.start_progress(len(filtered_df['Name'].unique()))
+                progress_bar.start_progress(len(filtered_df))
 
                 # Process the filtered CSV data and import the annotations
                 for image_name, group in filtered_df.groupby('Name'):
@@ -1089,8 +1096,11 @@ class AnnotationWindow(QGraphicsView):
                         # Add to the AnnotationWindow dictionary
                         self.annotations_dict[annotation.id] = annotation
 
-                    progress_bar.update_progress()
-                    QApplication.processEvents()
+                        progress_bar.update_progress()
+                        QApplication.processEvents()
+
+                    # Update the image window's image dict
+                    self.main_window.image_window.update_image_annotations(image_path)
 
                 progress_bar.stop_progress()
                 progress_bar.close()
@@ -1209,6 +1219,8 @@ class AnnotationWindow(QGraphicsView):
 
         # Load all associated annotations
         self.load_annotations()
+        # Update the image window's image dict
+        self.main_window.image_window.update_image_annotations(image_path)
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
@@ -1832,7 +1844,7 @@ class AnnotationSamplingDialog(QDialog):
         # Create and show the progress bar
         progress_bar = ProgressBar(self, title="Sampling Annotations")
         progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
+        progress_bar.start_progress(len(image_paths) * num_annotations)
 
         for image_path in image_paths:
             # Load the rasterio representation
@@ -1861,9 +1873,12 @@ class AnnotationSamplingDialog(QDialog):
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
 
-            # Update the progress bar
-            progress_bar.update_progress()
-            QApplication.processEvents()  # Update GUI
+                # Update the progress bar
+                progress_bar.update_progress()
+                QApplication.processEvents()  # Update GUI
+
+            # Update the image window's image dict
+            self.image_window.update_image_annotations(image_path)
 
         # Stop the progress bar
         progress_bar.stop_progress()
@@ -1871,5 +1886,5 @@ class AnnotationSamplingDialog(QDialog):
 
         # Set / load the image / annotations of the last image
         self.image_window.load_image_by_path(image_paths[-1], update=True)
-
+        # Reset dialog for next time
         self.reset_defaults()

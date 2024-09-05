@@ -1585,6 +1585,7 @@ class DeployModelDialog(QDialog):
         QApplication.restoreOverrideCursor()
 
     def process_annotations(self, annotations):
+
         # Make predictions on annotations
         progress_bar = ProgressBar(self, title=f"Preparing Images")
         progress_bar.show()
@@ -1616,6 +1617,12 @@ class DeployModelDialog(QDialog):
 
             progress_bar.update_progress()
             QApplication.processEvents()
+
+        # Group annotations by image path
+        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+        for image_path, annotations in grouped_annotations:
+            # Update the image window's image dict
+            self.main_window.image_window.update_image_annotations(image_path)
 
         progress_bar.stop_progress()
         progress_bar.close()
