@@ -953,7 +953,7 @@ class AnnotationWindow(QGraphicsView):
                 df_filtered = df_filtered.assign(Row=df_filtered['Row'].astype(int))
                 df_filtered = df_filtered.assign(Column=df_filtered['Column'].astype(int))
 
-                progress_bar.setValue(25)
+                progress_bar.set_value(25)
 
                 # Check if 'Name' exists as a path (or just basename) and create a unique list
                 image_paths = df_filtered['Name'].unique()
@@ -964,7 +964,7 @@ class AnnotationWindow(QGraphicsView):
                     progress_bar.close()
                     return
 
-                progress_bar.setValue(50)
+                progress_bar.set_value(50)
 
                 # Filter the DataFrame based on the input values
                 mask = (
@@ -975,7 +975,7 @@ class AnnotationWindow(QGraphicsView):
                 )
                 filtered_df = df_filtered[mask]
 
-                progress_bar.setValue(100)
+                progress_bar.set_value(100)
                 progress_bar.close()
 
                 annotation_size, ok = QInputDialog.getInt(self,
