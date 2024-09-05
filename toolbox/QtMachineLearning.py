@@ -1492,10 +1492,10 @@ class DeployModelDialog(QDialog):
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add labels: {str(e)}")
 
+                QMessageBox.information(self, "Model Loaded", "Model weights loaded successfully.")
+
                 # Check and display class names
                 self.check_and_display_class_names()
-
-                QMessageBox.information(self, "Model Loaded", "Model weights loaded successfully.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
             finally:
