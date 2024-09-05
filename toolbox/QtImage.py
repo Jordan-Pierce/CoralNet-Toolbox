@@ -115,8 +115,8 @@ class ImageWindow(QWidget):
             for i, file_name in enumerate(file_names):
                 if file_name not in set(self.image_paths):
                     self.add_image(file_name)
-                    progress_bar.update_progress()
-                    QApplication.processEvents()
+                progress_bar.update_progress()
+                QApplication.processEvents()
 
             progress_bar.stop_progress()
             progress_bar.close()
