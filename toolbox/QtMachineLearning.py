@@ -1197,12 +1197,9 @@ class TrainModelDialog(QDialog):
         return params
 
     def train_classification_model(self):
-        message = "Model training has commenced.\nMonitor the console for real-time progress."
-        QMessageBox.information(self, "Model Training Status", message)
 
         # Get training parameters
         self.params = self.get_training_parameters()
-
         # Create and start the worker thread
         self.worker = TrainModelWorker(self.params)
         self.worker.training_started.connect(self.on_training_started)
@@ -1211,15 +1208,16 @@ class TrainModelDialog(QDialog):
         self.worker.start()
 
     def on_training_started(self):
-        # Do nothing for now
-        pass
-
-    def on_training_completed(self):
         # Save the class mapping JSON file
         output_dir_path = os.path.join(self.params['project'], self.params['name'])
+        os.makedirs(output_dir_path, exist_ok=True)
         if os.path.exists(self.class_mapping_edit.text()):
-            shutil.copyfile(self.class_mapping_edit.text(), f"{output_dir_path}/class_mapping.json")
+            shutil.copyfile(self.class_mapping_edit.text(), f"{output_dir_path}\\class_mapping.json")
 
+        message = "Model training has commenced.\nMonitor the console for real-time progress."
+        QMessageBox.information(self, "Model Training Status", message)
+
+    def on_training_completed(self):
         message = "Model training has successfully been completed."
         QMessageBox.information(self, "Model Training Status", message)
 
