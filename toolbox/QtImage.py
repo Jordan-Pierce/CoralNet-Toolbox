@@ -121,6 +121,8 @@ class ImageWindow(QWidget):
             progress_bar.stop_progress()
             progress_bar.close()
 
+            # Update filtered images
+            self.filter_images()
             # Show the last image
             self.load_image_by_path(self.image_paths[-1])
 
@@ -131,9 +133,7 @@ class ImageWindow(QWidget):
     def add_image(self, image_path):
         if image_path not in self.image_paths:
             self.image_paths.append(image_path)
-            self.filter_images()
             self.update_table_widget()
-            # Update the image count label
             self.update_image_count_label()
 
     def load_image(self, row, column):
