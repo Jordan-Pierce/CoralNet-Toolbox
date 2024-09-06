@@ -1584,6 +1584,10 @@ class DeployModelDialog(QDialog):
 
         QApplication.restoreOverrideCursor()
 
+        # Clear cache
+        gc.collect()
+        empty_cache()
+
     def process_annotations(self, annotations):
 
         # Convert QImages to numpy arrays
