@@ -1611,16 +1611,15 @@ class DeployModelDialog(QDialog):
         for annotation, result in zip(annotations, results):
             # Process the results
             self.process_prediction_result(annotation, result)
-
-            # Show last in the confidence window
+            # Show in the confidence window
             self.main_window.confidence_window.display_cropped_image(annotation)
 
             progress_bar.update_progress()
             QApplication.processEvents()
 
         # Group annotations by image path
-        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
-        for image_path, annotations in grouped_annotations:
+        image_paths = list(set([annotation.image_path for annotation in annotations]))
+        for image_path in image_paths:
             # Update the image window's image dict
             self.main_window.image_window.update_image_annotations(image_path)
 
@@ -1789,23 +1788,23 @@ class BatchInferenceDialog(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
-        def process_image_annotations(image_path, image_annotations):
+        def crop(image_path, image_annotations):
             # Crop the image based on the annotations
             return self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
 
         # Initialize a list to store the cropped annotations
-        cropped_annotations = []
+        processed_annotations = []
+
         # Group annotations by image path
-        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+        groups = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
 
         with ThreadPoolExecutor() as executor:
-            future_to_image = {executor.submit(process_image_annotations, image_path, list(group)): image_path
-                               for image_path, group in grouped_annotations}
+            future_to_image = {executor.submit(crop, path, list(group)): path for path, group in groups}
 
             for future in as_completed(future_to_image):
                 image_path = future_to_image[future]
                 try:
-                    cropped_annotations.extend(future.result())
+                    processed_annotations.extend(future.result())
                 except Exception as exc:
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
@@ -1815,4 +1814,8 @@ class BatchInferenceDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
-        self.deploy_model_dialog.predict(annotations=cropped_annotations)
+        # Group annotations by image path
+        groups = groupby(sorted(processed_annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+        # Make predictions on each image's annotations
+        for path, group in groups:
+            self.deploy_model_dialog.predict(annotations=list(group))
