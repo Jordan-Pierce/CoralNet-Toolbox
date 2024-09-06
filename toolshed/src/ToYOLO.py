@@ -8,7 +8,6 @@ import traceback
 import multiprocessing
 from functools import partial
 
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -109,6 +108,16 @@ def to_yolo(args):
             patches_df = pd.concat((patches_df, patches))
         else:
             print(f"WARNING: Patches dataframe {patches_path} does not exist")
+
+    # Load the mapping CSV file into a dictionary
+    path = "C:/Users/jordan.pierce/Downloads/robot_labels_2024-08-30.csv"
+
+    if os.path.exists(path):
+        mapping_df = pd.read_csv(path)
+        mapping = dict(zip(mapping_df['old'], mapping_df['new']))
+
+        # Apply the mapping to patches_df['Label']
+        patches_df['Label'] = patches_df['Label'].map(mapping)
 
     class_names = sorted(patches_df['Label'].unique())
     num_classes = len(class_names)
