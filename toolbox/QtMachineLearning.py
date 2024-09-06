@@ -318,6 +318,10 @@ class CreateDatasetDialog(QDialog):
         if test_ratio > 0 and len(self.test_annotations) == 0:
             return False
 
+        # Allow creation of dataset if train ratio is 1 and valid and test ratios are 0
+        if train_ratio == 1 and val_ratio == 0 and test_ratio == 0:
+            return True
+
         return True
 
     def update_summary_statistics(self):
@@ -381,6 +385,11 @@ class CreateDatasetDialog(QDialog):
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
 
         self.updating_summary_statistics = False
+
+    def set_cell_color(self, row, column, color):
+        item = self.label_counts_table.item(row, column)
+        if item is not None:
+            item.setBackground(color)
 
     def get_class_mapping(self):
         # Get the label objects for the selected labels
