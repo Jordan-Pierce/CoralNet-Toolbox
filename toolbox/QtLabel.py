@@ -3,7 +3,7 @@ import json
 import random
 
 from PyQt5.QtWidgets import (QFileDialog, QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QColorDialog, QMenu, QLineEdit, QDialog, QHBoxLayout, QPushButton)
+                             QColorDialog, QMenu, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication)
 
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -302,10 +302,11 @@ class LabelWindow(QWidget):
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
         self.labels.append(label)
-
+        # Update in LabelWindow
         self.update_labels_per_row()
         self.reorganize_labels()
         self.set_active_label(label)
+        QApplication.processEvents()
 
         return label
 

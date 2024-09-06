@@ -1586,19 +1586,10 @@ class DeployModelDialog(QDialog):
 
     def process_annotations(self, annotations):
 
-        # Make predictions on annotations
-        progress_bar = ProgressBar(self, title=f"Preparing Images")
-        progress_bar.show()
-        progress_bar.start_progress(len(annotations))
-
         # Convert QImages to numpy arrays
         images_np = []
         for annotation in annotations:
             images_np.append(self.pixmap_to_numpy(annotation.cropped_image))
-            progress_bar.update_progress()
-            QApplication.processEvents()
-        progress_bar.stop_progress()
-        progress_bar.close()
 
         # Make predictions on annotations
         progress_bar = ProgressBar(self, title=f"Making Predictions")
@@ -1613,7 +1604,6 @@ class DeployModelDialog(QDialog):
             self.process_prediction_result(annotation, result)
             # Show in the confidence window
             self.main_window.confidence_window.display_cropped_image(annotation)
-
             progress_bar.update_progress()
             QApplication.processEvents()
 
