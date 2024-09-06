@@ -119,13 +119,13 @@ with the following link:
 # cmd
 
 # Change directories
-cd CoralNet-Toolbox/toolshed
+cd CoralNet-Toolbox/src
 
 # Install the latest
 pip install -e .
 
 # Run
-python app.py
+python main.py
 ```
 
 

@@ -11,14 +11,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from Common import console_user
-from Common import IMG_FORMATS
-from Common import CORALNET_URL
+from src.Common import console_user
+from src.Common import IMG_FORMATS
+from src.Common import CORALNET_URL
 
-from Browser import login
-from Browser import authenticate
-from Browser import check_permissions
-from Browser import check_for_browsers
+from src.Browser import login
+from src.Browser import authenticate
+from src.Browser import check_permissions
+from src.Browser import check_for_browsers
 
 
 # -----------------------------------------------------------------------------

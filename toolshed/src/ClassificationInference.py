@@ -14,14 +14,14 @@ import torchvision
 
 import segmentation_models_pytorch as smp
 
-from Common import get_now
-from Common import IMG_FORMATS
-from Common import console_user
-from Common import progress_printer
+from src.Common import get_now
+from src.Common import console_user
+from src.Common import IMG_FORMATS
+from src.Common import progress_printer
 
-from Patches import crop_patch
+from src.Patches import crop_patch
 
-from Classification import get_validation_augmentation
+from src.Classification import get_validation_augmentation
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -31,32 +31,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # Functions
 # ------------------------------------------------------------------------------------------------------------------
 
-
-def get_shortcode_id_dict(file_path):
+def classification_inference(args):
     """
 
-    :param file_path:
-    :return:
-    """
-    with open(file_path, 'r') as file:
-        data = json.load(file)
-
-    shortcode_id_dict = {}
-    for item in data['classlist']:
-        id_number, short_code, full_name = item
-        shortcode_id_dict[short_code] = id_number
-
-    return shortcode_id_dict
-
-
-def viscore_inference(args):
-    """
-
-    :param args:
-    :return:
     """
     print("\n###############################################")
-    print("Viscore Inference")
+    print("Classification Inference")
     print("###############################################\n")
 
     # Check for CUDA
@@ -67,19 +47,6 @@ def viscore_inference(args):
     # Whether to run on GPU or CPU
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Get User classes dict
-    if os.path.exists(args.user_json):
-        with open(args.user_json, 'r') as file:
-            user_classes_dict = json.load(file)
-    else:
-        raise Exception("ERROR: User JSON file not found.")
-
-    # Get the QClasses dict
-    if os.path.exists(args.qclasses_json):
-        qclasses_dict = get_shortcode_id_dict(args.qclasses_json)
-    else:
-        raise Exception(f"ERROR: QClasses JSON File doesn't exist.")
-
     # Points Dataframe
     if os.path.exists(args.points):
         # Annotation file
@@ -89,7 +56,6 @@ def viscore_inference(args):
         assert "Row" in points.columns, print(f"ERROR: 'Row' not in provided csv")
         assert "Column" in points.columns, print(f"ERROR: 'Column' not in provided csv")
         assert "Name" in points.columns, print(f"ERROR: 'Name' not in provided csv")
-        assert "Dot" in points.columns, print(f"ERROR: 'Dot' not in provided csv")
         # Redundant, just in case user passes the file path instead of the file name
         points['Name'] = [os.path.basename(n) for n in points['Name'].values]
         # Get the names of all the images
@@ -121,6 +87,7 @@ def viscore_inference(args):
     # Model Weights
     if os.path.exists(args.model):
         try:
+
             # Load into the model
             model = torch.load(args.model)
             model_name = model.name
@@ -154,12 +121,8 @@ def viscore_inference(args):
 
     # Output
     output_dir = f"{args.output_dir}/predictions/"
-    output_csv = f"{output_dir}classifier_{get_now()}_predictions.csv"
-    output_json = f"{output_dir}classifier_{get_now()}_samples.cl.user.robot.json"
+    output_path = f"{output_dir}classifier_{get_now()}_predictions.csv"
     os.makedirs(output_dir, exist_ok=True)
-
-    # Output points
-    output_points = pd.DataFrame(columns=points.columns.tolist())
 
     # ----------------------------------------------------------------
     # Inference Loop
@@ -217,7 +180,7 @@ def viscore_inference(args):
         class_predictions = np.array([class_map[v] for v in predictions]).astype(str)
 
         # Make a copy
-        image_predictions = image_points.copy()
+        output = image_points.copy()
 
         N = probabilities.shape[1]
         sorted_prob_indices = np.argsort(probabilities, axis=1)[:, ::-1]
@@ -229,48 +192,17 @@ def viscore_inference(args):
             num_classes = 5
 
         for index, class_num in enumerate(range(num_classes)):
-            image_predictions['Machine confidence ' + str(index + 1)] = top_N_confidences[:, index]
-            image_predictions['Machine suggestion ' + str(index + 1)] = top_N_suggestions[:, class_num]
+            output['Machine confidence ' + str(index + 1)] = top_N_confidences[:, index]
+            output['Machine suggestion ' + str(index + 1)] = top_N_suggestions[:, class_num]
 
-        output_points = pd.concat((output_points, image_predictions))
+        # Save with previous prediction, if any exists
+        if os.path.exists(output_path):
+            previous_predictions = pd.read_csv(output_path, index_col=0)
+            output = pd.concat((previous_predictions, output))
 
-    # Update the classes in user dict, using Dot ID
-    for index in range(len(user_classes_dict['cl'])):
-        try:
-            dot_df = output_points[output_points['Dot'] == index]
-
-            # For debugging, shouldn't happen
-            if dot_df.empty:
-                continue
-
-            # Get the top one for all views, get the mode; get the confidence
-            mode_class = dot_df['Machine suggestion 1'].mode().item()
-            mode_conf = dot_df[dot_df['Machine suggestion 1'] == mode_class]['Machine confidence 1'].mean()
-
-            if not mode_class in qclasses_dict:
-                raise Exception(f"Mode class {mode_class} not found in QClasses")
-
-            if int(mode_conf * 100) < args.conf:
-                raise Exception(f"Confidence for Dot {index} below {args.conf}")
-
-            mode_id = qclasses_dict[mode_class]
-
-        except Exception as e:
-            print(f"WARNING: {e}; setting as 'Review'")
-            mode_id = qclasses_dict['Review']
-
-        user_classes_dict['cl'][index] = mode_id
-
-    # Save image predictions to CSV
-    output_points.sort_index(inplace=True)
-    output_points.reset_index(drop=True, inplace=True)
-    output_points.to_csv(output_csv)
-
-    # Save image predictions to JSON
-    with open(output_json, "w") as json_file:
-        json.dump(user_classes_dict, json_file, indent=4)
-
-    print(f"NOTE: Predictions saved to {output_dir}")
+        # Save each image predictions
+        output.to_csv(output_path)
+        print(f"NOTE: Predictions saved to {output_path}")
 
 
 # -----------------------------------------------------------------------------
@@ -290,20 +222,11 @@ def main():
     parser.add_argument("--points", type=str, required=True,
                         help="Path to the points file containing 'Name', 'Row', and 'Column' information.")
 
-    parser.add_argument('--user_json', type=str, required=True,
-                        help='An empty User JSON file for the plot')
-
-    parser.add_argument('--qclasses_json', type=str, required=True,
-                        help='A QClasses JSON file for the plot')
-
     parser.add_argument("--model", type=str, required=True,
                         help="Path to Best Model and Weights File (.pth)")
 
     parser.add_argument("--class_map", type=str, required=True,
                         help="Path to the model's Class Map JSON file")
-
-    parser.add_argument("--conf", type=int, default=50,
-                        help="Confidence threshold value")
 
     parser.add_argument("--patch_size", type=int, default=112,
                         help="The size of each patch extracted")
@@ -314,8 +237,7 @@ def main():
     args = parser.parse_args()
 
     try:
-
-        viscore_inference(args)
+        classification_inference(args)
         print("Done.\n")
 
     except Exception as e:

@@ -12,9 +12,9 @@ import Metashape
 from plyfile import PlyData
 from scipy.spatial.distance import cdist
 
-from Common import console_user
-from Common import print_progress
-from Common import progress_printer
+from src.Common import console_user
+from src.Common import print_progress
+from src.Common import progress_printer
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"

@@ -31,8 +31,8 @@ from tensorboard import program
 
 import albumentations as albu
 
-from Common import get_now
-from Common import console_user
+from src.Common import get_now
+from src.Common import console_user
 
 torch.cuda.empty_cache()
 

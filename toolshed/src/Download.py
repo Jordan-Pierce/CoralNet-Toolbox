@@ -13,20 +13,20 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 
-from Common import CACHE_DIR
-from Common import LOGIN_URL
-from Common import CORALNET_URL
-from Common import CORALNET_SOURCE_URL
-from Common import CORALNET_LABELSET_URL
-from Common import CORALNET_LABELSET_FILE
-from Common import console_user
-from Common import print_progress
-from Common import progress_printer
+from src.Common import CACHE_DIR
+from src.Common import LOGIN_URL
+from src.Common import CORALNET_URL
+from src.Common import CORALNET_SOURCE_URL
+from src.Common import CORALNET_LABELSET_URL
+from src.Common import CORALNET_LABELSET_FILE
+from src.Common import console_user
+from src.Common import print_progress
+from src.Common import progress_printer
 
-from Browser import login
-from Browser import authenticate
-from Browser import check_permissions
-from Browser import check_for_browsers
+from src.Browser import login
+from src.Browser import authenticate
+from src.Browser import check_permissions
+from src.Browser import check_for_browsers
 
 
 # -------------------------------------------------------------------------------------------------

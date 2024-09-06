@@ -11,18 +11,18 @@ import re
 import math
 import pandas as pd
 
-from Common import get_now
-from Common import console_user
+from src.Common import get_now
+from src.Common import console_user
 
-from Browser import login
-from Browser import get_token
-from Browser import authenticate
-from Browser import CORALNET_URL
+from src.Browser import login
+from src.Browser import get_token
+from src.Browser import authenticate
+from src.Browser import CORALNET_URL
 
-from Download import get_images
-from Download import get_image_urls
-from Download import download_metadata
-from Download import check_for_browsers
+from src.Download import get_images
+from src.Download import get_image_urls
+from src.Download import download_metadata
+from src.Download import check_for_browsers
 
 
 # -----------------------------------------------------------------------------

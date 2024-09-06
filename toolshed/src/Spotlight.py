@@ -18,11 +18,11 @@ import torch.nn.functional as F
 
 import segmentation_models_pytorch as smp
 
-from Classification import CustomModel
-from Classification import get_classifier_encoders
-from Classification import get_validation_augmentation
+from src.Classification import CustomModel
+from src.Classification import get_classifier_encoders
+from src.Classification import get_validation_augmentation
 
-from Common import console_user
+from src.Common import console_user
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'

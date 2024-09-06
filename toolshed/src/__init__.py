@@ -1,4 +1,4 @@
-from toolshed.app import run
+from src.main import run
 
 import os
 import sys
