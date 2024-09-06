@@ -29,7 +29,7 @@ setup(
 )
 
 this_dir = os.path.dirname(os.path.realpath(__file__))
-whl_path = f'{this_dir}/Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl'
+whl_path = f'{this_dir}\\Packages\\Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl'
 if not os.path.exists(whl_path):
     raise FileNotFoundError("ERROR: Cannot find Metashape wheel file; please install from Metashape website.")
 
