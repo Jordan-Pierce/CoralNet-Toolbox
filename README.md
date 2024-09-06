@@ -92,14 +92,15 @@ coralnet-toolbox
 
 ## GitHub Repository
 
-If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following:
+If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following after
+creating an `Anaconda` environment:
 
 ```bash
 # cmd
 
 # Clone and enter the repository
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
-cd CoralNet-Toolbox/toolbox
+cd CoralNet-Toolbox
 
 # Install the latest
 pip install -e .
@@ -117,8 +118,11 @@ with the following link:
 ```bash
 # cmd
 
-# Install
-pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git#subdirectory=toolshed"
+# Change directories
+cd CoralNet-Toolbox/toolshed
+
+# Install the latest
+pip install -e .
 
 # Run
 coralnet-toolshed
