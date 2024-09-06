@@ -4,46 +4,46 @@ import traceback
 
 from gooey import Gooey, GooeyParser
 
-from src.API import api
-from src.Download import download
-from src.Labelset import labelset
-from src.Upload import upload
+from API import api
+from Download import download
+from Labelset import labelset
+from Upload import upload
 
-from src.Annotate import annotate
-from src.Patches import patches
-from src.Visualize import visualize
-from src.ToYOLO import to_yolo
-from src.Points import points
-from src.Projector import projector
-from src.Spotlight import spotlight
+from Annotate import annotate
+from Patches import patches
+from Visualize import visualize
+from ToYOLO import to_yolo
+from Points import points
+from Projector import projector
+from Spotlight import spotlight
 
-from src.ClassificationPreTrain import classification_pretrain
-from src.Classification import classification
-from src.Segmentation import segmentation
-from src.ClassificationInference import classification_inference
-from src.SegmentationInference import segmentation_inference
-from src.ViscoreInference import viscore_inference
+from ClassificationPreTrain import classification_pretrain
+from Classification import classification
+from Segmentation import segmentation
+from ClassificationInference import classification_inference
+from SegmentationInference import segmentation_inference
+from ViscoreInference import viscore_inference
 
-from src.SAM import sam
-from src.SfM import sfm
-from src.Segmentation3D import segmentation3d
+from SAM import sam
+from SfM import sfm
+from Segmentation3D import segmentation3d
 
 # For Gooey dropdown
-from src.Download import get_updated_labelset_list
-from src.Classification import get_classifier_losses
-from src.Classification import get_classifier_metrics
-from src.Classification import get_classifier_encoders
-from src.Classification import get_classifier_optimizers
-from src.Segmentation import get_segmentation_losses
-from src.Segmentation import get_segmentation_metrics
-from src.Segmentation import get_segmentation_encoders
-from src.Segmentation import get_segmentation_decoders
-from src.Segmentation import get_segmentation_optimizers
+from Download import get_updated_labelset_list
+from Classification import get_classifier_losses
+from Classification import get_classifier_metrics
+from Classification import get_classifier_encoders
+from Classification import get_classifier_optimizers
+from Segmentation import get_segmentation_losses
+from Segmentation import get_segmentation_metrics
+from Segmentation import get_segmentation_encoders
+from Segmentation import get_segmentation_decoders
+from Segmentation import get_segmentation_optimizers
 
-from src.Common import console_user
-from src.Common import DATA_DIR
-from src.Common import PATCH_EXTRACTOR
-from src.Common import FUNC_GROUPS_LIST
+from Common import console_user
+from Common import DATA_DIR
+from Common import PATCH_EXTRACTOR
+from Common import FUNC_GROUPS_LIST
 
 
 # ----------------------------------------------------------------------------------------------------------------------

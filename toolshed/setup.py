@@ -25,7 +25,7 @@ try:
         python_requires='>=3.7',
         entry_points={
             "console_scripts": [
-                "coralnet-toolshed = toolshed.toolshed:main"
+                "coralnet-toolshed = src.toolshed:main"
             ]
         },
     )
