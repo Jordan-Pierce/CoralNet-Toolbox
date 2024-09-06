@@ -28,13 +28,17 @@ setup(
     },
 )
 
-this_dir = os.path.dirname(os.path.realpath(__file__))
-whl_path = f'{this_dir}\\Packages\\Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl'
-if not os.path.exists(whl_path):
-    raise FileNotFoundError("ERROR: Cannot find Metashape wheel file; please install from Metashape website.")
+try:
+    this_dir = os.path.dirname(os.path.realpath(__file__))
+    whl_path = f'{this_dir}\\Packages\\Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl'
+    if not os.path.exists(whl_path):
+        raise FileNotFoundError("ERROR: Cannot find Metashape wheel file; please install from Metashape website.")
 
-subprocess.check_call([sys.executable, '-m', 'pip', 'install', whl_path],
-                      stdout=subprocess.PIPE,
-                      stderr=subprocess.PIPE)
+    subprocess.check_call([sys.executable, '-m', 'pip', 'install', whl_path],
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE)
 
-print("Metashape installation completed successfully.")
+    print("Metashape installation completed successfully.")
+
+except Exception as e:
+    print(f"ERROR: Could not install Metashape.\n{e}\n{traceback.format_exc()}")
