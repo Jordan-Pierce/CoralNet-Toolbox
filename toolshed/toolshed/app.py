@@ -63,7 +63,7 @@ from toolshed.Common import FUNC_GROUPS_LIST
            'show_time_remaining': True,
            'hide_time_remaining_on_complete': True,
        })
-def main():
+def run():
     desc = 'Interact with CoralNet, unofficially.'
     parser = GooeyParser(description=desc)
 
@@ -1223,4 +1223,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    run()
