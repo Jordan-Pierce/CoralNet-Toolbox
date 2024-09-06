@@ -112,7 +112,7 @@ coralnet-toolbox
 ## What Happened to the Old Repository?
 
 The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
-running the `toolshed` are the same as above; after creating a `Anaconda` environment, you can install the `toolshed` 
+running the `toolshed` are the same as above; after creating an `Anaconda` environment, you can install the `toolshed` 
 with the following link:
 
 ```bash
@@ -125,9 +125,30 @@ cd CoralNet-Toolbox/toolshed
 pip install -e .
 
 # Run
-coralnet-toolshed
+python main.py
 ```
+Alternatively, you can work with the functions within a script:
+```python
+# python
 
+import argparse
+from coralnet_toolshed.Download import download
+
+# Create an empty parser
+args = argparse.Namespace()
+
+# Add an argument
+args.username = "username"
+args.password = "password"
+args.source_id = 3420
+
+# Run the function
+download(args)
+```
+And also command line:
+```bash
+python coralnet_toolshed/Download.py --username username --password password --source_id 3420
+```
 
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 

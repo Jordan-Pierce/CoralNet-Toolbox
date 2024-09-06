@@ -7,9 +7,9 @@ import numpy as np
 
 import Metashape
 
-from Common import console_user
-from Common import get_now
-from Common import print_progress
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import print_progress
 
 # Check that the Metashape version is compatible with this script
 compatible_major_version = "2.0"

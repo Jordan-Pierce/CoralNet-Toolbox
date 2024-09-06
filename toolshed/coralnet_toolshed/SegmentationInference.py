@@ -17,14 +17,14 @@ from torch.utils.data import Dataset as BaseDataset
 
 import segmentation_models_pytorch as smp
 
-from Common import get_now
-from Common import console_user
-from Common import IMG_FORMATS
-from Common import progress_printer
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import IMG_FORMATS
+from coralnet_toolshed.Common import progress_printer
 
-from Segmentation import colorize_mask
-from Segmentation import get_preprocessing
-from Segmentation import get_validation_augmentation
+from coralnet_toolshed.Segmentation import colorize_mask
+from coralnet_toolshed.Segmentation import get_preprocessing
+from coralnet_toolshed.Segmentation import get_validation_augmentation
 
 torch.cuda.empty_cache()
 warnings.filterwarnings('ignore')

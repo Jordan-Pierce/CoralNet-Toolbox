@@ -21,10 +21,10 @@ from simclr.modules.transformations import TransformsSimCLR
 
 from tensorboard import program
 
-from Common import get_now
-from Common import console_user
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
 
-from Classification import get_classifier_optimizers
+from coralnet_toolshed.Classification import get_classifier_optimizers
 
 
 # ------------------------------------------------------------------------------------------------------------------

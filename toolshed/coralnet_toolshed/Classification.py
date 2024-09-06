@@ -35,8 +35,8 @@ import albumentations as albu
 
 from tensorboard import program
 
-from Common import get_now
-from Common import console_user
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
 
 torch.cuda.empty_cache()
 

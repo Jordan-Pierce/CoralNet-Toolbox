@@ -540,6 +540,12 @@ class AnnotationWindow(QGraphicsView):
             # Filter out annotations that are not associated with any loaded images
             df = df[df['Name'].isin(image_path_map.keys())]
 
+            # Drop everything else
+            df = df[required_columns]
+            df = df.dropna(how='any')
+            df = df.assign(Row=df['Row'].astype(int))
+            df = df.assign(Column=df['Column'].astype(int))
+
             if df.empty:
                 raise Exception("No annotations found for loaded images.")
 
@@ -961,6 +967,7 @@ class AnnotationWindow(QGraphicsView):
                 progress_bar.set_value(1)
 
                 # Apply filters more efficiently
+                df = df[required_columns]
                 df_filtered = df.dropna(how='any')
                 df_filtered = df_filtered.assign(Row=df_filtered['Row'].astype(int))
                 df_filtered = df_filtered.assign(Column=df_filtered['Column'].astype(int))
