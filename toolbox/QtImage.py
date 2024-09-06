@@ -136,12 +136,6 @@ class ImageWindow(QWidget):
                                     "Image(s) Imported",
                                     "Image(s) have been successfully imported.")
 
-    # def add_image(self, image_path):
-    #     if image_path not in self.image_paths:
-    #         self.image_paths.append(image_path)
-    #         self.update_table_widget()
-    #         self.update_image_count_label()
-
     def add_image(self, image_path):
         if image_path not in self.image_paths:
             self.image_paths.append(image_path)
@@ -201,40 +195,6 @@ class ImageWindow(QWidget):
         # Close the image with Rasterio
         self.rasterio_images[image_path] = None
 
-    # def delete_image(self, image_path):
-    #     if image_path not in self.image_paths:
-    #         return
-    #
-    #     # Remove the image from the lists and dictionaries
-    #     self.image_paths.remove(image_path)
-    #     if image_path in self.filtered_image_paths:
-    #         self.filtered_image_paths.remove(image_path)
-    #     if image_path in self.images:
-    #         del self.images[image_path]
-    #     if image_path in self.rasterio_images:
-    #         self.rasterio_close(image_path)
-    #         del self.rasterio_images[image_path]
-    #
-    #     # Remove the image's annotations
-    #     self.annotation_window.delete_image(image_path)
-    #
-    #     # Update the table widget
-    #     self.update_table_widget()
-    #
-    #     # Update the image count label
-    #     self.update_image_count_label()
-    #
-    #     # Select a new image if available
-    #     if self.filtered_image_paths:
-    #         new_image_path = self.filtered_image_paths[0]
-    #         self.load_image_by_path(new_image_path)
-    #     else:
-    #         self.selected_image_path = None
-    #         self.annotation_window.clear_scene()
-    #
-    #     # Update the current image index label
-    #     self.update_current_image_index_label()
-
     def delete_image(self, image_path):
         if image_path in self.image_paths:
             self.image_paths.remove(image_path)
@@ -290,19 +250,11 @@ class ImageWindow(QWidget):
         self.image_count_label.setText(f"Total Images: {total_images}")
 
     def update_current_image_index_label(self):
-        if self.selected_image_path:
+        if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
             index = self.filtered_image_paths.index(self.selected_image_path) + 1
             self.current_image_index_label.setText(f"Current Image: {index}")
         else:
             self.current_image_index_label.setText("Current Image: None")
-
-    # def update_table_widget(self):
-    #     self.tableWidget.setRowCount(0)  # Clear the table
-    #     for path in self.filtered_image_paths:
-    #         row_position = self.tableWidget.rowCount()
-    #         self.tableWidget.insertRow(row_position)
-    #         self.tableWidget.setItem(row_position, 0, QTableWidgetItem(os.path.basename(path)))
-    #     self.update_table_selection()
 
     def update_table_widget(self):
         self.tableWidget.setRowCount(0)  # Clear the table
@@ -346,80 +298,42 @@ class ImageWindow(QWidget):
     def debounce_search(self):
         self.search_timer.start(500)
 
-    # def filter_images(self):
-    #     search_text = self.search_bar.text().lower()
-    #     has_annotations = self.has_annotations_checkbox.isChecked()
-    #     needs_review = self.needs_review_checkbox.isChecked()
-    #     no_annotations = self.no_annotations_checkbox.isChecked()
-    #
-    #     # Return early if none of the search bar or checkboxes are being used
-    #     if not search_text and not has_annotations and not needs_review and not no_annotations:
-    #         self.filtered_image_paths = self.image_paths.copy()
-    #         self.update_table_widget()
-    #         self.update_current_image_index_label()
-    #         self.update_image_count_label()
-    #         return
-    #
-    #     self.filtered_image_paths = []
-    #
-    #     for path in self.image_paths:
-    #         filename = os.path.basename(path).lower()
-    #         annotations = self.annotation_window.get_image_annotations(path)
-    #         review_annotations = self.annotation_window.get_image_review_annotations(path)
-    #
-    #         if search_text and search_text not in filename:
-    #             continue
-    #
-    #         if has_annotations and not annotations:
-    #             continue
-    #         if needs_review and not review_annotations:
-    #             continue
-    #         if no_annotations and annotations:
-    #             continue
-    #
-    #         self.filtered_image_paths.append(path)
-    #
-    #     self.update_table_widget()
-    #
-    #     # Load the first filtered image if available, otherwise clear the scene
-    #     if self.filtered_image_paths:
-    #         self.load_image_by_path(self.filtered_image_paths[0])
-    #     else:
-    #         self.selected_image_path = None
-    #         self.annotation_window.clear_scene()
-    #
-    #     self.update_current_image_index_label()
-    #     self.update_image_count_label()
-
     def filter_images(self):
         search_text = self.search_bar.text().lower()
         has_annotations = self.has_annotations_checkbox.isChecked()
         needs_review = self.needs_review_checkbox.isChecked()
         no_annotations = self.no_annotations_checkbox.isChecked()
 
-        # Use a set for faster lookups during filtering
-        filtered_set = set()
+        # Return early if none of the search bar or checkboxes are being used
+        if not search_text and not has_annotations and not needs_review and not no_annotations:
+            self.filtered_image_paths = self.image_paths.copy()
+            self.update_table_widget()
+            self.update_current_image_index_label()
+            self.update_image_count_label()
+            return
+
+        self.filtered_image_paths = []
 
         for path in self.image_paths:
-            info = self.image_dict[path]
+            filename = os.path.basename(path).lower()
+            annotations = self.annotation_window.get_image_annotations(path)
+            review_annotations = self.annotation_window.get_image_review_annotations(path)
 
-            if search_text and search_text not in info['filename']:
+            if search_text and search_text not in filename:
                 continue
 
-            if has_annotations and not info['has_annotations']:
+            if has_annotations and not annotations:
                 continue
-            if needs_review and not info['needs_review']:
+            if needs_review and not review_annotations:
                 continue
-            if no_annotations and info['has_annotations']:
+            if no_annotations and annotations:
                 continue
 
-            filtered_set.add(path)
-
-        # Convert back to a list, maintaining the original order
-        self.filtered_image_paths = [path for path in self.image_paths if path in filtered_set]
+            self.filtered_image_paths.append(path)
 
         self.update_table_widget()
 
+        # Load the first filtered image if available, otherwise clear the scene
         if self.filtered_image_paths:
             self.load_image_by_path(self.filtered_image_paths[0])
         else:
