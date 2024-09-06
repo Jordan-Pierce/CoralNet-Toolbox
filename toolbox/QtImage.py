@@ -112,7 +112,10 @@ class ImageWindow(QWidget):
         self.search_bar.textChanged.connect(self.debounce_search)
 
     def import_images(self):
-        file_names, _ = QFileDialog.getOpenFileNames(self, "Open Image Files", "", "Image Files (*.png *.jpg *.jpeg)")
+        file_names, _ = QFileDialog.getOpenFileNames(self,
+                                                     "Open Image Files",
+                                                     "",
+                                                     "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
         if file_names:
             progress_bar = ProgressBar(self, title="Importing Images")
             progress_bar.show()
