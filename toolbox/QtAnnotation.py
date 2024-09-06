@@ -496,12 +496,17 @@ class AnnotationWindow(QGraphicsView):
         self.toolChanged.emit(None)
 
         if not self.active_image:
-            QMessageBox.warning(self, "No Images Loaded", "Please load images first before importing annotations.")
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images first before importing annotations.")
             return
 
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import CoralNet Annotations", "",
-                                                   "CSV Files (*.csv);;All Files (*)", options=options)
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Import CoralNet Annotations",
+                                                   "",
+                                                   "CSV Files (*.csv);;All Files (*)",
+                                                   options=options)
 
         if not file_path:
             return
