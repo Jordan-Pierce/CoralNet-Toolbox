@@ -118,7 +118,7 @@ with the following link:
 # cmd
 
 # Install
-pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox/toolshed.git"
+pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git#subdirectory=toolshed"
 
 # Run
 coralnet-toolshed
