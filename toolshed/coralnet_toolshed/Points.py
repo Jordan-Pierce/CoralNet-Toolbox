@@ -9,10 +9,10 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from src.Common import get_now
-from src.Common import console_user
-from src.Common import IMG_FORMATS
-from src.Common import progress_printer
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import IMG_FORMATS
+from coralnet_toolshed.Common import progress_printer
 
 
 # ----------------------------------------------------------------------------------------------------------------------

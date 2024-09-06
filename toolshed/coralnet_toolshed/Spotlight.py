@@ -18,11 +18,11 @@ import torch.nn.functional as F
 
 import segmentation_models_pytorch as smp
 
-from src.Classification import CustomModel
-from src.Classification import get_classifier_encoders
-from src.Classification import get_validation_augmentation
+from coralnet_toolshed.Classification import CustomModel
+from coralnet_toolshed.Classification import get_classifier_encoders
+from coralnet_toolshed.Classification import get_validation_augmentation
 
-from src.Common import console_user
+from coralnet_toolshed.Common import console_user
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'

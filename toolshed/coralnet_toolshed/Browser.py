@@ -11,8 +11,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-from src.Common import LOGIN_URL
-from src.Common import CORALNET_URL
+from coralnet_toolshed.Common import LOGIN_URL
+from coralnet_toolshed.Common import CORALNET_URL
 
 
 # -------------------------------------------------------------------------------------------------

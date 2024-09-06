@@ -119,13 +119,31 @@ with the following link:
 # cmd
 
 # Change directories
-cd CoralNet-Toolbox/src
+cd CoralNet-Toolbox/toolshed
 
 # Install the latest
 pip install -e .
 
 # Run
 python main.py
+```
+Alternatively, you can work with the functions within code:
+```python
+# python
+
+import argparse
+from coralnet_toolshed.Download import download
+
+# Create an empty parser
+args = argparse.Namespace()
+
+# Add an argument
+args.username = "username"
+args.password = "password"
+args.source_id = 3420
+
+# Run the function
+download(args)
 ```
 
 

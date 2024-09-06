@@ -11,18 +11,18 @@ import re
 import math
 import pandas as pd
 
-from src.Common import get_now
-from src.Common import console_user
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
 
-from src.Browser import login
-from src.Browser import get_token
-from src.Browser import authenticate
-from src.Browser import CORALNET_URL
+from coralnet_toolshed.Browser import login
+from coralnet_toolshed.Browser import get_token
+from coralnet_toolshed.Browser import authenticate
+from coralnet_toolshed.Browser import CORALNET_URL
 
-from src.Download import get_images
-from src.Download import get_image_urls
-from src.Download import download_metadata
-from src.Download import check_for_browsers
+from coralnet_toolshed.Download import get_images
+from coralnet_toolshed.Download import get_image_urls
+from coralnet_toolshed.Download import download_metadata
+from coralnet_toolshed.Download import check_for_browsers
 
 
 # -----------------------------------------------------------------------------

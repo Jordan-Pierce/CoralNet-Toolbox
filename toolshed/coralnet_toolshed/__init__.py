@@ -1,5 +1,3 @@
-from src.main import run
-
 import os
 import sys
 

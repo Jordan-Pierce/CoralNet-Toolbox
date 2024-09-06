@@ -9,9 +9,9 @@ import re
 import pandas as pd
 from PIL import Image
 
-from src.Common import get_now
-from src.Common import console_user
-from src.Common import PATCH_EXTRACTOR
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import PATCH_EXTRACTOR
 
 
 # ------------------------------------------------------------------------------------------------------------------

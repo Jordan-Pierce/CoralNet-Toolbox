@@ -13,10 +13,10 @@ import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 
-from src.Classification import downsample_majority_classes
+from coralnet_toolshed.Classification import downsample_majority_classes
 
-from src.Common import get_now
-from src.Common import console_user
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
 
 
 # ------------------------------------------------------------------------------------------------------------------
