@@ -127,7 +127,7 @@ pip install -e .
 # Run
 python main.py
 ```
-Alternatively, you can work with the functions within code:
+Alternatively, you can work with the functions within a script:
 ```python
 # python
 
@@ -145,7 +145,10 @@ args.source_id = 3420
 # Run the function
 download(args)
 ```
-
+And also command line:
+```bash
+python coralnet_toolshed/Download.py --username username --password password --source_id 3420
+```
 
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 
