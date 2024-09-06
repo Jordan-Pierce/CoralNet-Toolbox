@@ -4,46 +4,46 @@ import traceback
 
 from gooey import Gooey, GooeyParser
 
-from API import api
-from Download import download
-from Labelset import labelset
-from Upload import upload
+from toolshed.API import api
+from toolshed.Download import download
+from toolshed.Labelset import labelset
+from toolshed.Upload import upload
 
-from Annotate import annotate
-from Patches import patches
-from Visualize import visualize
-from ToYOLO import to_yolo
-from Points import points
-from Projector import projector
-from Spotlight import spotlight
+from toolshed.Annotate import annotate
+from toolshed.Patches import patches
+from toolshed.Visualize import visualize
+from toolshed.ToYOLO import to_yolo
+from toolshed.Points import points
+from toolshed.Projector import projector
+from toolshed.Spotlight import spotlight
 
-from ClassificationPreTrain import classification_pretrain
-from Classification import classification
-from Segmentation import segmentation
-from ClassificationInference import classification_inference
-from SegmentationInference import segmentation_inference
-from ViscoreInference import viscore_inference
+from toolshed.ClassificationPreTrain import classification_pretrain
+from toolshed.Classification import classification
+from toolshed.Segmentation import segmentation
+from toolshed.ClassificationInference import classification_inference
+from toolshed.SegmentationInference import segmentation_inference
+from toolshed.ViscoreInference import viscore_inference
 
-from SAM import sam
-from SfM import sfm
-from Segmentation3D import segmentation3d
+from toolshed.SAM import sam
+from toolshed.SfM import sfm
+from toolshed.Segmentation3D import segmentation3d
 
 # For Gooey dropdown
-from Download import get_updated_labelset_list
-from Classification import get_classifier_losses
-from Classification import get_classifier_metrics
-from Classification import get_classifier_encoders
-from Classification import get_classifier_optimizers
-from Segmentation import get_segmentation_losses
-from Segmentation import get_segmentation_metrics
-from Segmentation import get_segmentation_encoders
-from Segmentation import get_segmentation_decoders
-from Segmentation import get_segmentation_optimizers
+from toolshed.Download import get_updated_labelset_list
+from toolshed.Classification import get_classifier_losses
+from toolshed.Classification import get_classifier_metrics
+from toolshed.Classification import get_classifier_encoders
+from toolshed.Classification import get_classifier_optimizers
+from toolshed.Segmentation import get_segmentation_losses
+from toolshed.Segmentation import get_segmentation_metrics
+from toolshed.Segmentation import get_segmentation_encoders
+from toolshed.Segmentation import get_segmentation_decoders
+from toolshed.Segmentation import get_segmentation_optimizers
 
-from Common import console_user
-from Common import DATA_DIR
-from Common import PATCH_EXTRACTOR
-from Common import FUNC_GROUPS_LIST
+from toolshed.Common import console_user
+from toolshed.Common import DATA_DIR
+from toolshed.Common import PATCH_EXTRACTOR
+from toolshed.Common import FUNC_GROUPS_LIST
 
 
 # ----------------------------------------------------------------------------------------------------------------------

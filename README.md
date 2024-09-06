@@ -125,7 +125,7 @@ cd CoralNet-Toolbox/toolshed
 pip install -e .
 
 # Run
-coralnet-toolshed
+python app.py
 ```
 
 

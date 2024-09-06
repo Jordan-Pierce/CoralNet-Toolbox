@@ -4,7 +4,7 @@ import traceback
 import subprocess
 from setuptools import setup, find_packages
 
-from src.Common import console_user
+from toolshed.Common import console_user
 
 try:
     if not os.path.exists("requirements.txt"):
@@ -23,11 +23,6 @@ try:
         packages=find_packages(),
         install_requires=required_packages,
         python_requires='>=3.7',
-        entry_points={
-            "console_scripts": [
-                "coralnet-toolshed = src.toolshed:main"
-            ]
-        },
     )
 
     this_dir = os.path.dirname(os.path.realpath(__file__))
