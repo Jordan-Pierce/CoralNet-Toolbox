@@ -6,17 +6,13 @@ from setuptools import setup, find_packages
 
 from src.Common import console_user
 
-
 try:
-    # Check if requirements.txt exists
     if not os.path.exists("requirements.txt"):
         raise FileNotFoundError("ERROR: Cannot find requirements.txt")
 
-    # Read requirements from requirements.txt
     with open('requirements.txt') as f:
         required_packages = f.read().splitlines()
 
-    # Setup
     setup(
         name='coralnet-toolshed',
         version='0.0.1',
@@ -29,11 +25,11 @@ try:
         python_requires='>=3.7',
         entry_points={
             "console_scripts": [
-                "coralnet-toolshed = toolshed:main"
+                "coralnet-toolshed = toolshed.toolshed:main"
             ]
         },
     )
-    # Install Metashape
+
     this_dir = os.path.dirname(os.path.realpath(__file__))
     whl_path = f'{this_dir}/Packages/Metashape-2.0.2-cp37.cp38.cp39.cp310.cp311-none-win_amd64.whl'
     if not os.path.exists(whl_path):
