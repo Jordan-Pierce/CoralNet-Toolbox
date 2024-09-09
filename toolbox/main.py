@@ -8,6 +8,7 @@
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
 #   - add evaluation function
+#   - auto focus to selected annotation when zoomed
 
 import traceback
 from PyQt5.QtWidgets import QApplication

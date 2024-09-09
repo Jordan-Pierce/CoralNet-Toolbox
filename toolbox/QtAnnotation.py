@@ -1358,7 +1358,18 @@ class AnnotationWindow(QGraphicsView):
                     new_index = (current_index + direction) % len(annotations)
                 else:
                     new_index = 0
+                # Select the new annotation
                 self.select_annotation(annotations[new_index])
+                # Center the view on the new annotation
+                self.center_on_annotation(annotations[new_index])
+
+    def center_on_annotation(self, annotation):
+        # Get the bounding rect of the annotation in scene coordinates
+        annotation_rect = annotation.graphics_item.boundingRect()
+        annotation_center = annotation_rect.center()
+
+        # Center the view on the annotation's center
+        self.centerOn(annotation_center)
 
     def update_current_image_path(self, image_path):
         self.current_image_path = image_path
@@ -1769,7 +1780,7 @@ class AnnotationSamplingDialog(QDialog):
                 brush = QBrush(Qt.white)
                 brush.setStyle(Qt.SolidPattern)
                 color = brush.color()
-                color.setAlpha(50)
+                color.setAlpha(75)
                 brush.setColor(color)
                 rect_item.setBrush(brush)
                 self.preview_scene.addItem(rect_item)
@@ -1902,7 +1913,7 @@ class AnnotationSamplingDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
-        # Set / load the image / annotations of the last image
-        self.image_window.load_image_by_path(image_paths[-1], update=True)
+        # # Set / load the image / annotations of the last image
+        self.annotation_window.set_image(current_image_path)
         # Reset dialog for next time
         self.reset_defaults()
