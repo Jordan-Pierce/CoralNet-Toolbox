@@ -1,6 +1,6 @@
 wheel
 setuptools
 PyQt5
-ultralytics
+ultralytics==8.2.80
 rasterio
 dill

@@ -117,9 +117,13 @@ class ImageWindow(QWidget):
                                                      "",
                                                      "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
         if file_names:
+            # Set the cursor to waiting (busy) cursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
             progress_bar = ProgressBar(self, title="Importing Images")
             progress_bar.show()
             progress_bar.start_progress(len(file_names))
+            progress_bar.set_value(1)
 
             for i, file_name in enumerate(file_names):
                 if file_name not in set(self.image_paths):
@@ -134,6 +138,9 @@ class ImageWindow(QWidget):
             self.filter_images()
             # Show the last image
             self.load_image_by_path(self.image_paths[-1])
+
+            # Restore the cursor to the default cursor
+            QApplication.restoreOverrideCursor()
 
             QMessageBox.information(self,
                                     "Image(s) Imported",

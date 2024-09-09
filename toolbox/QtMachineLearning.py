@@ -789,6 +789,10 @@ class TrainModelWorker(QThread):
 
     def run(self):
         try:
+            # Clear cache from previous runs
+            self._cleanup()
+
+            # Emit signal to indicate training has started
             self.training_started.emit()
 
             # Extract parameters
@@ -796,12 +800,18 @@ class TrainModelWorker(QThread):
             weighted = self.params.pop('weighted', False)
 
             if weighted:
+                # Use the custom dataset class for weighted sampling
                 build.ClassificationDataset = WeightedClassificationDataset
 
+            # Load the model, train, and save the best weights
             self.target_model = YOLO(model_path)
             self.target_model.train(**self.params)
+
+            # Evaluate the model after training
             self._evaluate_model()
+            # Emit signal to indicate training has completed
             self.training_completed.emit()
+
         except Exception as e:
             self.training_error.emit(str(e))
         finally:
@@ -1395,14 +1405,41 @@ class DeployModelDialog(QDialog):
         self.init_classification_tab()
         self.init_segmentation_tab()
 
+        # Set the threshold slider for uncertainty
+        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
+        self.uncertainty_threshold_slider.setRange(0, 100)
+        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
+        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.uncertainty_threshold_slider.setTickInterval(10)
+        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
+
+        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
+        self.layout.addWidget(QLabel("Uncertainty Threshold"))
+        self.layout.addWidget(self.uncertainty_threshold_slider)
+        self.layout.addWidget(self.uncertainty_threshold_label)
+
+        # Status bar label
         self.status_bar = QLabel("No model loaded")
         self.layout.addWidget(self.status_bar)
 
         self.setLayout(self.layout)
 
+        # Connect to the shared data signal
+        self.main_window.uncertaintyChanged.connect(self.on_uncertainty_changed)
+
     def showEvent(self, event: QShowEvent):
         super().showEvent(event)
         self.check_and_display_class_names()
+
+    def update_uncertainty_label(self):
+        # Convert the slider value to a ratio (0-1)
+        value = self.uncertainty_threshold_slider.value() / 100.0
+        self.main_window.update_uncertainty_thresh(value)
+
+    def on_uncertainty_changed(self, value):
+        # Update the slider and label when the shared data changes
+        self.uncertainty_threshold_slider.setValue(int(value * 100))
+        self.uncertainty_threshold_label.setText(f"{value:.2f}")
 
     def init_classification_tab(self):
         layout = QVBoxLayout()
@@ -1589,7 +1626,7 @@ class DeployModelDialog(QDialog):
                 annotations = self.annotation_window.get_image_review_annotations()
 
             # Make predictions on the annotations
-            self.process_annotations(annotations)
+            self.preprocess_annotations(annotations)
 
         QApplication.restoreOverrideCursor()
 
@@ -1597,7 +1634,7 @@ class DeployModelDialog(QDialog):
         gc.collect()
         empty_cache()
 
-    def process_annotations(self, annotations):
+    def preprocess_annotations(self, annotations):
 
         # Convert QImages to numpy arrays
         images_np = []
@@ -1616,14 +1653,14 @@ class DeployModelDialog(QDialog):
             # Process the results
             self.process_prediction_result(annotation, result)
             # Show in the confidence window
-            self.main_window.confidence_window.display_cropped_image(annotation)
+            # self.main_window.confidence_window.display_cropped_image(annotation)  # TODO Consider removing
             progress_bar.update_progress()
             QApplication.processEvents()
 
         # Group annotations by image path
         image_paths = list(set([annotation.image_path for annotation in annotations]))
         for image_path in image_paths:
-            # Update the image window's image dict
+            # Update the image window's image dict (fast search filtering)
             self.main_window.image_window.update_image_annotations(image_path)
 
         progress_bar.stop_progress()
@@ -1644,6 +1681,7 @@ class DeployModelDialog(QDialog):
         class_names = result.names
         top5 = result.probs.top5
         top5conf = result.probs.top5conf
+        top1conf = top5conf[0].item()
 
         # Initialize an empty dictionary to store the results
         predictions = {}
@@ -1662,15 +1700,25 @@ class DeployModelDialog(QDialog):
         if predictions:
             # Update the machine confidence
             annotation.update_machine_confidence(predictions)
+            # If the top prediction is below the threshold, label as Review
+            if top1conf < self.main_window.get_uncertainty_thresh():
+                label = self.label_window.get_label_by_id('-1')
+                annotation.update_label(label)
 
 
 class BatchInferenceDialog(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.main_window = main_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
+
         self.loaded_model = self.deploy_model_dialog.loaded_model
+
+        self.annotations = []
+        self.processed_annotations = []
+        self.image_paths = []
 
         self.setWindowTitle("Batch Inference")
         self.resize(400, 100)
@@ -1689,8 +1737,22 @@ class BatchInferenceDialog(QDialog):
         # Make the segmentation tab unclickable
         self.segmentation_tab.setEnabled(False)
 
+        # Initialize the tabs
         self.init_classification_tab()
         self.init_segmentation_tab()
+
+        # Set the threshold slider for uncertainty
+        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
+        self.uncertainty_threshold_slider.setRange(0, 100)
+        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
+        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.uncertainty_threshold_slider.setTickInterval(10)
+        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
+
+        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
+        self.layout.addWidget(QLabel("Uncertainty Threshold"))
+        self.layout.addWidget(self.uncertainty_threshold_slider)
+        self.layout.addWidget(self.uncertainty_threshold_label)
 
         # Add the "Okay" and "Cancel" buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1700,9 +1762,17 @@ class BatchInferenceDialog(QDialog):
 
         self.setLayout(self.layout)
 
+        # Connect to the shared data signal
+        self.main_window.uncertaintyChanged.connect(self.on_uncertainty_changed)
+
     def update_uncertainty_label(self):
         # Convert the slider value to a ratio (0-1)
         value = self.uncertainty_threshold_slider.value() / 100.0
+        self.main_window.update_uncertainty_thresh(value)
+
+    def on_uncertainty_changed(self, value):
+        # Update the slider and label when the shared data changes
+        self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
 
     def init_segmentation_tab(self):
@@ -1730,18 +1800,6 @@ class BatchInferenceDialog(QDialog):
         layout.addWidget(self.classification_review_checkbox)
         layout.addWidget(self.classification_all_checkbox)
 
-        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(20)  # Default value set to 0.2 (20/100)
-        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
-        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-
-        self.uncertainty_threshold_label = QLabel("0.2")  # Initial label value
-        layout.addWidget(QLabel("Uncertainty Threshold"))
-        layout.addWidget(self.uncertainty_threshold_slider)
-        layout.addWidget(self.uncertainty_threshold_label)
-
         self.classification_tab.setLayout(layout)
 
     def on_ok_clicked(self):
@@ -1761,45 +1819,45 @@ class BatchInferenceDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         try:
-            annotations = []
             # Get the Review Annotations
             if self.classification_review_checkbox.isChecked():
                 for image_path in self.image_window.image_paths:
-                    annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
+                    self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
             else:
                 # Get all the annotations
                 for image_path in self.image_window.image_paths:
-                    annotations.extend(self.annotation_window.get_image_annotations(image_path))
+                    self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
 
             # Crop them, if not already cropped
-            self.process_annotations(annotations)
+            self.preprocess_annotations()
+            self.batch_inference()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to make predictions: {str(e)}")
-            return
+        finally:
+            self.annotations = []
+            self.processed_annotations = []
+            self.image_paths = []
 
         # Resume the cursor
         QApplication.restoreOverrideCursor()
 
-    def process_annotations(self, annotations):
+    def preprocess_annotations(self):
         # Get unique image paths
-        image_paths = list(set(a.image_path for a in annotations))
-        if not image_paths:
+        self.image_paths = list(set(a.image_path for a in self.annotations))
+        if not self.image_paths:
             return
 
         progress_bar = ProgressBar(self, title=f"Cropping Annotations")
         progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
+        progress_bar.start_progress(len(self.image_paths))
 
         def crop(image_path, image_annotations):
             # Crop the image based on the annotations
             return self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
 
-        # Initialize a list to store the cropped annotations
-        processed_annotations = []
-
         # Group annotations by image path
-        groups = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+        groups = groupby(sorted(self.annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
 
         with ThreadPoolExecutor() as executor:
             future_to_image = {executor.submit(crop, path, list(group)): path for path, group in groups}
@@ -1807,7 +1865,7 @@ class BatchInferenceDialog(QDialog):
             for future in as_completed(future_to_image):
                 image_path = future_to_image[future]
                 try:
-                    processed_annotations.extend(future.result())
+                    self.processed_annotations.extend(future.result())
                 except Exception as exc:
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
@@ -1817,8 +1875,19 @@ class BatchInferenceDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
+    def batch_inference(self):
+        # Make predictions on each image's annotations
+        progress_bar = ProgressBar(self, title=f"Batch Inference")
+        progress_bar.show()
+        progress_bar.start_progress(len(self.image_paths))
+
         # Group annotations by image path
-        groups = groupby(sorted(processed_annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+        groups = groupby(sorted(self.processed_annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
         # Make predictions on each image's annotations
         for path, group in groups:
             self.deploy_model_dialog.predict(annotations=list(group))
+            progress_bar.update_progress()
+            QApplication.processEvents()
+
+        progress_bar.stop_progress()
+        progress_bar.close()

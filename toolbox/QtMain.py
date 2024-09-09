@@ -36,6 +36,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
+    uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
 
     def __init__(self):
         super().__init__()
@@ -57,6 +58,9 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
+
+        # Set the default uncertainty threshold for Deploy Model and Batch Inference
+        self._uncertainty_thresh = 0.1
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
@@ -351,6 +355,14 @@ class MainWindow(QMainWindow):
     def update_annotation_transparency(self, value):
         if self.annotation_window.selected_label:
             self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
+
+    def get_uncertainty_thresh(self):
+        return self._uncertainty_thresh
+
+    def update_uncertainty_thresh(self, value):
+        if self._uncertainty_thresh != value:
+            self._uncertainty_thresh = value
+            self.uncertaintyChanged.emit(value)
 
     def open_import_images_dialog(self):
         self.image_window.import_images()

@@ -3,15 +3,11 @@
 #   - CoralNet tools
 #   - Clean up QImage, Rasterio Image, PixMap
 #   - add tensorboard option for modeling training
-#   - deal with the sampling annotation window
 #   - file explorer for annotations to edit, delete in batches
 #   - master transparency for all annotations / classes
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
-#   - merge dataset tool
-#   - batch inference tool
-#   - dragging causes crash
-#   - speed up searching
+#   - Consider removing the visual updates when making predictions for faster inference
 
 import traceback
 from PyQt5.QtWidgets import QApplication

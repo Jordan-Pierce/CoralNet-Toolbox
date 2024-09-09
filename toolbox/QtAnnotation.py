@@ -1301,7 +1301,7 @@ class AnnotationWindow(QGraphicsView):
                     delta = current_pos - self.drag_start_pos
                     new_center = self.selected_annotation.center_xy + delta
                     # Check if the new center is within the image bounds using cursorInWindow
-                    if self.cursorInWindow(current_pos, mapped=True):
+                    if self.cursorInWindow(current_pos, mapped=True) and self.selected_annotation:
                         self.set_annotation_location(self.selected_annotation.id, new_center)
                         self.selected_annotation.create_cropped_image(self.rasterio_image)
                         self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
