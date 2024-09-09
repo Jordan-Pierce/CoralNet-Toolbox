@@ -517,8 +517,10 @@ class CreateDatasetDialog(QDialog):
         grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
 
         with ThreadPoolExecutor() as executor:
-            future_to_image = {executor.submit(process_image_annotations, image_path, list(group)): image_path
-                               for image_path, group in grouped_annotations}
+            future_to_image = {}
+            for image_path, group in grouped_annotations:
+                future = executor.submit(process_image_annotations, image_path, list(group))
+                future_to_image[future] = image_path
 
             for future in as_completed(future_to_image):
                 image_path = future_to_image[future]
@@ -1853,7 +1855,10 @@ class BatchInferenceDialog(QDialog):
         groups = groupby(sorted(self.annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
 
         with ThreadPoolExecutor() as executor:
-            future_to_image = {executor.submit(crop, path, list(group)): path for path, group in groups}
+            future_to_image = {}
+            for path, group in groups:
+                future = executor.submit(crop, path, list(group))
+                future_to_image[future] = path
 
             for future in as_completed(future_to_image):
                 image_path = future_to_image[future]

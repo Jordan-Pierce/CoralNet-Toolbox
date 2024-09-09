@@ -327,10 +327,24 @@ class ImageWindow(QWidget):
 
         # Use a ThreadPoolExecutor to filter images in parallel
         with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(self.filter_image, path, search_text, has_annotations, needs_review, no_annotations) for path in self.image_paths]
+            futures = []
+            for path in self.image_paths:
+                future = executor.submit(
+                    self.filter_image,
+                    path,
+                    search_text,
+                    has_annotations,
+                    needs_review,
+                    no_annotations
+                )
+                futures.append(future)
+
             for future in as_completed(futures):
                 if future.result():
                     self.filtered_image_paths.append(future.result())
+
+        # Sort the filtered image paths
+        self.filtered_image_paths.sort()
 
         self.update_table_widget()
 
