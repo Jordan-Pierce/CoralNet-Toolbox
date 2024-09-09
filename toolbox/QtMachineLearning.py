@@ -268,14 +268,10 @@ class CreateDatasetDialog(QDialog):
         self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
 
     def check_label_distribution(self):
-        # Check if the train ratio is greater than 0
+        # Get the ratios from the spinboxes
         train_ratio = self.train_ratio_spinbox.value()
         val_ratio = self.val_ratio_spinbox.value()
         test_ratio = self.test_ratio_spinbox.value()
-
-        # Ensure there is at least one train set
-        if train_ratio == 0:
-            return False
 
         # Initialize dictionaries to store label counts for each split
         train_label_counts = {}
@@ -304,12 +300,6 @@ class CreateDatasetDialog(QDialog):
             if test_ratio > 0 and (label not in test_label_counts or test_label_counts[label] == 0):
                 return False
 
-        # Check if there are any labels in splits with a ratio of 0
-        if val_ratio == 0 and len(val_label_counts) > 0:
-            return False
-        if test_ratio == 0 and len(test_label_counts) > 0:
-            return False
-
         # Additional checks to ensure no empty splits
         if train_ratio > 0 and len(self.train_annotations) == 0:
             return False
@@ -318,8 +308,14 @@ class CreateDatasetDialog(QDialog):
         if test_ratio > 0 and len(self.test_annotations) == 0:
             return False
 
-        # Allow creation of dataset if train ratio is 1 and valid and test ratios are 0
-        if train_ratio == 1 and val_ratio == 0 and test_ratio == 0:
+        # Allow creation of dataset if
+        if train_ratio >= 0 and val_ratio >= 0 and test_ratio >= 0:
+            return True
+
+        if train_ratio >= 0 and val_ratio >= 0 and test_ratio == 0:
+            return True
+
+        if train_ratio == 0 and val_ratio == 0 and test_ratio == 1:
             return True
 
         return True
@@ -385,11 +381,6 @@ class CreateDatasetDialog(QDialog):
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
 
         self.updating_summary_statistics = False
-
-    def set_cell_color(self, row, column, color):
-        item = self.label_counts_table.item(row, column)
-        if item is not None:
-            item.setBackground(color)
 
     def get_class_mapping(self):
         # Get the label objects for the selected labels

@@ -8,7 +8,8 @@
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
 #   - add evaluation function
-#   - auto focus to selected annotation when zoomed
+#   - still need to make search filter faster / use multithread?
+#   - allow train / valid or train / valid / test/ or test
 
 import traceback
 from PyQt5.QtWidgets import QApplication

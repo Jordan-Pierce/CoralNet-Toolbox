@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import rasterio
 
@@ -324,22 +325,12 @@ class ImageWindow(QWidget):
 
         self.filtered_image_paths = []
 
-        for path in self.image_paths:
-            filename = os.path.basename(path).lower()
-            annotations = self.annotation_window.get_image_annotations(path)
-            review_annotations = self.annotation_window.get_image_review_annotations(path)
-
-            if search_text and search_text not in filename:
-                continue
-
-            if has_annotations and not annotations:
-                continue
-            if needs_review and not review_annotations:
-                continue
-            if no_annotations and annotations:
-                continue
-
-            self.filtered_image_paths.append(path)
+        # Use a ThreadPoolExecutor to filter images in parallel
+        with ThreadPoolExecutor() as executor:
+            futures = [executor.submit(self.filter_image, path, search_text, has_annotations, needs_review, no_annotations) for path in self.image_paths]
+            for future in as_completed(futures):
+                if future.result():
+                    self.filtered_image_paths.append(future.result())
 
         self.update_table_widget()
 
@@ -352,6 +343,23 @@ class ImageWindow(QWidget):
 
         self.update_current_image_index_label()
         self.update_image_count_label()
+
+    def filter_image(self, path, search_text, has_annotations, needs_review, no_annotations):
+        filename = os.path.basename(path).lower()
+        annotations = self.annotation_window.get_image_annotations(path)
+        review_annotations = self.annotation_window.get_image_review_annotations(path)
+
+        if search_text and search_text not in filename:
+            return None
+
+        if has_annotations and not annotations:
+            return None
+        if needs_review and not review_annotations:
+            return None
+        if no_annotations and annotations:
+            return None
+
+        return path
 
     def load_first_filtered_image(self):
         if self.filtered_image_paths:
