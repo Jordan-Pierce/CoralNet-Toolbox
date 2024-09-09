@@ -1212,6 +1212,9 @@ class AnnotationWindow(QGraphicsView):
 
     def set_image(self, image_path):
 
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         # Clean up
         self.clear_scene()
 
@@ -1236,6 +1239,9 @@ class AnnotationWindow(QGraphicsView):
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
 
     def wheelEvent(self, event: QMouseEvent):
         if event.angleDelta().y() > 0:

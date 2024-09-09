@@ -1611,10 +1611,10 @@ class DeployModelDialog(QDialog):
         if self.loaded_model is None:
             return
 
+        # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+        # Get the selected annotation
         selected_annotation = self.annotation_window.selected_annotation
-
         if selected_annotation and not annotations:
             # Make predictions on a single, specific annotation
             self.predict_annotation(selected_annotation)
@@ -1628,6 +1628,7 @@ class DeployModelDialog(QDialog):
             # Make predictions on the annotations
             self.preprocess_annotations(annotations)
 
+        # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
 
         # Clear cache
