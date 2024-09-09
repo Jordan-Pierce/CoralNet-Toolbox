@@ -1652,10 +1652,11 @@ class DeployModelDialog(QDialog):
         for annotation, result in zip(annotations, results):
             # Process the results
             self.process_prediction_result(annotation, result)
-            # Show in the confidence window
-            # self.main_window.confidence_window.display_cropped_image(annotation)  # TODO Consider removing
             progress_bar.update_progress()
             QApplication.processEvents()
+
+        # Show the last annotation in the confidence window (aesthetic)
+        self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Group annotations by image path
         image_paths = list(set([annotation.image_path for annotation in annotations]))

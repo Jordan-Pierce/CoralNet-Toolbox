@@ -7,7 +7,7 @@
 #   - master transparency for all annotations / classes
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
-#   - Consider removing the visual updates when making predictions for faster inference
+#   - add evaluation function
 
 import traceback
 from PyQt5.QtWidgets import QApplication
