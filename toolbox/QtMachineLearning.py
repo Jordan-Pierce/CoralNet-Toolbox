@@ -1755,7 +1755,6 @@ class OptimizeModelDialog(QDialog):
             QMessageBox.information(self, "Model Export Status", message)
 
         except Exception as e:
-
             # Display an error message box to the user
             error_message = f"An error occurred when converting model: {e}"
             QMessageBox.critical(self, "Error", error_message)
