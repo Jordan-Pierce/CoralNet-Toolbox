@@ -784,9 +784,6 @@ class TrainModelWorker(QThread):
 
     def run(self):
         try:
-            # Clear cache from previous runs
-            self._cleanup()
-
             # Emit signal to indicate training has started
             self.training_started.emit()
 
@@ -814,22 +811,28 @@ class TrainModelWorker(QThread):
 
     def _evaluate_model(self):
         try:
-            results = self.target_model.val(
-                name=f"{self.params['name']}/test",
-                data=self.params['data'],
-                batch=self.params['batch'],
-                imgsz=self.params['imgsz'],
-                split='test',
-                plots=True
-            )
+            # Create an instance of EvaluateModelWorker and start it
+            eval_params = {
+                'data': self.params['data'],
+                'split': 'test',  # Evaluate on the test set only
+                'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
+            }
+            # Create and start the worker thread
+            eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params)
+            eval_worker.evaluation_error.connect(self.on_evaluation_error)
+            eval_worker.start()
+        except Exception as e:
+            self.training_error.emit(str(e))
 
-            # Output metrics as json
-            save_dir = Path(self.params['project']) / self.params['name'] / 'test'
-            # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix)
-            metrics.save_metrics_to_json(save_dir)
-        except:
-            pass
+    def on_evaluation_started(self):
+        pass
+
+    def on_evaluation_completed(self):
+        pass
+
+    def on_evaluation_error(self, error_message):
+        # Handle any errors that occur during evaluation
+        self.training_error.emit(error_message)
 
     def _cleanup(self):
         del self.target_model
@@ -1410,8 +1413,7 @@ class ConfusionMatrixMetrics:
             directory (str): The directory where the JSON file will be saved.
             filename (str): The name of the JSON file. Default is "metrics.json".
         """
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+        os.makedirs(directory, exist_ok=True)
 
         metrics_all = self.get_metrics_all()
         metrics_per_class = self.get_metrics_per_class()
@@ -1431,28 +1433,22 @@ class EvaluateModelWorker(QThread):
     evaluation_completed = pyqtSignal()
     evaluation_error = pyqtSignal(str)
 
-    def __init__(self, params):
+    def __init__(self, model, params):
         super().__init__()
+        self.model = model
         self.params = params
-        self.target_model = None
 
     def run(self):
         try:
-            # Clear cache from previous runs
-            self._cleanup()
-
-            # Emit signal to indicate training has started
+            # Emit signal to indicate evaluation has started
             self.evaluation_started.emit()
 
-            # Load the model
-            self.target_model = YOLO(self.params['model'])
-
             # Modify the save directory
-            save_dir = Path(self.params['save_dir']) / self.params['name']
+            save_dir = self.params['save_dir']
             validator.get_save_dir = lambda x: save_dir
 
             # Evaluate the model
-            results = self.target_model.val(
+            results = self.model.val(
                 data=self.params['data'],
                 split=self.params['split'],
                 save_json=True,
@@ -1463,18 +1459,11 @@ class EvaluateModelWorker(QThread):
             metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix)
             metrics.save_metrics_to_json(save_dir)
 
-            # Emit signal to indicate training has completed
+            # Emit signal to indicate evaluation has completed
             self.evaluation_completed.emit()
 
         except Exception as e:
             self.evaluation_error.emit(str(e))
-        finally:
-            self._cleanup()
-
-    def _cleanup(self):
-        del self.target_model
-        gc.collect()
-        empty_cache()
 
 
 class EvaluateModelDialog(QDialog):
@@ -1591,24 +1580,23 @@ class EvaluateModelDialog(QDialog):
     def get_evaluation_parameters(self):
         # Extract values from dialog widgets
         params = {
+            'name': self.name_edit.text(),
             'model': self.model_edit.text(),
             'data': self.dataset_dir_edit.text(),
             'split': self.split_combo.currentText(),
-            'save_dir': self.save_dir_edit.text(),
-            'name': self.name_edit.text(),
             'verbose': True,
             'exist_ok': True,
             'plots': True,
         }
 
-        # Default project folder
-        # project = 'Data/Evaluation'
-        # params['project'] = params['project'] if params['project'] else project
-
         # Default project name
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
+
+        save_dir = self.save_dir_edit.text()
+        save_dir = Path(save_dir) / params['name']
+        params['save_dir'] = save_dir
 
         # Return the dictionary of parameters
         return params
@@ -1617,12 +1605,20 @@ class EvaluateModelDialog(QDialog):
         # Get evaluation parameters
         self.params = self.get_evaluation_parameters()
 
-        # Create and start the worker thread
-        self.worker = EvaluateModelWorker(self.params)
-        self.worker.evaluation_started.connect(self.on_evaluation_started)
-        self.worker.evaluation_completed.connect(self.on_evaluation_completed)
-        self.worker.evaluation_error.connect(self.on_evaluation_error)
-        self.worker.start()
+        try:
+            # Initialize the model, evaluate, and save the results
+            self.target_model = YOLO(self.params['model'])
+
+            # Create and start the worker thread
+            self.worker = EvaluateModelWorker(self.target_model, self.params)
+            self.worker.evaluation_started.connect(self.on_evaluation_started)
+            self.worker.evaluation_completed.connect(self.on_evaluation_completed)
+            self.worker.evaluation_error.connect(self.on_evaluation_error)
+            self.worker.start()
+        except Exception as e:
+            error_message = f"An error occurred when evaluating model: {e}"
+            QMessageBox.critical(self, "Error", error_message)
+            print(error_message)
 
     def on_evaluation_started(self):
         message = "Model evaluation has commenced.\nMonitor the console for real-time progress."
