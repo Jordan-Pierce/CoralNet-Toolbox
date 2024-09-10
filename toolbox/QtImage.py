@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import rasterio
 
@@ -117,9 +118,13 @@ class ImageWindow(QWidget):
                                                      "",
                                                      "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
         if file_names:
+            # Set the cursor to waiting (busy) cursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
             progress_bar = ProgressBar(self, title="Importing Images")
             progress_bar.show()
             progress_bar.start_progress(len(file_names))
+            progress_bar.set_value(1)
 
             for i, file_name in enumerate(file_names):
                 if file_name not in set(self.image_paths):
@@ -134,6 +139,9 @@ class ImageWindow(QWidget):
             self.filter_images()
             # Show the last image
             self.load_image_by_path(self.image_paths[-1])
+
+            # Restore the cursor to the default cursor
+            QApplication.restoreOverrideCursor()
 
             QMessageBox.information(self,
                                     "Image(s) Imported",
@@ -317,22 +325,26 @@ class ImageWindow(QWidget):
 
         self.filtered_image_paths = []
 
-        for path in self.image_paths:
-            filename = os.path.basename(path).lower()
-            annotations = self.annotation_window.get_image_annotations(path)
-            review_annotations = self.annotation_window.get_image_review_annotations(path)
+        # Use a ThreadPoolExecutor to filter images in parallel
+        with ThreadPoolExecutor() as executor:
+            futures = []
+            for path in self.image_paths:
+                future = executor.submit(
+                    self.filter_image,
+                    path,
+                    search_text,
+                    has_annotations,
+                    needs_review,
+                    no_annotations
+                )
+                futures.append(future)
 
-            if search_text and search_text not in filename:
-                continue
+            for future in as_completed(futures):
+                if future.result():
+                    self.filtered_image_paths.append(future.result())
 
-            if has_annotations and not annotations:
-                continue
-            if needs_review and not review_annotations:
-                continue
-            if no_annotations and annotations:
-                continue
-
-            self.filtered_image_paths.append(path)
+        # Sort the filtered image paths
+        self.filtered_image_paths.sort()
 
         self.update_table_widget()
 
@@ -345,6 +357,23 @@ class ImageWindow(QWidget):
 
         self.update_current_image_index_label()
         self.update_image_count_label()
+
+    def filter_image(self, path, search_text, has_annotations, needs_review, no_annotations):
+        filename = os.path.basename(path).lower()
+        annotations = self.annotation_window.get_image_annotations(path)
+        review_annotations = self.annotation_window.get_image_review_annotations(path)
+
+        if search_text and search_text not in filename:
+            return None
+
+        if has_annotations and not annotations:
+            return None
+        if needs_review and not review_annotations:
+            return None
+        if no_annotations and annotations:
+            return None
+
+        return path
 
     def load_first_filtered_image(self):
         if self.filtered_image_paths:

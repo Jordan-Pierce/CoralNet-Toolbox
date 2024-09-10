@@ -130,9 +130,10 @@ class ConfidenceWindow(QWidget):
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 self.create_bar_chart()
-                # Load the current image
-                image_path = annotation.image_path
-                self.main_window.image_window.load_image_by_path(image_path)
+
+                # Load the current image TODO Consider removing
+                # image_path = annotation.image_path
+                # self.main_window.image_window.load_image_by_path(image_path)
         except:
             # Cropped image is None or some other error occurred
             pass

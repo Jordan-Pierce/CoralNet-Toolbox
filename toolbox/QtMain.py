@@ -9,6 +9,7 @@ from toolbox.QtConfidence import ConfidenceWindow
 from toolbox.QtMachineLearning import CreateDatasetDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import TrainModelDialog
+from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import DeployModelDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
@@ -19,7 +20,7 @@ from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.utilities import get_icon_path
 
 from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider, QDoubleSpinBox)
 
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
@@ -36,6 +37,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
+    uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
 
     def __init__(self):
         super().__init__()
@@ -58,9 +60,13 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
+        # Set the default uncertainty threshold for Deploy Model and Batch Inference
+        self.uncertainty_thresh = 0.1
+
         self.create_dataset_dialog = CreateDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
         self.train_model_dialog = TrainModelDialog(self)
+        self.evaluate_model_dialog = EvaluateModelDialog(self)
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
@@ -172,6 +178,10 @@ class MainWindow(QMainWindow):
         self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
         self.ml_menu.addAction(self.ml_train_model_action)
 
+        self.ml_evaluate_model_action = QAction("Evaluate Model", self)
+        self.ml_evaluate_model_action.triggered.connect(self.open_evaluate_model_dialog)
+        self.ml_menu.addAction(self.ml_evaluate_model_action)
+
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
@@ -254,10 +264,17 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
 
+        # Spin box for Uncertainty threshold control
+        self.uncertainty_thresh_spinbox = QDoubleSpinBox()
+        self.uncertainty_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
+        self.uncertainty_thresh_spinbox.setSingleStep(0.01)  # Step size for the spinbox
+        self.uncertainty_thresh_spinbox.setValue(self.uncertainty_thresh)
+        self.uncertainty_thresh_spinbox.valueChanged.connect(self.update_uncertainty_thresh)
+
         # Spin box for annotation size control
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(1000)  # Adjust as needed
+        self.annotation_size_spinbox.setMaximum(1000)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
@@ -269,6 +286,8 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
         self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("Uncertainty Threshold:"))
+        self.status_bar_layout.addWidget(self.uncertainty_thresh_spinbox)
         self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
         self.status_bar_layout.addWidget(self.annotation_size_spinbox)
 
@@ -352,6 +371,15 @@ class MainWindow(QMainWindow):
         if self.annotation_window.selected_label:
             self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
 
+    def get_uncertainty_thresh(self):
+        return self.uncertainty_thresh
+
+    def update_uncertainty_thresh(self, value):
+        if self.uncertainty_thresh != value:
+            self.uncertainty_thresh = value
+            self.uncertainty_thresh_spinbox.setValue(value)
+            self.uncertaintyChanged.emit(value)
+
     def open_import_images_dialog(self):
         self.image_window.import_images()
 
@@ -402,6 +430,12 @@ class MainWindow(QMainWindow):
     def open_train_model_dialog(self):
         try:
             self.train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_evaluate_model_dialog(self):
+        try:
+            self.evaluate_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
