@@ -20,7 +20,7 @@ from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.utilities import get_icon_path
 
 from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider, QDoubleSpinBox)
 
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
@@ -264,10 +264,17 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
 
+        # Spin box for Uncertainty threshold control
+        self.uncertainty_thresh_spinbox = QDoubleSpinBox()
+        self.uncertainty_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
+        self.uncertainty_thresh_spinbox.setSingleStep(0.01)  # Step size for the spinbox
+        self.uncertainty_thresh_spinbox.setValue(self.uncertainty_thresh)
+        self.uncertainty_thresh_spinbox.valueChanged.connect(self.update_uncertainty_thresh)
+
         # Spin box for annotation size control
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(1000)  # Adjust as needed
+        self.annotation_size_spinbox.setMaximum(1000)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
@@ -279,6 +286,8 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
         self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("Uncertainty Threshold:"))
+        self.status_bar_layout.addWidget(self.uncertainty_thresh_spinbox)
         self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
         self.status_bar_layout.addWidget(self.annotation_size_spinbox)
 
@@ -368,6 +377,7 @@ class MainWindow(QMainWindow):
     def update_uncertainty_thresh(self, value):
         if self.uncertainty_thresh != value:
             self.uncertainty_thresh = value
+            self.uncertainty_thresh_spinbox.setValue(value)
             self.uncertaintyChanged.emit(value)
 
     def open_import_images_dialog(self):
