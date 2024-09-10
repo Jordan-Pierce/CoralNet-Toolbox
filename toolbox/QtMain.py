@@ -9,6 +9,7 @@ from toolbox.QtConfidence import ConfidenceWindow
 from toolbox.QtMachineLearning import CreateDatasetDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import TrainModelDialog
+from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import DeployModelDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
@@ -60,11 +61,12 @@ class MainWindow(QMainWindow):
         self.confidence_window = ConfidenceWindow(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
-        self._uncertainty_thresh = 0.1
+        self.uncertainty_thresh = 0.1
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
         self.train_model_dialog = TrainModelDialog(self)
+        self.evaluate_model_dialog = EvaluateModelDialog(self)
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
@@ -175,6 +177,10 @@ class MainWindow(QMainWindow):
         self.ml_train_model_action = QAction("Train Model", self)
         self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
         self.ml_menu.addAction(self.ml_train_model_action)
+
+        self.ml_evaluate_model_action = QAction("Evaluate Model", self)
+        self.ml_evaluate_model_action.triggered.connect(self.open_evaluate_model_dialog)
+        self.ml_menu.addAction(self.ml_evaluate_model_action)
 
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
@@ -357,11 +363,11 @@ class MainWindow(QMainWindow):
             self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
 
     def get_uncertainty_thresh(self):
-        return self._uncertainty_thresh
+        return self.uncertainty_thresh
 
     def update_uncertainty_thresh(self, value):
-        if self._uncertainty_thresh != value:
-            self._uncertainty_thresh = value
+        if self.uncertainty_thresh != value:
+            self.uncertainty_thresh = value
             self.uncertaintyChanged.emit(value)
 
     def open_import_images_dialog(self):
@@ -414,6 +420,12 @@ class MainWindow(QMainWindow):
     def open_train_model_dialog(self):
         try:
             self.train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_evaluate_model_dialog(self):
+        try:
+            self.evaluate_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

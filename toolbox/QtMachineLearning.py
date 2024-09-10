@@ -2,8 +2,9 @@ import os
 import gc
 import json
 import random
-import datetime
 import shutil
+import datetime
+from pathlib import Path
 from itertools import groupby
 from operator import attrgetter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,8 +12,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 
 from ultralytics import YOLO
+import ultralytics.engine.validator as validator
 from ultralytics.data.dataset import ClassificationDataset
-import ultralytics.models.yolo.classify.train as build
+import ultralytics.models.yolo.classify.train as train_build
 
 from torch.cuda import empty_cache
 
@@ -794,7 +796,7 @@ class TrainModelWorker(QThread):
 
             if weighted:
                 # Use the custom dataset class for weighted sampling
-                build.ClassificationDataset = WeightedClassificationDataset
+                train_build.ClassificationDataset = WeightedClassificationDataset
 
             # Load the model, train, and save the best weights
             self.target_model = YOLO(model_path)
@@ -812,14 +814,20 @@ class TrainModelWorker(QThread):
 
     def _evaluate_model(self):
         try:
-            self.target_model.val(
-                name=f"{self.params['name']}/eval",
+            results = self.target_model.val(
+                name=f"{self.params['name']}/test",
                 data=self.params['data'],
                 batch=self.params['batch'],
                 imgsz=self.params['imgsz'],
                 split='test',
                 plots=True
             )
+
+            # Output metrics as json
+            save_dir = Path(self.params['project']) / self.params['name'] / 'test'
+            # Output confusion matrix metrics as json
+            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix)
+            metrics.save_metrics_to_json(save_dir)
         except:
             pass
 
@@ -1087,7 +1095,6 @@ class TrainModelDialog(QDialog):
         self.dataset_dir_edit = QLineEdit()
         self.dataset_dir_button = QPushButton("Browse...")
         self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
-
         dataset_dir_layout = QHBoxLayout()
         dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
         dataset_dir_layout.addWidget(self.dataset_dir_edit)
@@ -1098,7 +1105,6 @@ class TrainModelDialog(QDialog):
         self.class_mapping_edit = QLineEdit()
         self.class_mapping_button = QPushButton("Browse...")
         self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
-
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(QLabel("Class Mapping:"))
         class_mapping_layout.addWidget(self.class_mapping_edit)
@@ -1125,7 +1131,6 @@ class TrainModelDialog(QDialog):
         self.dataset_yaml_edit = QLineEdit()
         self.dataset_yaml_button = QPushButton("Browse...")
         self.dataset_yaml_button.clicked.connect(self.browse_dataset_yaml)
-
         dataset_yaml_layout = QHBoxLayout()
         dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
         dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
@@ -1234,6 +1239,400 @@ class TrainModelDialog(QDialog):
         QMessageBox.information(self, "Model Training Status", message)
 
     def on_training_error(self, error_message):
+        QMessageBox.critical(self, "Error", error_message)
+        print(error_message)
+
+
+class ConfusionMatrixMetrics:
+    """
+    A class for calculating TP, FP, TN, FN, precision, recall, accuracy,
+    and per-class accuracy from a confusion matrix.
+
+    Attributes:
+        matrix (np.ndarray): The confusion matrix.
+        num_classes (int): The number of classes.
+    """
+
+    def __init__(self, matrix):
+        """
+        Initialize the ConfusionMatrixMetrics with a given confusion matrix.
+
+        Args:
+            matrix (np.ndarray): The confusion matrix.
+        """
+        self.matrix = matrix
+        self.num_classes = matrix.shape[0]
+
+    def calculate_tp(self):
+        """
+        Calculate true positives for each class.
+
+        Returns:
+            np.ndarray: An array of true positives for each class.
+        """
+        return np.diagonal(self.matrix)
+
+    def calculate_fp(self):
+        """
+        Calculate false positives for each class.
+
+        Returns:
+            np.ndarray: An array of false positives for each class.
+        """
+        return self.matrix.sum(axis=0) - np.diagonal(self.matrix)
+
+    def calculate_fn(self):
+        """
+        Calculate false negatives for each class.
+
+        Returns:
+            np.ndarray: An array of false negatives for each class.
+        """
+        return self.matrix.sum(axis=1) - np.diagonal(self.matrix)
+
+    def calculate_tn(self):
+        """
+        Calculate true negatives for each class.
+
+        Returns:
+            np.ndarray: An array of true negatives for each class.
+        """
+        total = self.matrix.sum()
+        tp = self.calculate_tp()
+        fp = self.calculate_fp()
+        fn = self.calculate_fn()
+        return total - (tp + fp + fn)
+
+    def calculate_precision(self):
+        """
+        Calculate precision for each class.
+
+        Returns:
+            np.ndarray: An array of precision values for each class.
+        """
+        tp = self.calculate_tp()
+        fp = self.calculate_fp()
+        return tp / (tp + fp + 1e-16)  # avoid division by zero
+
+    def calculate_recall(self):
+        """
+        Calculate recall for each class.
+
+        Returns:
+            np.ndarray: An array of recall values for each class.
+        """
+        tp = self.calculate_tp()
+        fn = self.calculate_fn()
+        return tp / (tp + fn + 1e-16)  # avoid division by zero
+
+    def calculate_accuracy(self):
+        """
+        Calculate accuracy for all classes combined.
+
+        Returns:
+            float: The accuracy value.
+        """
+        tp = self.calculate_tp().sum()
+        total = self.matrix.sum()
+        return tp / total
+
+    def calculate_per_class_accuracy(self):
+        """
+        Calculate per-class accuracy.
+
+        Returns:
+            np.ndarray: An array of accuracy values for each class.
+        """
+        tp = self.calculate_tp()
+        total_per_class = self.matrix.sum(axis=1)
+        return tp / (total_per_class + 1e-16)  # avoid division by zero
+
+    def get_metrics_all(self):
+        """
+        Get all metrics (TP, FP, TN, FN, precision, recall, accuracy) for all classes combined.
+
+        Returns:
+            dict: A dictionary containing all calculated metrics for all classes combined.
+        """
+        tp = self.calculate_tp().sum()
+        fp = self.calculate_fp().sum()
+        tn = self.calculate_tn().sum()
+        fn = self.calculate_fn().sum()
+        precision = tp / (tp + fp + 1e-16)  # avoid division by zero
+        recall = tp / (tp + fn + 1e-16)  # avoid division by zero
+        accuracy = self.calculate_accuracy()
+
+        return {
+            'TP': tp,
+            'FP': fp,
+            'TN': tn,
+            'FN': fn,
+            'Precision': precision,
+            'Recall': recall,
+            'Accuracy': accuracy
+        }
+
+    def get_metrics_per_class(self):
+        """
+        Get all metrics (TP, FP, TN, FN, precision, recall, accuracy)
+        per class in a dictionary.
+
+        Returns:
+            dict: A dictionary containing all calculated metrics per class.
+        """
+        tp = self.calculate_tp()
+        fp = self.calculate_fp()
+        tn = self.calculate_tn()
+        fn = self.calculate_fn()
+        precision = self.calculate_precision()
+        recall = self.calculate_recall()
+        accuracy = self.calculate_per_class_accuracy()
+
+        metrics_per_class = {}
+        for i in range(self.num_classes):
+            metrics_per_class[f'Class {i}'] = {
+                'TP': tp[i],
+                'FP': fp[i],
+                'TN': tn[i],
+                'FN': fn[i],
+                'Precision': precision[i],
+                'Recall': recall[i],
+                'Accuracy': accuracy[i]
+            }
+
+        return metrics_per_class
+
+    def save_metrics_to_json(self, directory, filename="metrics.json"):
+        """
+        Save the metrics to a JSON file.
+
+        Args:
+            directory (str): The directory where the JSON file will be saved.
+            filename (str): The name of the JSON file. Default is "metrics.json".
+        """
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        metrics_all = self.get_metrics_all()
+        metrics_per_class = self.get_metrics_per_class()
+
+        results = {
+            'All Classes': metrics_all,
+            'Per Class': metrics_per_class
+        }
+
+        file_path = os.path.join(directory, filename)
+        with open(file_path, 'w') as f:
+            json.dump(results, f, indent=4)
+
+
+class EvaluateModelWorker(QThread):
+    evaluation_started = pyqtSignal()
+    evaluation_completed = pyqtSignal()
+    evaluation_error = pyqtSignal(str)
+
+    def __init__(self, params):
+        super().__init__()
+        self.params = params
+        self.target_model = None
+
+    def run(self):
+        try:
+            # Clear cache from previous runs
+            self._cleanup()
+
+            # Emit signal to indicate training has started
+            self.evaluation_started.emit()
+
+            # Load the model
+            self.target_model = YOLO(self.params['model'])
+
+            # Modify the save directory
+            save_dir = Path(self.params['save_dir']) / self.params['name']
+            validator.get_save_dir = lambda x: save_dir
+
+            # Evaluate the model
+            results = self.target_model.val(
+                data=self.params['data'],
+                split=self.params['split'],
+                save_json=True,
+                plots=True
+            )
+
+            # Output confusion matrix metrics as json
+            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix)
+            metrics.save_metrics_to_json(save_dir)
+
+            # Emit signal to indicate training has completed
+            self.evaluation_completed.emit()
+
+        except Exception as e:
+            self.evaluation_error.emit(str(e))
+        finally:
+            self._cleanup()
+
+    def _cleanup(self):
+        del self.target_model
+        gc.collect()
+        empty_cache()
+
+
+class EvaluateModelDialog(QDialog):
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+
+        # For holding parameters
+        self.params = {}
+
+        self.setWindowTitle("Evaluate Model")
+
+        # Set window settings
+        self.setWindowFlags(Qt.Window |
+                            Qt.WindowCloseButtonHint |
+                            Qt.WindowMinimizeButtonHint |
+                            Qt.WindowMaximizeButtonHint |
+                            Qt.WindowTitleHint)
+
+        self.resize(400, 200)
+
+        # Main layout
+        self.main_layout = QVBoxLayout()
+
+        # Create and set up the tabs, parameters form, and console output
+        self.setup_ui()
+
+        # Set the main layout as the layout of the dialog
+        self.setLayout(self.main_layout)
+
+    def setup_ui(self):
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Details on different evaluation settings can be found "
+                            "<a href='https://docs.ultralytics.com/modes/val/#arguments-for-yolo-model-validation"
+                            "'>here</a>.")
+
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        self.main_layout.addWidget(info_label)
+
+        # Parameters Form
+        self.form_layout = QFormLayout()
+
+        # Existing Model
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        self.form_layout.addRow("Existing Model:", model_layout)
+
+        # Dataset Directory
+        self.dataset_dir_edit = QLineEdit()
+        self.dataset_dir_button = QPushButton("Browse...")
+        self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
+        dataset_dir_layout = QHBoxLayout()
+        dataset_dir_layout.addWidget(self.dataset_dir_edit)
+        dataset_dir_layout.addWidget(self.dataset_dir_button)
+        self.form_layout.addRow("Dataset Directory:", dataset_dir_layout)
+
+        # Split
+        self.split_combo = QComboBox()
+        self.split_combo.addItems(["train", "val", "test"])
+        self.split_combo.setCurrentText("test")
+        self.form_layout.addRow("Split:", self.split_combo)
+
+        # Save Directory
+        self.save_dir_edit = QLineEdit()
+        self.save_dir_button = QPushButton("Browse...")
+        self.save_dir_button.clicked.connect(self.browse_save_dir)
+        save_dir_layout = QHBoxLayout()
+        save_dir_layout.addWidget(self.save_dir_edit)
+        save_dir_layout.addWidget(self.save_dir_button)
+        self.form_layout.addRow("Save Directory:", save_dir_layout)
+
+        # Name
+        self.name_edit = QLineEdit()
+        self.form_layout.addRow("Name:", self.name_edit)
+
+        self.main_layout.addLayout(self.form_layout)
+
+        # Add OK and Cancel buttons
+        self.buttons = QPushButton("OK")
+        self.buttons.clicked.connect(self.accept)
+        self.main_layout.addWidget(self.buttons)
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        self.main_layout.addWidget(self.cancel_button)
+
+    def browse_dataset_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
+        if dir_path:
+            self.dataset_dir_edit.setText(dir_path)
+
+    def browse_save_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
+        if dir_path:
+            self.save_dir_edit.setText(dir_path)
+
+    def browse_model_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
+        if file_path:
+            self.model_edit.setText(file_path)
+
+    def accept(self):
+        if not self.model_edit.text():
+            QMessageBox.critical(self, "Error", "Existing Model field cannot be empty.")
+            return
+        self.evaluate_model()
+        super().accept()
+
+    def get_evaluation_parameters(self):
+        # Extract values from dialog widgets
+        params = {
+            'model': self.model_edit.text(),
+            'data': self.dataset_dir_edit.text(),
+            'split': self.split_combo.currentText(),
+            'save_dir': self.save_dir_edit.text(),
+            'name': self.name_edit.text(),
+            'verbose': True,
+            'exist_ok': True,
+            'plots': True,
+        }
+
+        # Default project folder
+        # project = 'Data/Evaluation'
+        # params['project'] = params['project'] if params['project'] else project
+
+        # Default project name
+        now = datetime.datetime.now()
+        now = now.strftime("%Y-%m-%d_%H-%M-%S")
+        params['name'] = params['name'] if params['name'] else now
+
+        # Return the dictionary of parameters
+        return params
+
+    def evaluate_model(self):
+        # Get evaluation parameters
+        self.params = self.get_evaluation_parameters()
+
+        # Create and start the worker thread
+        self.worker = EvaluateModelWorker(self.params)
+        self.worker.evaluation_started.connect(self.on_evaluation_started)
+        self.worker.evaluation_completed.connect(self.on_evaluation_completed)
+        self.worker.evaluation_error.connect(self.on_evaluation_error)
+        self.worker.start()
+
+    def on_evaluation_started(self):
+        message = "Model evaluation has commenced.\nMonitor the console for real-time progress."
+        QMessageBox.information(self, "Model Evaluation Status", message)
+
+    def on_evaluation_completed(self):
+        message = "Model evaluation has successfully been completed."
+        QMessageBox.information(self, "Model Evaluation Status", message)
+
+    def on_evaluation_error(self, error_message):
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
 

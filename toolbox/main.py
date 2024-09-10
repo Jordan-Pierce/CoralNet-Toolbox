@@ -7,9 +7,6 @@
 #   - master transparency for all annotations / classes
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
-#   - add evaluation function
-#   - still need to make search filter faster / use multithread?
-#   - allow train / valid or train / valid / test/ or test
 
 import traceback
 from PyQt5.QtWidgets import QApplication
