@@ -468,6 +468,15 @@ class CreateDatasetDialog(QDialog):
         # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
+        # Create a blank sample in train folder it's a test-only dataset
+        # Ultralytics bug... it doesn't like empty directories (hacky)
+        if not sum([train_ratio, val_ratio]):
+            for label in self.selected_labels:
+                label_folder = os.path.join(train_dir, label)
+                os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
+                with open(os.path.join(label_folder, 'NULL.jpg'), 'w') as f:
+                    f.write("")
+
         self.process_annotations(self.train_annotations, train_dir, "Training")
         self.process_annotations(self.val_annotations, val_dir, "Validation")
         self.process_annotations(self.test_annotations, test_dir, "Testing")
@@ -820,7 +829,7 @@ class TrainModelWorker(QThread):
             # Create and start the worker thread
             eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params)
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
-            eval_worker.start()
+            eval_worker.run()  # Run the evaluation synchronously (same thread)
         except Exception as e:
             self.training_error.emit(str(e))
 
@@ -1615,6 +1624,11 @@ class EvaluateModelDialog(QDialog):
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
             self.worker.evaluation_error.connect(self.on_evaluation_error)
             self.worker.start()
+
+            # Empty cache
+            del self.target_model
+            gc.collect()
+            empty_cache()
         except Exception as e:
             error_message = f"An error occurred when evaluating model: {e}"
             QMessageBox.critical(self, "Error", error_message)

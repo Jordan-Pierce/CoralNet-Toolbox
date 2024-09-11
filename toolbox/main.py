@@ -7,6 +7,11 @@
 #   - master transparency for all annotations / classes
 #   - restart training from yaml file
 #   - add importing of coralnet predictions / output
+#   - exporting image names for creating dataset
+#   - filter images when creating dataset?
+#   - delete all annotations in image context menu
+#   - QThread error QThread: Destroyed while thread is still running
+#   - Look into multiGPU
 
 import traceback
 from PyQt5.QtWidgets import QApplication
