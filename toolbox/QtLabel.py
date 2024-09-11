@@ -469,7 +469,7 @@ class LabelWindow(QWidget):
         label.deleteLater()
 
         # Delete annotations associated with the label
-        self.annotation_window.delete_annotations_for_label(label)
+        self.annotation_window.delete_label_annotations(label)
 
         # Reset active label if it was deleted
         if self.active_label == label:

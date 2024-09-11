@@ -2,14 +2,11 @@
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
 #   - Clean up QImage, Rasterio Image, PixMap
-#   - add tensorboard option for modeling training
 #   - file explorer for annotations to edit, delete in batches
 #   - master transparency for all annotations / classes
-#   - restart training from yaml file
 #   - add importing of coralnet predictions / output
 #   - exporting image names for creating dataset
 #   - filter images when creating dataset?
-#   - delete all annotations in image context menu
 #   - QThread error QThread: Destroyed while thread is still running
 #   - Look into multiGPU
 

@@ -1512,6 +1512,16 @@ class AnnotationWindow(QGraphicsView):
         for annotation in annotations:
             self.delete_annotation(annotation.id)
 
+    def delete_label_annotations(self, label):
+        for annotation in list(self.annotations_dict.values()):
+            if annotation.label.id == label.id:
+                annotation.delete()
+                del self.annotations_dict[annotation.id]
+
+    def delete_image_annotations(self, image_path):
+        annotations = self.get_image_annotations(image_path)
+        self.delete_annotations(annotations)
+
     def delete_image(self, image_path):
         # Delete all annotations associated with image path
         self.delete_annotations(self.get_image_annotations(image_path))
@@ -1522,12 +1532,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_pixmap = None
             self.rasterio_image = None
             self.active_image = False  # Reset image_set flag
-
-    def delete_annotations_for_label(self, label):
-        for annotation in list(self.annotations_dict.values()):
-            if annotation.label.id == label.id:
-                annotation.delete()
-                del self.annotations_dict[annotation.id]
 
     def clear_scene(self):
         # Clean up

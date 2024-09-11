@@ -7,7 +7,7 @@ import rasterio
 from toolbox.QtProgressBar import ProgressBar
 
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
-                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication)
+                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu)
 
 from PyQt5.QtGui import QImage
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
@@ -91,9 +91,10 @@ class ImageWindow(QWidget):
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
         self.tableWidget.setSelectionMode(QTableWidget.SingleSelection)
+        self.tableWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.cellClicked.connect(self.load_image)
         self.tableWidget.keyPressEvent = self.tableWidget_keyPressEvent
-
         self.layout.addWidget(self.tableWidget)
 
         self.image_paths = []  # Store all image paths
@@ -111,6 +112,21 @@ class ImageWindow(QWidget):
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.filter_images)
         self.search_bar.textChanged.connect(self.debounce_search)
+
+    def show_context_menu(self, position):
+        context_menu = QMenu(self)
+        delete_annotations_action = context_menu.addAction("Delete Annotations")
+        delete_annotations_action.triggered.connect(self.delete_annotations)
+        context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
+
+    def delete_annotations(self):
+        reply = QMessageBox.question(self,
+                                     "Confirm Delete",
+                                     "Are you sure you want to delete annotations for this image?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # Proceed with deleting annotations
+            self.annotation_window.delete_image_annotations(self.selected_image_path)
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self,
