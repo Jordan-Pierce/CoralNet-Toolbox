@@ -199,6 +199,35 @@ class ImageWindow(QWidget):
             self.update_table_widget()
             self.update_image_count_label()
 
+    def update_table_widget(self):
+        self.tableWidget.setRowCount(0)  # Clear the table
+        for path in self.filtered_image_paths:
+            row_position = self.tableWidget.rowCount()
+            self.tableWidget.insertRow(row_position)
+            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(self.image_dict[path]['filename']))
+        self.update_table_selection()
+        QApplication.processEvents()
+
+    def update_table_selection(self):
+        if self.selected_image_path in self.filtered_image_paths:
+            row = self.filtered_image_paths.index(self.selected_image_path)
+            self.tableWidget.selectRow(row)
+        else:
+            self.tableWidget.clearSelection()
+
+    def update_image_count_label(self):
+        total_images = len(self.filtered_image_paths)
+        self.image_count_label.setText(f"Total Images: {total_images}")
+        QApplication.processEvents()
+
+    def update_current_image_index_label(self):
+        if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
+            index = self.filtered_image_paths.index(self.selected_image_path) + 1
+            self.current_image_index_label.setText(f"Current Image: {index}")
+        else:
+            self.current_image_index_label.setText("Current Image: None")
+        QApplication.processEvents()
+
     def update_image_annotations(self, image_path):
         if image_path in self.image_dict:
             annotations = self.annotation_window.get_image_annotations(image_path)
@@ -343,39 +372,6 @@ class ImageWindow(QWidget):
             self.show_confirmation_dialog = False
 
         return result
-
-    def update_image_count_label(self):
-        total_images = len(self.filtered_image_paths)
-        self.image_count_label.setText(f"Total Images: {total_images}")
-        QApplication.processEvents()
-
-    def update_current_image_index_label(self):
-        if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
-            index = self.filtered_image_paths.index(self.selected_image_path) + 1
-            self.current_image_index_label.setText(f"Current Image: {index}")
-        else:
-            self.current_image_index_label.setText("Current Image: None")
-        QApplication.processEvents()
-
-    def update_table_widget(self):
-        self.tableWidget.setRowCount(0)  # Clear the table
-        for path in self.filtered_image_paths:
-            row_position = self.tableWidget.rowCount()
-            self.tableWidget.insertRow(row_position)
-            self.tableWidget.setItem(row_position,
-                                     0,
-                                     QTableWidgetItem(self.image_dict[path]['filename']))
-            QApplication.processEvents()
-
-        self.update_table_selection()
-
-    def update_table_selection(self):
-        if self.selected_image_path in self.filtered_image_paths:
-            row = self.filtered_image_paths.index(self.selected_image_path)
-            self.tableWidget.selectRow(row)
-        else:
-            self.tableWidget.clearSelection()
-        QApplication.processEvents()
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
