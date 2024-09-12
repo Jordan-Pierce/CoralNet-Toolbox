@@ -241,51 +241,6 @@ class ImageWindow(QWidget):
         image_path = self.filtered_image_paths[row]
         self.load_image_by_path(image_path)
 
-    # def load_image_by_path(self, image_path, update=False):
-    #     if image_path not in self.image_paths:
-    #         return
-    #
-    #     if image_path == self.selected_image_path and update is False:
-    #         return
-    #
-    #     # Cancel the previous worker thread if it is still running
-    #     if self.current_worker and self.current_worker.isRunning():
-    #         self.current_worker.cancel()
-    #         self.current_worker.quit()
-    #         self.current_worker.wait()
-    #
-    #     # Update the selected image path
-    #     self.selected_image_path = image_path
-    #     self.imageSelected.emit(image_path)
-    #     # Update the table, current image index label
-    #     self.update_table_selection()
-    #     self.update_current_image_index_label()
-    #
-    #     # Load a scaled-down version of the image using QImageReader
-    #     def load_scaled_image():
-    #         reader = QImageReader(image_path)
-    #         original_size = reader.size()  # Get the original size of the image
-    #         scaled_width = original_size.width() // 100
-    #         scaled_height = original_size.height() // 100
-    #         scaled_size = original_size.scaled(scaled_width, scaled_height, Qt.KeepAspectRatio)
-    #         reader.setScaledSize(scaled_size)  # Set the desired scaled size
-    #         scaled_image = reader.read()
-    #         return scaled_image
-    #
-    #     # Set the cursor to waiting (busy) cursor
-    #     QApplication.setOverrideCursor(Qt.WaitCursor)
-    #
-    #     # Load the scaled-down image
-    #     scaled_image = load_scaled_image()
-    #     # Display lower resolution image while threading loads full resolution image
-    #     self.annotation_window.display_image_item(scaled_image)
-    #
-    #     # Create and start the worker thread to load the full-resolution image
-    #     self.current_worker = LoadFullResolutionImageWorker(image_path)
-    #     self.current_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
-    #     self.current_worker.finished.connect(self.on_worker_finished)
-    #     self.current_worker.start()
-
     def load_image_by_path(self, image_path, update=False):
         if image_path not in self.image_paths:
             return
@@ -306,21 +261,38 @@ class ImageWindow(QWidget):
 
         image_path = self.image_load_queue.get()
 
-        # Cancel the previous worker thread if it is still running
-        if self.current_worker and self.current_worker.isRunning():
-            self.current_worker.cancel()
-            self.current_worker.quit()
-            self.current_worker.wait()
+        try:
+            # Cancel the previous worker thread if it is still running
+            if self.current_worker and self.current_worker.isRunning():
+                self.current_worker.cancel()
+                self.current_worker.quit()
+                self.current_worker.wait()
 
-        # Update the selected image path
-        self.selected_image_path = image_path
-        self.imageSelected.emit(image_path)
-        # Update the table, current image index label
-        self.update_table_selection()
-        self.update_current_image_index_label()
+            # Update the selected image path
+            self.selected_image_path = image_path
+            self.imageSelected.emit(image_path)
+            # Update the table, current image index label
+            self.update_table_selection()
+            self.update_current_image_index_label()
 
-        # Load a scaled-down version of the image using QImageReader
-        def load_scaled_image():
+            # Load a scaled-down version of the image using QImageReader
+            scaled_image = self.load_scaled_image(image_path)
+            # Display lower resolution image while threading loads full resolution image
+            self.annotation_window.display_image_item(scaled_image)
+
+            # Create and start the worker thread to load the full-resolution image
+            self.current_worker = LoadFullResolutionImageWorker(image_path)
+            self.current_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
+            self.current_worker.finished.connect(self.on_worker_finished)
+            self.current_worker.errorOccurred.connect(self.on_worker_error)
+            self.current_worker.start()
+
+        except Exception as e:
+            print(f"Error processing image {image_path}: {str(e)}")
+            self.on_worker_finished()  # Ensure we process the next image even if there's an error
+
+    def load_scaled_image(self, image_path):
+        try:
             reader = QImageReader(image_path)
             original_size = reader.size()  # Get the original size of the image
             scaled_width = original_size.width() // 100
@@ -329,24 +301,25 @@ class ImageWindow(QWidget):
             reader.setScaledSize(scaled_size)  # Set the desired scaled size
             scaled_image = reader.read()
             return scaled_image
-
-        # Set the cursor to waiting (busy) cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        # Load the scaled-down image
-        scaled_image = load_scaled_image()
-        # Display lower resolution image while threading loads full resolution image
-        self.annotation_window.display_image_item(scaled_image)
-
-        # Create and start the worker thread to load the full-resolution image
-        self.current_worker = LoadFullResolutionImageWorker(image_path)
-        self.current_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
-        self.current_worker.finished.connect(self.on_worker_finished)
-        self.current_worker.start()
+        except Exception as e:
+            print(f"Error loading scaled image {image_path}: {str(e)}")
+            return QImage()  # Return an empty QImage if there's an error
 
     def on_worker_finished(self):
         # Process the next image in the queue, if any
-        self._process_image_queue()
+        QTimer.singleShot(0, self._process_image_queue)
+
+    def on_worker_error(self, error_message):
+        print(f"Worker error: {error_message}")
+        self.on_worker_finished()  # Ensure we process the next image even if there's an error
+
+    def closeEvent(self, event):
+        # Ensure all threads are properly closed when the window is closed
+        if self.current_worker and self.current_worker.isRunning():
+            self.current_worker.cancel()
+            self.current_worker.quit()
+            self.current_worker.wait()
+        super().closeEvent(event)
 
     def on_full_resolution_image_loaded(self, full_resolution_image):
         if not self.selected_image_path:
@@ -365,11 +338,6 @@ class ImageWindow(QWidget):
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-
-    # def on_worker_finished(self):
-    #     if not self.image_load_queue.empty():
-    #         next_image_path = self.image_load_queue.get()
-    #         self.load_image_by_path(next_image_path)
 
     @lru_cache(maxsize=32)
     def rasterio_open(self, image_path):
