@@ -1219,6 +1219,7 @@ class AnnotationWindow(QGraphicsView):
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
+        QApplication.processEvents()
 
     def set_image(self, image_path):
 
@@ -1238,6 +1239,7 @@ class AnnotationWindow(QGraphicsView):
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
+        QApplication.processEvents()
 
         # Load all associated annotations in parallel
         self.load_annotations_parallel()
@@ -1246,6 +1248,7 @@ class AnnotationWindow(QGraphicsView):
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
+        QApplication.processEvents()
 
     def wheelEvent(self, event: QMouseEvent):
         if event.angleDelta().y() > 0:
