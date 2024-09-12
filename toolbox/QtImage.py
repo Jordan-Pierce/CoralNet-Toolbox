@@ -219,7 +219,6 @@ class ImageWindow(QWidget):
             # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
             self.full_res_worker.cancel()
-            # self.full_res_worker.wait()  # Wait for the thread to finish
 
         # Update the selected image path
         self.selected_image_path = image_path
@@ -237,20 +236,10 @@ class ImageWindow(QWidget):
         def load_scaled_image():
             reader = QImageReader(image_path)
             original_size = reader.size()  # Get the original size of the image
-            # Calculate the target resolution for approximately 2 MP (2 million pixels)
-            target_resolution = 2 * 10 ** 6
-            # Calculate the scaling factor based on the original size
-            original_area = original_size.width() * original_size.height()
-            if original_area > target_resolution:
-                scale_factor = (original_area / target_resolution) ** 0.5
-            else:
-                scale_factor = 1
-            # Calculate the scaled size
-            scaled_width = int(original_size.width() / scale_factor)
-            scaled_height = int(original_size.height() / scale_factor)
+            scaled_width = original_size.width() // 100
+            scaled_height = original_size.height() // 100
             scaled_size = original_size.scaled(scaled_width, scaled_height, Qt.KeepAspectRatio)
-            # Set the desired scaled size
-            reader.setScaledSize(scaled_size)
+            reader.setScaledSize(scaled_size)  # Set the desired scaled size
             scaled_image = reader.read()
             return scaled_image
 
