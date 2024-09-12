@@ -22,7 +22,8 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 class LoadFullResolutionImageWorker(QThread):
     imageLoaded = pyqtSignal(QImage)
-    cancelled = pyqtSignal()
+    finished = pyqtSignal()
+    errorOccurred = pyqtSignal(str)
 
     def __init__(self, image_path):
         super().__init__()
@@ -31,13 +32,16 @@ class LoadFullResolutionImageWorker(QThread):
         self.full_resolution_image = None
 
     def run(self):
-        # Load the QImage
-        self.full_resolution_image = QImage(self.image_path)
-        # Emit the signal with the loaded image
-        if not self._is_cancelled:
-            self.imageLoaded.emit(self.full_resolution_image)
-        else:
-            self.cancelled.emit()
+        try:
+            # Load the QImage
+            self.full_resolution_image = QImage(self.image_path)
+            # Emit the signal with the loaded image
+            if not self._is_cancelled:
+                self.imageLoaded.emit(self.full_resolution_image)
+        except Exception as e:
+            self.errorOccurred.emit(str(e))
+        finally:
+            self.finished.emit()
 
     def cancel(self):
         self._is_cancelled = True
@@ -219,6 +223,8 @@ class ImageWindow(QWidget):
             # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
             self.full_res_worker.cancel()
+            self.full_res_worker.quit()
+            self.full_res_worker.wait()  # Wait for the thread to finish
 
         # Update the selected image path
         self.selected_image_path = image_path
