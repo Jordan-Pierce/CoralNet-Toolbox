@@ -3,17 +3,16 @@ import os
 import random
 import uuid
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
-
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
                              QDialogButtonBox)
-
 from rasterio.windows import Window
 
 from toolbox.QtLabel import Label
@@ -1237,8 +1236,8 @@ class AnnotationWindow(QGraphicsView):
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
 
-        # Load all associated annotations
-        self.load_annotations()
+        # Load all associated annotations in parallel
+        self.load_annotations_parallel()
         # Update the image window's image dict
         self.main_window.image_window.update_image_annotations(image_path)
 
@@ -1408,19 +1407,30 @@ class AnnotationWindow(QGraphicsView):
             if annotation.label.id == label.id:
                 annotation.update_transparency(transparency)
 
+    def load_annotation(self, annotation):
+        # Create the graphics item (scene previously cleared)
+        annotation.create_graphics_item(self.scene)
+        # Connect update signals
+        annotation.selected.connect(self.select_annotation)
+        annotation.annotation_deleted.connect(self.delete_annotation)
+        annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+
     def load_annotations(self):
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_image_annotations(return_annotations=True)
 
         # Connect update signals for all the annotations
         for annotation in annotations:
-            # Create the graphics item (scene previously cleared)
-            annotation.create_graphics_item(self.scene)
+            self.load_annotation(annotation)
 
-            # Connect update signals
-            annotation.selected.connect(self.select_annotation)
-            annotation.annotation_deleted.connect(self.delete_annotation)
-            annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+    def load_annotations_parallel(self):
+        # Crop all the annotations for current image (if not already cropped)
+        annotations = self.crop_image_annotations(return_annotations=True)
+
+        # Use ThreadPoolExecutor to process annotations in parallel
+        with ThreadPoolExecutor() as executor:
+            for annotation in annotations:
+                executor.submit(self.load_annotation, annotation)
 
     def get_image_annotations(self, image_path=None):
         if not image_path:
