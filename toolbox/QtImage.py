@@ -1,4 +1,5 @@
 import os
+import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
@@ -275,6 +276,9 @@ class ImageWindow(QWidget):
             self.update_table_selection()
             self.update_current_image_index_label()
 
+            # Set the cursor to waiting (busy) cursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
             # Load a scaled-down version of the image using QImageReader
             scaled_image = self.load_scaled_image(image_path)
             # Display lower resolution image while threading loads full resolution image
@@ -316,6 +320,7 @@ class ImageWindow(QWidget):
     def closeEvent(self, event):
         # Ensure all threads are properly closed when the window is closed
         if self.current_worker and self.current_worker.isRunning():
+            QApplication.restoreOverrideCursor()
             self.current_worker.cancel()
             self.current_worker.quit()
             self.current_worker.wait()
@@ -411,6 +416,7 @@ class ImageWindow(QWidget):
         if not self.filtered_image_paths:
             return
 
+        time.sleep(0.05)
         current_index = self.filtered_image_paths.index(self.selected_image_path)
         new_index = (current_index - 1) % len(self.filtered_image_paths)
         self.load_image_by_path(self.filtered_image_paths[new_index])
@@ -419,6 +425,7 @@ class ImageWindow(QWidget):
         if not self.filtered_image_paths:
             return
 
+        time.sleep(0.05)
         current_index = self.filtered_image_paths.index(self.selected_image_path)
         new_index = (current_index + 1) % len(self.filtered_image_paths)
         self.load_image_by_path(self.filtered_image_paths[new_index])
