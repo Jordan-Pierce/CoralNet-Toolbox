@@ -256,9 +256,6 @@ class ImageWindow(QWidget):
         self.full_res_timer.timeout.connect(self.check_full_res_image_loaded)
         self.full_res_timer.start(1)  # Check every 1 milliseconds
 
-        # # Restore the cursor to the default cursor
-        # QApplication.restoreOverrideCursor()
-
     def check_full_res_image_loaded(self):
         if self.full_res_worker.isFinished():
             self.full_res_timer.stop()
@@ -344,6 +341,7 @@ class ImageWindow(QWidget):
     def update_image_count_label(self):
         total_images = len(self.filtered_image_paths)
         self.image_count_label.setText(f"Total Images: {total_images}")
+        QApplication.processEvents()
 
     def update_current_image_index_label(self):
         if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
@@ -351,13 +349,18 @@ class ImageWindow(QWidget):
             self.current_image_index_label.setText(f"Current Image: {index}")
         else:
             self.current_image_index_label.setText("Current Image: None")
+        QApplication.processEvents()
 
     def update_table_widget(self):
         self.tableWidget.setRowCount(0)  # Clear the table
         for path in self.filtered_image_paths:
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
-            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(self.image_dict[path]['filename']))
+            self.tableWidget.setItem(row_position,
+                                     0,
+                                     QTableWidgetItem(self.image_dict[path]['filename']))
+            QApplication.processEvents()
+
         self.update_table_selection()
 
     def update_table_selection(self):
@@ -366,6 +369,7 @@ class ImageWindow(QWidget):
             self.tableWidget.selectRow(row)
         else:
             self.tableWidget.clearSelection()
+        QApplication.processEvents()
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
