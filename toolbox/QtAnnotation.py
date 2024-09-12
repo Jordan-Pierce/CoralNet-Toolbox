@@ -1210,6 +1210,9 @@ class AnnotationWindow(QGraphicsView):
         # Clean up
         self.clear_scene()
 
+        # Display NaN values the image dimensions in status bar
+        self.imageLoaded.emit(-0, -0)
+
         # Set the image representations
         self.image_pixmap = QPixmap(image_item)
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
