@@ -331,7 +331,6 @@ class AnnotationWindow(QGraphicsView):
                     export_dict[image_path].append(annotation.to_dict())
 
                     progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
 
                 with open(file_path, 'w') as file:
                     json.dump(export_dict, file, indent=4)
@@ -406,7 +405,6 @@ class AnnotationWindow(QGraphicsView):
                             updated_annotations = True
 
                         progress_bar.update_progress()
-                        QApplication.processEvents()  # Update GUI
 
                 if updated_annotations:
                     # Inform the user that some annotations have been updated
@@ -420,9 +418,7 @@ class AnnotationWindow(QGraphicsView):
                     for annotation_data in annotations:
                         annotation = Annotation.from_dict(annotation_data)
                         self.annotations_dict[annotation.id] = annotation
-
                         progress_bar.update_progress()
-                        QApplication.processEvents()
 
                     # Update the image window's image dict
                     self.main_window.image_window.update_image_annotations(image_path)
@@ -465,9 +461,7 @@ class AnnotationWindow(QGraphicsView):
 
                 for annotation in self.annotations_dict.values():
                     data.append(annotation.to_coralnet_format())
-
                     progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
 
                 df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size'])
                 df.to_csv(file_path, index=False)
@@ -597,9 +591,7 @@ class AnnotationWindow(QGraphicsView):
 
                     # Add to the AnnotationWindow dictionary
                     self.annotations_dict[annotation.id] = annotation
-
                     progress_bar.update_progress()
-                    QApplication.processEvents()
 
                 # Update the image window's image dict
                 self.main_window.image_window.update_image_annotations(image_path)
@@ -1026,9 +1018,7 @@ class AnnotationWindow(QGraphicsView):
                     for i, image_path in enumerate(image_paths):
                         if image_path not in set(self.main_window.image_window.image_paths):
                             self.main_window.image_window.add_image(image_path)
-
                             progress_bar.update_progress()
-                            QApplication.processEvents()  # Update GUI
 
                     progress_bar.stop_progress()
                     progress_bar.close()
@@ -1103,9 +1093,7 @@ class AnnotationWindow(QGraphicsView):
 
                         # Add to the AnnotationWindow dictionary
                         self.annotations_dict[annotation.id] = annotation
-
                         progress_bar.update_progress()
-                        QApplication.processEvents()
 
                     # Update the image window's image dict
                     self.main_window.image_window.update_image_annotations(image_path)
@@ -1239,7 +1227,6 @@ class AnnotationWindow(QGraphicsView):
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
-        QApplication.processEvents()
 
         # Load all associated annotations in parallel
         self.load_annotations_parallel()
@@ -1929,7 +1916,6 @@ class AnnotationSamplingDialog(QDialog):
 
                 # Update the progress bar
                 progress_bar.update_progress()
-                QApplication.processEvents()  # Update GUI
 
             # Update the image window's image dict
             self.image_window.update_image_annotations(image_path)

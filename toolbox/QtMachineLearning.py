@@ -539,7 +539,6 @@ class CreateDatasetDialog(QDialog):
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
                     progress_bar.update_progress()
-                    QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -692,7 +691,6 @@ class MergeDatasetsDialog(QDialog):
             for i, future in enumerate(as_completed(futures)):
                 future.result()
                 progress_bar.update_progress()
-                QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -2026,7 +2024,6 @@ class DeployModelDialog(QDialog):
             # Process the results
             self.process_prediction_result(annotation, result)
             progress_bar.update_progress()
-            QApplication.processEvents()
 
         # Show the last annotation in the confidence window (aesthetic)
         self.main_window.confidence_window.display_cropped_image(annotation)
@@ -2247,7 +2244,6 @@ class BatchInferenceDialog(QDialog):
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
                     progress_bar.update_progress()
-                    QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -2264,7 +2260,6 @@ class BatchInferenceDialog(QDialog):
         for path, group in groups:
             self.deploy_model_dialog.predict(annotations=list(group))
             progress_bar.update_progress()
-            QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()

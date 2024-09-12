@@ -2,9 +2,10 @@ import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
+from queue import Queue
 
 import rasterio
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QThread, QEventLoop
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt5.QtGui import QImage, QImageReader
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
                              QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu)
@@ -137,6 +138,9 @@ class ImageWindow(QWidget):
         self.search_timer.timeout.connect(self.filter_images)
         self.search_bar.textChanged.connect(self.debounce_search)
 
+        self.image_load_queue = Queue()
+        self.current_worker = None
+
     def show_context_menu(self, position):
         context_menu = QMenu(self)
         delete_annotations_action = context_menu.addAction("Delete Annotations")
@@ -170,7 +174,6 @@ class ImageWindow(QWidget):
                 if file_name not in set(self.image_paths):
                     self.add_image(file_name)
                 progress_bar.update_progress()
-                QApplication.processEvents()
 
             progress_bar.stop_progress()
             progress_bar.close()
@@ -198,6 +201,7 @@ class ImageWindow(QWidget):
             }
             self.update_table_widget()
             self.update_image_count_label()
+            QApplication.processEvents()
 
     def update_table_widget(self):
         self.tableWidget.setRowCount(0)  # Clear the table
@@ -245,12 +249,11 @@ class ImageWindow(QWidget):
             return
 
         # Cancel the previous worker thread if it is still running
-        if hasattr(self, 'full_res_worker') and self.full_res_worker.isRunning():
-            # Restore the cursor to the default cursor
+        if self.current_worker and self.current_worker.isRunning():
             QApplication.restoreOverrideCursor()
-            self.full_res_worker.cancel()
-            self.full_res_worker.quit()
-            self.full_res_worker.wait()  # Wait for the thread to finish
+            self.current_worker.cancel()
+            self.current_worker.quit()
+            self.current_worker.wait()
 
         # Update the selected image path
         self.selected_image_path = image_path
@@ -279,63 +282,33 @@ class ImageWindow(QWidget):
         self.annotation_window.display_image_item(scaled_image)
 
         # Create and start the worker thread to load the full-resolution image
-        self.full_res_worker = LoadFullResolutionImageWorker(image_path)
-        self.full_res_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
-        self.full_res_worker.start()
-
-        #####
-        # Wait until the full resolution image is loaded
-        loop = QEventLoop()
-        self.full_res_worker.imageLoaded.connect(loop.quit)
-        loop.exec_()
-
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
+        self.current_worker = LoadFullResolutionImageWorker(image_path)
+        self.current_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
+        self.current_worker.finished.connect(self.on_worker_finished)
+        self.current_worker.start()
 
     def on_full_resolution_image_loaded(self, full_resolution_image):
-        image_path = self.selected_image_path
+        if not self.selected_image_path:
+            return
+
         # Load the Rasterio
-        self.rasterio_images[image_path] = self.rasterio_open(image_path)
+        self.rasterio_images[self.selected_image_path] = self.rasterio_open(self.selected_image_path)
 
         # Update the selected image
-        self.selected_image_path = image_path
         self.update_table_selection()
 
         # Update the display with the full-resolution image
-        self.images[image_path] = full_resolution_image
-        self.annotation_window.set_image(image_path)
-        self.imageSelected.emit(image_path)
+        self.images[self.selected_image_path] = full_resolution_image
+        self.annotation_window.set_image(self.selected_image_path)
+        self.imageSelected.emit(self.selected_image_path)
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-        ####
 
-    #     # Use QTimer to periodically check if the full-resolution image is loaded
-    #     self.full_res_timer = QTimer()
-    #     self.full_res_timer.timeout.connect(self.check_full_res_image_loaded)
-    #     self.full_res_timer.start(1)  # Check every 1 milliseconds
-    #
-    # def check_full_res_image_loaded(self):
-    #     if self.full_res_worker.isFinished():
-    #         self.full_res_timer.stop()
-    #         # Connect the signal to the on_full_resolution_image_loaded method
-    #         self.full_res_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
-    #         # Emit the signal to trigger the on_full_resolution_image_loaded method
-    #         self.full_res_worker.imageLoaded.emit(self.full_res_worker.full_resolution_image)
-    #
-    # def on_full_resolution_image_loaded(self, full_resolution_image):
-    #     # Access the selected_image
-    #     image_path = self.selected_image_path
-    #
-    #     # Load the Rasterio
-    #     self.rasterio_images[image_path] = self.rasterio_open(image_path)
-    #
-    #     # Update the display with the full-resolution image
-    #     self.images[image_path] = full_resolution_image
-    #     self.annotation_window.set_image(image_path)
-    #
-    #     # Restore the cursor to the default cursor
-    #     QApplication.restoreOverrideCursor()
+    def on_worker_finished(self):
+        if not self.image_load_queue.empty():
+            next_image_path = self.image_load_queue.get()
+            self.load_image_by_path(next_image_path)
 
     @lru_cache(maxsize=32)
     def rasterio_open(self, image_path):
