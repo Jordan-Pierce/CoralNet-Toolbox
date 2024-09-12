@@ -1,25 +1,23 @@
-import os
-import uuid
 import json
+import os
 import random
+import uuid
+import warnings
 
 import numpy as np
 import pandas as pd
 
-from rasterio.windows import Window
-
-from toolbox.QtLabel import Label
-from toolbox.QtProgressBar import ProgressBar
-
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
+from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
                              QDialogButtonBox)
 
-from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush, QPixmapCache
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
+from rasterio.windows import Window
 
-import warnings
+from toolbox.QtLabel import Label
+from toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -1209,10 +1207,18 @@ class AnnotationWindow(QGraphicsView):
                 self.cursor_annotation.delete()
                 self.cursor_annotation = None
 
-    def set_image(self, image_path):
+    def display_image_item(self, image_item):
+        # Clean up
+        self.clear_scene()
 
-        # Set the cursor to waiting (busy) cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Set the image representations
+        self.image_pixmap = QPixmap(image_item)
+        self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
+        self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
+
+    def set_image(self, image_path):
 
         # Clean up
         self.clear_scene()
@@ -1238,9 +1244,6 @@ class AnnotationWindow(QGraphicsView):
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
 
     def wheelEvent(self, event: QMouseEvent):
         if event.angleDelta().y() > 0:
@@ -1847,6 +1850,9 @@ class AnnotationSamplingDialog(QDialog):
 
     def add_sampled_annotations(self, method, num_annotations, annotation_size, margins):
 
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         self.apply_to_filtered = self.apply_filtered_checkbox.isChecked()
         self.apply_to_prev = self.apply_prev_checkbox.isChecked()
         self.apply_to_next = self.apply_next_checkbox.isChecked()
@@ -1920,3 +1926,6 @@ class AnnotationSamplingDialog(QDialog):
         self.annotation_window.set_image(current_image_path)
         # Reset dialog for next time
         self.reset_defaults()
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()

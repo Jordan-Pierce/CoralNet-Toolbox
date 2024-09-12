@@ -1,14 +1,12 @@
-import uuid
 import json
 import random
-
-from PyQt5.QtWidgets import (QFileDialog, QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QColorDialog, QMenu, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication)
-
-from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QFont, QDrag
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
-
+import uuid
 import warnings
+
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
+from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
+from PyQt5.QtWidgets import (QFileDialog, QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
+                             QColorDialog, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

@@ -1,6 +1,6 @@
-from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton
-
 import warnings
+
+from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

@@ -1,6 +1,6 @@
-import pkg_resources
-
 import warnings
+
+import pkg_resources
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

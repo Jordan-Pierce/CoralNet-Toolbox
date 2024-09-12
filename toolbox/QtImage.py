@@ -1,18 +1,15 @@
 import os
-from functools import lru_cache
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 
 import rasterio
-
-from toolbox.QtProgressBar import ProgressBar
-
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QThread, QEventLoop
+from PyQt5.QtGui import QImage, QImageReader
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
                              QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu)
 
-from PyQt5.QtGui import QImage
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
-
-import warnings
+from toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -21,6 +18,20 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class LoadFullResolutionImageWorker(QThread):
+    imageLoaded = pyqtSignal(QImage)
+
+    def __init__(self, image_path):
+        super().__init__()
+        self.image_path = image_path
+
+    def run(self):
+        # Load the QImage
+        full_resolution_image = QImage(self.image_path)
+        # Emit the signal with the loaded image
+        self.imageLoaded.emit(full_resolution_image)
 
 
 class ImageWindow(QWidget):
@@ -194,20 +205,58 @@ class ImageWindow(QWidget):
         if image_path == self.selected_image_path and update is False:
             return
 
-        # Load the QImage
-        image = QImage(image_path)
-        self.images[image_path] = image
-        # Load the Rasterio
-        rasterio_image = self.rasterio_open(image_path)
-        self.rasterio_images[image_path] = rasterio_image
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Update the selected image
+        # Update the selected image path
         self.selected_image_path = image_path
         self.update_table_selection()
-
-        # Pass to the AnnotationWindow to be displayed / selected
-        self.annotation_window.set_image(image_path)
         self.imageSelected.emit(image_path)
+
+        # Create and start the worker thread to load the full-resolution image
+        self.full_res_worker = LoadFullResolutionImageWorker(image_path)
+        self.full_res_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
+        self.full_res_worker.start()
+
+        # Load a scaled-down version of the image using QImageReader
+        def load_scaled_image():
+            reader = QImageReader(image_path)
+            original_size = reader.size()  # Get the original size of the image
+            scaled_width = original_size.width() // 20
+            scaled_height = original_size.height() // 20
+            scaled_size = original_size.scaled(scaled_width, scaled_height, Qt.KeepAspectRatio)
+            reader.setScaledSize(scaled_size)  # Set the desired scaled size
+            scaled_image = reader.read()
+            return scaled_image
+
+        # Check if the full-resolution image is already loaded
+        if self.full_res_worker.isFinished():
+            # If the full-resolution image is already loaded, skip displaying the scaled-down version
+            self.full_res_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
+        else:
+            # Load the scaled-down image
+            scaled_image = load_scaled_image()
+            # Display lower resolution image while threading loads full resolution image
+            self.annotation_window.display_image_item(scaled_image)
+
+        # Wait until the full resolution image is loaded
+        loop = QEventLoop()
+        self.full_res_worker.imageLoaded.connect(loop.quit)
+        loop.exec_()
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+
+    def on_full_resolution_image_loaded(self, full_resolution_image):
+        # Access the selected_image
+        image_path = self.selected_image_path
+
+        # Load the Rasterio
+        self.rasterio_images[image_path] = self.rasterio_open(image_path)
+
+        # Update the display with the full-resolution image
+        self.images[image_path] = full_resolution_image
+        self.annotation_window.set_image(image_path)
 
         # Update the current image index label
         self.update_current_image_index_label()

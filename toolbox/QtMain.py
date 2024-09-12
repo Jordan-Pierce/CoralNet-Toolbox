@@ -1,31 +1,26 @@
+import warnings
+
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent
+from PyQt5.QtGui import QIcon
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox)
+
 from torch.cuda import is_available
 
+from toolbox.QtAnnotation import AnnotationSamplingDialog
+from toolbox.QtAnnotation import AnnotationWindow
+from toolbox.QtConfidence import ConfidenceWindow
+from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.QtImage import ImageWindow
 from toolbox.QtLabel import LabelWindow
-from toolbox.QtAnnotation import AnnotationWindow
-from toolbox.QtAnnotation import AnnotationSamplingDialog
-from toolbox.QtConfidence import ConfidenceWindow
-
-from toolbox.QtMachineLearning import CreateDatasetDialog
-from toolbox.QtMachineLearning import MergeDatasetsDialog
-from toolbox.QtMachineLearning import TrainModelDialog
-from toolbox.QtMachineLearning import EvaluateModelDialog
-from toolbox.QtMachineLearning import OptimizeModelDialog
-from toolbox.QtMachineLearning import DeployModelDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
-
-from toolbox.QtProgressBar import ProgressBar
-from toolbox.QtEventFilter import GlobalEventFilter
-
+from toolbox.QtMachineLearning import CreateDatasetDialog
+from toolbox.QtMachineLearning import DeployModelDialog
+from toolbox.QtMachineLearning import EvaluateModelDialog
+from toolbox.QtMachineLearning import MergeDatasetsDialog
+from toolbox.QtMachineLearning import OptimizeModelDialog
+from toolbox.QtMachineLearning import TrainModelDialog
 from toolbox.utilities import get_icon_path
-
-from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider, QDoubleSpinBox)
-
-from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-
-import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

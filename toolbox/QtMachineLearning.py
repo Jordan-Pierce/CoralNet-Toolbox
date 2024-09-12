@@ -1,34 +1,31 @@
-import os
+import datetime
 import gc
 import json
+import os
 import random
 import shutil
-import datetime
-from pathlib import Path
+import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import groupby
 from operator import attrgetter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import numpy as np
-
-from ultralytics import YOLO
 import ultralytics.engine.validator as validator
-from ultralytics.data.dataset import ClassificationDataset
 import ultralytics.models.yolo.classify.train as train_build
 
-from torch.cuda import empty_cache
-
-from toolbox.QtProgressBar import ProgressBar
-
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
                              QTableWidgetItem, QSlider, QButtonGroup)
 
-from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from torch.cuda import empty_cache
+from ultralytics import YOLO
+from ultralytics.data.dataset import ClassificationDataset
 
-import warnings
+from toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
