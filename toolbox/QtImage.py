@@ -5,7 +5,7 @@ from functools import lru_cache
 from queue import Queue
 
 import rasterio
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QThread
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QThread, QEventLoop
 from PyQt5.QtGui import QImage, QImageReader
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
                              QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu)
@@ -250,7 +250,6 @@ class ImageWindow(QWidget):
 
         # Cancel the previous worker thread if it is still running
         if self.current_worker and self.current_worker.isRunning():
-            QApplication.restoreOverrideCursor()
             self.current_worker.cancel()
             self.current_worker.quit()
             self.current_worker.wait()
