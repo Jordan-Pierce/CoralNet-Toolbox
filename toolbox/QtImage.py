@@ -227,11 +227,6 @@ class ImageWindow(QWidget):
         self.update_table_selection()
         self.update_current_image_index_label()
 
-        # Create and start the worker thread to load the full-resolution image
-        self.full_res_worker = LoadFullResolutionImageWorker(image_path)
-        self.full_res_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
-        self.full_res_worker.start()
-
         # Load a scaled-down version of the image using QImageReader
         def load_scaled_image():
             reader = QImageReader(image_path)
@@ -251,10 +246,15 @@ class ImageWindow(QWidget):
         # Display lower resolution image while threading loads full resolution image
         self.annotation_window.display_image_item(scaled_image)
 
+        # Create and start the worker thread to load the full-resolution image
+        self.full_res_worker = LoadFullResolutionImageWorker(image_path)
+        self.full_res_worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
+        self.full_res_worker.start()
+
         # Use QTimer to periodically check if the full-resolution image is loaded
         self.full_res_timer = QTimer()
         self.full_res_timer.timeout.connect(self.check_full_res_image_loaded)
-        self.full_res_timer.start(100)  # Check every 100 milliseconds
+        self.full_res_timer.start(1)  # Check every 1 milliseconds
 
         # # Restore the cursor to the default cursor
         # QApplication.restoreOverrideCursor()
