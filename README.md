@@ -31,12 +31,14 @@ Enhance your CoralNet experience with these tools:
 - 📥 Download: Retrieve source data from CoralNet 
 - 📤 Upload: Add images and annotations to CoralNet
 - ✏️ Annotate: Create patches manually or from annotations  
-- 👁️ Visualize: See points/patches on images  
+- 👁️ Visualize: See points / patches on images  
 - 🧩 Patches: Extract from annotated images  
 - 📍 Points: Sample using various methods (Uniform, Random, Stratified  
 - 🧠 Classification: Build local patch-based classifiers  
 - 🔮 Inference: Use trained models for predictions
-
+- 📊 Metrics: Evaluate model performance
+- 🚀 Optimize: Productionize models for faster inferencing
+- 📦 Toolshed: Access tools from the old repository
 
 <details>
   <summary>Watch the Video</summary>

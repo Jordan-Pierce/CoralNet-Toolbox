@@ -1,15 +1,17 @@
 # TODO
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
-#   - Clean up QImage, Rasterio Image, PixMap
-#   - add tensorboard option for modeling training
 #   - file explorer for annotations to edit, delete in batches
 #   - master transparency for all annotations / classes
-#   - restart training from yaml file
 #   - add importing of coralnet predictions / output
+#   - exporting image names for creating dataset
+#   - filter images when creating dataset?
+#   - Look into multiGPU
 
 import traceback
+
 from PyQt5.QtWidgets import QApplication
+
 from toolbox.QtMain import MainWindow
 from toolbox.utilities import console_user
 

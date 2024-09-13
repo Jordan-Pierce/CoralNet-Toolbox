@@ -1,25 +1,22 @@
-import os
-import uuid
 import json
+import os
 import random
+import uuid
+import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
-
-from rasterio.windows import Window
-
-from toolbox.QtLabel import Label
-from toolbox.QtProgressBar import ProgressBar
-
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
+from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
                              QDialogButtonBox)
+from rasterio.windows import Window
 
-from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush, QPixmapCache
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
-
-import warnings
+from toolbox.QtLabel import Label
+from toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -334,7 +331,6 @@ class AnnotationWindow(QGraphicsView):
                     export_dict[image_path].append(annotation.to_dict())
 
                     progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
 
                 with open(file_path, 'w') as file:
                     json.dump(export_dict, file, indent=4)
@@ -409,7 +405,6 @@ class AnnotationWindow(QGraphicsView):
                             updated_annotations = True
 
                         progress_bar.update_progress()
-                        QApplication.processEvents()  # Update GUI
 
                 if updated_annotations:
                     # Inform the user that some annotations have been updated
@@ -423,9 +418,7 @@ class AnnotationWindow(QGraphicsView):
                     for annotation_data in annotations:
                         annotation = Annotation.from_dict(annotation_data)
                         self.annotations_dict[annotation.id] = annotation
-
                         progress_bar.update_progress()
-                        QApplication.processEvents()
 
                     # Update the image window's image dict
                     self.main_window.image_window.update_image_annotations(image_path)
@@ -468,9 +461,7 @@ class AnnotationWindow(QGraphicsView):
 
                 for annotation in self.annotations_dict.values():
                     data.append(annotation.to_coralnet_format())
-
                     progress_bar.update_progress()
-                    QApplication.processEvents()  # Update GUI
 
                 df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size'])
                 df.to_csv(file_path, index=False)
@@ -600,9 +591,7 @@ class AnnotationWindow(QGraphicsView):
 
                     # Add to the AnnotationWindow dictionary
                     self.annotations_dict[annotation.id] = annotation
-
                     progress_bar.update_progress()
-                    QApplication.processEvents()
 
                 # Update the image window's image dict
                 self.main_window.image_window.update_image_annotations(image_path)
@@ -1029,9 +1018,7 @@ class AnnotationWindow(QGraphicsView):
                     for i, image_path in enumerate(image_paths):
                         if image_path not in set(self.main_window.image_window.image_paths):
                             self.main_window.image_window.add_image(image_path)
-
                             progress_bar.update_progress()
-                            QApplication.processEvents()  # Update GUI
 
                     progress_bar.stop_progress()
                     progress_bar.close()
@@ -1106,9 +1093,7 @@ class AnnotationWindow(QGraphicsView):
 
                         # Add to the AnnotationWindow dictionary
                         self.annotations_dict[annotation.id] = annotation
-
                         progress_bar.update_progress()
-                        QApplication.processEvents()
 
                     # Update the image window's image dict
                     self.main_window.image_window.update_image_annotations(image_path)
@@ -1209,10 +1194,22 @@ class AnnotationWindow(QGraphicsView):
                 self.cursor_annotation.delete()
                 self.cursor_annotation = None
 
-    def set_image(self, image_path):
+    def display_image_item(self, image_item):
+        # Clean up
+        self.clear_scene()
 
-        # Set the cursor to waiting (busy) cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Display NaN values the image dimensions in status bar
+        self.imageLoaded.emit(-0, -0)
+
+        # Set the image representations
+        self.image_pixmap = QPixmap(image_item)
+        self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
+        self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
+        QApplication.processEvents()
+
+    def set_image(self, image_path):
 
         # Clean up
         self.clear_scene()
@@ -1231,16 +1228,14 @@ class AnnotationWindow(QGraphicsView):
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
 
-        # Load all associated annotations
-        self.load_annotations()
+        # Load all associated annotations in parallel
+        self.load_annotations_parallel()
         # Update the image window's image dict
         self.main_window.image_window.update_image_annotations(image_path)
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
+        QApplication.processEvents()
 
     def wheelEvent(self, event: QMouseEvent):
         if event.angleDelta().y() > 0:
@@ -1405,19 +1400,30 @@ class AnnotationWindow(QGraphicsView):
             if annotation.label.id == label.id:
                 annotation.update_transparency(transparency)
 
+    def load_annotation(self, annotation):
+        # Create the graphics item (scene previously cleared)
+        annotation.create_graphics_item(self.scene)
+        # Connect update signals
+        annotation.selected.connect(self.select_annotation)
+        annotation.annotation_deleted.connect(self.delete_annotation)
+        annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+
     def load_annotations(self):
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_image_annotations(return_annotations=True)
 
         # Connect update signals for all the annotations
         for annotation in annotations:
-            # Create the graphics item (scene previously cleared)
-            annotation.create_graphics_item(self.scene)
+            self.load_annotation(annotation)
 
-            # Connect update signals
-            annotation.selected.connect(self.select_annotation)
-            annotation.annotation_deleted.connect(self.delete_annotation)
-            annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+    def load_annotations_parallel(self):
+        # Crop all the annotations for current image (if not already cropped)
+        annotations = self.crop_image_annotations(return_annotations=True)
+
+        # Use ThreadPoolExecutor to process annotations in parallel
+        with ThreadPoolExecutor() as executor:
+            for annotation in annotations:
+                executor.submit(self.load_annotation, annotation)
 
     def get_image_annotations(self, image_path=None):
         if not image_path:
@@ -1512,6 +1518,16 @@ class AnnotationWindow(QGraphicsView):
         for annotation in annotations:
             self.delete_annotation(annotation.id)
 
+    def delete_label_annotations(self, label):
+        for annotation in list(self.annotations_dict.values()):
+            if annotation.label.id == label.id:
+                annotation.delete()
+                del self.annotations_dict[annotation.id]
+
+    def delete_image_annotations(self, image_path):
+        annotations = self.get_image_annotations(image_path)
+        self.delete_annotations(annotations)
+
     def delete_image(self, image_path):
         # Delete all annotations associated with image path
         self.delete_annotations(self.get_image_annotations(image_path))
@@ -1522,12 +1538,6 @@ class AnnotationWindow(QGraphicsView):
             self.image_pixmap = None
             self.rasterio_image = None
             self.active_image = False  # Reset image_set flag
-
-    def delete_annotations_for_label(self, label):
-        for annotation in list(self.annotations_dict.values()):
-            if annotation.label.id == label.id:
-                annotation.delete()
-                del self.annotations_dict[annotation.id]
 
     def clear_scene(self):
         # Clean up
@@ -1843,6 +1853,9 @@ class AnnotationSamplingDialog(QDialog):
 
     def add_sampled_annotations(self, method, num_annotations, annotation_size, margins):
 
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         self.apply_to_filtered = self.apply_filtered_checkbox.isChecked()
         self.apply_to_prev = self.apply_prev_checkbox.isChecked()
         self.apply_to_next = self.apply_next_checkbox.isChecked()
@@ -1903,7 +1916,6 @@ class AnnotationSamplingDialog(QDialog):
 
                 # Update the progress bar
                 progress_bar.update_progress()
-                QApplication.processEvents()  # Update GUI
 
             # Update the image window's image dict
             self.image_window.update_image_annotations(image_path)
@@ -1916,3 +1928,6 @@ class AnnotationSamplingDialog(QDialog):
         self.annotation_window.set_image(current_image_path)
         # Reset dialog for next time
         self.reset_defaults()
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()

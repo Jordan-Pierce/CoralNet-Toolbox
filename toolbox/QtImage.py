@@ -1,18 +1,19 @@
+import gc
 import os
-from functools import lru_cache
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
+from queue import Queue
 
+import numpy as np
 import rasterio
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer, QDateTime
+from PyQt5.QtGui import QImage
+from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
+                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu)
+from rasterio.windows import Window
 
 from toolbox.QtProgressBar import ProgressBar
-
-from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
-                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication)
-
-from PyQt5.QtGui import QImage
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
-
-import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -23,8 +24,37 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class LoadFullResolutionImageWorker(QThread):
+    imageLoaded = pyqtSignal(QImage)
+    finished = pyqtSignal()
+    errorOccurred = pyqtSignal(str)
+
+    def __init__(self, image_path):
+        super().__init__()
+        self.image_path = image_path
+        self._is_cancelled = False
+        self.full_resolution_image = None
+
+    def run(self):
+        try:
+            # Load the QImage
+            self.full_resolution_image = QImage(self.image_path)
+            # Emit the signal with the loaded image
+            if not self._is_cancelled:
+                self.imageLoaded.emit(self.full_resolution_image)
+        except Exception as e:
+            self.errorOccurred.emit(str(e))
+        finally:
+            self.finished.emit()
+
+    def cancel(self):
+        self._is_cancelled = True
+
+
 class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)
+    MAX_CONCURRENT_THREADS = 8  # Maximum number of concurrent threads
+    THROTTLE_INTERVAL = 50  # Minimum time (in milliseconds) between image selection
 
     def __init__(self, main_window):
         super().__init__()
@@ -91,9 +121,10 @@ class ImageWindow(QWidget):
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
         self.tableWidget.setSelectionMode(QTableWidget.SingleSelection)
+        self.tableWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.cellClicked.connect(self.load_image)
         self.tableWidget.keyPressEvent = self.tableWidget_keyPressEvent
-
         self.layout.addWidget(self.tableWidget)
 
         self.image_paths = []  # Store all image paths
@@ -111,6 +142,25 @@ class ImageWindow(QWidget):
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.filter_images)
         self.search_bar.textChanged.connect(self.debounce_search)
+
+        self.image_load_queue = Queue()
+        self.current_workers = []  # List to keep track of running workers
+        self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
+
+    def show_context_menu(self, position):
+        context_menu = QMenu(self)
+        delete_annotations_action = context_menu.addAction("Delete Annotations")
+        delete_annotations_action.triggered.connect(self.delete_annotations)
+        context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
+
+    def delete_annotations(self):
+        reply = QMessageBox.question(self,
+                                     "Confirm Delete",
+                                     "Are you sure you want to delete annotations for this image?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            # Proceed with deleting annotations
+            self.annotation_window.delete_image_annotations(self.selected_image_path)
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self,
@@ -130,7 +180,6 @@ class ImageWindow(QWidget):
                 if file_name not in set(self.image_paths):
                     self.add_image(file_name)
                 progress_bar.update_progress()
-                QApplication.processEvents()
 
             progress_bar.stop_progress()
             progress_bar.close()
@@ -158,6 +207,33 @@ class ImageWindow(QWidget):
             }
             self.update_table_widget()
             self.update_image_count_label()
+            QApplication.processEvents()
+
+    def update_table_widget(self):
+        self.tableWidget.setRowCount(0)  # Clear the table
+        for path in self.filtered_image_paths:
+            row_position = self.tableWidget.rowCount()
+            self.tableWidget.insertRow(row_position)
+            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(self.image_dict[path]['filename']))
+        self.update_table_selection()
+
+    def update_table_selection(self):
+        if self.selected_image_path in self.filtered_image_paths:
+            row = self.filtered_image_paths.index(self.selected_image_path)
+            self.tableWidget.selectRow(row)
+        else:
+            self.tableWidget.clearSelection()
+
+    def update_image_count_label(self):
+        total_images = len(self.filtered_image_paths)
+        self.image_count_label.setText(f"Total Images: {total_images}")
+
+    def update_current_image_index_label(self):
+        if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
+            index = self.filtered_image_paths.index(self.selected_image_path) + 1
+            self.current_image_index_label.setText(f"Current Image: {index}")
+        else:
+            self.current_image_index_label.setText("Current Image: None")
 
     def update_image_annotations(self, image_path):
         if image_path in self.image_dict:
@@ -172,29 +248,158 @@ class ImageWindow(QWidget):
         self.load_image_by_path(image_path)
 
     def load_image_by_path(self, image_path, update=False):
+        current_time = QDateTime.currentMSecsSinceEpoch()
+        time_since_last_selection = current_time - self.last_image_selection_time
+
+        if time_since_last_selection < self.THROTTLE_INTERVAL:
+            # If selecting images too quickly, ignore this request
+            return
+
         if image_path not in self.image_paths:
             return
 
         if image_path == self.selected_image_path and update is False:
             return
 
-        # Load the QImage
-        image = QImage(image_path)
-        self.images[image_path] = image
+        self.last_image_selection_time = current_time
+
+        # Add the image path to the queue
+        self.image_load_queue.put(image_path)
+
+        # Start processing the queue if we're under the thread limit
+        self._process_image_queue()
+
+    def _process_image_queue(self):
+        if self.image_load_queue.empty():
+            return
+
+        # Remove finished workers from the list
+        self.current_workers = [worker for worker in self.current_workers if worker.isRunning()]
+
+        # If we're at the thread limit, don't start a new one
+        if len(self.current_workers) >= self.MAX_CONCURRENT_THREADS:
+            return
+
+        image_path = self.image_load_queue.get()
+
+        try:
+            # Update the selected image path
+            self.selected_image_path = image_path
+            self.imageSelected.emit(image_path)
+            self.update_table_selection()
+            self.update_current_image_index_label()
+
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            # Load and display scaled-down version
+            scaled_image = self.load_scaled_image(image_path)
+            self.annotation_window.display_image_item(scaled_image)
+
+            # Create and start the worker thread for full-resolution image
+            worker = LoadFullResolutionImageWorker(image_path)
+            worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
+            worker.finished.connect(lambda: self.on_worker_finished(worker))
+            worker.errorOccurred.connect(self.on_worker_error)
+            worker.start()
+
+            self.current_workers.append(worker)
+
+        except Exception as e:
+            print(f"Error processing image {image_path}: {str(e)}")
+            self.on_worker_finished(None)
+
+    def on_worker_finished(self, finished_worker):
+        if finished_worker in self.current_workers:
+            self.current_workers.remove(finished_worker)
+
+        QTimer.singleShot(0, self._process_image_queue)
+
+    def on_worker_error(self, error_message):
+        print(f"Worker error: {error_message}")
+        self.on_worker_finished(None)
+
+    def closeEvent(self, event):
+        for worker in self.current_workers:
+            if worker.isRunning():
+                worker.cancel()
+                worker.quit()
+                worker.wait()
+        QApplication.restoreOverrideCursor()
+        super().closeEvent(event)
+
+    def load_scaled_image(self, image_path):
+        try:
+            # Open the raster file with Rasterio
+            with rasterio.open(image_path) as src:
+                # Get the original size of the image
+                original_width = src.width
+                original_height = src.height
+
+                # Calculate the scaled size
+                scaled_width = original_width // 100
+                scaled_height = original_height // 100
+
+                # Read a downsampled version of the image
+                # We use a window to read a subset of the image and then resize it
+                window = Window(0, 0, original_width, original_height)
+                if src.count == 3:
+                    # Read bands in the correct order (RGB)
+                    downsampled_image = src.read([1, 2, 3], window=window, out_shape=(scaled_height, scaled_width))
+                else:
+                    downsampled_image = src.read(window=window, out_shape=(scaled_height, scaled_width))
+
+                # Determine the number of bands
+                num_bands = src.count
+
+                # Convert the downsampled image to a QImage
+                if num_bands == 1:
+                    # Grayscale image
+                    qimage = QImage(downsampled_image.data.tobytes(),
+                                    scaled_width,
+                                    scaled_height,
+                                    QImage.Format_Grayscale8)
+                elif num_bands == 3:
+                    # RGB image
+                    # Convert to uint8 if it's not already
+                    rgb_image = downsampled_image.astype(np.uint8)
+                    # Ensure the bands are in the correct order (RGB)
+                    rgb_image = np.transpose(rgb_image, (1, 2, 0))
+
+                    # Create QImage directly from the numpy array
+                    qimage = QImage(rgb_image.data.tobytes(),
+                                    scaled_width,
+                                    scaled_height,
+                                    scaled_width * 3,
+                                    QImage.Format_RGB888)
+                else:
+                    raise ValueError(f"Unsupported number of bands: {num_bands}")
+
+                # Close the rasterio dataset
+                src.close()
+                gc.collect()
+
+                return qimage
+        except Exception as e:
+            print(f"Error loading scaled image {image_path}: {str(e)}")
+            return QImage()  # Return an empty QImage if there's an error
+
+    def on_full_resolution_image_loaded(self, full_resolution_image):
+        if not self.selected_image_path:
+            return
+
         # Load the Rasterio
-        rasterio_image = self.rasterio_open(image_path)
-        self.rasterio_images[image_path] = rasterio_image
+        self.rasterio_images[self.selected_image_path] = self.rasterio_open(self.selected_image_path)
 
         # Update the selected image
-        self.selected_image_path = image_path
         self.update_table_selection()
 
-        # Pass to the AnnotationWindow to be displayed / selected
-        self.annotation_window.set_image(image_path)
-        self.imageSelected.emit(image_path)
+        # Update the display with the full-resolution image
+        self.images[self.selected_image_path] = full_resolution_image
+        self.annotation_window.set_image(self.selected_image_path)
+        self.imageSelected.emit(self.selected_image_path)
 
-        # Update the current image index label
-        self.update_current_image_index_label()
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
 
     @lru_cache(maxsize=32)
     def rasterio_open(self, image_path):
@@ -255,32 +460,6 @@ class ImageWindow(QWidget):
             self.show_confirmation_dialog = False
 
         return result
-
-    def update_image_count_label(self):
-        total_images = len(self.filtered_image_paths)
-        self.image_count_label.setText(f"Total Images: {total_images}")
-
-    def update_current_image_index_label(self):
-        if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
-            index = self.filtered_image_paths.index(self.selected_image_path) + 1
-            self.current_image_index_label.setText(f"Current Image: {index}")
-        else:
-            self.current_image_index_label.setText("Current Image: None")
-
-    def update_table_widget(self):
-        self.tableWidget.setRowCount(0)  # Clear the table
-        for path in self.filtered_image_paths:
-            row_position = self.tableWidget.rowCount()
-            self.tableWidget.insertRow(row_position)
-            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(self.image_dict[path]['filename']))
-        self.update_table_selection()
-
-    def update_table_selection(self):
-        if self.selected_image_path in self.filtered_image_paths:
-            row = self.filtered_image_paths.index(self.selected_image_path)
-            self.tableWidget.selectRow(row)
-        else:
-            self.tableWidget.clearSelection()
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:

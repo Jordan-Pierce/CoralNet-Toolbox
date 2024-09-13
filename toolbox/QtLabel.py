@@ -1,14 +1,12 @@
-import uuid
 import json
 import random
-
-from PyQt5.QtWidgets import (QFileDialog, QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QColorDialog, QMenu, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication)
-
-from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QFont
-from PyQt5.QtCore import Qt, pyqtSignal
-
+import uuid
 import warnings
+
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
+from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
+from PyQt5.QtWidgets import (QFileDialog, QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
+                             QColorDialog, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -39,18 +37,34 @@ class Label(QWidget):
         # Set tooltip for long label
         self.setToolTip(self.long_label_code)
 
-        # Context menu
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_context_menu)
-
-    def update_color(self):
-        self.update()  # Trigger a repaint
+        self.drag_start_position = None
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.is_selected = not self.is_selected
             self.update_selection()
             self.selected.emit(self)  # Emit the selected signal
+
+        if event.button() == Qt.RightButton:
+            self.is_selected = not self.is_selected
+            self.update_selection()
+            self.selected.emit(self)  # Emit the selected signal
+            self.drag_start_position = event.pos()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.RightButton and self.drag_start_position:
+            drag = QDrag(self)
+            mime_data = QMimeData()
+            mime_data.setText(self.id)
+            drag.setMimeData(mime_data)
+            drag.exec_(Qt.MoveAction)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.drag_start_position = None
+
+    def update_color(self):
+        self.update()  # Trigger a repaint
 
     def update_selection(self):
         self.update()  # Trigger a repaint
@@ -102,9 +116,6 @@ class Label(QWidget):
         painter.drawText(12, 0, self.width() - 30, self.height(), Qt.AlignVCenter, elided_text)
 
         super().paintEvent(event)
-
-    def show_context_menu(self, pos):
-        context_menu = QMenu(self)
 
     def delete_label(self):
         self.label_deleted.emit(self)
@@ -208,6 +219,24 @@ class LabelWindow(QWidget):
         self.active_label.deselect()
 
         self.show_confirmation_dialog = True
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        label_id = event.mimeData().text()
+        label = self.get_label_by_id(label_id)
+        if label:
+            self.labels.remove(label)
+            self.labels.insert(self.calculate_new_index(event.pos()), label)
+            self.reorganize_labels()
+
+    def calculate_new_index(self, pos):
+        row = pos.y() // self.label_width
+        col = pos.x() // self.label_width
+        return row * self.labels_per_row + col
 
     def export_labels(self):
         options = QFileDialog.Options()
@@ -324,6 +353,7 @@ class LabelWindow(QWidget):
 
         # Update annotations with the new label
         self.update_annotations_with_label(selected_label)
+        self.adjust_scrollbar_for_active_label()
 
     def deselect_active_label(self):
         if self.active_label:
@@ -437,7 +467,7 @@ class LabelWindow(QWidget):
         label.deleteLater()
 
         # Delete annotations associated with the label
-        self.annotation_window.delete_annotations_for_label(label)
+        self.annotation_window.delete_label_annotations(label)
 
         # Reset active label if it was deleted
         if self.active_label == label:

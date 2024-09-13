@@ -1,34 +1,31 @@
-import os
+import datetime
 import gc
 import json
+import os
 import random
 import shutil
-import datetime
-from pathlib import Path
+import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import groupby
 from operator import attrgetter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import numpy as np
-
-from ultralytics import YOLO
 import ultralytics.engine.validator as validator
-from ultralytics.data.dataset import ClassificationDataset
 import ultralytics.models.yolo.classify.train as train_build
 
-from torch.cuda import empty_cache
-
-from toolbox.QtProgressBar import ProgressBar
-
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
                              QTableWidgetItem, QSlider, QButtonGroup)
 
-from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from torch.cuda import empty_cache
+from ultralytics import YOLO
+from ultralytics.data.dataset import ClassificationDataset
 
-import warnings
+from toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -468,6 +465,15 @@ class CreateDatasetDialog(QDialog):
         # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
+        # Create a blank sample in train folder it's a test-only dataset
+        # Ultralytics bug... it doesn't like empty directories (hacky)
+        if not sum([train_ratio, val_ratio]):
+            for label in self.selected_labels:
+                label_folder = os.path.join(train_dir, label)
+                os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
+                with open(os.path.join(label_folder, 'NULL.jpg'), 'w') as f:
+                    f.write("")
+
         self.process_annotations(self.train_annotations, train_dir, "Training")
         self.process_annotations(self.val_annotations, val_dir, "Validation")
         self.process_annotations(self.test_annotations, test_dir, "Testing")
@@ -533,7 +539,6 @@ class CreateDatasetDialog(QDialog):
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
                     progress_bar.update_progress()
-                    QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -686,7 +691,6 @@ class MergeDatasetsDialog(QDialog):
             for i, future in enumerate(as_completed(futures)):
                 future.result()
                 progress_bar.update_progress()
-                QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -820,7 +824,7 @@ class TrainModelWorker(QThread):
             # Create and start the worker thread
             eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params)
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
-            eval_worker.start()
+            eval_worker.run()  # Run the evaluation synchronously (same thread)
         except Exception as e:
             self.training_error.emit(str(e))
 
@@ -1615,6 +1619,11 @@ class EvaluateModelDialog(QDialog):
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
             self.worker.evaluation_error.connect(self.on_evaluation_error)
             self.worker.start()
+
+            # Empty cache
+            del self.target_model
+            gc.collect()
+            empty_cache()
         except Exception as e:
             error_message = f"An error occurred when evaluating model: {e}"
             QMessageBox.critical(self, "Error", error_message)
@@ -1755,7 +1764,6 @@ class OptimizeModelDialog(QDialog):
             QMessageBox.information(self, "Model Export Status", message)
 
         except Exception as e:
-
             # Display an error message box to the user
             error_message = f"An error occurred when converting model: {e}"
             QMessageBox.critical(self, "Error", error_message)
@@ -2016,7 +2024,6 @@ class DeployModelDialog(QDialog):
             # Process the results
             self.process_prediction_result(annotation, result)
             progress_bar.update_progress()
-            QApplication.processEvents()
 
         # Show the last annotation in the confidence window (aesthetic)
         self.main_window.confidence_window.display_cropped_image(annotation)
@@ -2237,7 +2244,6 @@ class BatchInferenceDialog(QDialog):
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
                     progress_bar.update_progress()
-                    QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -2254,7 +2260,6 @@ class BatchInferenceDialog(QDialog):
         for path, group in groups:
             self.deploy_model_dialog.predict(annotations=list(group))
             progress_bar.update_progress()
-            QApplication.processEvents()
 
         progress_bar.stop_progress()
         progress_bar.close()

@@ -1,8 +1,8 @@
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF
-
 import warnings
+
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF
+from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
+from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

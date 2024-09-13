@@ -1,7 +1,7 @@
-from PyQt5.QtWidgets import QApplication, QMessageBox
-from PyQt5.QtCore import Qt, QObject, QEvent
-
 import warnings
+
+from PyQt5.QtCore import Qt, QObject, QEvent
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
