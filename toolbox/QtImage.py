@@ -1,4 +1,5 @@
 import os
+import gc
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -328,28 +329,11 @@ class ImageWindow(QWidget):
         QApplication.restoreOverrideCursor()
         super().closeEvent(event)
 
-    # def load_scaled_image(self, image_path):
-    #     try:
-    #         import time
-    #         start_time = time.perf_counter()
-    #         reader = QImageReader(image_path)
-    #         original_size = reader.size()  # Get the original size of the image
-    #         scaled_width = original_size.width() // 100
-    #         scaled_height = original_size.height() // 100
-    #         scaled_size = original_size.scaled(scaled_width, scaled_height, Qt.KeepAspectRatio)
-    #         reader.setScaledSize(scaled_size)  # Set the desired scaled size
-    #         scaled_image = reader.read()
-    #         end_time = time.perf_counter()
-    #         print(f"Time to load scaled image: {end_time - start_time:.4f} seconds")
-    #         return scaled_image
-    #     except Exception as e:
-    #         print(f"Error loading scaled image {image_path}: {str(e)}")
-    #         return QImage()  # Return an empty QImage if there's an error
-
     def load_scaled_image(self, image_path):
         try:
             import time
             start_time = time.perf_counter()
+
             # Open the raster file with Rasterio
             with rasterio.open(image_path) as src:
                 # Get the original size of the image
@@ -363,17 +347,76 @@ class ImageWindow(QWidget):
                 # Read a downsampled version of the image
                 # We use a window to read a subset of the image and then resize it
                 window = Window(0, 0, original_width, original_height)
-                downsampled_image = src.read(1, window=window, out_shape=(scaled_height, scaled_width))
+                if src.count == 3:
+                    # Read bands in the correct order (RGB)
+                    downsampled_image = src.read([1, 2, 3], window=window, out_shape=(scaled_height, scaled_width))
+                else:
+                    downsampled_image = src.read(window=window, out_shape=(scaled_height, scaled_width))
+
+                # Determine the number of bands
+                num_bands = src.count
 
                 # Convert the downsampled image to a QImage
-                # Grayscale image
-                qimage = QImage(downsampled_image.data, scaled_width, scaled_height, QImage.Format_Grayscale8)
+                if num_bands == 1:
+                    # Grayscale image
+                    qimage = QImage(downsampled_image.data.tobytes(),
+                                    scaled_width,
+                                    scaled_height,
+                                    QImage.Format_Grayscale8)
+                elif num_bands == 3:
+                    # RGB image
+                    # Convert to uint8 if it's not already
+                    rgb_image = downsampled_image.astype(np.uint8)
+                    # Ensure the bands are in the correct order (RGB)
+                    rgb_image = np.transpose(rgb_image, (1, 2, 0))
+
+                    # Create QImage directly from the numpy array
+                    qimage = QImage(rgb_image.data.tobytes(),
+                                    scaled_width,
+                                    scaled_height,
+                                    scaled_width * 3,
+                                    QImage.Format_RGB888)
+                else:
+                    raise ValueError(f"Unsupported number of bands: {num_bands}")
+
                 end_time = time.perf_counter()
                 print(f"Time to load scaled image: {end_time - start_time:.4f} seconds")
+                # Close the rasterio dataset
+                src.close()
+                gc.collect()
                 return qimage
         except Exception as e:
             print(f"Error loading scaled image {image_path}: {str(e)}")
             return QImage()  # Return an empty QImage if there's an error
+
+    # def load_scaled_image(self, image_path):
+    #     try:
+    #         import time
+    #         start_time = time.perf_counter()
+    #         # Open the raster file with Rasterio
+    #         with rasterio.open(image_path) as src:
+    #             # Get the original size of the image
+    #             original_width = src.width
+    #             original_height = src.height
+    #
+    #             # Calculate the scaled size
+    #             scaled_width = original_width // 100
+    #             scaled_height = original_height // 100
+    #
+    #             # Read a downsampled version of the image
+    #             # We use a window to read a subset of the image and then resize it
+    #             window = Window(0, 0, original_width, original_height)
+    #             downsampled_image = src.read(1, window=window, out_shape=(scaled_height, scaled_width))
+    #
+    #             # Convert the downsampled image to a QImage
+    #             # Grayscale image
+    #             qimage = QImage(downsampled_image.data, scaled_width, scaled_height, QImage.Format_Grayscale8)
+    #             end_time = time.perf_counter()
+    #             print(f"Time to load scaled image: {end_time - start_time:.4f} seconds")
+    #             return qimage
+    #     except Exception as e:
+    #         print(f"Error loading scaled image {image_path}: {str(e)}")
+    #         return QImage()  # Return an empty QImage if there's an error
 
     def on_full_resolution_image_loaded(self, full_resolution_image):
         if not self.selected_image_path:
