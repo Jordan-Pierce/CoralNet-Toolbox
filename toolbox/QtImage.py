@@ -5,7 +5,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from queue import Queue
 
+import numpy as np
+
 import rasterio
+from rasterio.windows import Window
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QSize, QThread, QEventLoop, QTimer, QDateTime
 from PyQt5.QtGui import QImage, QImageReader
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
@@ -325,16 +328,49 @@ class ImageWindow(QWidget):
         QApplication.restoreOverrideCursor()
         super().closeEvent(event)
 
+    # def load_scaled_image(self, image_path):
+    #     try:
+    #         import time
+    #         start_time = time.perf_counter()
+    #         reader = QImageReader(image_path)
+    #         original_size = reader.size()  # Get the original size of the image
+    #         scaled_width = original_size.width() // 100
+    #         scaled_height = original_size.height() // 100
+    #         scaled_size = original_size.scaled(scaled_width, scaled_height, Qt.KeepAspectRatio)
+    #         reader.setScaledSize(scaled_size)  # Set the desired scaled size
+    #         scaled_image = reader.read()
+    #         end_time = time.perf_counter()
+    #         print(f"Time to load scaled image: {end_time - start_time:.4f} seconds")
+    #         return scaled_image
+    #     except Exception as e:
+    #         print(f"Error loading scaled image {image_path}: {str(e)}")
+    #         return QImage()  # Return an empty QImage if there's an error
+
     def load_scaled_image(self, image_path):
         try:
-            reader = QImageReader(image_path)
-            original_size = reader.size()  # Get the original size of the image
-            scaled_width = original_size.width() // 100
-            scaled_height = original_size.height() // 100
-            scaled_size = original_size.scaled(scaled_width, scaled_height, Qt.KeepAspectRatio)
-            reader.setScaledSize(scaled_size)  # Set the desired scaled size
-            scaled_image = reader.read()
-            return scaled_image
+            import time
+            start_time = time.perf_counter()
+            # Open the raster file with Rasterio
+            with rasterio.open(image_path) as src:
+                # Get the original size of the image
+                original_width = src.width
+                original_height = src.height
+
+                # Calculate the scaled size
+                scaled_width = original_width // 100
+                scaled_height = original_height // 100
+
+                # Read a downsampled version of the image
+                # We use a window to read a subset of the image and then resize it
+                window = Window(0, 0, original_width, original_height)
+                downsampled_image = src.read(1, window=window, out_shape=(scaled_height, scaled_width))
+
+                # Convert the downsampled image to a QImage
+                # Grayscale image
+                qimage = QImage(downsampled_image.data, scaled_width, scaled_height, QImage.Format_Grayscale8)
+                end_time = time.perf_counter()
+                print(f"Time to load scaled image: {end_time - start_time:.4f} seconds")
+                return qimage
         except Exception as e:
             print(f"Error loading scaled image {image_path}: {str(e)}")
             return QImage()  # Return an empty QImage if there's an error
