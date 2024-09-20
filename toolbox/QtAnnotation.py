@@ -225,7 +225,9 @@ class Annotation(QObject):
                 int(self.center_xy.x()),
                 self.label.short_label_code,
                 self.label.long_label_code,
-                self.annotation_size]
+                self.annotation_size,
+                *[f"{confidence:.3f}" for confidence in self.machine_confidence.values()],
+                *[suggestion for suggestion in self.machine_confidence.keys()]]
 
     def to_dict(self):
         return {
@@ -237,7 +239,8 @@ class Annotation(QObject):
             'annotation_color': self.label.color.getRgb(),
             'image_path': self.image_path,
             'label_id': self.label.id,
-            'data': self.data
+            'data': self.data,
+            'machine_confidence': self.machine_confidence
         }
 
     @classmethod
@@ -250,6 +253,7 @@ class Annotation(QObject):
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
+        annotation.machine_confidence = data.get('machine_confidence', {})
         return annotation
 
     def __repr__(self):
@@ -258,7 +262,8 @@ class Annotation(QObject):
                 f"annotation_color={self.label.color.name()}, "
                 f"image_path={self.image_path}, "
                 f"label={self.label.short_label_code}, "
-                f"data={self.data})")
+                f"data={self.data}, "
+                f"machine_confidence={self.machine_confidence})")
 
 
 class AnnotationWindow(QGraphicsView):
@@ -463,7 +468,12 @@ class AnnotationWindow(QGraphicsView):
                     data.append(annotation.to_coralnet_format())
                     progress_bar.update_progress()
 
-                df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size'])
+                columns = ['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size']
+                for i in range(1, 6):
+                    columns.append(f'Machine confidence {i}')
+                    columns.append(f'Machine suggestion {i}')
+
+                df = pd.DataFrame(data, columns=columns)
                 df.to_csv(file_path, index=False)
 
                 progress_bar.stop_progress()
@@ -588,6 +598,23 @@ class AnnotationWindow(QGraphicsView):
                                             color,
                                             image_path,
                                             label_id)
+
+                    # Add machine confidence and suggestions if they exist
+                    for i in range(1, 6):
+                        confidence_col = f'Machine confidence {i}'
+                        suggestion_col = f'Machine suggestion {i}'
+                        if confidence_col in row and suggestion_col in row:
+                            confidence = float(row[confidence_col])
+                            suggestion = row[suggestion_col]
+                            annotation.machine_confidence[suggestion] = confidence
+
+                            # Ensure the suggestion is an existing label
+                            existing_suggestion_label = self.main_window.label_window.get_label_by_short_code(suggestion)
+                            if not existing_suggestion_label:
+                                color = QColor(random.randint(0, 255),
+                                               random.randint(0, 255),
+                                               random.randint(0, 255))
+                                self.main_window.label_window.add_label_if_not_exists(suggestion, suggestion, color)
 
                     # Add to the AnnotationWindow dictionary
                     self.annotations_dict[annotation.id] = annotation
