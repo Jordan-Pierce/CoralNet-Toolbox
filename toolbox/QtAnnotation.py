@@ -12,7 +12,7 @@ from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
-                             QDialogButtonBox)
+                             QDialogButtonBox, QButtonGroup)
 from rasterio.windows import Window
 
 from toolbox.QtLabel import Label
@@ -1619,7 +1619,7 @@ class AnnotationSamplingDialog(QDialog):
         self.apply_group.addButton(self.apply_prev_checkbox)
         self.apply_group.addButton(self.apply_next_checkbox)
         self.apply_group.addButton(self.apply_all_checkbox)
-        self.apply_group.setExclusive(True)
+        self.apply_group.setExclusive(False)
 
         # Preview Button
         self.preview_button = QPushButton("Preview")
