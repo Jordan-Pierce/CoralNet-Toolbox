@@ -1920,14 +1920,14 @@ class AnnotationSamplingDialog(QDialog):
             # Update the image window's image dict
             self.image_window.update_image_annotations(image_path)
 
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-        # # Set / load the image / annotations of the last image
+        # Set / load the image / annotations of the last image
         self.annotation_window.set_image(current_image_path)
         # Reset dialog for next time
         self.reset_defaults()
+
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()

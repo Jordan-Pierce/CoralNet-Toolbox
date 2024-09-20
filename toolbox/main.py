@@ -10,9 +10,6 @@
 # TODO Now:
 #   - add importing of coralnet predictions / output (also for Viscore); Keep all of the input data, and export with
 #   - Reef Future short label code json?
-#   - Batch inference goes to every image, even without annotations?
-#   - progress bar for cropping images when sampling
-#   - Reading tiled tifs and show increasing resolution as it loads (if they are tiled), viewed; rasterio image pyramid
 
 import traceback
 
