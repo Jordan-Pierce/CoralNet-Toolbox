@@ -5,11 +5,9 @@
 #   - master transparency for all annotations / classes
 #   - exporting image names for creating dataset
 #   - filter images when creating dataset
-#   - filter, prev, next, all images when batch inference
 
 # TODO Now:
-#   - add importing of coralnet predictions / output (also for Viscore); Keep all of the input data, and export with
-#   - Reef Future short label code json?
+#   - add importing of coralnet predictions / output  for Viscore Keep all of the input data, and export with
 
 import traceback
 

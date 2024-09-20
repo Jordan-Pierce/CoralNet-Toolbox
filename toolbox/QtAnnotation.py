@@ -220,14 +220,26 @@ class Annotation(QObject):
             self.graphics_item.update()
 
     def to_coralnet_format(self):
+        # Extract machine confidence values and suggestions
+        confidences = [f"{confidence:.3f}" for confidence in self.machine_confidence.values()]
+        suggestions = [suggestion.short_label_code for suggestion in self.machine_confidence.keys()]
+
+        # Pad with NaN if there are fewer than 5 values
+        while len(confidences) < 5:
+            confidences.append(np.nan)
+        while len(suggestions) < 5:
+            suggestions.append(np.nan)
+
+        # Interleave confidences and suggestions
+        interleaved = [val for pair in zip(confidences[:5], suggestions[:5]) for val in pair]
+
         return [os.path.basename(self.image_path),
                 int(self.center_xy.y()),
                 int(self.center_xy.x()),
                 self.label.short_label_code,
                 self.label.long_label_code,
                 self.annotation_size,
-                *[f"{confidence:.3f}" for confidence in self.machine_confidence.values()],
-                *[suggestion for suggestion in self.machine_confidence.keys()]]
+                *interleaved]  # Ensure only 5 pairs are taken
 
     def to_dict(self):
         return {
