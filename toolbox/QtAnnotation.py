@@ -1614,10 +1614,12 @@ class AnnotationSamplingDialog(QDialog):
         self.layout.addWidget(self.apply_all_checkbox)
 
         # Ensure only one of the apply checkboxes can be selected at a time
-        self.apply_filtered_checkbox.stateChanged.connect(self.update_apply_filtered_checkboxes)
-        self.apply_prev_checkbox.stateChanged.connect(self.update_apply_prev_checkboxes)
-        self.apply_next_checkbox.stateChanged.connect(self.update_apply_next_checkboxes)
-        self.apply_all_checkbox.stateChanged.connect(self.update_apply_all_checkboxes)
+        self.apply_group = QButtonGroup(self)
+        self.apply_group.addButton(self.apply_filtered_checkbox)
+        self.apply_group.addButton(self.apply_prev_checkbox)
+        self.apply_group.addButton(self.apply_next_checkbox)
+        self.apply_group.addButton(self.apply_all_checkbox)
+        self.apply_group.setExclusive(True)
 
         # Preview Button
         self.preview_button = QPushButton("Preview")
@@ -1666,54 +1668,6 @@ class AnnotationSamplingDialog(QDialog):
         spinbox.setMaximum(1000)
         layout.addRow(label, spinbox)
         return spinbox
-
-    def update_apply_filtered_checkboxes(self):
-        if self.apply_filtered_checkbox.isChecked():
-            self.apply_filtered_checkbox.setChecked(True)
-            self.apply_prev_checkbox.setChecked(False)
-            self.apply_next_checkbox.setChecked(False)
-            self.apply_all_checkbox.setChecked(False)
-            return
-
-        if not self.apply_filtered_checkbox.isChecked():
-            self.apply_filtered_checkbox.setChecked(False)
-            return
-
-    def update_apply_prev_checkboxes(self):
-        if self.apply_prev_checkbox.isChecked():
-            self.apply_prev_checkbox.setChecked(True)
-            self.apply_filtered_checkbox.setChecked(False)
-            self.apply_next_checkbox.setChecked(False)
-            self.apply_all_checkbox.setChecked(False)
-            return
-
-        if not self.apply_prev_checkbox.isChecked():
-            self.apply_prev_checkbox.setChecked(False)
-            return
-
-    def update_apply_next_checkboxes(self):
-        if self.apply_next_checkbox.isChecked():
-            self.apply_next_checkbox.setChecked(True)
-            self.apply_filtered_checkbox.setChecked(False)
-            self.apply_prev_checkbox.setChecked(False)
-            self.apply_all_checkbox.setChecked(False)
-            return
-
-        if not self.apply_next_checkbox.isChecked():
-            self.apply_next_checkbox.setChecked(False)
-            return
-
-    def update_apply_all_checkboxes(self):
-        if self.apply_all_checkbox.isChecked():
-            self.apply_all_checkbox.setChecked(True)
-            self.apply_filtered_checkbox.setChecked(False)
-            self.apply_prev_checkbox.setChecked(False)
-            self.apply_next_checkbox.setChecked(False)
-            return
-
-        if not self.apply_all_checkbox.isChecked():
-            self.apply_all_checkbox.setChecked(False)
-            return
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins
