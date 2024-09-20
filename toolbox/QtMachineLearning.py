@@ -2171,6 +2171,31 @@ class BatchInferenceDialog(QDialog):
         layout.addWidget(self.classification_review_checkbox)
         layout.addWidget(self.classification_all_checkbox)
 
+        # Add options for selecting images
+        self.image_options_group = QButtonGroup(self)
+
+        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.apply_prev_checkbox = QCheckBox("Apply to previous images")
+        self.apply_next_checkbox = QCheckBox("Apply to next images")
+        self.apply_all_checkbox = QCheckBox("Apply to all images")
+
+        # Add the checkboxes to the button group
+        self.image_options_group.addButton(self.apply_filtered_checkbox)
+        self.image_options_group.addButton(self.apply_prev_checkbox)
+        self.image_options_group.addButton(self.apply_next_checkbox)
+        self.image_options_group.addButton(self.apply_all_checkbox)
+
+        # Ensure only one checkbox can be checked at a time
+        self.image_options_group.setExclusive(True)
+
+        # Set the default checkbox
+        self.apply_all_checkbox.setChecked(True)
+
+        layout.addWidget(self.apply_filtered_checkbox)
+        layout.addWidget(self.apply_prev_checkbox)
+        layout.addWidget(self.apply_next_checkbox)
+        layout.addWidget(self.apply_all_checkbox)
+
         self.classification_tab.setLayout(layout)
 
     def on_ok_clicked(self):
@@ -2192,11 +2217,11 @@ class BatchInferenceDialog(QDialog):
         try:
             # Get the Review Annotations
             if self.classification_review_checkbox.isChecked():
-                for image_path in self.image_window.image_paths:
+                for image_path in self.get_selected_image_paths():
                     self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
             else:
                 # Get all the annotations
-                for image_path in self.image_window.image_paths:
+                for image_path in self.get_selected_image_paths():
                     self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
 
             # Crop them, if not already cropped
@@ -2212,6 +2237,18 @@ class BatchInferenceDialog(QDialog):
 
         # Resume the cursor
         QApplication.restoreOverrideCursor()
+
+    def get_selected_image_paths(self):
+        if self.apply_filtered_checkbox.isChecked():
+            return self.image_window.filtered_image_paths
+        elif self.apply_prev_checkbox.isChecked():
+            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+            return self.image_window.image_paths[:current_image_index + 1]
+        elif self.apply_next_checkbox.isChecked():
+            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+            return self.image_window.image_paths[current_image_index:]
+        else:
+            return self.image_window.image_paths
 
     def preprocess_annotations(self):
         # Get unique image paths
