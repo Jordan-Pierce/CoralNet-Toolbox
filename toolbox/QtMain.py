@@ -5,7 +5,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
                              QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox)
 
-from torch.cuda import is_available
+from torch.cuda import is_available, device_count
 
 from toolbox.QtAnnotation import AnnotationSamplingDialog
 from toolbox.QtAnnotation import AnnotationWindow
@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
         polygon_icon_path = get_icon_path("polygon.png")
         turtle_icon_path = get_icon_path("turtle.png")
         rabbit_icon_path = get_icon_path("rabbit.png")
+        rocket_icon_path = get_icon_path("rocket.png")
 
         # Add tools here with icons
         self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
@@ -231,15 +232,23 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Add the device label widget as an action in the toolbar
-        self.device = 'cuda:0' if is_available() else 'cpu'
-        device_icon = QIcon(rabbit_icon_path) if self.device != 'cpu' else QIcon(turtle_icon_path)
+        self.device, num_device = self.get_available_device()
+        if num_device == 1:
+            device_icon = QIcon(rabbit_icon_path)
+            device_tooltip = f"cuda:{self.device}"
+        elif num_device > 1:
+            device_icon = QIcon(rocket_icon_path)
+            device_tooltip = f"cuda:{self.device}"
+        else:
+            device_icon = QIcon(turtle_icon_path)
+            device_tooltip = "cpu"
 
         # Create the device action with the appropriate icon
         device_action = QAction(device_icon, "", self)  # Empty string for the text
         self.device_tool_action = device_action
         self.device_tool_action.setCheckable(False)
         # Set the tooltip to show the value of self.device
-        self.device_tool_action.setToolTip(self.device)
+        self.device_tool_action.setToolTip(device_tooltip)
         self.toolbar.addAction(self.device_tool_action)
 
         # Create status bar layout
@@ -329,6 +338,15 @@ class MainWindow(QMainWindow):
             else:
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
+
+    def get_available_device(self):
+        device = ''
+        if is_available():
+            for i in range(device_count()):
+                device += f'{i}'
+        else:
+            device = 'cpu'
+        return device, device_count()
 
     def toggle_tool(self, state):
         action = self.sender()
