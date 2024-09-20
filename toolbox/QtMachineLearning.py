@@ -2153,26 +2153,37 @@ class BatchInferenceDialog(QDialog):
     def init_classification_tab(self):
         layout = QVBoxLayout()
 
-        # Create a button group for the checkboxes
-        self.prediction_options_group = QButtonGroup(self)
+        # Create a group box for annotation options
+        annotation_group_box = QGroupBox("Annotation Options")
+        annotation_layout = QVBoxLayout()
+
+        # Create a button group for the annotation checkboxes
+        self.annotation_options_group = QButtonGroup(self)
 
         self.classification_review_checkbox = QCheckBox("Predict Review Annotation")
         self.classification_all_checkbox = QCheckBox("Predict All Annotations")
 
         # Add the checkboxes to the button group
-        self.prediction_options_group.addButton(self.classification_review_checkbox)
-        self.prediction_options_group.addButton(self.classification_all_checkbox)
+        self.annotation_options_group.addButton(self.classification_review_checkbox)
+        self.annotation_options_group.addButton(self.classification_all_checkbox)
 
         # Ensure only one checkbox can be checked at a time
-        self.prediction_options_group.setExclusive(True)
+        self.annotation_options_group.setExclusive(True)
 
         # Set the default checkbox
         self.classification_review_checkbox.setChecked(True)
 
-        layout.addWidget(self.classification_review_checkbox)
-        layout.addWidget(self.classification_all_checkbox)
+        annotation_layout.addWidget(self.classification_review_checkbox)
+        annotation_layout.addWidget(self.classification_all_checkbox)
+        annotation_group_box.setLayout(annotation_layout)
 
-        # Add options for selecting images
+        layout.addWidget(annotation_group_box)
+
+        # Create a group box for image options
+        image_group_box = QGroupBox("Image Options")
+        image_layout = QVBoxLayout()
+
+        # Create a button group for the image checkboxes
         self.image_options_group = QButtonGroup(self)
 
         self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
@@ -2192,10 +2203,13 @@ class BatchInferenceDialog(QDialog):
         # Set the default checkbox
         self.apply_all_checkbox.setChecked(True)
 
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
+        image_layout.addWidget(self.apply_filtered_checkbox)
+        image_layout.addWidget(self.apply_prev_checkbox)
+        image_layout.addWidget(self.apply_next_checkbox)
+        image_layout.addWidget(self.apply_all_checkbox)
+        image_group_box.setLayout(image_layout)
+
+        layout.addWidget(image_group_box)
 
         self.classification_tab.setLayout(layout)
 
