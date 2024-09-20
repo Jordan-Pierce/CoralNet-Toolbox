@@ -1,12 +1,18 @@
-# TODO
+# TODO Later:
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
 #   - file explorer for annotations to edit, delete in batches
 #   - master transparency for all annotations / classes
-#   - add importing of coralnet predictions / output
 #   - exporting image names for creating dataset
-#   - filter images when creating dataset?
-#   - Look into multiGPU
+#   - filter images when creating dataset
+#   - filter, prev, next, all images when batch inference
+
+# TODO Now:
+#   - add importing of coralnet predictions / output (also for Viscore); Keep all of the input data, and export with
+#   - Reef Future short label code json?
+#   - Batch inference goes to every image, even without annotations?
+#   - progress bar for cropping images when sampling
+#   - Reading tiled tifs and show increasing resolution as it loads (if they are tiled), viewed; rasterio image pyramid
 
 import traceback
 

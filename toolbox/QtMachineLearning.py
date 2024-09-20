@@ -781,9 +781,10 @@ class TrainModelWorker(QThread):
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
 
-    def __init__(self, params):
+    def __init__(self, params, device):
         super().__init__()
         self.params = params
+        self.device = device
         self.target_model = None
 
     def run(self):
@@ -801,7 +802,7 @@ class TrainModelWorker(QThread):
 
             # Load the model, train, and save the best weights
             self.target_model = YOLO(model_path)
-            self.target_model.train(**self.params)
+            self.target_model.train(**self.params, device=self.device)
 
             # Evaluate the model after training
             self._evaluate_model()
@@ -1225,7 +1226,7 @@ class TrainModelDialog(QDialog):
         # Get training parameters
         self.params = self.get_training_parameters()
         # Create and start the worker thread
-        self.worker = TrainModelWorker(self.params)
+        self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
@@ -2018,7 +2019,7 @@ class DeployModelDialog(QDialog):
         progress_bar.start_progress(len(annotations))
 
         # Perform batch prediction
-        results = self.loaded_model(images_np, stream=True)
+        results = self.loaded_model(images_np, stream=True, device=self.main_window.device)
 
         for annotation, result in zip(annotations, results):
             # Process the results
@@ -2043,7 +2044,7 @@ class DeployModelDialog(QDialog):
         # Convert QImage to np
         image_np = self.pixmap_to_numpy(image)
         # Perform prediction
-        result = self.loaded_model(image_np)[0]
+        result = self.loaded_model(image_np, device=self.main_window.device)[0]
         # Process the results
         self.process_prediction_result(annotation, result)
 
