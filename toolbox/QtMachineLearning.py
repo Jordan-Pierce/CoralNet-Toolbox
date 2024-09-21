@@ -781,9 +781,10 @@ class TrainModelWorker(QThread):
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
 
-    def __init__(self, params):
+    def __init__(self, params, device):
         super().__init__()
         self.params = params
+        self.device = device
         self.target_model = None
 
     def run(self):
@@ -801,7 +802,7 @@ class TrainModelWorker(QThread):
 
             # Load the model, train, and save the best weights
             self.target_model = YOLO(model_path)
-            self.target_model.train(**self.params)
+            self.target_model.train(**self.params, device=self.device)
 
             # Evaluate the model after training
             self._evaluate_model()
@@ -1225,7 +1226,7 @@ class TrainModelDialog(QDialog):
         # Get training parameters
         self.params = self.get_training_parameters()
         # Create and start the worker thread
-        self.worker = TrainModelWorker(self.params)
+        self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
@@ -2018,7 +2019,7 @@ class DeployModelDialog(QDialog):
         progress_bar.start_progress(len(annotations))
 
         # Perform batch prediction
-        results = self.loaded_model(images_np, stream=True)
+        results = self.loaded_model(images_np, stream=True, device=self.main_window.device)
 
         for annotation, result in zip(annotations, results):
             # Process the results
@@ -2043,7 +2044,7 @@ class DeployModelDialog(QDialog):
         # Convert QImage to np
         image_np = self.pixmap_to_numpy(image)
         # Perform prediction
-        result = self.loaded_model(image_np)[0]
+        result = self.loaded_model(image_np, device=self.main_window.device)[0]
         # Process the results
         self.process_prediction_result(annotation, result)
 
@@ -2152,24 +2153,63 @@ class BatchInferenceDialog(QDialog):
     def init_classification_tab(self):
         layout = QVBoxLayout()
 
-        # Create a button group for the checkboxes
-        self.prediction_options_group = QButtonGroup(self)
+        # Create a group box for annotation options
+        annotation_group_box = QGroupBox("Annotation Options")
+        annotation_layout = QVBoxLayout()
+
+        # Create a button group for the annotation checkboxes
+        self.annotation_options_group = QButtonGroup(self)
 
         self.classification_review_checkbox = QCheckBox("Predict Review Annotation")
         self.classification_all_checkbox = QCheckBox("Predict All Annotations")
 
         # Add the checkboxes to the button group
-        self.prediction_options_group.addButton(self.classification_review_checkbox)
-        self.prediction_options_group.addButton(self.classification_all_checkbox)
+        self.annotation_options_group.addButton(self.classification_review_checkbox)
+        self.annotation_options_group.addButton(self.classification_all_checkbox)
 
         # Ensure only one checkbox can be checked at a time
-        self.prediction_options_group.setExclusive(True)
+        self.annotation_options_group.setExclusive(True)
 
         # Set the default checkbox
         self.classification_review_checkbox.setChecked(True)
 
-        layout.addWidget(self.classification_review_checkbox)
-        layout.addWidget(self.classification_all_checkbox)
+        annotation_layout.addWidget(self.classification_review_checkbox)
+        annotation_layout.addWidget(self.classification_all_checkbox)
+        annotation_group_box.setLayout(annotation_layout)
+
+        layout.addWidget(annotation_group_box)
+
+        # Create a group box for image options
+        image_group_box = QGroupBox("Image Options")
+        image_layout = QVBoxLayout()
+
+        # Create a button group for the image checkboxes
+        self.image_options_group = QButtonGroup(self)
+
+        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.apply_prev_checkbox = QCheckBox("Apply to previous images")
+        self.apply_next_checkbox = QCheckBox("Apply to next images")
+        self.apply_all_checkbox = QCheckBox("Apply to all images")
+
+        # Add the checkboxes to the button group
+        self.image_options_group.addButton(self.apply_filtered_checkbox)
+        self.image_options_group.addButton(self.apply_prev_checkbox)
+        self.image_options_group.addButton(self.apply_next_checkbox)
+        self.image_options_group.addButton(self.apply_all_checkbox)
+
+        # Ensure only one checkbox can be checked at a time
+        self.image_options_group.setExclusive(True)
+
+        # Set the default checkbox
+        self.apply_all_checkbox.setChecked(True)
+
+        image_layout.addWidget(self.apply_filtered_checkbox)
+        image_layout.addWidget(self.apply_prev_checkbox)
+        image_layout.addWidget(self.apply_next_checkbox)
+        image_layout.addWidget(self.apply_all_checkbox)
+        image_group_box.setLayout(image_layout)
+
+        layout.addWidget(image_group_box)
 
         self.classification_tab.setLayout(layout)
 
@@ -2192,11 +2232,11 @@ class BatchInferenceDialog(QDialog):
         try:
             # Get the Review Annotations
             if self.classification_review_checkbox.isChecked():
-                for image_path in self.image_window.image_paths:
+                for image_path in self.get_selected_image_paths():
                     self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
             else:
                 # Get all the annotations
-                for image_path in self.image_window.image_paths:
+                for image_path in self.get_selected_image_paths():
                     self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
 
             # Crop them, if not already cropped
@@ -2212,6 +2252,18 @@ class BatchInferenceDialog(QDialog):
 
         # Resume the cursor
         QApplication.restoreOverrideCursor()
+
+    def get_selected_image_paths(self):
+        if self.apply_filtered_checkbox.isChecked():
+            return self.image_window.filtered_image_paths
+        elif self.apply_prev_checkbox.isChecked():
+            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+            return self.image_window.image_paths[:current_image_index + 1]
+        elif self.apply_next_checkbox.isChecked():
+            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+            return self.image_window.image_paths[current_image_index:]
+        else:
+            return self.image_window.image_paths
 
     def preprocess_annotations(self):
         # Get unique image paths

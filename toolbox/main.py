@@ -1,12 +1,13 @@
-# TODO
+# TODO Later:
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
 #   - file explorer for annotations to edit, delete in batches
 #   - master transparency for all annotations / classes
-#   - add importing of coralnet predictions / output
 #   - exporting image names for creating dataset
-#   - filter images when creating dataset?
-#   - Look into multiGPU
+#   - filter images when creating dataset
+
+# TODO Now:
+#   - add importing of coralnet predictions / output  for Viscore Keep all of the input data, and export with
 
 import traceback
 

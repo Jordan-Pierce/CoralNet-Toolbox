@@ -12,7 +12,7 @@ from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
-                             QDialogButtonBox)
+                             QDialogButtonBox, QButtonGroup)
 from rasterio.windows import Window
 
 from toolbox.QtLabel import Label
@@ -220,12 +220,26 @@ class Annotation(QObject):
             self.graphics_item.update()
 
     def to_coralnet_format(self):
+        # Extract machine confidence values and suggestions
+        confidences = [f"{confidence:.3f}" for confidence in self.machine_confidence.values()]
+        suggestions = [suggestion.short_label_code for suggestion in self.machine_confidence.keys()]
+
+        # Pad with NaN if there are fewer than 5 values
+        while len(confidences) < 5:
+            confidences.append(np.nan)
+        while len(suggestions) < 5:
+            suggestions.append(np.nan)
+
+        # Interleave confidences and suggestions
+        interleaved = [val for pair in zip(confidences[:5], suggestions[:5]) for val in pair]
+
         return [os.path.basename(self.image_path),
                 int(self.center_xy.y()),
                 int(self.center_xy.x()),
                 self.label.short_label_code,
                 self.label.long_label_code,
-                self.annotation_size]
+                self.annotation_size,
+                *interleaved]  # Ensure only 5 pairs are taken
 
     def to_dict(self):
         return {
@@ -237,7 +251,8 @@ class Annotation(QObject):
             'annotation_color': self.label.color.getRgb(),
             'image_path': self.image_path,
             'label_id': self.label.id,
-            'data': self.data
+            'data': self.data,
+            'machine_confidence': self.machine_confidence
         }
 
     @classmethod
@@ -250,6 +265,7 @@ class Annotation(QObject):
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
+        annotation.machine_confidence = data.get('machine_confidence', {})
         return annotation
 
     def __repr__(self):
@@ -258,7 +274,8 @@ class Annotation(QObject):
                 f"annotation_color={self.label.color.name()}, "
                 f"image_path={self.image_path}, "
                 f"label={self.label.short_label_code}, "
-                f"data={self.data})")
+                f"data={self.data}, "
+                f"machine_confidence={self.machine_confidence})")
 
 
 class AnnotationWindow(QGraphicsView):
@@ -463,7 +480,12 @@ class AnnotationWindow(QGraphicsView):
                     data.append(annotation.to_coralnet_format())
                     progress_bar.update_progress()
 
-                df = pd.DataFrame(data, columns=['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size'])
+                columns = ['Name', 'Row', 'Column', 'Label', 'Long Label', 'Patch Size']
+                for i in range(1, 6):
+                    columns.append(f'Machine confidence {i}')
+                    columns.append(f'Machine suggestion {i}')
+
+                df = pd.DataFrame(data, columns=columns)
                 df.to_csv(file_path, index=False)
 
                 progress_bar.stop_progress()
@@ -588,6 +610,23 @@ class AnnotationWindow(QGraphicsView):
                                             color,
                                             image_path,
                                             label_id)
+
+                    # Add machine confidence and suggestions if they exist
+                    for i in range(1, 6):
+                        confidence_col = f'Machine confidence {i}'
+                        suggestion_col = f'Machine suggestion {i}'
+                        if confidence_col in row and suggestion_col in row:
+                            confidence = float(row[confidence_col])
+                            suggestion = row[suggestion_col]
+                            annotation.machine_confidence[suggestion] = confidence
+
+                            # Ensure the suggestion is an existing label
+                            existing_suggestion_label = self.main_window.label_window.get_label_by_short_code(suggestion)
+                            if not existing_suggestion_label:
+                                color = QColor(random.randint(0, 255),
+                                               random.randint(0, 255),
+                                               random.randint(0, 255))
+                                self.main_window.label_window.add_label_if_not_exists(suggestion, suggestion, color)
 
                     # Add to the AnnotationWindow dictionary
                     self.annotations_dict[annotation.id] = annotation
@@ -1614,10 +1653,12 @@ class AnnotationSamplingDialog(QDialog):
         self.layout.addWidget(self.apply_all_checkbox)
 
         # Ensure only one of the apply checkboxes can be selected at a time
-        self.apply_filtered_checkbox.stateChanged.connect(self.update_apply_filtered_checkboxes)
-        self.apply_prev_checkbox.stateChanged.connect(self.update_apply_prev_checkboxes)
-        self.apply_next_checkbox.stateChanged.connect(self.update_apply_next_checkboxes)
-        self.apply_all_checkbox.stateChanged.connect(self.update_apply_all_checkboxes)
+        self.apply_group = QButtonGroup(self)
+        self.apply_group.addButton(self.apply_filtered_checkbox)
+        self.apply_group.addButton(self.apply_prev_checkbox)
+        self.apply_group.addButton(self.apply_next_checkbox)
+        self.apply_group.addButton(self.apply_all_checkbox)
+        self.apply_group.setExclusive(False)
 
         # Preview Button
         self.preview_button = QPushButton("Preview")
@@ -1666,54 +1707,6 @@ class AnnotationSamplingDialog(QDialog):
         spinbox.setMaximum(1000)
         layout.addRow(label, spinbox)
         return spinbox
-
-    def update_apply_filtered_checkboxes(self):
-        if self.apply_filtered_checkbox.isChecked():
-            self.apply_filtered_checkbox.setChecked(True)
-            self.apply_prev_checkbox.setChecked(False)
-            self.apply_next_checkbox.setChecked(False)
-            self.apply_all_checkbox.setChecked(False)
-            return
-
-        if not self.apply_filtered_checkbox.isChecked():
-            self.apply_filtered_checkbox.setChecked(False)
-            return
-
-    def update_apply_prev_checkboxes(self):
-        if self.apply_prev_checkbox.isChecked():
-            self.apply_prev_checkbox.setChecked(True)
-            self.apply_filtered_checkbox.setChecked(False)
-            self.apply_next_checkbox.setChecked(False)
-            self.apply_all_checkbox.setChecked(False)
-            return
-
-        if not self.apply_prev_checkbox.isChecked():
-            self.apply_prev_checkbox.setChecked(False)
-            return
-
-    def update_apply_next_checkboxes(self):
-        if self.apply_next_checkbox.isChecked():
-            self.apply_next_checkbox.setChecked(True)
-            self.apply_filtered_checkbox.setChecked(False)
-            self.apply_prev_checkbox.setChecked(False)
-            self.apply_all_checkbox.setChecked(False)
-            return
-
-        if not self.apply_next_checkbox.isChecked():
-            self.apply_next_checkbox.setChecked(False)
-            return
-
-    def update_apply_all_checkboxes(self):
-        if self.apply_all_checkbox.isChecked():
-            self.apply_all_checkbox.setChecked(True)
-            self.apply_filtered_checkbox.setChecked(False)
-            self.apply_prev_checkbox.setChecked(False)
-            self.apply_next_checkbox.setChecked(False)
-            return
-
-        if not self.apply_all_checkbox.isChecked():
-            self.apply_all_checkbox.setChecked(False)
-            return
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins
@@ -1920,14 +1913,14 @@ class AnnotationSamplingDialog(QDialog):
             # Update the image window's image dict
             self.image_window.update_image_annotations(image_path)
 
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-        # # Set / load the image / annotations of the last image
+        # Set / load the image / annotations of the last image
         self.annotation_window.set_image(current_image_path)
         # Reset dialog for next time
         self.reset_defaults()
+
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
