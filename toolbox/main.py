@@ -1,7 +1,7 @@
 # TODO Later:
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
-#   - file explorer for annotations to edit, delete in batches
+#   - file explorer for annotations to edit, delete in batches; spotlight?
 #   - master transparency for all annotations / classes
 #   - exporting image names for creating dataset
 #   - filter images when creating dataset
