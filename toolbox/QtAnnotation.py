@@ -294,6 +294,7 @@ class AnnotationWindow(QGraphicsView):
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
+    transparencyChanged = pyqtSignal(int)  # Signal to emit when transparency changes
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -1186,9 +1187,9 @@ class AnnotationWindow(QGraphicsView):
 
         if self.selected_annotation:
             if self.selected_annotation.label.id != label.id:
-                self.selected_annotation.update_label(self.selected_label)
+                # self.selected_annotation.update_label(self.selected_label)
+                self.selected_annotation.update_user_confidence(self.selected_label)
                 self.selected_annotation.create_cropped_image(self.rasterio_image)
-                # Notify ConfidenceWindow the selected annotation has changed
                 self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
         if self.cursor_annotation:
@@ -1219,9 +1220,6 @@ class AnnotationWindow(QGraphicsView):
             annotation = self.annotations_dict[annotation_id]
             old_center_xy = annotation.center_xy
             annotation.update_location(new_center_xy)
-
-    def set_transparency(self, transparency: int):
-        self.transparency = transparency
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         if scene_pos:
@@ -1436,7 +1434,7 @@ class AnnotationWindow(QGraphicsView):
             # Emit a signal indicating the selected annotations label to LabelWindow
             self.labelSelected.emit(annotation.label.id)
             # Emit a signal indicating the selected annotation's transparency to MainWindow
-            self.annotationSelected.emit(annotation.transparency)
+            self.transparencyChanged.emit(annotation.transparency)
             # Crop the image from annotation using current image item
             if not self.selected_annotation.cropped_image:
                 self.selected_annotation.create_cropped_image(self.rasterio_image)
@@ -1451,11 +1449,14 @@ class AnnotationWindow(QGraphicsView):
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
 
-    def update_annotations_transparency(self, label, transparency):
-        self.set_transparency(transparency)
-        for annotation in self.annotations_dict.values():
-            if annotation.label.id == label.id:
-                annotation.update_transparency(transparency)
+    def update_annotation_transparency(self, transparency):
+        if self.selected_annotation:
+            # Update the label's transparency in the LabelWindow
+            self.main_window.label_window.update_label_transparency(transparency)
+            label = self.selected_annotation.label
+            for annotation in self.annotations_dict.values():
+                if annotation.label.id == label.id:
+                    annotation.update_transparency(transparency)
 
     def load_annotation(self, annotation):
         # Create the graphics item (scene previously cleared)
@@ -1544,7 +1545,7 @@ class AnnotationWindow(QGraphicsView):
                                     self.selected_label.color,
                                     self.current_image_path,
                                     self.selected_label.id,
-                                    transparency=self.transparency)
+                                    transparency=self.main_window.label_window.active_label.transparency)
 
         annotation.create_graphics_item(self.scene)
         annotation.create_cropped_image(self.rasterio_image)

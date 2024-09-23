@@ -6,9 +6,6 @@
 #   - exporting image names for creating dataset
 #   - filter images when creating dataset
 
-# TODO Now:
-#   - add importing of coralnet predictions / output  for Viscore Keep all of the input data, and export with
-
 import traceback
 
 from PyQt5.QtWidgets import QApplication

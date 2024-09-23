@@ -30,6 +30,7 @@ class Label(QWidget):
         self.color = color
         self.is_selected = False
         self.fixed_width = fixed_width
+        self.transparency = 128
 
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(self.fixed_width)
@@ -151,6 +152,9 @@ class Label(QWidget):
             self.update_color()
             self.color_changed.emit(new_color)
 
+    def update_transparency(self, transparency):
+        self.transparency = transparency
+
     def __repr__(self):
         return (f"Label(id={self.id}, "
                 f"short_label_code={self.short_label_code}, "
@@ -160,6 +164,7 @@ class Label(QWidget):
 
 class LabelWindow(QWidget):
     labelSelected = pyqtSignal(object)  # Signal to emit the entire Label object
+    transparencyChanged = pyqtSignal(int)  # Signal to emit the transparency value
 
     def __init__(self, main_window, label_width=100):
         super().__init__()
@@ -346,6 +351,7 @@ class LabelWindow(QWidget):
         self.active_label = selected_label
         self.active_label.select()
         self.labelSelected.emit(selected_label)
+        self.transparencyChanged.emit(self.active_label.transparency)
 
         # Enable or disable the Edit Label and Delete Label buttons based on whether a label is selected
         self.edit_label_button.setEnabled(self.active_label is not None)
@@ -362,6 +368,16 @@ class LabelWindow(QWidget):
     def delete_active_label(self):
         if self.active_label:
             self.delete_label(self.active_label)
+
+    def update_label_transparency(self, transparency):
+        if self.active_label:
+            # Update the active label's transparency
+            self.active_label.update_transparency(transparency)
+            label = self.active_label
+            # Update the transparency of all annotations with the active label
+            for annotation in self.annotation_window.annotations_dict.values():
+                if annotation.label.id == label.id:
+                    annotation.update_transparency(transparency)
 
     def update_annotations_with_label(self, label):
         for annotation in self.annotation_window.annotations_dict.values():

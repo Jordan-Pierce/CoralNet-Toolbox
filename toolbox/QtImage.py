@@ -165,6 +165,7 @@ class ImageWindow(QWidget):
         if reply == QMessageBox.Yes:
             # Proceed with deleting annotations
             self.annotation_window.delete_image_annotations(self.selected_image_path)
+            self.main_window.confidence_window.clear_display()
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self,
