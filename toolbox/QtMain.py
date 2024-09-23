@@ -82,6 +82,10 @@ class MainWindow(QMainWindow):
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
+        # Connect the annotationSelected signal from AnnotationWindow to update the transparency slider
+        self.annotation_window.annotationSelected.connect(self.update_transparency_slider)
+        # Connect the labelSelected signal from LabelWindow to update the transparency slider
+        self.label_window.labelSelected.connect(self.update_transparency_slider)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -383,6 +387,10 @@ class MainWindow(QMainWindow):
     def update_annotation_transparency(self, value):
         if self.annotation_window.selected_label:
             self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
+        self.transparency_slider.setValue(value)  # Update the slider value
+
+    def update_transparency_slider(self, transparency):
+        self.transparency_slider.setValue(transparency)
 
     def get_uncertainty_thresh(self):
         return self.uncertainty_thresh
