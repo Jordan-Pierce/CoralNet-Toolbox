@@ -293,6 +293,7 @@ class AnnotationWindow(QGraphicsView):
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
+    annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -1434,6 +1435,8 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_color = self.selected_annotation.label.color
             # Emit a signal indicating the selected annotations label to LabelWindow
             self.labelSelected.emit(annotation.label.id)
+            # Emit a signal indicating the selected annotation's transparency to MainWindow
+            self.annotationSelected.emit(annotation.transparency)
             # Crop the image from annotation using current image item
             if not self.selected_annotation.cropped_image:
                 self.selected_annotation.create_cropped_image(self.rasterio_image)
