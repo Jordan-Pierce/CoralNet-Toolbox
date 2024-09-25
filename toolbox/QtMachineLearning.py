@@ -1263,7 +1263,7 @@ class ConfusionMatrixMetrics:
         num_classes (int): The number of classes.
     """
 
-    def __init__(self, matrix):
+    def __init__(self, matrix, class_mapping):
         """
         Initialize the ConfusionMatrixMetrics with a given confusion matrix.
 
@@ -1272,6 +1272,7 @@ class ConfusionMatrixMetrics:
         """
         self.matrix = matrix
         self.num_classes = matrix.shape[0]
+        self.class_mapping = class_mapping
 
     def calculate_tp(self):
         """
@@ -1400,7 +1401,8 @@ class ConfusionMatrixMetrics:
 
         metrics_per_class = {}
         for i in range(self.num_classes):
-            metrics_per_class[f'Class {i}'] = {
+            class_name = list(self.class_mapping.keys())[i]
+            metrics_per_class[f'{class_name}'] = {
                 'TP': tp[i],
                 'FP': fp[i],
                 'TN': tn[i],
@@ -1465,7 +1467,7 @@ class EvaluateModelWorker(QThread):
             )
 
             # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix)
+            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, self.class_mapping)
             metrics.save_metrics_to_json(save_dir)
 
             # Emit signal to indicate evaluation has completed
@@ -1526,6 +1528,15 @@ class EvaluateModelDialog(QDialog):
         model_layout.addWidget(self.model_button)
         self.form_layout.addRow("Existing Model:", model_layout)
 
+        # Class Mapping
+        self.class_mapping_edit = QLineEdit()
+        self.class_mapping_button = QPushButton("Browse...")
+        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.class_mapping_edit)
+        class_mapping_layout.addWidget(self.class_mapping_button)
+        self.form_layout.addRow("Class Mapping:", class_mapping_layout)
+
         # Dataset Directory
         self.dataset_dir_edit = QLineEdit()
         self.dataset_dir_button = QPushButton("Browse...")
@@ -1534,16 +1545,6 @@ class EvaluateModelDialog(QDialog):
         dataset_dir_layout.addWidget(self.dataset_dir_edit)
         dataset_dir_layout.addWidget(self.dataset_dir_button)
         self.form_layout.addRow("Dataset Directory:", dataset_dir_layout)
-
-        # Class Mapping
-        self.class_mapping_edit = QLineEdit()
-        self.class_mapping_button = QPushButton("Browse...")
-        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
-        class_mapping_layout.addWidget(self.class_mapping_edit)
-        class_mapping_layout.addWidget(self.class_mapping_button)
-        self.form_layout.addRow("Class Mapping:", class_mapping_layout)
 
         # Split
         self.split_combo = QComboBox()
@@ -1582,15 +1583,17 @@ class EvaluateModelDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.main_layout.addWidget(self.cancel_button)
 
-    def browse_dataset_dir(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
-        if dir_path:
-            self.dataset_dir_edit.setText(dir_path)
+    def browse_model_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
+        if file_path:
+            self.model_edit.setText(file_path)
+            # Get the directory two above file path
+            dir_path = os.path.dirname(os.path.dirname(file_path))
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
                 self.class_mapping_edit.setText(class_mapping_path)
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
-    
+
     def browse_class_mapping_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Select Class Mapping File",
@@ -1600,16 +1603,15 @@ class EvaluateModelDialog(QDialog):
             self.class_mapping_edit.setText(file_path)
             self.class_mapping = json.load(open(file_path, 'r'))
 
+    def browse_dataset_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
+        if dir_path:
+            self.dataset_dir_edit.setText(dir_path)
 
     def browse_save_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if dir_path:
             self.save_dir_edit.setText(dir_path)
-
-    def browse_model_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
-        if file_path:
-            self.model_edit.setText(file_path)
 
     def accept(self):
         if not self.model_edit.text():
