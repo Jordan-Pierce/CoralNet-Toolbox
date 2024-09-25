@@ -404,6 +404,9 @@ class AnnotationWindow(QGraphicsView):
                 with open(file_path, 'r') as file:
                     data = json.load(file)
 
+                # Needed keys for each annotation
+                keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
+
                 # Filter out annotations that are not associated with any loaded images
                 filtered_annotations = {p: a for p, a in data.items() if p in self.main_window.image_window.image_paths}
                 total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
@@ -417,6 +420,10 @@ class AnnotationWindow(QGraphicsView):
 
                 for image_path, annotations in filtered_annotations.items():
                     for annotation_data in annotations:
+                        # Check if the annotation data contains the required keys
+                        if not all(key in annotation_data for key in keys):
+                            continue
+
                         short_label = annotation_data['label_short_code']
                         long_label = annotation_data['label_long_code']
                         color = QColor(*annotation_data['annotation_color'])
@@ -444,6 +451,9 @@ class AnnotationWindow(QGraphicsView):
                 # Add annotations to the AnnotationWindow dict
                 for image_path, annotations in filtered_annotations.items():
                     for annotation_data in annotations:
+                        # Check if the annotation data contains the required keys
+                        if not all(key in annotation_data for key in keys):
+                            continue
                         annotation = Annotation.from_dict(annotation_data)
                         self.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()

@@ -819,6 +819,7 @@ class TrainModelWorker(QThread):
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
                 'data': self.params['data'],
+                'imgsz': self.params['imgsz'],
                 'split': 'test',  # Evaluate on the test set only
                 'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
             }
@@ -950,7 +951,7 @@ class TrainModelDialog(QDialog):
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(224)
+        self.imgsz_spinbox.setValue(256)
         self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Batch
@@ -1455,6 +1456,7 @@ class EvaluateModelWorker(QThread):
             # Evaluate the model
             results = self.model.val(
                 data=self.params['data'],
+                imgsz=self.params['imgsz'],
                 split=self.params['split'],
                 save_json=True,
                 plots=True
@@ -1549,6 +1551,13 @@ class EvaluateModelDialog(QDialog):
         self.name_edit = QLineEdit()
         self.form_layout.addRow("Name:", self.name_edit)
 
+        # Imgsz
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setMinimum(16)
+        self.imgsz_spinbox.setMaximum(4096)
+        self.imgsz_spinbox.setValue(256)
+        self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
+
         self.main_layout.addLayout(self.form_layout)
 
         # Add OK and Cancel buttons
@@ -1589,6 +1598,7 @@ class EvaluateModelDialog(QDialog):
             'model': self.model_edit.text(),
             'data': self.dataset_dir_edit.text(),
             'split': self.split_combo.currentText(),
+            'imgsz': int(self.imgsz_spinbox.value()),
             'verbose': True,
             'exist_ok': True,
             'plots': True,

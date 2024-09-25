@@ -2,9 +2,11 @@
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
 #   - file explorer for annotations to edit, delete in batches; spotlight?
-#   - master transparency for all annotations / classes
 #   - exporting image names for creating dataset
 #   - filter images when creating dataset
+#   - return early while loading old high resolution image
+#   - include imgsz variable when evaluating model
+#   - pass class_mapping to confusion matrix function
 
 import traceback
 
