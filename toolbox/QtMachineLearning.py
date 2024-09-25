@@ -781,10 +781,11 @@ class TrainModelWorker(QThread):
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
 
-    def __init__(self, params, device):
+    def __init__(self, params, device, class_mapping):
         super().__init__()
         self.params = params
         self.device = device
+        self.class_mapping = class_mapping
         self.target_model = None
 
     def run(self):
@@ -824,7 +825,7 @@ class TrainModelWorker(QThread):
                 'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
             }
             # Create and start the worker thread
-            eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params)
+            eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params, class_mapping=self.class_mapping)
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
             eval_worker.run()  # Run the evaluation synchronously (same thread)
         except Exception as e:
@@ -1227,7 +1228,7 @@ class TrainModelDialog(QDialog):
         # Get training parameters
         self.params = self.get_training_parameters()
         # Create and start the worker thread
-        self.worker = TrainModelWorker(self.params, self.main_window.device)
+        self.worker = TrainModelWorker(self.params, self.main_window.device, self.class_mapping)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
@@ -1439,10 +1440,11 @@ class EvaluateModelWorker(QThread):
     evaluation_completed = pyqtSignal()
     evaluation_error = pyqtSignal(str)
 
-    def __init__(self, model, params):
+    def __init__(self, model, params, class_mapping):
         super().__init__()
         self.model = model
         self.params = params
+        self.class_mapping = class_mapping
 
     def run(self):
         try:
@@ -1480,6 +1482,7 @@ class EvaluateModelDialog(QDialog):
 
         # For holding parameters
         self.params = {}
+        self.class_mapping = {}
 
         self.setWindowTitle("Evaluate Model")
 
@@ -1532,6 +1535,16 @@ class EvaluateModelDialog(QDialog):
         dataset_dir_layout.addWidget(self.dataset_dir_button)
         self.form_layout.addRow("Dataset Directory:", dataset_dir_layout)
 
+        # Class Mapping
+        self.class_mapping_edit = QLineEdit()
+        self.class_mapping_button = QPushButton("Browse...")
+        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
+        class_mapping_layout.addWidget(self.class_mapping_edit)
+        class_mapping_layout.addWidget(self.class_mapping_button)
+        self.form_layout.addRow("Class Mapping:", class_mapping_layout)
+
         # Split
         self.split_combo = QComboBox()
         self.split_combo.addItems(["train", "val", "test"])
@@ -1573,6 +1586,20 @@ class EvaluateModelDialog(QDialog):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
             self.dataset_dir_edit.setText(dir_path)
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping_edit.setText(class_mapping_path)
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+    
+    def browse_class_mapping_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Class Mapping File",
+                                                   "",
+                                                   "JSON Files (*.json)")
+        if file_path:
+            self.class_mapping_edit.setText(file_path)
+            self.class_mapping = json.load(open(file_path, 'r'))
+
 
     def browse_save_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
@@ -1625,7 +1652,7 @@ class EvaluateModelDialog(QDialog):
             self.target_model = YOLO(self.params['model'])
 
             # Create and start the worker thread
-            self.worker = EvaluateModelWorker(self.target_model, self.params)
+            self.worker = EvaluateModelWorker(self.target_model, self.params, self.class_mapping)
             self.worker.evaluation_started.connect(self.on_evaluation_started)
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
             self.worker.evaluation_error.connect(self.on_evaluation_error)
