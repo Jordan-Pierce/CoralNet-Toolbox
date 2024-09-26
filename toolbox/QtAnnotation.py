@@ -8,11 +8,11 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush
+from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush, QPolygonF
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
-                             QDialogButtonBox, QButtonGroup)
+                             QDialogButtonBox, QButtonGroup, QGraphicsPolygonItem)
 from rasterio.windows import Window
 
 from toolbox.QtLabel import Label
@@ -32,9 +32,7 @@ class Annotation(QObject):
     annotation_deleted = pyqtSignal(object)
     annotation_updated = pyqtSignal(object)
 
-    def __init__(self, center_xy: QPointF,
-                 annotation_size: int,
-                 short_label_code: str,
+    def __init__(self, short_label_code: str,
                  long_label_code: str,
                  color: QColor,
                  image_path: str,
@@ -43,8 +41,6 @@ class Annotation(QObject):
                  show_msg=True):
         super().__init__()
         self.id = str(uuid.uuid4())
-        self.center_xy = center_xy
-        self.annotation_size = annotation_size
         self.label = Label(short_label_code, long_label_code, color, label_id)
         self.image_path = image_path
         self.is_selected = False
@@ -68,14 +64,6 @@ class Annotation(QObject):
         # Only show once
         self.show_message = False
 
-    def contains_point(self, point: QPointF) -> bool:
-        half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size)
-        return rect.contains(point)
-
     def select(self):
         self.is_selected = True
         self.update_graphics_item()
@@ -89,6 +77,88 @@ class Annotation(QObject):
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
+
+    def update_machine_confidence(self, prediction: dict):
+        # Set user confidence to None
+        self.user_confidence = {}
+        # Update machine confidence
+        self.machine_confidence = prediction
+        # Pass the label with the largest confidence as the label
+        self.label = max(prediction, key=prediction.get)
+        # Create the graphic
+        self.update_graphics_item()
+
+    def update_user_confidence(self, new_label: 'Label'):
+        # Set machine confidence to None
+        self.machine_confidence = {}
+        # Update user confidence
+        self.user_confidence = {new_label: 1.0}
+        # Pass the label with the largest confidence as the label
+        self.label = new_label
+        # Create the graphic
+        self.update_graphics_item()
+
+    def update_label(self, new_label: 'Label'):
+        self.label = new_label
+        self.update_graphics_item()
+
+    def update_transparency(self, transparency: int):
+        self.transparency = transparency
+        self.update_graphics_item()
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'label_short_code': self.label.short_label_code,
+            'label_long_code': self.label.long_label_code,
+            'annotation_color': self.label.color.getRgb(),
+            'image_path': self.image_path,
+            'label_id': self.label.id,
+            'data': self.data,
+            'machine_confidence': self.machine_confidence
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        annotation = cls(data['label_short_code'],
+                         data['label_long_code'],
+                         QColor(*data['annotation_color']),
+                         data['image_path'],
+                         data['label_id'])
+        annotation.data = data.get('data', {})
+        annotation.machine_confidence = data.get('machine_confidence', {})
+        return annotation
+
+    def __repr__(self):
+        return (f"Annotation(id={self.id}, "
+                f"annotation_color={self.label.color.name()}, "
+                f"image_path={self.image_path}, "
+                f"label={self.label.short_label_code}, "
+                f"data={self.data}, "
+                f"machine_confidence={self.machine_confidence})")
+
+
+class PatchAnnotation(Annotation):
+    def __init__(self, center_xy: QPointF,
+                 annotation_size: int,
+                 short_label_code: str,
+                 long_label_code: str,
+                 color: QColor,
+                 image_path: str,
+                 label_id: str,
+                 transparency: int = 128,
+                 show_msg=True):
+        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+        self.center_xy = center_xy
+        self.annotation_size = annotation_size
+
+    def contains_point(self, point: QPointF) -> bool:
+        half_size = self.annotation_size / 2
+        rect = QRectF(self.center_xy.x() - half_size,
+                      self.center_xy.y() - half_size,
+                      self.annotation_size,
+                      self.annotation_size)
+        return rect.contains(point)
 
     def create_cropped_image(self, rasterio_src):
         half_size = self.annotation_size / 2
@@ -146,30 +216,6 @@ class Annotation(QObject):
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
 
-    def update_machine_confidence(self, prediction: dict):
-        # Set user confidence to None
-        self.user_confidence = {}
-        # Update machine confidence
-        self.machine_confidence = prediction
-        # Pass the label with the largest confidence as the label
-        self.label = max(prediction, key=prediction.get)
-        # Create the graphic
-        self.update_graphics_item()
-
-    def update_user_confidence(self, new_label: 'Label'):
-        # Set machine confidence to None
-        self.machine_confidence = {}
-        # Update user confidence
-        self.user_confidence = {new_label: 1.0}
-        # Pass the label with the largest confidence as the label
-        self.label = new_label
-        # Create the graphic
-        self.update_graphics_item()
-
-    def update_label(self, new_label: 'Label'):
-        self.label = new_label
-        self.update_graphics_item()
-
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
@@ -193,10 +239,6 @@ class Annotation(QObject):
         self.annotation_size = size
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
-
-    def update_transparency(self, transparency: int):
-        self.transparency = transparency
-        self.update_graphics_item()
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -251,18 +293,12 @@ class Annotation(QObject):
         }
 
     def to_dict(self):
-        return {
-            'id': self.id,
+        base_dict = super().to_dict()
+        base_dict.update({
             'center_xy': (self.center_xy.x(), self.center_xy.y()),
             'annotation_size': self.annotation_size,
-            'label_short_code': self.label.short_label_code,
-            'label_long_code': self.label.long_label_code,
-            'annotation_color': self.label.color.getRgb(),
-            'image_path': self.image_path,
-            'label_id': self.label.id,
-            'data': self.data,
-            'machine_confidence': self.machine_confidence
-        }
+        })
+        return base_dict
 
     @classmethod
     def from_dict(cls, data):
@@ -278,8 +314,90 @@ class Annotation(QObject):
         return annotation
 
     def __repr__(self):
-        return (f"Annotation(id={self.id}, center_xy={self.center_xy}, "
+        return (f"PatchAnnotation(id={self.id}, center_xy={self.center_xy}, "
                 f"annotation_size={self.annotation_size}, "
+                f"annotation_color={self.label.color.name()}, "
+                f"image_path={self.image_path}, "
+                f"label={self.label.short_label_code}, "
+                f"data={self.data}, "
+                f"machine_confidence={self.machine_confidence})")
+
+
+class PolygonAnnotation(Annotation):
+    def __init__(self, points: list,
+                 short_label_code: str,
+                 long_label_code: str,
+                 color: QColor,
+                 image_path: str,
+                 label_id: str,
+                 transparency: int = 128,
+                 show_msg=True):
+        super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+        self.points = points
+
+    def contains_point(self, point: QPointF) -> bool:
+        polygon = QPolygonF(self.points)
+        return polygon.containsPoint(point, Qt.OddEvenFill)
+
+    def create_graphics_item(self, scene: QGraphicsScene):
+        polygon = QPolygonF(self.points)
+        self.graphics_item = QGraphicsPolygonItem(polygon)
+        self.update_graphics_item()
+        self.graphics_item.setData(0, self.id)
+        scene.addItem(self.graphics_item)
+
+    def update_location(self, new_points: list):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+        # Update the location, graphic
+        self.points = new_points
+        self.update_graphics_item()
+        self.annotation_updated.emit(self)  # Notify update
+
+    def update_graphics_item(self):
+        if self.graphics_item:
+            polygon = QPolygonF(self.points)
+            self.graphics_item.setPolygon(polygon)
+            color = QColor(self.label.color)
+            color.setAlpha(self.transparency)
+
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                pen = QPen(inverse_color, 4, Qt.DotLine)  # Inverse color, thicker border, and dotted line
+            else:
+                pen = QPen(color, 2, Qt.SolidLine)  # Default border color and thickness
+
+            self.graphics_item.setPen(pen)
+            brush = QBrush(color)
+            self.graphics_item.setBrush(brush)
+            self.graphics_item.update()
+
+    def to_dict(self):
+        base_dict = super().to_dict()
+        base_dict.update({
+            'points': [(point.x(), point.y()) for point in self.points],
+        })
+        return base_dict
+
+    @classmethod
+    def from_dict(cls, data):
+        points = [QPointF(x, y) for x, y in data['points']]
+        annotation = cls(points,
+                         data['label_short_code'],
+                         data['label_long_code'],
+                         QColor(*data['annotation_color']),
+                         data['image_path'],
+                         data['label_id'])
+        annotation.data = data.get('data', {})
+        annotation.machine_confidence = data.get('machine_confidence', {})
+        return annotation
+
+    def __repr__(self):
+        return (f"PolygonAnnotation(id={self.id}, points={self.points}, "
                 f"annotation_color={self.label.color.name()}, "
                 f"image_path={self.image_path}, "
                 f"label={self.label.short_label_code}, "
@@ -318,6 +436,8 @@ class AnnotationWindow(QGraphicsView):
         self.selected_annotation = None  # Stores the selected annotation
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
+
+        self.polygon_points = []  # List to store points for polygon annotation
 
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
@@ -454,7 +574,12 @@ class AnnotationWindow(QGraphicsView):
                         # Check if the annotation data contains the required keys
                         if not all(key in annotation_data for key in keys):
                             continue
-                        annotation = Annotation.from_dict(annotation_data)
+                        if 'center_xy' in annotation_data and 'annotation_size' in annotation_data:
+                            annotation = PatchAnnotation.from_dict(annotation_data)
+                        elif 'points' in annotation_data:
+                            annotation = PolygonAnnotation.from_dict(annotation_data)
+                        else:
+                            continue
                         self.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()
 
@@ -616,13 +741,13 @@ class AnnotationWindow(QGraphicsView):
                                                                               color,
                                                                               label_id)
                     # Create the annotation
-                    annotation = Annotation(QPointF(col_coord, row_coord),
-                                            annotation_size,
-                                            short_label_code,
-                                            long_label_code,
-                                            color,
-                                            image_path,
-                                            label_id)
+                    annotation = PatchAnnotation(QPointF(col_coord, row_coord),
+                                                 annotation_size,
+                                                 short_label_code,
+                                                 long_label_code,
+                                                 color,
+                                                 image_path,
+                                                 label_id)
 
                     # Add machine confidence and suggestions if they exist
                     machine_confidence = {}
@@ -1146,13 +1271,13 @@ class AnnotationWindow(QGraphicsView):
                                                                                   color,
                                                                                   label_id)
                         # Create the annotation
-                        annotation = Annotation(QPointF(col_coord, row_coord),
-                                                annotation_size,
-                                                short_label_code,
-                                                long_label_code,
-                                                color,
-                                                image_path,
-                                                label_id)
+                        annotation = PatchAnnotation(QPointF(col_coord, row_coord),
+                                                     annotation_size,
+                                                     short_label_code,
+                                                     long_label_code,
+                                                     color,
+                                                     image_path,
+                                                     label_id)
 
                         # Add additional data to the annotation
                         annotation.data['Dot'] = row['Dot']
@@ -1185,6 +1310,8 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_tool == "select":
             self.setCursor(Qt.PointingHandCursor)
         elif self.selected_tool == "annotate":
+            self.setCursor(Qt.CrossCursor)
+        elif self.selected_tool == "polygon":
             self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
@@ -1237,15 +1364,15 @@ class AnnotationWindow(QGraphicsView):
                 return
 
             if not self.cursor_annotation:
-                self.cursor_annotation = Annotation(scene_pos,
-                                                    self.annotation_size,
-                                                    self.selected_label.short_label_code,
-                                                    self.selected_label.long_label_code,
-                                                    self.selected_label.color,
-                                                    self.current_image_path,
-                                                    self.selected_label.id,
-                                                    transparency=128,
-                                                    show_msg=False)
+                self.cursor_annotation = PatchAnnotation(scene_pos,
+                                                         self.annotation_size,
+                                                         self.selected_label.short_label_code,
+                                                         self.selected_label.long_label_code,
+                                                         self.selected_label.color,
+                                                         self.current_image_path,
+                                                         self.selected_label.id,
+                                                         transparency=128,
+                                                         show_msg=False)
 
                 self.cursor_annotation.create_graphics_item(self.scene)
             else:
@@ -1313,6 +1440,8 @@ class AnnotationWindow(QGraphicsView):
             self.setCursor(Qt.PointingHandCursor)
         elif self.selected_tool == "annotate":
             self.setCursor(Qt.CrossCursor)
+        elif self.selected_tool == "polygon":
+            self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
 
@@ -1344,6 +1473,24 @@ class AnnotationWindow(QGraphicsView):
                 self.unselect_annotation()
                 # Add annotation to the scene
                 self.add_annotation(self.mapToScene(event.pos()))
+
+            elif self.selected_tool == "polygon" and event.button() == Qt.LeftButton:
+                # Add point to the polygon
+                self.polygon_points.append(self.mapToScene(event.pos()))
+                # Draw the polygon as the user clicks points
+                if len(self.polygon_points) > 1:
+                    polygon = QPolygonF(self.polygon_points)
+                    if self.cursor_annotation:
+                        self.cursor_annotation.delete()
+                    self.cursor_annotation = PolygonAnnotation(self.polygon_points,
+                                                               self.selected_label.short_label_code,
+                                                               self.selected_label.long_label_code,
+                                                               self.selected_label.color,
+                                                               self.current_image_path,
+                                                               self.selected_label.id,
+                                                               transparency=128,
+                                                               show_msg=False)
+                    self.cursor_annotation.create_graphics_item(self.scene)
 
         super().mousePressEvent(event)
 
@@ -1391,6 +1538,23 @@ class AnnotationWindow(QGraphicsView):
             # Clean up the drag start position
             del self.drag_start_pos
         super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.selected_tool == "polygon" and event.key() == Qt.Key_Space:
+            # Finish the polygon annotation
+            if len(self.polygon_points) > 2:
+                annotation = PolygonAnnotation(self.polygon_points,
+                                               self.selected_label.short_label_code,
+                                               self.selected_label.long_label_code,
+                                               self.selected_label.color,
+                                               self.current_image_path,
+                                               self.selected_label.id,
+                                               transparency=self.transparency)
+                self.annotations_dict[annotation.id] = annotation
+                annotation.create_graphics_item(self.scene)
+                self.polygon_points = []
+                self.cursor_annotation = None
+        super().keyPressEvent(event)
 
     def pan(self, pos):
         delta = pos - self.pan_start
@@ -1548,14 +1712,14 @@ class AnnotationWindow(QGraphicsView):
             return
 
         if annotation is None:
-            annotation = Annotation(scene_pos,
-                                    self.annotation_size,
-                                    self.selected_label.short_label_code,
-                                    self.selected_label.long_label_code,
-                                    self.selected_label.color,
-                                    self.current_image_path,
-                                    self.selected_label.id,
-                                    transparency=self.main_window.label_window.active_label.transparency)
+            annotation = PatchAnnotation(scene_pos,
+                                         self.annotation_size,
+                                         self.selected_label.short_label_code,
+                                         self.selected_label.long_label_code,
+                                         self.selected_label.color,
+                                         self.current_image_path,
+                                         self.selected_label.id,
+                                         transparency=self.main_window.label_window.active_label.transparency)
 
         annotation.create_graphics_item(self.scene)
         annotation.create_cropped_image(self.rasterio_image)
@@ -1924,14 +2088,14 @@ class AnnotationSamplingDialog(QDialog):
 
             for annotation in annotations:
                 x, y, size = annotation
-                new_annotation = Annotation(QPointF(x + size // 2, y + size // 2),
-                                            size,
-                                            review_label.short_label_code,
-                                            review_label.long_label_code,
-                                            review_label.color,
-                                            image_path,
-                                            review_label.id,
-                                            transparency=self.annotation_window.transparency)
+                new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
+                                                 size,
+                                                 review_label.short_label_code,
+                                                 review_label.long_label_code,
+                                                 review_label.color,
+                                                 image_path,
+                                                 review_label.id,
+                                                 transparency=self.annotation_window.transparency)
 
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation

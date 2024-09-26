@@ -226,7 +226,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.annotate_tool_action)
 
         self.polygon_tool_action = QAction(QIcon(polygon_icon_path), "Polygon", self)
-        self.polygon_tool_action.setCheckable(False)
+        self.polygon_tool_action.setCheckable(True)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
 
@@ -358,13 +358,22 @@ class MainWindow(QMainWindow):
         if action == self.select_tool_action:
             if state:
                 self.annotate_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
         elif action == self.annotate_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
                 self.toolChanged.emit("annotate")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.polygon_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.annotate_tool_action.setChecked(False)
+                self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
 
@@ -378,12 +387,19 @@ class MainWindow(QMainWindow):
         if tool == "select":
             self.select_tool_action.setChecked(True)
             self.annotate_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
         elif tool == "annotate":
             self.select_tool_action.setChecked(False)
             self.annotate_tool_action.setChecked(True)
+            self.polygon_tool_action.setChecked(False)
+        elif tool == "polygon":
+            self.select_tool_action.setChecked(False)
+            self.annotate_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
             self.annotate_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {width} x {height}")
