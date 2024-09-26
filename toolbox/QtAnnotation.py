@@ -1568,6 +1568,20 @@ class AnnotationWindow(QGraphicsView):
               self.active_image and self.image_pixmap and
               self.cursorInWindow(event.pos())):
             self.toggle_cursor_annotation(self.mapToScene(event.pos()))
+        elif self.selected_tool == "polygon" and self.active_image and self.image_pixmap:
+            if len(self.polygon_points) > 0:
+                temp_points = self.polygon_points + [self.mapToScene(event.pos())]
+                if self.cursor_annotation:
+                    self.cursor_annotation.delete()
+                self.cursor_annotation = PolygonAnnotation(temp_points,
+                                                           self.selected_label.short_label_code,
+                                                           self.selected_label.long_label_code,
+                                                           self.selected_label.color,
+                                                           self.current_image_path,
+                                                           self.selected_label.id,
+                                                           transparency=128,
+                                                           show_msg=False)
+                self.cursor_annotation.create_graphics_item(self.scene)
         else:
             self.toggle_cursor_annotation()
 
