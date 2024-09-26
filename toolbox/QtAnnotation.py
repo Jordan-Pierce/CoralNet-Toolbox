@@ -404,6 +404,52 @@ class PolygonAnnotation(Annotation):
                 f"data={self.data}, "
                 f"machine_confidence={self.machine_confidence})")
 
+    def create_cropped_image(self, rasterio_src):
+        # Get the bounding box of the polygon
+        min_x = min(point.x() for point in self.points)
+        min_y = min(point.y() for point in self.points)
+        max_x = max(point.x() for point in self.points)
+        max_y = max(point.y() for point in self.points)
+
+        # Calculate the window for rasterio
+        window = Window(
+            col_off=max(0, int(min_x)),
+            row_off=max(0, int(min_y)),
+            width=min(rasterio_src.width - int(min_x), int(max_x - min_x)),
+            height=min(rasterio_src.height - int(min_y), int(max_y - min_y))
+        )
+
+        # Read the data from rasterio
+        data = rasterio_src.read(window=window)
+
+        # Ensure the data is in the correct format for QImage
+        if data.shape[0] == 3:  # RGB image
+            data = np.transpose(data, (1, 2, 0))
+        elif data.shape[0] == 1:  # Grayscale image
+            data = np.squeeze(data)
+
+        # Normalize data to 0-255 range if it's not already
+        if data.dtype != np.uint8:
+            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
+
+        # Convert numpy array to QImage
+        height, width = data.shape[:2]
+        bytes_per_line = 3 * width if len(data.shape) == 3 else width
+        image_format = QImage.Format_RGB888 if len(data.shape) == 3 else QImage.Format_Grayscale8
+
+        # Convert numpy array to bytes
+        if len(data.shape) == 3:
+            data = data.tobytes()
+        else:
+            data = np.expand_dims(data, -1).tobytes()
+
+        q_image = QImage(data, width, height, bytes_per_line, image_format)
+
+        # Convert QImage to QPixmap
+        self.cropped_image = QPixmap.fromImage(q_image)
+
+        self.annotation_updated.emit(self)  # Notify update
+
 
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
@@ -474,7 +520,7 @@ class AnnotationWindow(QGraphicsView):
                 export_dict = {}
                 for annotation in self.annotations_dict.values():
                     image_path = annotation.image_path
-                    if image_path not in export_dict:
+                    if (image_path) not in export_dict:
                         export_dict[image_path] = []
                     export_dict[image_path].append(annotation.to_dict())
 
@@ -1537,6 +1583,18 @@ class AnnotationWindow(QGraphicsView):
         if hasattr(self, 'drag_start_pos'):
             # Clean up the drag start position
             del self.drag_start_pos
+        if self.selected_tool == "polygon" and event.button() == Qt.LeftButton and len(self.polygon_points) > 2:
+            annotation = PolygonAnnotation(self.polygon_points,
+                                           self.selected_label.short_label_code,
+                                           self.selected_label.long_label_code,
+                                           self.selected_label.color,
+                                           self.current_image_path,
+                                           self.selected_label.id,
+                                           transparency=self.transparency)
+            self.annotations_dict[annotation.id] = annotation
+            annotation.create_graphics_item(self.scene)
+            self.polygon_points = []
+            self.cursor_annotation = None
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
@@ -1712,14 +1770,23 @@ class AnnotationWindow(QGraphicsView):
             return
 
         if annotation is None:
-            annotation = PatchAnnotation(scene_pos,
-                                         self.annotation_size,
-                                         self.selected_label.short_label_code,
-                                         self.selected_label.long_label_code,
-                                         self.selected_label.color,
-                                         self.current_image_path,
-                                         self.selected_label.id,
-                                         transparency=self.main_window.label_window.active_label.transparency)
+            if self.selected_tool == "polygon":
+                annotation = PolygonAnnotation(self.polygon_points,
+                                               self.selected_label.short_label_code,
+                                               self.selected_label.long_label_code,
+                                               self.selected_label.color,
+                                               self.current_image_path,
+                                               self.selected_label.id,
+                                               transparency=self.main_window.label_window.active_label.transparency)
+            else:
+                annotation = PatchAnnotation(scene_pos,
+                                             self.annotation_size,
+                                             self.selected_label.short_label_code,
+                                             self.selected_label.long_label_code,
+                                             self.selected_label.color,
+                                             self.current_image_path,
+                                             self.selected_label.id,
+                                             transparency=self.main_window.label_window.active_label.transparency)
 
         annotation.create_graphics_item(self.scene)
         annotation.create_cropped_image(self.rasterio_image)
