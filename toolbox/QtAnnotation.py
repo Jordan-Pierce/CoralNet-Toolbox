@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush, QPolygonF
+from PyQt5.QtGui import QMouseEvent, QImage, QPixmap, QColor, QPen, QBrush, QPolygonF, QCursor
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QGraphicsPixmapItem, QGraphicsRectItem, QFormLayout, QInputDialog, QLineEdit,
@@ -1410,21 +1410,48 @@ class AnnotationWindow(QGraphicsView):
                 return
 
             if not self.cursor_annotation:
-                self.cursor_annotation = PatchAnnotation(scene_pos,
-                                                         self.annotation_size,
-                                                         self.selected_label.short_label_code,
-                                                         self.selected_label.long_label_code,
-                                                         self.selected_label.color,
-                                                         self.current_image_path,
-                                                         self.selected_label.id,
-                                                         transparency=128,
-                                                         show_msg=False)
-
-                self.cursor_annotation.create_graphics_item(self.scene)
+                if self.selected_tool == "annotate":
+                    self.cursor_annotation = PatchAnnotation(scene_pos,
+                                                             self.annotation_size,
+                                                             self.selected_label.short_label_code,
+                                                             self.selected_label.long_label_code,
+                                                             self.selected_label.color,
+                                                             self.current_image_path,
+                                                             self.selected_label.id,
+                                                             transparency=128,
+                                                             show_msg=False)
+                    self.cursor_annotation.create_graphics_item(self.scene)
+                elif self.selected_tool == "polygon":
+                    if len(self.polygon_points) > 0:
+                        temp_points = self.polygon_points + [scene_pos]
+                        self.cursor_annotation = PolygonAnnotation(temp_points,
+                                                                   self.selected_label.short_label_code,
+                                                                   self.selected_label.long_label_code,
+                                                                   self.selected_label.color,
+                                                                   self.current_image_path,
+                                                                   self.selected_label.id,
+                                                                   transparency=128,
+                                                                   show_msg=False)
+                        self.cursor_annotation.create_graphics_item(self.scene)
             else:
-                self.cursor_annotation.update_location(scene_pos)
-                self.cursor_annotation.update_graphics_item()
-                self.cursor_annotation.update_transparency(128)
+                if self.selected_tool == "annotate":
+                    self.cursor_annotation.update_location(scene_pos)
+                    self.cursor_annotation.update_graphics_item()
+                    self.cursor_annotation.update_transparency(128)
+                elif self.selected_tool == "polygon":
+                    if len(self.polygon_points) > 0:
+                        temp_points = self.polygon_points + [scene_pos]
+                        if self.cursor_annotation:
+                            self.cursor_annotation.delete()
+                        self.cursor_annotation = PolygonAnnotation(temp_points,
+                                                                   self.selected_label.short_label_code,
+                                                                   self.selected_label.long_label_code,
+                                                                   self.selected_label.color,
+                                                                   self.current_image_path,
+                                                                   self.selected_label.id,
+                                                                   transparency=128,
+                                                                   show_msg=False)
+                        self.cursor_annotation.create_graphics_item(self.scene)
         else:
             if self.cursor_annotation:
                 self.cursor_annotation.delete()
@@ -1503,24 +1530,29 @@ class AnnotationWindow(QGraphicsView):
                 position = self.mapToScene(event.pos())
                 items = self.scene.items(position)
 
+                # Collect both rect and polygon items
                 rect_items = [item for item in items if isinstance(item, QGraphicsRectItem)]
-                rect_items.sort(key=lambda item: item.zValue(), reverse=True)
+                polygon_items = [item for item in items if isinstance(item, QGraphicsPolygonItem)]
 
-                for rect_item in rect_items:
-                    annotation_id = rect_item.data(0)  # Retrieve the UUID from the graphics item's data
+                # Combine and sort the items by zValue
+                all_items = rect_items + polygon_items
+                all_items.sort(key=lambda item: item.zValue(), reverse=True)
+
+                for item in all_items:
+                    annotation_id = item.data(0)  # Retrieve the UUID from the graphics item's data
                     annotation = self.annotations_dict.get(annotation_id)
                     if annotation.contains_point(position):
                         self.select_annotation(annotation)
                         self.drag_start_pos = position  # Store the start position for dragging
                         break
 
-            elif self.selected_tool == "annotate" and event.button() == Qt.LeftButton:
+            elif self.selected_tool == "annotate" and event.button() == Qt.LeftButton and self.check_label_selected():
                 # Annotation cannot be selected in annotate mode
                 self.unselect_annotation()
                 # Add annotation to the scene
                 self.add_annotation(self.mapToScene(event.pos()))
 
-            elif self.selected_tool == "polygon" and event.button() == Qt.LeftButton:
+            elif self.selected_tool == "polygon" and event.button() == Qt.LeftButton and self.check_label_selected():
                 # Add point to the polygon
                 self.polygon_points.append(self.mapToScene(event.pos()))
                 # Draw the polygon as the user clicks points
@@ -1543,6 +1575,7 @@ class AnnotationWindow(QGraphicsView):
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.pan_active:
             self.pan(event.pos())
+
         elif self.selected_tool == "select" and self.selected_annotation:
             # Check if the left mouse button is pressed, then drag the annotation
             if event.buttons() & Qt.LeftButton:
@@ -1564,26 +1597,10 @@ class AnnotationWindow(QGraphicsView):
                         self.drag_start_pos = current_pos  # Update the start position for smooth dragging
 
         # Normal movement with annotation tool selected
-        elif (self.selected_tool == "annotate" and
+        elif (self.selected_tool in ["annotate", "polygon"] and
               self.active_image and self.image_pixmap and
               self.cursorInWindow(event.pos())):
             self.toggle_cursor_annotation(self.mapToScene(event.pos()))
-        elif self.selected_tool == "polygon" and self.active_image and self.image_pixmap:
-            if len(self.polygon_points) > 0:
-                temp_points = self.polygon_points + [self.mapToScene(event.pos())]
-                if self.cursor_annotation:
-                    self.cursor_annotation.delete()
-                self.cursor_annotation = PolygonAnnotation(temp_points,
-                                                           self.selected_label.short_label_code,
-                                                           self.selected_label.long_label_code,
-                                                           self.selected_label.color,
-                                                           self.current_image_path,
-                                                           self.selected_label.id,
-                                                           transparency=128,
-                                                           show_msg=False)
-                self.cursor_annotation.create_graphics_item(self.scene)
-        else:
-            self.toggle_cursor_annotation()
 
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
@@ -1597,35 +1614,13 @@ class AnnotationWindow(QGraphicsView):
         if hasattr(self, 'drag_start_pos'):
             # Clean up the drag start position
             del self.drag_start_pos
-        if self.selected_tool == "polygon" and event.button() == Qt.LeftButton and len(self.polygon_points) > 2:
-            annotation = PolygonAnnotation(self.polygon_points,
-                                           self.selected_label.short_label_code,
-                                           self.selected_label.long_label_code,
-                                           self.selected_label.color,
-                                           self.current_image_path,
-                                           self.selected_label.id,
-                                           transparency=self.transparency)
-            self.annotations_dict[annotation.id] = annotation
-            annotation.create_graphics_item(self.scene)
-            self.polygon_points = []
-            self.cursor_annotation = None
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
         if self.selected_tool == "polygon" and event.key() == Qt.Key_Space:
-            # Finish the polygon annotation
+            # Finalize the polygon annotation
             if len(self.polygon_points) > 2:
-                annotation = PolygonAnnotation(self.polygon_points,
-                                               self.selected_label.short_label_code,
-                                               self.selected_label.long_label_code,
-                                               self.selected_label.color,
-                                               self.current_image_path,
-                                               self.selected_label.id,
-                                               transparency=self.transparency)
-                self.annotations_dict[annotation.id] = annotation
-                annotation.create_graphics_item(self.scene)
-                self.polygon_points = []
-                self.cursor_annotation = None
+                self.add_annotation(self.mapToScene(self.mapFromGlobal(QCursor.pos())))
         super().keyPressEvent(event)
 
     def pan(self, pos):
@@ -1775,6 +1770,12 @@ class AnnotationWindow(QGraphicsView):
             if not annotation.cropped_image:
                 annotation.create_cropped_image(rasterio_image)
 
+    def check_label_selected(self):
+        if not self.selected_label:
+            QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
+            return False
+        return True
+
     def add_annotation(self, scene_pos: QPointF, annotation=None):
         if not self.selected_label:
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
@@ -1785,13 +1786,19 @@ class AnnotationWindow(QGraphicsView):
 
         if annotation is None:
             if self.selected_tool == "polygon":
-                annotation = PolygonAnnotation(self.polygon_points,
-                                               self.selected_label.short_label_code,
-                                               self.selected_label.long_label_code,
-                                               self.selected_label.color,
-                                               self.current_image_path,
-                                               self.selected_label.id,
-                                               transparency=self.main_window.label_window.active_label.transparency)
+                if len(self.polygon_points) > 2:
+                    # Close the polygon by adding the first point as the last point
+                    self.polygon_points.append(self.polygon_points[0])
+                    annotation = PolygonAnnotation(self.polygon_points,
+                                                   self.selected_label.short_label_code,
+                                                   self.selected_label.long_label_code,
+                                                   self.selected_label.color,
+                                                   self.current_image_path,
+                                                   self.selected_label.id,
+                                                   transparency=self.main_window.label_window.active_label.transparency)
+                    self.polygon_points = []  # Reset the polygon points
+                else:
+                    return  # Do not finalize the polygon if there are not enough points
             else:
                 annotation = PatchAnnotation(scene_pos,
                                              self.annotation_size,
