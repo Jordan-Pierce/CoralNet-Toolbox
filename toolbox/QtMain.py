@@ -82,6 +82,10 @@ class MainWindow(QMainWindow):
         self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
+        # Connect the annotationSelected signal from AnnotationWindow to update the transparency slider
+        self.annotation_window.transparencyChanged.connect(self.update_annotation_transparency)
+        # Connect the labelSelected signal from LabelWindow to update the transparency slider
+        self.label_window.transparencyChanged.connect(self.update_label_transparency)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -267,6 +271,7 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
+        self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # Spin box for Uncertainty threshold control
         self.uncertainty_thresh_spinbox = QDoubleSpinBox()
@@ -363,6 +368,12 @@ class MainWindow(QMainWindow):
             else:
                 self.toolChanged.emit(None)
 
+    def untoggle_all_tools(self):
+        self.select_tool_action.setChecked(False)
+        self.annotate_tool_action.setChecked(False)
+        self.polygon_tool_action.setChecked(False)
+        self.toolChanged.emit(None)
+
     def handle_tool_changed(self, tool):
         if tool == "select":
             self.select_tool_action.setChecked(True)
@@ -381,8 +392,15 @@ class MainWindow(QMainWindow):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
 
     def update_annotation_transparency(self, value):
-        if self.annotation_window.selected_label:
-            self.annotation_window.update_annotations_transparency(self.annotation_window.selected_label, value)
+        self.annotation_window.update_annotation_transparency(value)
+        self.update_transparency_slider(value)  # Update the slider value
+
+    def update_label_transparency(self, value):
+        self.label_window.update_label_transparency(value)
+        self.update_transparency_slider(value)  # Update the slider value
+
+    def update_transparency_slider(self, transparency):
+        self.transparency_slider.setValue(transparency)
 
     def get_uncertainty_thresh(self):
         return self.uncertainty_thresh

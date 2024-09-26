@@ -781,10 +781,11 @@ class TrainModelWorker(QThread):
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
 
-    def __init__(self, params, device):
+    def __init__(self, params, device, class_mapping):
         super().__init__()
         self.params = params
         self.device = device
+        self.class_mapping = class_mapping
         self.target_model = None
 
     def run(self):
@@ -819,11 +820,12 @@ class TrainModelWorker(QThread):
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
                 'data': self.params['data'],
+                'imgsz': self.params['imgsz'],
                 'split': 'test',  # Evaluate on the test set only
                 'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
             }
             # Create and start the worker thread
-            eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params)
+            eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params, class_mapping=self.class_mapping)
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
             eval_worker.run()  # Run the evaluation synchronously (same thread)
         except Exception as e:
@@ -950,7 +952,7 @@ class TrainModelDialog(QDialog):
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(224)
+        self.imgsz_spinbox.setValue(256)
         self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Batch
@@ -1226,7 +1228,7 @@ class TrainModelDialog(QDialog):
         # Get training parameters
         self.params = self.get_training_parameters()
         # Create and start the worker thread
-        self.worker = TrainModelWorker(self.params, self.main_window.device)
+        self.worker = TrainModelWorker(self.params, self.main_window.device, self.class_mapping)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
@@ -1261,7 +1263,7 @@ class ConfusionMatrixMetrics:
         num_classes (int): The number of classes.
     """
 
-    def __init__(self, matrix):
+    def __init__(self, matrix, class_mapping):
         """
         Initialize the ConfusionMatrixMetrics with a given confusion matrix.
 
@@ -1270,6 +1272,7 @@ class ConfusionMatrixMetrics:
         """
         self.matrix = matrix
         self.num_classes = matrix.shape[0]
+        self.class_mapping = class_mapping
 
     def calculate_tp(self):
         """
@@ -1398,7 +1401,8 @@ class ConfusionMatrixMetrics:
 
         metrics_per_class = {}
         for i in range(self.num_classes):
-            metrics_per_class[f'Class {i}'] = {
+            class_name = list(self.class_mapping.keys())[i]
+            metrics_per_class[f'{class_name}'] = {
                 'TP': tp[i],
                 'FP': fp[i],
                 'TN': tn[i],
@@ -1438,10 +1442,11 @@ class EvaluateModelWorker(QThread):
     evaluation_completed = pyqtSignal()
     evaluation_error = pyqtSignal(str)
 
-    def __init__(self, model, params):
+    def __init__(self, model, params, class_mapping):
         super().__init__()
         self.model = model
         self.params = params
+        self.class_mapping = class_mapping
 
     def run(self):
         try:
@@ -1455,13 +1460,14 @@ class EvaluateModelWorker(QThread):
             # Evaluate the model
             results = self.model.val(
                 data=self.params['data'],
+                imgsz=self.params['imgsz'],
                 split=self.params['split'],
                 save_json=True,
                 plots=True
             )
 
             # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix)
+            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, self.class_mapping)
             metrics.save_metrics_to_json(save_dir)
 
             # Emit signal to indicate evaluation has completed
@@ -1478,6 +1484,7 @@ class EvaluateModelDialog(QDialog):
 
         # For holding parameters
         self.params = {}
+        self.class_mapping = {}
 
         self.setWindowTitle("Evaluate Model")
 
@@ -1521,6 +1528,15 @@ class EvaluateModelDialog(QDialog):
         model_layout.addWidget(self.model_button)
         self.form_layout.addRow("Existing Model:", model_layout)
 
+        # Class Mapping
+        self.class_mapping_edit = QLineEdit()
+        self.class_mapping_button = QPushButton("Browse...")
+        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.class_mapping_edit)
+        class_mapping_layout.addWidget(self.class_mapping_button)
+        self.form_layout.addRow("Class Mapping:", class_mapping_layout)
+
         # Dataset Directory
         self.dataset_dir_edit = QLineEdit()
         self.dataset_dir_button = QPushButton("Browse...")
@@ -1549,6 +1565,13 @@ class EvaluateModelDialog(QDialog):
         self.name_edit = QLineEdit()
         self.form_layout.addRow("Name:", self.name_edit)
 
+        # Imgsz
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setMinimum(16)
+        self.imgsz_spinbox.setMaximum(4096)
+        self.imgsz_spinbox.setValue(256)
+        self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
+
         self.main_layout.addLayout(self.form_layout)
 
         # Add OK and Cancel buttons
@@ -1560,6 +1583,26 @@ class EvaluateModelDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.main_layout.addWidget(self.cancel_button)
 
+    def browse_model_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
+        if file_path:
+            self.model_edit.setText(file_path)
+            # Get the directory two above file path
+            dir_path = os.path.dirname(os.path.dirname(file_path))
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping_edit.setText(class_mapping_path)
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+
+    def browse_class_mapping_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Class Mapping File",
+                                                   "",
+                                                   "JSON Files (*.json)")
+        if file_path:
+            self.class_mapping_edit.setText(file_path)
+            self.class_mapping = json.load(open(file_path, 'r'))
+
     def browse_dataset_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
@@ -1569,11 +1612,6 @@ class EvaluateModelDialog(QDialog):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if dir_path:
             self.save_dir_edit.setText(dir_path)
-
-    def browse_model_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
-        if file_path:
-            self.model_edit.setText(file_path)
 
     def accept(self):
         if not self.model_edit.text():
@@ -1589,6 +1627,7 @@ class EvaluateModelDialog(QDialog):
             'model': self.model_edit.text(),
             'data': self.dataset_dir_edit.text(),
             'split': self.split_combo.currentText(),
+            'imgsz': int(self.imgsz_spinbox.value()),
             'verbose': True,
             'exist_ok': True,
             'plots': True,
@@ -1615,7 +1654,7 @@ class EvaluateModelDialog(QDialog):
             self.target_model = YOLO(self.params['model'])
 
             # Create and start the worker thread
-            self.worker = EvaluateModelWorker(self.target_model, self.params)
+            self.worker = EvaluateModelWorker(self.target_model, self.params, self.class_mapping)
             self.worker.evaluation_started.connect(self.on_evaluation_started)
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
             self.worker.evaluation_error.connect(self.on_evaluation_error)
@@ -2153,26 +2192,37 @@ class BatchInferenceDialog(QDialog):
     def init_classification_tab(self):
         layout = QVBoxLayout()
 
-        # Create a button group for the checkboxes
-        self.prediction_options_group = QButtonGroup(self)
+        # Create a group box for annotation options
+        annotation_group_box = QGroupBox("Annotation Options")
+        annotation_layout = QVBoxLayout()
+
+        # Create a button group for the annotation checkboxes
+        self.annotation_options_group = QButtonGroup(self)
 
         self.classification_review_checkbox = QCheckBox("Predict Review Annotation")
         self.classification_all_checkbox = QCheckBox("Predict All Annotations")
 
         # Add the checkboxes to the button group
-        self.prediction_options_group.addButton(self.classification_review_checkbox)
-        self.prediction_options_group.addButton(self.classification_all_checkbox)
+        self.annotation_options_group.addButton(self.classification_review_checkbox)
+        self.annotation_options_group.addButton(self.classification_all_checkbox)
 
         # Ensure only one checkbox can be checked at a time
-        self.prediction_options_group.setExclusive(True)
+        self.annotation_options_group.setExclusive(True)
 
         # Set the default checkbox
         self.classification_review_checkbox.setChecked(True)
 
-        layout.addWidget(self.classification_review_checkbox)
-        layout.addWidget(self.classification_all_checkbox)
+        annotation_layout.addWidget(self.classification_review_checkbox)
+        annotation_layout.addWidget(self.classification_all_checkbox)
+        annotation_group_box.setLayout(annotation_layout)
 
-        # Add options for selecting images
+        layout.addWidget(annotation_group_box)
+
+        # Create a group box for image options
+        image_group_box = QGroupBox("Image Options")
+        image_layout = QVBoxLayout()
+
+        # Create a button group for the image checkboxes
         self.image_options_group = QButtonGroup(self)
 
         self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
@@ -2192,10 +2242,13 @@ class BatchInferenceDialog(QDialog):
         # Set the default checkbox
         self.apply_all_checkbox.setChecked(True)
 
-        layout.addWidget(self.apply_filtered_checkbox)
-        layout.addWidget(self.apply_prev_checkbox)
-        layout.addWidget(self.apply_next_checkbox)
-        layout.addWidget(self.apply_all_checkbox)
+        image_layout.addWidget(self.apply_filtered_checkbox)
+        image_layout.addWidget(self.apply_prev_checkbox)
+        image_layout.addWidget(self.apply_next_checkbox)
+        image_layout.addWidget(self.apply_all_checkbox)
+        image_group_box.setLayout(image_layout)
+
+        layout.addWidget(image_group_box)
 
         self.classification_tab.setLayout(layout)
 

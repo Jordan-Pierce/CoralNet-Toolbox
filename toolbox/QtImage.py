@@ -10,7 +10,7 @@ import rasterio
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer, QDateTime
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
-                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu)
+                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu, QButtonGroup)
 from rasterio.windows import Window
 
 from toolbox.QtProgressBar import ProgressBar
@@ -65,27 +65,31 @@ class ImageWindow(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
 
         # Create a horizontal layout for the checkboxes
-        self.checkbox_layout = QHBoxLayout()
+        self.checkbox_layout = QHBoxLayout(self)
         self.layout.addLayout(self.checkbox_layout)
+
+        # Add a QButtonGroup for the checkboxes
+        self.checkbox_group = QButtonGroup(self)
+        self.checkbox_group.setExclusive(False)
 
         # Add checkboxes for filtering images based on annotations
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
-        self.has_annotations_checkbox.stateChanged.connect(self.update_has_annotations_checkbox)
         self.has_annotations_checkbox.stateChanged.connect(self.filter_images)
         self.checkbox_layout.addWidget(self.has_annotations_checkbox)
+        self.checkbox_group.addButton(self.has_annotations_checkbox)
 
         self.needs_review_checkbox = QCheckBox("Needs Review", self)
-        self.needs_review_checkbox.stateChanged.connect(self.update_needs_review_checkbox)
         self.needs_review_checkbox.stateChanged.connect(self.filter_images)
         self.checkbox_layout.addWidget(self.needs_review_checkbox)
+        self.checkbox_group.addButton(self.needs_review_checkbox)
 
         self.no_annotations_checkbox = QCheckBox("No Annotations", self)
-        self.no_annotations_checkbox.stateChanged.connect(self.update_no_annotations_checkbox)
         self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
         self.checkbox_layout.addWidget(self.no_annotations_checkbox)
+        self.checkbox_group.addButton(self.no_annotations_checkbox)
 
         # Create a horizontal layout for the search bar
-        self.search_layout = QHBoxLayout()
+        self.search_layout = QHBoxLayout(self)
         self.layout.addLayout(self.search_layout)
 
         # Add a search bar
@@ -95,7 +99,7 @@ class ImageWindow(QWidget):
         self.search_layout.addWidget(self.search_bar)
 
         # Create a horizontal layout for the labels
-        self.info_layout = QHBoxLayout()
+        self.info_layout = QHBoxLayout(self)
         self.layout.addLayout(self.info_layout)
 
         # Add a label to display the index of the currently selected image
@@ -161,6 +165,7 @@ class ImageWindow(QWidget):
         if reply == QMessageBox.Yes:
             # Proceed with deleting annotations
             self.annotation_window.delete_image_annotations(self.selected_image_path)
+            self.main_window.confidence_window.clear_display()
 
     def import_images(self):
         file_names, _ = QFileDialog.getOpenFileNames(self,
@@ -558,30 +563,3 @@ class ImageWindow(QWidget):
         if self.filtered_image_paths:
             self.annotation_window.clear_scene()
             self.load_image_by_path(self.filtered_image_paths[0])
-
-    def update_has_annotations_checkbox(self):
-        if self.has_annotations_checkbox.isChecked():
-            self.has_annotations_checkbox.setChecked(True)
-            self.needs_review_checkbox.setChecked(False)
-            self.no_annotations_checkbox.setChecked(False)
-
-        if not self.has_annotations_checkbox.isChecked():
-            self.has_annotations_checkbox.setChecked(False)
-
-    def update_needs_review_checkbox(self):
-        if self.needs_review_checkbox.isChecked():
-            self.needs_review_checkbox.setChecked(True)
-            self.has_annotations_checkbox.setChecked(False)
-            self.no_annotations_checkbox.setChecked(False)
-
-        if not self.needs_review_checkbox.isChecked():
-            self.needs_review_checkbox.setChecked(False)
-
-    def update_no_annotations_checkbox(self):
-        if self.no_annotations_checkbox.isChecked():
-            self.no_annotations_checkbox.setChecked(True)
-            self.has_annotations_checkbox.setChecked(False)
-            self.needs_review_checkbox.setChecked(False)
-
-        if not self.no_annotations_checkbox.isChecked():
-            self.no_annotations_checkbox.setChecked(False)

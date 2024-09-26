@@ -63,7 +63,7 @@ conda activate coralnet-toolbox
 ```
 ### CUDA
 Once this has finished, if you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you 
-need, and then install the corresponding versions `torch` and `torchvision`:
+need, and then install the corresponding versions of `torch` and `torchvision`:
 ```bash
 # cmd
 
