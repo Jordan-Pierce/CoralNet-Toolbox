@@ -5,14 +5,13 @@
 #   - exporting image names for creating dataset
 #   - filter images when creating dataset
 #   - return early while loading old high resolution image
-#   - include imgsz variable when evaluating model
 #   - pass class_mapping to confusion matrix function
 
 import traceback
 
 from PyQt5.QtWidgets import QApplication
 
-from toolbox.QtMain import MainWindow
+from toolbox.QtMainWindow import MainWindow
 from toolbox.utilities import console_user
 
 

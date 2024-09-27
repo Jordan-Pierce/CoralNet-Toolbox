@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
 
 from torch.cuda import is_available, device_count
 
-from toolbox.QtAnnotation import AnnotationSamplingDialog
+from toolbox.QtAnnotation import PatchSamplingDialog
 from toolbox.QtAnnotation import AnnotationWindow
 from toolbox.QtConfidence import ConfidenceWindow
 from toolbox.QtEventFilter import GlobalEventFilter
@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
-        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
+        self.patch_sampling_dialog = PatchSamplingDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -142,10 +142,10 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations_action.triggered.connect(self.annotation_window.export_viscore_annotations)
         self.export_menu.addAction(self.export_viscore_annotations_action)
 
-        # Sampling Annotations menu
-        self.annotation_sampling_action = QAction("Sample", self)
-        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
-        self.menu_bar.addAction(self.annotation_sampling_action)
+        # Patch Annotations Sampling menu
+        self.patch_sampling_action = QAction("Sample", self)
+        self.patch_sampling_action.triggered.connect(self.open_patch_sampling_dialog)
+        self.menu_bar.addAction(self.patch_sampling_action)
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -208,7 +208,7 @@ class MainWindow(QMainWindow):
 
         # Define icon paths
         select_icon_path = get_icon_path("select.png")
-        annotate_icon_path = get_icon_path("annotate.png")
+        patch_icon_path = get_icon_path("patch.png")
         polygon_icon_path = get_icon_path("polygon.png")
         turtle_icon_path = get_icon_path("turtle.png")
         rabbit_icon_path = get_icon_path("rabbit.png")
@@ -220,10 +220,10 @@ class MainWindow(QMainWindow):
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
 
-        self.annotate_tool_action = QAction(QIcon(annotate_icon_path), "Annotate", self)
-        self.annotate_tool_action.setCheckable(True)
-        self.annotate_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.annotate_tool_action)
+        self.patch_tool_action = QAction(QIcon(patch_icon_path), "Patch", self)
+        self.patch_tool_action.setCheckable(True)
+        self.patch_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.patch_tool_action)
 
         self.polygon_tool_action = QAction(QIcon(polygon_icon_path), "Polygon", self)
         self.polygon_tool_action.setCheckable(True)
@@ -357,48 +357,48 @@ class MainWindow(QMainWindow):
         action = self.sender()
         if action == self.select_tool_action:
             if state:
-                self.annotate_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
-        elif action == self.annotate_tool_action:
+        elif action == self.patch_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
-                self.toolChanged.emit("annotate")
+                self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
         elif action == self.polygon_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
-                self.annotate_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
         self.select_tool_action.setChecked(False)
-        self.annotate_tool_action.setChecked(False)
+        self.patch_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
         if tool == "select":
             self.select_tool_action.setChecked(True)
-            self.annotate_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
-        elif tool == "annotate":
+        elif tool == "patch":
             self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(True)
+            self.patch_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
 
     def update_image_dimensions(self, width, height):
@@ -430,7 +430,7 @@ class MainWindow(QMainWindow):
     def open_import_images_dialog(self):
         self.image_window.import_images()
 
-    def open_annotation_sampling_dialog(self):
+    def open_patch_sampling_dialog(self):
 
         if not self.image_window.image_paths:
             # Check if there are any images in the project
@@ -441,12 +441,12 @@ class MainWindow(QMainWindow):
 
         try:
             # Proceed to open the dialog if images are loaded
-            self.annotation_sampling_dialog.exec_()
+            self.patch_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-        self.annotation_sampling_dialog = None
-        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
+        self.patch_sampling_dialog = None
+        self.patch_sampling_dialog = PatchSamplingDialog(self)
 
     def open_create_dataset_dialog(self):
         # Check if there are loaded images

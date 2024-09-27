@@ -316,7 +316,6 @@ class ImageWindow(QWidget):
     def on_worker_finished(self, finished_worker):
         if finished_worker in self.current_workers:
             self.current_workers.remove(finished_worker)
-
         QTimer.singleShot(0, self._process_image_queue)
 
     def on_worker_error(self, error_message):
