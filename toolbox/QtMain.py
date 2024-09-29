@@ -417,9 +417,6 @@ class MainWindow(QMainWindow):
         self.device_tool_action.setIcon(device_icon)
         self.device_tool_action.setToolTip(device_tooltip)
 
-        # Show a pop-up message
-        QMessageBox.information(self, "Device Switched", f"Device switched to {self.device}")
-
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {width} x {height}")
 
