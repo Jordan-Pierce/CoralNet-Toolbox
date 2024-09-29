@@ -1,6 +1,6 @@
-from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton
-
 import warnings
+
+from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -37,6 +37,7 @@ class ProgressBar(QDialog):
             self.progress_bar.setValue(self.value)
             if self.value >= self.max_value:
                 self.stop_progress()
+            QApplication.processEvents()
 
     def start_progress(self, max_value):
         self.value = 0

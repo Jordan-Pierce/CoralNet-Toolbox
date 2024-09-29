@@ -1,8 +1,8 @@
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF
-
 import warnings
+
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF
+from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
+from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -130,9 +130,6 @@ class ConfidenceWindow(QWidget):
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 self.create_bar_chart()
-                # Load the current image
-                image_path = annotation.image_path
-                self.main_window.image_window.load_image_by_path(image_path)
         except:
             # Cropped image is None or some other error occurred
             pass

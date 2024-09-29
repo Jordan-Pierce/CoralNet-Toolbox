@@ -19,11 +19,11 @@ import torchvision
 from segment_anything import sam_model_registry
 from segment_anything import SamAutomaticMaskGenerator
 
-from Common import get_now
-from Common import console_user
-from Common import CACHE_DIR
-from Common import IMG_FORMATS
-from Common import progress_printer
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import CACHE_DIR
+from coralnet_toolshed.Common import IMG_FORMATS
+from coralnet_toolshed.Common import progress_printer
 
 warnings.filterwarnings('ignore')
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'

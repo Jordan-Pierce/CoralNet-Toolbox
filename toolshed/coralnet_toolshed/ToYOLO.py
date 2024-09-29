@@ -8,16 +8,15 @@ import traceback
 import multiprocessing
 from functools import partial
 
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 from sklearn.model_selection import train_test_split
 
-from Classification import downsample_majority_classes
+from coralnet_toolshed.Classification import downsample_majority_classes
 
-from Common import get_now
-from Common import console_user
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -109,6 +108,16 @@ def to_yolo(args):
             patches_df = pd.concat((patches_df, patches))
         else:
             print(f"WARNING: Patches dataframe {patches_path} does not exist")
+
+    # Load the mapping CSV file into a dictionary
+    path = "C:/Users/jordan.pierce/Downloads/robot_labels_2024-08-30.csv"
+
+    if os.path.exists(path):
+        mapping_df = pd.read_csv(path)
+        mapping = dict(zip(mapping_df['old'], mapping_df['new']))
+
+        # Apply the mapping to patches_df['Label']
+        patches_df['Label'] = patches_df['Label'].map(mapping)
 
     class_names = sorted(patches_df['Label'].unique())
     num_classes = len(class_names)

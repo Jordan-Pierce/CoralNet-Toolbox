@@ -12,8 +12,8 @@ from skimage.io import imread
 from skimage.io import imsave
 from skimage.transform import resize
 
-from Common import get_now
-from Common import console_user
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
 
 warnings.filterwarnings("ignore")
 

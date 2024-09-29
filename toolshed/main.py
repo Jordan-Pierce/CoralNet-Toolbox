@@ -4,46 +4,45 @@ import traceback
 
 from gooey import Gooey, GooeyParser
 
-from src.API import api
-from src.Download import download
-from src.Labelset import labelset
-from src.Upload import upload
+from coralnet_toolshed.API import api
+from coralnet_toolshed.Download import download
+from coralnet_toolshed.Labelset import labelset
+from coralnet_toolshed.Upload import upload
 
-from src.Annotate import annotate
-from src.Patches import patches
-from src.Visualize import visualize
-from src.ToYOLO import to_yolo
-from src.Points import points
-from src.Projector import projector
-from src.Spotlight import spotlight
+from coralnet_toolshed.Annotate import annotate
+from coralnet_toolshed.Patches import patches
+from coralnet_toolshed.Visualize import visualize
+from coralnet_toolshed.ToYOLO import to_yolo
+from coralnet_toolshed.Points import points
+from coralnet_toolshed.Projector import projector
+from coralnet_toolshed.Spotlight import spotlight
 
-from src.ClassificationPreTrain import classification_pretrain
-from src.Classification import classification
-from src.Segmentation import segmentation
-from src.ClassificationInference import classification_inference
-from src.SegmentationInference import segmentation_inference
-from src.ViscoreInference import viscore_inference
+from coralnet_toolshed.ClassificationPreTrain import classification_pretrain
+from coralnet_toolshed.Classification import classification
+from coralnet_toolshed.Segmentation import segmentation
+from coralnet_toolshed.ClassificationInference import classification_inference
+from coralnet_toolshed.SegmentationInference import segmentation_inference
+from coralnet_toolshed.ViscoreInference import viscore_inference
 
-from src.SAM import sam
-from src.SfM import sfm
-from src.Segmentation3D import segmentation3d
+from coralnet_toolshed.SAM import sam
+from coralnet_toolshed.SfM import sfm
+from coralnet_toolshed.Segmentation3D import segmentation3d
 
-# For Gooey dropdown
-from src.Download import get_updated_labelset_list
-from src.Classification import get_classifier_losses
-from src.Classification import get_classifier_metrics
-from src.Classification import get_classifier_encoders
-from src.Classification import get_classifier_optimizers
-from src.Segmentation import get_segmentation_losses
-from src.Segmentation import get_segmentation_metrics
-from src.Segmentation import get_segmentation_encoders
-from src.Segmentation import get_segmentation_decoders
-from src.Segmentation import get_segmentation_optimizers
+from coralnet_toolshed.Download import get_updated_labelset_list
+from coralnet_toolshed.Classification import get_classifier_losses
+from coralnet_toolshed.Classification import get_classifier_metrics
+from coralnet_toolshed.Classification import get_classifier_encoders
+from coralnet_toolshed.Classification import get_classifier_optimizers
+from coralnet_toolshed.Segmentation import get_segmentation_losses
+from coralnet_toolshed.Segmentation import get_segmentation_metrics
+from coralnet_toolshed.Segmentation import get_segmentation_encoders
+from coralnet_toolshed.Segmentation import get_segmentation_decoders
+from coralnet_toolshed.Segmentation import get_segmentation_optimizers
 
-from src.Common import console_user
-from src.Common import DATA_DIR
-from src.Common import PATCH_EXTRACTOR
-from src.Common import FUNC_GROUPS_LIST
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import DATA_DIR
+from coralnet_toolshed.Common import PATCH_EXTRACTOR
+from coralnet_toolshed.Common import FUNC_GROUPS_LIST
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -63,7 +62,7 @@ from src.Common import FUNC_GROUPS_LIST
            'show_time_remaining': True,
            'hide_time_remaining_on_complete': True,
        })
-def main():
+def run():
     desc = 'Interact with CoralNet, unofficially.'
     parser = GooeyParser(description=desc)
 
@@ -1223,4 +1222,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    run()

@@ -1,20 +1,17 @@
-# TODO
+# TODO Later:
 #   - update pre-warm inference based on input size of model
 #   - CoralNet tools
-#   - Clean up QImage, Rasterio Image, PixMap
-#   - add tensorboard option for modeling training
-#   - deal with the sampling annotation window
-#   - file explorer for annotations to edit, delete in batches
-#   - master transparency for all annotations / classes
-#   - restart training from yaml file
-#   - add importing of coralnet predictions / output
-#   - merge dataset tool
-#   - batch inference tool
-#   - dragging causes crash
-#   - speed up searching
+#   - file explorer for annotations to edit, delete in batches; spotlight?
+#   - exporting image names for creating dataset
+#   - filter images when creating dataset
+#   - return early while loading old high resolution image
+#   - include imgsz variable when evaluating model
+#   - pass class_mapping to confusion matrix function
 
 import traceback
+
 from PyQt5.QtWidgets import QApplication
+
 from toolbox.QtMain import MainWindow
 from toolbox.utilities import console_user
 

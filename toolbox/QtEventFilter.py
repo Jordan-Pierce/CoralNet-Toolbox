@@ -1,7 +1,7 @@
-from PyQt5.QtWidgets import QApplication, QMessageBox
-from PyQt5.QtCore import Qt, QObject, QEvent
-
 import warnings
+
+from PyQt5.QtCore import Qt, QObject, QEvent
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class GlobalEventFilter(QObject):
     def __init__(self, main_window):
         super().__init__()
+        self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
@@ -71,6 +72,16 @@ class GlobalEventFilter(QObject):
                     if self.image_window.selected_image_path:
                         self.image_window.delete_selected_image()
                         return True
+
+            # Unselect annotation on End key press
+            if event.key() == Qt.Key_End:
+                self.annotation_window.unselect_annotation()
+                return True
+
+            # Untoggle all tools on Home key press
+            if event.key() == Qt.Key_Home:
+                self.main_window.untoggle_all_tools()
+                return True
 
             # Handle Escape key for exiting program
             if event.key() == Qt.Key_Escape:

@@ -31,18 +31,20 @@ Enhance your CoralNet experience with these tools:
 - 📥 Download: Retrieve source data from CoralNet 
 - 📤 Upload: Add images and annotations to CoralNet
 - ✏️ Annotate: Create patches manually or from annotations  
-- 👁️ Visualize: See points/patches on images  
+- 👁️ Visualize: See points / patches on images  
 - 🧩 Patches: Extract from annotated images  
 - 📍 Points: Sample using various methods (Uniform, Random, Stratified  
 - 🧠 Classification: Build local patch-based classifiers  
 - 🔮 Inference: Use trained models for predictions
-
+- 📊 Metrics: Evaluate model performance
+- 🚀 Optimize: Productionize models for faster inferencing
+- 📦 Toolshed: Access tools from the old repository
 
 <details>
   <summary>Watch the Video</summary>
   <p align="center">
-    <a href="https://youtu.be/LwSvgFtmUAA">
-      <img src="http://img.youtube.com/vi/LwSvgFtmUAA/0.jpg" alt="Video Title">
+    <a href="https://youtu.be/1Etd_29v4uI">
+      <img src="http://img.youtube.com/vi/1Etd_29v4uI/0.jpg" alt="Video Title">
     </a>
   </p>
 </details>
@@ -61,7 +63,7 @@ conda activate coralnet-toolbox
 ```
 ### CUDA
 Once this has finished, if you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you 
-need, and then install the corresponding versions `torch` and `torchvision`:
+need, and then install the corresponding versions of `torch` and `torchvision`:
 ```bash
 # cmd
 
@@ -73,7 +75,8 @@ conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
 pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 ```
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `rabbit` icon in the 
-`toolbox` instead of a `turtle`.
+`toolbox` instead of a `turtle`; if you have multiple `CUDA` devices available, you should see a `rocket ship` icon, 
+and if you're using a Mac with Metal, you should see an `apple` icon.
 
 See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
 
@@ -92,14 +95,15 @@ coralnet-toolbox
 
 ## GitHub Repository
 
-If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following:
+If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following after
+creating an `Anaconda` environment:
 
 ```bash
 # cmd
 
 # Clone and enter the repository
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
-cd CoralNet-Toolbox/toolbox
+cd CoralNet-Toolbox
 
 # Install the latest
 pip install -e .
@@ -111,19 +115,43 @@ coralnet-toolbox
 ## What Happened to the Old Repository?
 
 The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
-running the `toolshed` are the same as above; after creating a `Anaconda` environment, you can install the `toolshed` 
+running the `toolshed` are the same as above; after creating an `Anaconda` environment, you can install the `toolshed` 
 with the following link:
 
 ```bash
 # cmd
 
-# Install
-pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox/toolshed.git"
+# Change directories
+cd CoralNet-Toolbox/toolshed
+
+# Install the latest
+pip install -e .
 
 # Run
-coralnet-toolshed
+python main.py
 ```
+Alternatively, you can work with the functions within a script:
+```python
+# python
 
+import argparse
+from coralnet_toolshed.Download import download
+
+# Create an empty parser
+args = argparse.Namespace()
+
+# Add an argument
+args.username = "username"
+args.password = "password"
+args.source_id = 3420
+
+# Run the function
+download(args)
+```
+And also command line:
+```bash
+python coralnet_toolshed/Download.py --username username --password password --source_id 3420
+```
 
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 

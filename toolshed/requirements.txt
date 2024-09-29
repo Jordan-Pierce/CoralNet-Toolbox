@@ -20,5 +20,5 @@ torcheval==0.0.7
 tensorboard
 segment-anything==1.0
 segmentation-models-pytorch==0.3.3
-renumics-spotlight==1.6.9
+renumics-spotlight
 gooey

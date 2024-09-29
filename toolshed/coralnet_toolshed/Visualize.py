@@ -12,8 +12,8 @@ from matplotlib.widgets import Button
 from matplotlib.widgets import TextBox
 from matplotlib.patches import Rectangle
 
-from Common import console_user
-from Common import IMG_FORMATS
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import IMG_FORMATS
 
 # Set plot backend
 matplotlib.use('TkAgg')

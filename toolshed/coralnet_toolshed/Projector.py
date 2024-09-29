@@ -17,11 +17,11 @@ import torch.nn.functional as F
 
 import segmentation_models_pytorch as smp
 
-from Common import get_now
-from Common import console_user
-from Common import progress_printer
+from coralnet_toolshed.Common import get_now
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import progress_printer
 
-from Classification import get_validation_augmentation
+from coralnet_toolshed.Classification import get_validation_augmentation
 
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'

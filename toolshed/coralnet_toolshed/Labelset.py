@@ -7,16 +7,16 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from Common import console_user
-from Common import IMG_FORMATS
-from Common import CORALNET_URL
-from Common import FUNC_GROUPS_LIST
-from Common import FUNC_GROUPS_DICT
+from coralnet_toolshed.Common import console_user
+from coralnet_toolshed.Common import IMG_FORMATS
+from coralnet_toolshed.Common import CORALNET_URL
+from coralnet_toolshed.Common import FUNC_GROUPS_LIST
+from coralnet_toolshed.Common import FUNC_GROUPS_DICT
 
-from Browser import login
-from Browser import authenticate
-from Browser import check_permissions
-from Browser import check_for_browsers
+from coralnet_toolshed.Browser import login
+from coralnet_toolshed.Browser import authenticate
+from coralnet_toolshed.Browser import check_permissions
+from coralnet_toolshed.Browser import check_for_browsers
 
 
 # -----------------------------------------------------------------------------
