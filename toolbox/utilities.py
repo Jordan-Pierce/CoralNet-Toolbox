@@ -15,16 +15,17 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def get_available_device():
     """
+    Get available devices
 
     :param self:
     :return:
     """
     devices = []
-    if torch.backends.mps.is_available():
-        devices.append('mps')
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             devices.append(f'cuda:{i}')
+    if torch.backends.mps.is_available():
+        devices.append('mps')
     devices.append('cpu')
     return devices
 

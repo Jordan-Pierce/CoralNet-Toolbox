@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
 
         # Add the device label widget as an action in the toolbar
         self.devices = get_available_device()
-        self.current_device_index = 0
+        self.current_device_index = len(self.devices) - 1  # Start with CPU as the default
         self.device = self.devices[self.current_device_index]
 
         if self.device.startswith('cuda'):
@@ -278,7 +278,6 @@ class MainWindow(QMainWindow):
         self.device_tool_action.setToolTip(device_tooltip)
         self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
-
         # Create status bar layout
         self.status_bar_layout = QHBoxLayout()
 
@@ -367,15 +366,6 @@ class MainWindow(QMainWindow):
             else:
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
-
-    def get_available_device(self):
-        device = ''
-        if is_available():
-            for i in range(device_count()):
-                device += f'{i}'
-        else:
-            device = 'cpu'
-        return device, device_count()
 
     def toggle_tool(self, state):
         action = self.sender()
