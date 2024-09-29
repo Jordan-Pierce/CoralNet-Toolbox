@@ -1,5 +1,7 @@
 import pkg_resources
 
+import torch
+
 import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -8,6 +10,23 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+def get_available_device():
+    """
+
+    :param self:
+    :return:
+    """
+    devices = []
+    if torch.backends.mps.is_available():
+        devices.append('mps')
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            devices.append(f'cuda:{i}')
+    devices.append('cpu')
+    return devices
+
 
 def get_icon_path(icon_name):
     """

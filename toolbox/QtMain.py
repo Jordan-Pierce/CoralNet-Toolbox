@@ -1,5 +1,3 @@
-from torch.cuda import is_available
-
 from toolbox.QtImage import ImageWindow
 from toolbox.QtLabel import LabelWindow
 from toolbox.QtAnnotation import AnnotationWindow
@@ -17,11 +15,12 @@ from toolbox.QtProgressBar import ProgressBar
 from toolbox.QtEventFilter import GlobalEventFilter
 
 from toolbox.utilities import get_icon_path
+from toolbox.utilities import get_available_device
 
 from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
                              QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider)
 
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 
 import warnings
@@ -32,6 +31,16 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class ClickableAction(QAction):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.trigger()
+        super().mousePressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -198,24 +207,26 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Define icon paths
-        select_icon_path = get_icon_path("select.png")
-        annotate_icon_path = get_icon_path("annotate.png")
-        polygon_icon_path = get_icon_path("polygon.png")
-        turtle_icon_path = get_icon_path("turtle.png")
-        rabbit_icon_path = get_icon_path("rabbit.png")
+        self.select_icon_path = get_icon_path("select.png")
+        self.annotate_icon_path = get_icon_path("annotate.png")
+        self.polygon_icon_path = get_icon_path("polygon.png")
+        self.turtle_icon_path = get_icon_path("turtle.png")
+        self.rabbit_icon_path = get_icon_path("rabbit.png")
+        self.rocket_icon_path = get_icon_path("rocket.png")
+        self.apple_icon_path = get_icon_path("apple.png")
 
         # Add tools here with icons
-        self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
+        self.select_tool_action = QAction(QIcon(self.select_icon_path), "Select", self)
         self.select_tool_action.setCheckable(True)
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
 
-        self.annotate_tool_action = QAction(QIcon(annotate_icon_path), "Annotate", self)
+        self.annotate_tool_action = QAction(QIcon(self.annotate_icon_path), "Annotate", self)
         self.annotate_tool_action.setCheckable(True)
         self.annotate_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.annotate_tool_action)
 
-        self.polygon_tool_action = QAction(QIcon(polygon_icon_path), "Polygon", self)
+        self.polygon_tool_action = QAction(QIcon(self.polygon_icon_path), "Polygon", self)
         self.polygon_tool_action.setCheckable(False)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
@@ -226,15 +237,27 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Add the device label widget as an action in the toolbar
-        self.device = 'cuda:0' if is_available() else 'cpu'
-        device_icon = QIcon(rabbit_icon_path) if self.device != 'cpu' else QIcon(turtle_icon_path)
+        self.devices = get_available_device()
+        self.current_device_index = 0
+        self.device = self.devices[self.current_device_index]
+
+        if self.device.startswith('cuda'):
+            device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(self.rocket_icon_path)
+            device_tooltip = self.device
+        elif self.device == 'mps':
+            device_icon = QIcon(self.apple_icon_path)
+            device_tooltip = 'mps'
+        else:
+            device_icon = QIcon(self.turtle_icon_path)
+            device_tooltip = 'cpu'
 
         # Create the device action with the appropriate icon
-        device_action = QAction(device_icon, "", self)  # Empty string for the text
+        device_action = ClickableAction(device_icon, "", self)  # Empty string for the text
         self.device_tool_action = device_action
         self.device_tool_action.setCheckable(False)
         # Set the tooltip to show the value of self.device
-        self.device_tool_action.setToolTip(self.device)
+        self.device_tool_action.setToolTip(device_tooltip)
+        self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
 
         # Create status bar layout
@@ -341,6 +364,27 @@ class MainWindow(QMainWindow):
         else:
             self.select_tool_action.setChecked(False)
             self.annotate_tool_action.setChecked(False)
+
+    def toggle_device(self):
+        self.current_device_index = (self.current_device_index + 1) % len(self.devices)
+        self.device = self.devices[self.current_device_index]
+
+        # Update the icon and tooltip
+        if self.device.startswith('cuda'):
+            device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(self.rocket_icon_path)
+            device_tooltip = self.device
+        elif self.device == 'mps':
+            device_icon = QIcon(self.apple_icon_path)  # Use the same icon for MPS as CUDA
+            device_tooltip = 'mps'
+        else:
+            device_icon = QIcon(self.turtle_icon_path)
+            device_tooltip = 'cpu'
+
+        self.device_tool_action.setIcon(device_icon)
+        self.device_tool_action.setToolTip(device_tooltip)
+
+        # Show a pop-up message
+        QMessageBox.information(self, "Device Switched", f"Device switched to {self.device}")
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {width} x {height}")
