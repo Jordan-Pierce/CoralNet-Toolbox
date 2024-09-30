@@ -3,7 +3,7 @@ import warnings
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox, QListWidget)
 
 from torch.cuda import is_available, device_count
 
@@ -24,7 +24,8 @@ from toolbox.utilities import get_icon_path
 from toolbox.utilities import get_available_device
 
 from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider, QDialog, QComboBox,
+                             QPushButton)
 
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
@@ -37,16 +38,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
-
-
-class ClickableAction(QAction):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self.trigger()
-        super().mousePressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -261,7 +252,10 @@ class MainWindow(QMainWindow):
         self.device = self.devices[self.current_device_index]
 
         if self.device.startswith('cuda'):
-            device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(self.rocket_icon_path)
+            if len(self.devices) == 1:
+                device_icon = QIcon(self.rabbit_icon_path)
+            else:
+                device_icon = QIcon(self.rocket_icon_path)
             device_tooltip = self.device
         elif self.device == 'mps':
             device_icon = QIcon(self.apple_icon_path)
@@ -278,6 +272,7 @@ class MainWindow(QMainWindow):
         self.device_tool_action.setToolTip(device_tooltip)
         self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
+
         # Create status bar layout
         self.status_bar_layout = QHBoxLayout()
 
@@ -400,22 +395,37 @@ class MainWindow(QMainWindow):
             self.annotate_tool_action.setChecked(False)
 
     def toggle_device(self):
-        self.current_device_index = (self.current_device_index + 1) % len(self.devices)
-        self.device = self.devices[self.current_device_index]
+        dialog = DeviceSelectionDialog(self.devices, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.selected_devices = dialog.selected_devices
 
-        # Update the icon and tooltip
-        if self.device.startswith('cuda'):
-            device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(self.rocket_icon_path)
-            device_tooltip = self.device
-        elif self.device == 'mps':
-            device_icon = QIcon(self.apple_icon_path)  # Use the same icon for MPS as CUDA
-            device_tooltip = 'mps'
-        else:
-            device_icon = QIcon(self.turtle_icon_path)
-            device_tooltip = 'cpu'
+            if len(self.selected_devices) == 1:
+                self.device = self.selected_devices[0]
+            else:
+                cuda_devices = [device for device in self.selected_devices if device.startswith('cuda')]
+                if cuda_devices:
+                    self.device = f"cuda:{','.join(cuda_devices)}"
+                else:
+                    self.device = self.selected_devices[0]  # Default to the first selected device if no CUDA devices
 
-        self.device_tool_action.setIcon(device_icon)
-        self.device_tool_action.setToolTip(device_tooltip)
+            # Update the icon and tooltip
+            if self.device.startswith('cuda'):
+                if len(self.selected_devices) == 1:
+                    device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(
+                        self.rocket_icon_path)
+                    device_tooltip = self.device
+                else:
+                    device_icon = QIcon(self.rocket_icon_path)  # Use a different icon for multiple devices
+                    device_tooltip = f"Multiple CUDA Devices: {', '.join(self.selected_devices)}"
+            elif self.device == 'mps':
+                device_icon = QIcon(self.apple_icon_path)
+                device_tooltip = 'mps'
+            else:
+                device_icon = QIcon(self.turtle_icon_path)
+                device_tooltip = 'cpu'
+
+            self.device_tool_action.setIcon(device_icon)
+            self.device_tool_action.setToolTip(device_tooltip)
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {width} x {height}")
@@ -538,3 +548,50 @@ class MainWindow(QMainWindow):
             self.batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+
+
+class ClickableAction(QAction):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.trigger()
+        super().mousePressEvent(event)
+
+
+class DeviceSelectionDialog(QDialog):
+    def __init__(self, devices, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Device")
+        self.devices = devices
+        self.selected_devices = []
+
+        layout = QVBoxLayout()
+
+        self.device_list = QListWidget()
+        self.device_list.addItems(self.devices)
+        self.device_list.setSelectionMode(QListWidget.MultiSelection)
+        layout.addWidget(self.device_list)
+
+        self.ok_button = QPushButton("OK")
+        self.ok_button.clicked.connect(self.accept)
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
+
+    def accept(self):
+        self.selected_devices = [item.text() for item in self.device_list.selectedItems()]
+        if self.validate_selection():
+            super().accept()
+        else:
+            QMessageBox.warning(self, "Invalid Selection", "Cannot mix CUDA devices with CPU or MPS.")
+
+    def validate_selection(self):
+        cuda_selected = any(device.startswith('cuda') for device in self.selected_devices)
+        cpu_selected = 'cpu' in self.selected_devices
+        mps_selected = 'mps' in self.selected_devices
+
+        if cuda_selected and (cpu_selected or mps_selected):
+            return False
+        return True
