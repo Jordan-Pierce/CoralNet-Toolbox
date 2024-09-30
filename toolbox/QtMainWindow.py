@@ -11,6 +11,7 @@ from toolbox.QtConfidence import ConfidenceWindow
 from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.QtImage import ImageWindow
 from toolbox.QtLabel import LabelWindow
+from toolbox.QtPatchSamplingDialog import PatchSamplingDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
 from toolbox.QtMachineLearning import CreateDatasetDialog
 from toolbox.QtMachineLearning import DeployModelDialog
@@ -18,7 +19,9 @@ from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import TrainModelDialog
-from toolbox.QtPatchSamplingDialog import PatchSamplingDialog
+from toolbox.QtSAM import SAMBatchInferenceDialog
+from toolbox.QtSAM import SAMDeployModelDialog
+
 from toolbox.utilities import get_available_device
 from toolbox.utilities import get_icon_path
 
@@ -56,7 +59,7 @@ class MainWindow(QMainWindow):
         self.confidence_window = ConfidenceWindow(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
-        self.uncertainty_thresh = 0.1
+        self.uncertainty_thresh = 0.25
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
@@ -65,6 +68,9 @@ class MainWindow(QMainWindow):
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
+
+        self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
+        self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
 
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
@@ -193,6 +199,17 @@ class MainWindow(QMainWindow):
         self.ml_batch_inference_action.triggered.connect(self.open_batch_inference_dialog)
         self.ml_menu.addAction(self.ml_batch_inference_action)
 
+        # SAM menu
+        self.sam_menu = self.menu_bar.addMenu("SAM")
+
+        self.sam_deploy_model_action = QAction("Deploy Model", self)
+        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
+        self.sam_menu.addAction(self.sam_deploy_model_action)
+
+        self.sam_batch_inference_action = QAction("Batch Inference", self)
+        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
+        self.sam_menu.addAction(self.sam_batch_inference_action)
+
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
         self.toolbar.setOrientation(Qt.Vertical)
@@ -210,6 +227,7 @@ class MainWindow(QMainWindow):
         self.select_icon_path = get_icon_path("select.png")
         self.patch_icon_path = get_icon_path("patch.png")
         self.polygon_icon_path = get_icon_path("polygon.png")
+        self.sam_icon_path = get_icon_path("sam.png")
         self.turtle_icon_path = get_icon_path("turtle.png")
         self.rabbit_icon_path = get_icon_path("rabbit.png")
         self.rocket_icon_path = get_icon_path("rocket.png")
@@ -230,6 +248,11 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setCheckable(False)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
+
+        self.sam_tool_action = QAction(QIcon(self.sam_icon_path), "SAM", self)
+        self.sam_tool_action.setCheckable(True)
+        self.sam_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.sam_tool_action)
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()
@@ -357,13 +380,37 @@ class MainWindow(QMainWindow):
         if action == self.select_tool_action:
             if state:
                 self.patch_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
         elif action == self.patch_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("patch")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.polygon_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.toolChanged.emit("polygon")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.sam_tool_action:
+            if not self.sam_deploy_model_dialog.loaded_model:
+                self.sam_tool_action.setChecked(False)
+                QMessageBox.warning(self, "SAM Deploy Model", "You must deploy a model before using the SAM tool.")
+                return
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.toolChanged.emit("sam")
             else:
                 self.toolChanged.emit(None)
 
@@ -371,18 +418,35 @@ class MainWindow(QMainWindow):
         self.select_tool_action.setChecked(False)
         self.patch_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
+        self.sam_tool_action.setChecked(False)
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
         if tool == "select":
             self.select_tool_action.setChecked(True)
             self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+        elif tool == "polygon":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(True)
+            self.sam_tool_action.setChecked(False)
+        elif tool == "sam":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
@@ -539,6 +603,30 @@ class MainWindow(QMainWindow):
 
         try:
             self.batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_sam_deploy_model_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.sam_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_sam_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

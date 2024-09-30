@@ -26,6 +26,7 @@ from ultralytics import YOLO
 from ultralytics.data.dataset import ClassificationDataset
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.utilities import pixmap_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -786,7 +787,7 @@ class TrainModelWorker(QThread):
         self.params = params
         self.device = device
         self.class_mapping = class_mapping
-        self.target_model = None
+        self.model = None
 
     def run(self):
         try:
@@ -802,8 +803,8 @@ class TrainModelWorker(QThread):
                 train_build.ClassificationDataset = WeightedClassificationDataset
 
             # Load the model, train, and save the best weights
-            self.target_model = YOLO(model_path)
-            self.target_model.train(**self.params, device=self.device)
+            self.model = YOLO(model_path)
+            self.model.train(**self.params, device=self.device)
 
             # Evaluate the model after training
             self._evaluate_model()
@@ -824,8 +825,14 @@ class TrainModelWorker(QThread):
                 'split': 'test',  # Evaluate on the test set only
                 'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
             }
+            # Update the class mapping with target model names
+            class_mapping = {name: self.class_mapping[name] for name in self.model.names}
+
             # Create and start the worker thread
-            eval_worker = EvaluateModelWorker(model=self.target_model, params=eval_params, class_mapping=self.class_mapping)
+            eval_worker = EvaluateModelWorker(model=self.model,
+                                              params=eval_params,
+                                              class_mapping=class_mapping)
+
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
             eval_worker.run()  # Run the evaluation synchronously (same thread)
         except Exception as e:
@@ -842,7 +849,7 @@ class TrainModelWorker(QThread):
         self.training_error.emit(error_message)
 
     def _cleanup(self):
-        del self.target_model
+        del self.model
         gc.collect()
         empty_cache()
 
@@ -1165,7 +1172,7 @@ class TrainModelDialog(QDialog):
         self.train_classification_model()
         super().accept()
 
-    def get_training_parameters(self):
+    def get_parameters(self):
 
         # Extract values from dialog widgets
         params = {
@@ -1226,7 +1233,7 @@ class TrainModelDialog(QDialog):
     def train_classification_model(self):
 
         # Get training parameters
-        self.params = self.get_training_parameters()
+        self.params = self.get_parameters()
         # Create and start the worker thread
         self.worker = TrainModelWorker(self.params, self.main_window.device, self.class_mapping)
         self.worker.training_started.connect(self.on_training_started)
@@ -1466,8 +1473,11 @@ class EvaluateModelWorker(QThread):
                 plots=True
             )
 
+            # Update the class mapping with target model names
+            class_mapping = {name: self.class_mapping[name] for name in self.model.names}
+
             # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, self.class_mapping)
+            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, class_mapping)
             metrics.save_metrics_to_json(save_dir)
 
             # Emit signal to indicate evaluation has completed
@@ -1651,17 +1661,17 @@ class EvaluateModelDialog(QDialog):
 
         try:
             # Initialize the model, evaluate, and save the results
-            self.target_model = YOLO(self.params['model'])
+            self.model = YOLO(self.params['model'])
 
             # Create and start the worker thread
-            self.worker = EvaluateModelWorker(self.target_model, self.params, self.class_mapping)
+            self.worker = EvaluateModelWorker(self.model, self.params, self.class_mapping)
             self.worker.evaluation_started.connect(self.on_evaluation_started)
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
             self.worker.evaluation_error.connect(self.on_evaluation_error)
             self.worker.start()
 
             # Empty cache
-            del self.target_model
+            del self.model
             gc.collect()
             empty_cache()
         except Exception as e:
@@ -1994,28 +2004,13 @@ class DeployModelDialog(QDialog):
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = {}
+        gc.collect()
+        empty_cache()
         self.status_bar.setText("No model loaded")
         if self.tab_widget.currentIndex() == 0:
             self.classification_text_area.setText("No model file selected")
         else:
             self.segmentation_file_path.setText("No model file selected")
-
-    def pixmap_to_numpy(self, pixmap):
-        # Convert QPixmap to QImage
-        image = pixmap.toImage()
-        # Get image dimensions
-        width = image.width()
-        height = image.height()
-
-        # Convert QImage to numpy array
-        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
-        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
-
-        # If the image format is ARGB32, swap the first and last channels (A and B)
-        if format == QImage.Format_ARGB32:
-            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
-
-        return numpy_array
 
     def predict(self, annotations=None):
         if self.loaded_model is None:
@@ -2050,7 +2045,7 @@ class DeployModelDialog(QDialog):
         # Convert QImages to numpy arrays
         images_np = []
         for annotation in annotations:
-            images_np.append(self.pixmap_to_numpy(annotation.cropped_image))
+            images_np.append(pixmap_to_numpy(annotation.cropped_image))
 
         # Make predictions on annotations
         progress_bar = ProgressBar(self, title=f"Making Predictions")
@@ -2081,7 +2076,7 @@ class DeployModelDialog(QDialog):
         # Get the cropped image
         image = annotation.cropped_image
         # Convert QImage to np
-        image_np = self.pixmap_to_numpy(image)
+        image_np = pixmap_to_numpy(image)
         # Perform prediction
         result = self.loaded_model(image_np, device=self.main_window.device)[0]
         # Process the results
