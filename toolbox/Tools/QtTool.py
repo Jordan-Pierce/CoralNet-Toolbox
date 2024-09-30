@@ -1,5 +1,6 @@
 import warnings
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QMouseEvent
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -12,6 +13,17 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class Tool:
     def __init__(self, annotation_window):
         self.annotation_window = annotation_window
+        self.active = False
+        self.cursor = Qt.ArrowCursor
+        self.default_cursor = Qt.ArrowCursor
+
+    def activate(self):
+        self.active = True
+        self.annotation_window.setCursor(self.cursor)
+
+    def deactivate(self):
+        self.active = False
+        self.annotation_window.setCursor(self.default_cursor)
 
     def mousePressEvent(self, event: QMouseEvent):
         pass

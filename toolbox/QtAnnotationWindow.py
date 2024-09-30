@@ -15,6 +15,9 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphics
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.QtPatchAnnotation import PatchAnnotation
 
+from toolbox.Tools.QtSelectTool import SelectTool
+from toolbox.Tools.QtPatchTool import PatchTool
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -67,6 +70,11 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = None
 
         self.toolChanged.connect(self.set_selected_tool)
+
+        self.tools = {
+            "select": SelectTool(self),
+            "patch": PatchTool(self)
+        }
 
     def export_annotations(self):
         options = QFileDialog.Options()
@@ -917,14 +925,11 @@ class AnnotationWindow(QGraphicsView):
         QApplication.restoreOverrideCursor()
 
     def set_selected_tool(self, tool):
+        if self.selected_tool:
+            self.tools[self.selected_tool].deactivate()
         self.selected_tool = tool
-        if self.selected_tool == "select":
-            self.setCursor(Qt.PointingHandCursor)
-        elif self.selected_tool == "patch":
-            self.setCursor(Qt.CrossCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
-
+        if self.selected_tool:
+            self.tools[self.selected_tool].activate()
         self.unselect_annotation()
 
     def set_selected_label(self, label):
@@ -1054,65 +1059,25 @@ class AnnotationWindow(QGraphicsView):
 
     def mousePressEvent(self, event: QMouseEvent):
         if self.active_image:
-
             if event.button() == Qt.RightButton:
                 self.pan_active = True
                 self.pan_start = event.pos()
-                self.setCursor(Qt.ClosedHandCursor)  # Change cursor to indicate panning
+                self.setCursor(Qt.ClosedHandCursor)
 
-            if event.button() == Qt.LeftButton and self.selected_tool == "select":
-                position = self.mapToScene(event.pos())
-                items = self.scene.items(position)
-
-                rect_items = [item for item in items if isinstance(item, QGraphicsRectItem)]
-                rect_items.sort(key=lambda item: item.zValue(), reverse=True)
-
-                for rect_item in rect_items:
-                    annotation_id = rect_item.data(0)  # Retrieve the UUID from the graphics item's data
-                    annotation = self.annotations_dict.get(annotation_id)
-                    if annotation.contains_point(position):
-                        self.select_annotation(annotation)
-                        self.drag_start_pos = position  # Store the start position for dragging
-                        break
-
-            elif self.selected_tool == "patch" and event.button() == Qt.LeftButton:
-                # Annotation cannot be selected in annotate mode
-                self.unselect_annotation()
-                # Add annotation to the scene
-                self.add_annotation(self.mapToScene(event.pos()))
+            if self.selected_tool == "select":
+                self.tools["select"].mousePressEvent(event)
+            elif self.selected_tool == "patch":
+                self.tools["patch"].mousePressEvent(event)
 
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.pan_active:
             self.pan(event.pos())
-        elif self.selected_tool == "select" and self.selected_annotation:
-            # Check if the left mouse button is pressed, then drag the annotation
-            if event.buttons() & Qt.LeftButton:
-                # Get the current position of the mouse in the scene
-                current_pos = self.mapToScene(event.pos())
-                # Check that it's not the first time dragging
-                if hasattr(self, 'drag_start_pos'):
-                    if not self.drag_start_pos:
-                        # Start the dragging
-                        self.drag_start_pos = current_pos
-                    # Continue the dragging
-                    delta = current_pos - self.drag_start_pos
-                    new_center = self.selected_annotation.center_xy + delta
-                    # Check if the new center is within the image bounds using cursorInWindow
-                    if self.cursorInWindow(current_pos, mapped=True) and self.selected_annotation:
-                        self.set_annotation_location(self.selected_annotation.id, new_center)
-                        self.selected_annotation.create_cropped_image(self.rasterio_image)
-                        self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
-                        self.drag_start_pos = current_pos  # Update the start position for smooth dragging
-
-        # Normal movement with annotation tool selected
-        elif (self.selected_tool == "patch" and
-              self.active_image and self.image_pixmap and
-              self.cursorInWindow(event.pos())):
-            self.toggle_cursor_annotation(self.mapToScene(event.pos()))
-        else:
-            self.toggle_cursor_annotation()
+        elif self.selected_tool == "select":
+            self.tools["select"].mouseMoveEvent(event)
+        elif self.selected_tool == "patch":
+            self.tools["patch"].mouseMoveEvent(event)
 
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
@@ -1124,7 +1089,6 @@ class AnnotationWindow(QGraphicsView):
             self.setCursor(Qt.ArrowCursor)
         self.toggle_cursor_annotation()
         if hasattr(self, 'drag_start_pos'):
-            # Clean up the drag start position
             del self.drag_start_pos
         super().mouseReleaseEvent(event)
 
