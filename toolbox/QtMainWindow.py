@@ -218,7 +218,7 @@ class MainWindow(QMainWindow):
 
         # Define icon paths
         self.select_icon_path = get_icon_path("select.png")
-        self.annotate_icon_path = get_icon_path("annotate.png")
+        self.patch_icon_path = get_icon_path("patch.png")
         self.polygon_icon_path = get_icon_path("polygon.png")
         self.turtle_icon_path = get_icon_path("turtle.png")
         self.rabbit_icon_path = get_icon_path("rabbit.png")
@@ -231,10 +231,10 @@ class MainWindow(QMainWindow):
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
 
-        self.annotate_tool_action = QAction(QIcon(self.annotate_icon_path), "Annotate", self)
-        self.annotate_tool_action.setCheckable(True)
-        self.annotate_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.annotate_tool_action)
+        self.patch_tool_action = QAction(QIcon(self.patch_icon_path), "Patch", self)
+        self.patch_tool_action.setCheckable(True)
+        self.patch_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.patch_tool_action)
 
         self.polygon_tool_action = QAction(QIcon(self.polygon_icon_path), "Polygon", self)
         self.polygon_tool_action.setCheckable(False)
@@ -366,38 +366,41 @@ class MainWindow(QMainWindow):
         action = self.sender()
         if action == self.select_tool_action:
             if state:
-                self.annotate_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
-        elif action == self.annotate_tool_action:
+        elif action == self.patch_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
-                self.toolChanged.emit("annotate")
+                self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
         self.select_tool_action.setChecked(False)
-        self.annotate_tool_action.setChecked(False)
+        self.patch_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
         if tool == "select":
             self.select_tool_action.setChecked(True)
-            self.annotate_tool_action.setChecked(False)
-        elif tool == "annotate":
+            self.patch_tool_action.setChecked(False)
+        elif tool == "patch":
             self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(True)
+            self.patch_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
         if dialog.exec_() == QDialog.Accepted:
             self.selected_devices = dialog.selected_devices
+
+            if not self.selected_devices:
+                return
 
             if len(self.selected_devices) == 1:
                 self.device = self.selected_devices[0]

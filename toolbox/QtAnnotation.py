@@ -1184,7 +1184,7 @@ class AnnotationWindow(QGraphicsView):
         self.selected_tool = tool
         if self.selected_tool == "select":
             self.setCursor(Qt.PointingHandCursor)
-        elif self.selected_tool == "annotate":
+        elif self.selected_tool == "patch":
             self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
@@ -1311,7 +1311,7 @@ class AnnotationWindow(QGraphicsView):
 
         if self.selected_tool == "select":
             self.setCursor(Qt.PointingHandCursor)
-        elif self.selected_tool == "annotate":
+        elif self.selected_tool == "patch":
             self.setCursor(Qt.CrossCursor)
         else:
             self.setCursor(Qt.ArrowCursor)
@@ -1339,7 +1339,7 @@ class AnnotationWindow(QGraphicsView):
                         self.drag_start_pos = position  # Store the start position for dragging
                         break
 
-            elif self.selected_tool == "annotate" and event.button() == Qt.LeftButton:
+            elif self.selected_tool == "patch" and event.button() == Qt.LeftButton:
                 # Annotation cannot be selected in annotate mode
                 self.unselect_annotation()
                 # Add annotation to the scene
@@ -1371,7 +1371,7 @@ class AnnotationWindow(QGraphicsView):
                         self.drag_start_pos = current_pos  # Update the start position for smooth dragging
 
         # Normal movement with annotation tool selected
-        elif (self.selected_tool == "annotate" and
+        elif (self.selected_tool == "patch" and
               self.active_image and self.image_pixmap and
               self.cursorInWindow(event.pos())):
             self.toggle_cursor_annotation(self.mapToScene(event.pos()))
