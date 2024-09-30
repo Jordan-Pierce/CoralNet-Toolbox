@@ -12,7 +12,7 @@ import traceback
 
 from PyQt5.QtWidgets import QApplication
 
-from toolbox.QtMain import MainWindow
+from toolbox.QtMainWindow import MainWindow
 from toolbox.utilities import console_user
 
 

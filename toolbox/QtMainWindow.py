@@ -3,7 +3,7 @@ import warnings
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox, QListWidget)
 
 from torch.cuda import is_available, device_count
 
@@ -21,6 +21,16 @@ from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import TrainModelDialog
 from toolbox.utilities import get_icon_path
+from toolbox.utilities import get_available_device
+
+from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider, QDialog, QComboBox,
+                             QPushButton)
+
+from PyQt5.QtGui import QIcon, QMouseEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent
+
+import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -207,25 +217,26 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Define icon paths
-        select_icon_path = get_icon_path("select.png")
-        annotate_icon_path = get_icon_path("annotate.png")
-        polygon_icon_path = get_icon_path("polygon.png")
-        turtle_icon_path = get_icon_path("turtle.png")
-        rabbit_icon_path = get_icon_path("rabbit.png")
-        rocket_icon_path = get_icon_path("rocket.png")
+        self.select_icon_path = get_icon_path("select.png")
+        self.patch_icon_path = get_icon_path("patch.png")
+        self.polygon_icon_path = get_icon_path("polygon.png")
+        self.turtle_icon_path = get_icon_path("turtle.png")
+        self.rabbit_icon_path = get_icon_path("rabbit.png")
+        self.rocket_icon_path = get_icon_path("rocket.png")
+        self.apple_icon_path = get_icon_path("apple.png")
 
         # Add tools here with icons
-        self.select_tool_action = QAction(QIcon(select_icon_path), "Select", self)
+        self.select_tool_action = QAction(QIcon(self.select_icon_path), "Select", self)
         self.select_tool_action.setCheckable(True)
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
 
-        self.annotate_tool_action = QAction(QIcon(annotate_icon_path), "Annotate", self)
-        self.annotate_tool_action.setCheckable(True)
-        self.annotate_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.annotate_tool_action)
+        self.patch_tool_action = QAction(QIcon(self.patch_icon_path), "Patch", self)
+        self.patch_tool_action.setCheckable(True)
+        self.patch_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.patch_tool_action)
 
-        self.polygon_tool_action = QAction(QIcon(polygon_icon_path), "Polygon", self)
+        self.polygon_tool_action = QAction(QIcon(self.polygon_icon_path), "Polygon", self)
         self.polygon_tool_action.setCheckable(False)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
@@ -236,23 +247,30 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(spacer)
 
         # Add the device label widget as an action in the toolbar
-        self.device, num_device = self.get_available_device()
-        if num_device == 1:
-            device_icon = QIcon(rabbit_icon_path)
-            device_tooltip = f"cuda:{self.device}"
-        elif num_device > 1:
-            device_icon = QIcon(rocket_icon_path)
-            device_tooltip = f"cuda:{self.device}"
+        self.devices = get_available_device()
+        self.current_device_index = len(self.devices) - 1  # Start with CPU as the default
+        self.device = self.devices[self.current_device_index]
+
+        if self.device.startswith('cuda'):
+            if len(self.devices) == 1:
+                device_icon = QIcon(self.rabbit_icon_path)
+            else:
+                device_icon = QIcon(self.rocket_icon_path)
+            device_tooltip = self.device
+        elif self.device == 'mps':
+            device_icon = QIcon(self.apple_icon_path)
+            device_tooltip = 'mps'
         else:
-            device_icon = QIcon(turtle_icon_path)
-            device_tooltip = "cpu"
+            device_icon = QIcon(self.turtle_icon_path)
+            device_tooltip = 'cpu'
 
         # Create the device action with the appropriate icon
-        device_action = QAction(device_icon, "", self)  # Empty string for the text
+        device_action = ClickableAction(device_icon, "", self)  # Empty string for the text
         self.device_tool_action = device_action
         self.device_tool_action.setCheckable(False)
         # Set the tooltip to show the value of self.device
         self.device_tool_action.setToolTip(device_tooltip)
+        self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
 
         # Create status bar layout
@@ -344,46 +362,70 @@ class MainWindow(QMainWindow):
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
 
-    def get_available_device(self):
-        device = ''
-        if is_available():
-            for i in range(device_count()):
-                device += f'{i}'
-        else:
-            device = 'cpu'
-        return device, device_count()
-
     def toggle_tool(self, state):
         action = self.sender()
         if action == self.select_tool_action:
             if state:
-                self.annotate_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
-        elif action == self.annotate_tool_action:
+        elif action == self.patch_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
-                self.toolChanged.emit("annotate")
+                self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
         self.select_tool_action.setChecked(False)
-        self.annotate_tool_action.setChecked(False)
+        self.patch_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
         if tool == "select":
             self.select_tool_action.setChecked(True)
-            self.annotate_tool_action.setChecked(False)
-        elif tool == "annotate":
+            self.patch_tool_action.setChecked(False)
+        elif tool == "patch":
             self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(True)
+            self.patch_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
-            self.annotate_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+
+    def toggle_device(self):
+        dialog = DeviceSelectionDialog(self.devices, self)
+        if dialog.exec_() == QDialog.Accepted:
+            self.selected_devices = dialog.selected_devices
+
+            if len(self.selected_devices) == 1:
+                self.device = self.selected_devices[0]
+            else:
+                cuda_devices = [device for device in self.selected_devices if device.startswith('cuda')]
+                if cuda_devices:
+                    self.device = f"cuda:{','.join(cuda_devices)}"
+                else:
+                    self.device = self.selected_devices[0]  # Default to the first selected device if no CUDA devices
+
+            # Update the icon and tooltip
+            if self.device.startswith('cuda'):
+                if len(self.selected_devices) == 1:
+                    device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(
+                        self.rocket_icon_path)
+                    device_tooltip = self.device
+                else:
+                    device_icon = QIcon(self.rocket_icon_path)  # Use a different icon for multiple devices
+                    device_tooltip = f"Multiple CUDA Devices: {', '.join(self.selected_devices)}"
+            elif self.device == 'mps':
+                device_icon = QIcon(self.apple_icon_path)
+                device_tooltip = 'mps'
+            else:
+                device_icon = QIcon(self.turtle_icon_path)
+                device_tooltip = 'cpu'
+
+            self.device_tool_action.setIcon(device_icon)
+            self.device_tool_action.setToolTip(device_tooltip)
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {width} x {height}")
@@ -506,3 +548,50 @@ class MainWindow(QMainWindow):
             self.batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+
+
+class ClickableAction(QAction):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.trigger()
+        super().mousePressEvent(event)
+
+
+class DeviceSelectionDialog(QDialog):
+    def __init__(self, devices, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Device")
+        self.devices = devices
+        self.selected_devices = []
+
+        layout = QVBoxLayout()
+
+        self.device_list = QListWidget()
+        self.device_list.addItems(self.devices)
+        self.device_list.setSelectionMode(QListWidget.MultiSelection)
+        layout.addWidget(self.device_list)
+
+        self.ok_button = QPushButton("OK")
+        self.ok_button.clicked.connect(self.accept)
+        layout.addWidget(self.ok_button)
+
+        self.setLayout(layout)
+
+    def accept(self):
+        self.selected_devices = [item.text() for item in self.device_list.selectedItems()]
+        if self.validate_selection():
+            super().accept()
+        else:
+            QMessageBox.warning(self, "Invalid Selection", "Cannot mix CUDA devices with CPU or MPS.")
+
+    def validate_selection(self):
+        cuda_selected = any(device.startswith('cuda') for device in self.selected_devices)
+        cpu_selected = 'cpu' in self.selected_devices
+        mps_selected = 'mps' in self.selected_devices
+
+        if cuda_selected and (cpu_selected or mps_selected):
+            return False
+        return True
