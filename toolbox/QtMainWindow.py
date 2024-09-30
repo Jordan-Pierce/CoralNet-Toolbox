@@ -1,14 +1,12 @@
 import warnings
 
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QMouseEvent
+from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox, QListWidget)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, QPushButton)
 
-from torch.cuda import is_available, device_count
-
-from toolbox.QtAnnotation import AnnotationSamplingDialog
-from toolbox.QtAnnotation import AnnotationWindow
+from toolbox.QtAnnotationWindow import AnnotationWindow
 from toolbox.QtConfidence import ConfidenceWindow
 from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.QtImage import ImageWindow
@@ -20,17 +18,9 @@ from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import TrainModelDialog
-from toolbox.utilities import get_icon_path
+from toolbox.QtPatchSamplingDialog import PatchSamplingDialog
 from toolbox.utilities import get_available_device
-
-from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider, QDialog, QComboBox,
-                             QPushButton)
-
-from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-
-import warnings
+from toolbox.utilities import get_icon_path
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -76,7 +66,7 @@ class MainWindow(QMainWindow):
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
-        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
+        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -154,7 +144,7 @@ class MainWindow(QMainWindow):
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
-        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
+        self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
 
         # CoralNet menu
@@ -399,6 +389,9 @@ class MainWindow(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             self.selected_devices = dialog.selected_devices
 
+            if not self.selected_devices:
+                return
+
             if len(self.selected_devices) == 1:
                 self.device = self.selected_devices[0]
             else:
@@ -456,7 +449,7 @@ class MainWindow(QMainWindow):
     def open_import_images_dialog(self):
         self.image_window.import_images()
 
-    def open_annotation_sampling_dialog(self):
+    def open_patch_annotation_sampling_dialog(self):
 
         if not self.image_window.image_paths:
             # Check if there are any images in the project
@@ -467,12 +460,12 @@ class MainWindow(QMainWindow):
 
         try:
             # Proceed to open the dialog if images are loaded
-            self.annotation_sampling_dialog.exec_()
+            self.patch_annotation_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-        self.annotation_sampling_dialog = None
-        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
+        self.patch_annotation_sampling_dialog = None
+        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
     def open_create_dataset_dialog(self):
         # Check if there are loaded images
