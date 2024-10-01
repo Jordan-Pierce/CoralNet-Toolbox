@@ -51,9 +51,9 @@ class PolygonAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        self.calculate_centroid()
         delta = new_center_xy - self.center_xy
         self.points = [point + delta for point in self.points]
+        self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
@@ -65,11 +65,11 @@ class PolygonAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        self.calculate_centroid()
         centroid_x, centroid_y = self.center_xy.x(), self.center_xy.y()
         translated_points = [QPointF(point.x() - centroid_x, point.y() - centroid_y) for point in self.points]
         scaled_points = [QPointF(point.x() * scale_factor, point.y() * scale_factor) for point in translated_points]
         self.points = [QPointF(point.x() + centroid_x, point.y() + centroid_y) for point in scaled_points]
+        self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
@@ -82,14 +82,9 @@ class PolygonAnnotation(Annotation):
 
     def update_graphics_item(self):
         if self.graphics_item:
-
-            # Remove the old graphic item from the scene
-            if self.graphics_item.scene():
-                self.graphics_item.scene().removeItem(self.graphics_item)
-
             # Create a new polygon item
             polygon = QPolygonF(self.points)
-            self.graphics_item = QGraphicsPolygonItem(polygon)
+            self.graphics_item.setPolygon(polygon)
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
 
@@ -102,10 +97,6 @@ class PolygonAnnotation(Annotation):
             self.graphics_item.setPen(pen)
             brush = QBrush(color)
             self.graphics_item.setBrush(brush)
-
-            # Add the new graphic item to the scene
-            if self.graphics_item.scene():
-                self.graphics_item.scene().addItem(self.graphics_item)
 
             # Update the vertex items
             for point in self.points:
