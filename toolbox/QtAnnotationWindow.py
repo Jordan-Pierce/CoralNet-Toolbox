@@ -254,6 +254,17 @@ class AnnotationWindow(QGraphicsView):
         self.main_window.confidence_window.clear_display()
         QApplication.processEvents()
 
+        # Enforce zoom constraints related to the image height
+        min_zoom_factor = self.calculate_min_zoom_factor()
+        if self.zoom_factor < min_zoom_factor:
+            self.zoom_factor = min_zoom_factor
+            self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
+    def calculate_min_zoom_factor(self):
+        if self.image_pixmap:
+            return self.height() / self.image_pixmap.height()
+        return 1.0
+
     def update_current_image_path(self, image_path):
         self.current_image_path = image_path
 

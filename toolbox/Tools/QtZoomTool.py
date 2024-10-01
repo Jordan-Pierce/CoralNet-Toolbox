@@ -24,7 +24,14 @@ class ZoomTool(Tool):
         else:
             factor = 0.9
 
-        self.annotation_window.zoom_factor *= factor
+        new_zoom_factor = self.annotation_window.zoom_factor * factor
+        min_zoom_factor = self.annotation_window.height() / self.annotation_window.image_pixmap.height()
+
+        if new_zoom_factor < min_zoom_factor:
+            new_zoom_factor = min_zoom_factor
+            factor = min_zoom_factor / self.annotation_window.zoom_factor
+
+        self.annotation_window.zoom_factor = new_zoom_factor
         self.annotation_window.scale(factor, factor)
 
         if self.annotation_window.selected_tool in ["select", "patch", "polygon", "sam"]:
