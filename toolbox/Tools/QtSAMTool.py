@@ -163,6 +163,10 @@ class SAMTool(Tool):
         labels = [1] * len(positive) + [0] * len(negative)
         points = positive + negative
 
+        plt.imshow(self.image)
+        plt.scatter(points[0][0], points[0][1], c='red')
+        plt.show()
+
         # Get the results from SAM model
         results = self.sam_dialog.predict(None, points, labels)
 
