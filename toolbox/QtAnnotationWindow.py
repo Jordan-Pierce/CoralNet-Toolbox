@@ -172,10 +172,10 @@ class AnnotationWindow(QGraphicsView):
             scale_factor = 1 + delta / 100.0
             self.selected_annotation.update_annotation_size(scale_factor)
             if self.cursor_annotation:
-                self.cursor_annotation.update_annotation_size(self.annotation_size)
+                self.cursor_annotation.update_annotation_size(scale_factor)
 
-        # Update the graphic
-        self.toggle_cursor_annotation()
+        # # Update the graphic
+        # self.toggle_cursor_annotation()
 
         if self.selected_annotation:
             self.selected_annotation.create_cropped_image(self.rasterio_image)

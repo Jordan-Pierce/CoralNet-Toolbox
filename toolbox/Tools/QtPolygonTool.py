@@ -33,7 +33,7 @@ class PolygonTool(Tool):
             self.drawing_continuous = True
             self.annotation_window.unselect_annotation()
             self.points.append(self.annotation_window.mapToScene(event.pos()))
-            self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
+            self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
         elif event.button() == Qt.LeftButton and self.drawing_continuous:
             # Finish the current annotation
             self.points.append(self.annotation_window.mapToScene(event.pos()))

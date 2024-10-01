@@ -74,8 +74,6 @@ class PolygonAnnotation(Annotation):
         self.annotation_updated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
-        if self.graphics_item:
-            return  # Do not create a new graphics item if one already exists
         polygon = QPolygonF(self.points)
         self.graphics_item = QGraphicsPolygonItem(polygon)
         self.update_graphics_item()
@@ -84,27 +82,29 @@ class PolygonAnnotation(Annotation):
 
     def update_graphics_item(self):
         if self.graphics_item:
-            # Update the existing polygon item
+            scene = self.graphics_item.scene()
+            if scene:
+                scene.removeItem(self.graphics_item)
+
+            # Update the graphic item
             polygon = QPolygonF(self.points)
-            self.graphics_item.setPolygon(polygon)
+            self.graphics_item = QGraphicsPolygonItem(polygon)
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
 
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 4, Qt.DotLine)  # Inverse color, thicker border, and dotted line
+                pen = QPen(inverse_color, 4, Qt.DotLine)
             else:
-                pen = QPen(color, 2, Qt.SolidLine)  # Default border color and thickness
+                pen = QPen(color, 2, Qt.SolidLine)
 
             self.graphics_item.setPen(pen)
             brush = QBrush(color)
             self.graphics_item.setBrush(brush)
 
-            # Remove the previous vertex items
-            for child in self.graphics_item.childItems():
-                self.graphics_item.scene().removeItem(child)
+            if scene:
+                scene.addItem(self.graphics_item)
 
-            # Update the vertex items
             for point in self.points:
                 vertex_item = QGraphicsRectItem(point.x() - 2, point.y() - 2, 4, 4, parent=self.graphics_item)
                 vertex_color = QColor(self.label.color)
@@ -112,9 +112,9 @@ class PolygonAnnotation(Annotation):
                 vertex_item.setBrush(QBrush(vertex_color))
                 vertex_item.setPen(QPen(vertex_color))
 
+            self.graphics_item.setData(0, self.id)
             self.graphics_item.update()
 
-            # Update the cropped image
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
 

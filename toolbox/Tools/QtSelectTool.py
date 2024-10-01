@@ -28,9 +28,6 @@ class SelectTool(Tool):
             all_items = rect_items + polygon_items
             all_items.sort(key=lambda item: item.zValue(), reverse=True)
 
-            if all_items:
-                self.annotation_window.unselect_annotation()
-
             for item in all_items:
                 annotation_id = item.data(0)
                 annotation = self.annotation_window.annotations_dict.get(annotation_id)
