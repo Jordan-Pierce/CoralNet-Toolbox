@@ -98,6 +98,10 @@ class PolygonAnnotation(Annotation):
             brush = QBrush(color)
             self.graphics_item.setBrush(brush)
 
+            # Remove the previous vertex items
+            for child in self.graphics_item.childItems():
+                self.graphics_item.scene().removeItem(child)
+
             # Update the vertex items
             for point in self.points:
                 vertex_item = QGraphicsRectItem(point.x() - 2, point.y() - 2, 4, 4, parent=self.graphics_item)
