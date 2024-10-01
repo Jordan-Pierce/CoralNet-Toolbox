@@ -58,6 +58,8 @@ class SAMTool(Tool):
                                                                 QPen(Qt.green),
                                                                 QColor(Qt.green))
                 self.point_graphics.append(point)
+                self.annotation_window.scene.addItem(point)
+
             elif event.modifiers() == Qt.ShiftModifier:
                 # Add a negative point
                 self.negative_points.append(self.annotation_window.mapToScene(event.pos()))
@@ -67,6 +69,7 @@ class SAMTool(Tool):
                                                                 QPen(Qt.red),
                                                                 QColor(Qt.red))
                 self.point_graphics.append(point)
+                self.annotation_window.scene.addItem(point)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         pass
