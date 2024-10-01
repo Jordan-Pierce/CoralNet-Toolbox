@@ -42,12 +42,14 @@ class SAMDeployModelDialog(QDialog):
 
         self.setWindowTitle("SAM Deploy Model")
 
-        self.resize(300, 300)
+        self.resize(300, 200)
 
         self.imgsz = 1024
         self.conf = 0.25
         self.model_path = None
         self.loaded_model = None
+        # For FastSAM
+        self.everything_results = None
 
         # Main layout
         self.main_layout = QVBoxLayout(self)
@@ -191,23 +193,25 @@ class SAMDeployModelDialog(QDialog):
 
     def set_image(self, image):
         if self.loaded_model is not None:
-             # Set the image in the model
-            self.loaded_model.set_image(image)
+            # Set the image in the model
+            if "fast" in self.model_path.lower():
+                self.everything_results = None
+                self.everything_results = self.loaded_model(image)
+            else:
+                self.loaded_model.set_image(image)
         else:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
 
-    def predict(self, bboxes, positive, negative):
+    def predict(self, bboxes, points, labels):
         if not self.loaded_model:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
             return None
         try:
-            # Combine the positive and negative points
-            points = np.stack(positive + negative)
-            labels = [1] * len(positive) + [0] * len(negative)
-            # Make the prediction
-            points = positive[0]
-            labels = [labels[0]]
-            results = self.loaded_model(points=points, labels=labels)[0]
+            # Provide prompt to SAM model in form of numpy array
+            if "fast" in self.model_path.lower():
+                results = self.loaded_model.prompt(self.everything_results, points=points, labels=labels)[0]
+            else:
+                results = self.loaded_model(points=points, labels=labels)[0]
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
@@ -218,6 +222,7 @@ class SAMDeployModelDialog(QDialog):
     def deactivate_model(self):
         self.loaded_model = None
         self.model_path = None
+        self.everything_results = None
         gc.collect()
         empty_cache()
         self.status_bar.setText("No model loaded")
