@@ -7,10 +7,10 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
                              QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, QPushButton)
 
 from toolbox.QtAnnotationWindow import AnnotationWindow
-from toolbox.QtConfidence import ConfidenceWindow
+from toolbox.QtConfidenceWindow import ConfidenceWindow
 from toolbox.QtEventFilter import GlobalEventFilter
-from toolbox.QtImage import ImageWindow
-from toolbox.QtLabel import LabelWindow
+from toolbox.QtImageWindow import ImageWindow
+from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSamplingDialog import PatchSamplingDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
 from toolbox.QtMachineLearning import CreateDatasetDialog
@@ -21,6 +21,8 @@ from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import TrainModelDialog
 from toolbox.QtSAM import SAMBatchInferenceDialog
 from toolbox.QtSAM import SAMDeployModelDialog
+
+from toolbox.QtIO import IODialog
 
 from toolbox.utilities import get_available_device
 from toolbox.utilities import get_icon_path
@@ -57,6 +59,8 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
+
+        self.io_dialog = IODialog(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
         self.uncertainty_thresh = 0.25
@@ -107,45 +111,45 @@ class MainWindow(QMainWindow):
         self.import_menu = self.menu_bar.addMenu("Import")
 
         self.import_images_action = QAction("Import Images", self)
-        self.import_images_action.triggered.connect(self.image_window.import_images)
+        self.import_images_action.triggered.connect(self.io_dialog.import_images)
         self.import_menu.addAction(self.import_images_action)
         self.import_menu.addSeparator()
 
         self.import_labels_action = QAction("Import Labels (JSON)", self)
-        self.import_labels_action.triggered.connect(self.label_window.import_labels)
+        self.import_labels_action.triggered.connect(self.io_dialog.import_labels)
         self.import_menu.addAction(self.import_labels_action)
         self.import_menu.addSeparator()
 
         self.import_annotations_action = QAction("Import Annotations (JSON)", self)
-        self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
+        self.import_annotations_action.triggered.connect(self.io_dialog.import_annotations)
         self.import_menu.addAction(self.import_annotations_action)
 
         self.import_coralnet_annotations_action = QAction("Import CoralNet Annotations (CSV)", self)
-        self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
+        self.import_coralnet_annotations_action.triggered.connect(self.io_dialog.import_coralnet_annotations)
         self.import_menu.addAction(self.import_coralnet_annotations_action)
 
         self.import_viscore_annotations_action = QAction("Import Viscore Annotations (CSV)", self)
-        self.import_viscore_annotations_action.triggered.connect(self.annotation_window.import_viscore_annotations)
+        self.import_viscore_annotations_action.triggered.connect(self.io_dialog.import_viscore_annotations)
         self.import_menu.addAction(self.import_viscore_annotations_action)
 
         # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")
 
         self.export_labels_action = QAction("Export Labels (JSON)", self)
-        self.export_labels_action.triggered.connect(self.label_window.export_labels)
+        self.export_labels_action.triggered.connect(self.io_dialog.export_labels)
         self.export_menu.addAction(self.export_labels_action)
         self.export_menu.addSeparator()
 
         self.export_annotations_action = QAction("Export Annotations (JSON)", self)
-        self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
+        self.export_annotations_action.triggered.connect(self.io_dialog.export_annotations)
         self.export_menu.addAction(self.export_annotations_action)
 
         self.export_coralnet_annotations_action = QAction("Export CoralNet Annotations (CSV)", self)
-        self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
+        self.export_coralnet_annotations_action.triggered.connect(self.io_dialog.export_coralnet_annotations)
         self.export_menu.addAction(self.export_coralnet_annotations_action)
 
         self.export_viscore_annotations_action = QAction("Export Viscore Annotations (JSON)", self)
-        self.export_viscore_annotations_action.triggered.connect(self.annotation_window.export_viscore_annotations)
+        self.export_viscore_annotations_action.triggered.connect(self.io_dialog.export_viscore_annotations)
         self.export_menu.addAction(self.export_viscore_annotations_action)
 
         # Sampling Annotations menu
@@ -511,7 +515,7 @@ class MainWindow(QMainWindow):
             self.uncertaintyChanged.emit(value)
 
     def open_import_images_dialog(self):
-        self.image_window.import_images()
+        self.io_dialog.import_images()
 
     def open_patch_annotation_sampling_dialog(self):
 

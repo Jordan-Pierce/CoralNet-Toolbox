@@ -5,7 +5,7 @@ from PyQt5.QtCore import pyqtSignal, QObject
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QMessageBox)
 
-from toolbox.QtLabel import Label
+from toolbox.QtLabelWindow import Label
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
