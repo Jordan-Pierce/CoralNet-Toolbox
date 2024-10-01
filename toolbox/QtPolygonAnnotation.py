@@ -74,6 +74,8 @@ class PolygonAnnotation(Annotation):
         self.annotation_updated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
+        if self.graphics_item:
+            return  # Do not create a new graphics item if one already exists
         polygon = QPolygonF(self.points)
         self.graphics_item = QGraphicsPolygonItem(polygon)
         self.update_graphics_item()
@@ -82,7 +84,7 @@ class PolygonAnnotation(Annotation):
 
     def update_graphics_item(self):
         if self.graphics_item:
-            # Create a new polygon item
+            # Update the existing polygon item
             polygon = QPolygonF(self.points)
             self.graphics_item.setPolygon(polygon)
             color = QColor(self.label.color)

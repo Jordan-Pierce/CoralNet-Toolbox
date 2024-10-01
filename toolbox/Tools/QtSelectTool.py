@@ -34,7 +34,7 @@ class SelectTool(Tool):
             for item in all_items:
                 annotation_id = item.data(0)
                 annotation = self.annotation_window.annotations_dict.get(annotation_id)
-                if annotation.contains_point(position):
+                if annotation and annotation.contains_point(position):
                     self.annotation_window.select_annotation(annotation)
                     self.annotation_window.drag_start_pos = position
                     break
