@@ -243,57 +243,6 @@ class LabelWindow(QWidget):
         col = pos.x() // self.label_width
         return row * self.labels_per_row + col
 
-    def export_labels(self):
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self,
-                                                   "Export Labels",
-                                                   "",
-                                                   "JSON Files (*.json);;All Files (*)",
-                                                   options=options)
-        if file_path:
-            try:
-                labels_data = [label.to_dict() for label in self.labels]
-                with open(file_path, 'w') as file:
-                    json.dump(labels_data, file, indent=4)
-
-                QMessageBox.information(self, ""
-                                              "Labels Exported",
-                                        "Labels have been successfully exported.")
-
-            except Exception as e:
-                QMessageBox.warning(self,
-                                    "Error Importing Labels",
-                                    f"An error occurred while importing labels: {str(e)}")
-
-    def import_labels(self):
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Import Labels",
-                                                   "",
-                                                   "JSON Files (*.json);;All Files (*)",
-                                                   options=options)
-        if file_path:
-            try:
-                with open(file_path, 'r') as file:
-                    labels_data = json.load(file)
-
-                for label_data in labels_data:
-                    label = Label.from_dict(label_data)
-                    if not self.label_exists(label.short_label_code, label.long_label_code):
-                        self.add_label(label.short_label_code, label.long_label_code, label.color, label.id)
-
-                # Set the Review label as active
-                self.set_active_label(self.get_label_by_long_code("Review"))
-
-                QMessageBox.information(self,
-                                        "Labels Imported",
-                                        "Annotations have been successfully imported.")
-
-            except Exception as e:
-                QMessageBox.warning(self,
-                                    "Error Importing Labels",
-                                    f"An error occurred while importing Labels: {str(e)}")
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_labels_per_row()

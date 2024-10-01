@@ -1,9 +1,10 @@
+import warnings
 import pkg_resources
 
 import torch
+import numpy as np
 
-import warnings
-
+from PyQt5.QtGui import QImage
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -11,6 +12,15 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+def get_icon_path(icon_name):
+    """
+
+    :param icon_name:
+    :return:
+    """
+    return pkg_resources.resource_filename('toolbox', f'icons/{icon_name}')
 
 
 def get_available_device():
@@ -30,13 +40,22 @@ def get_available_device():
     return devices
 
 
-def get_icon_path(icon_name):
-    """
+def pixmap_to_numpy(pixmap):
+    # Convert QPixmap to QImage
+    image = pixmap.toImage()
+    # Get image dimensions
+    width = image.width()
+    height = image.height()
 
-    :param icon_name:
-    :return:
-    """
-    return pkg_resources.resource_filename('toolbox', f'icons/{icon_name}')
+    # Convert QImage to numpy array
+    byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
+    numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+
+    # If the image format is ARGB32, swap the first and last channels (A and B)
+    if format == QImage.Format_ARGB32:
+        numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+
+    return numpy_array[:, :, :3]
 
 
 def console_user(error_msg):

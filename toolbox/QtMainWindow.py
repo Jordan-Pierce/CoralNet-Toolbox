@@ -1,18 +1,17 @@
 import warnings
 
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QMouseEvent
+from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDoubleSpinBox, QListWidget)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, QPushButton)
 
-from torch.cuda import is_available, device_count
-
-from toolbox.QtAnnotation import AnnotationSamplingDialog
-from toolbox.QtAnnotation import AnnotationWindow
-from toolbox.QtConfidence import ConfidenceWindow
+from toolbox.QtAnnotationWindow import AnnotationWindow
+from toolbox.QtConfidenceWindow import ConfidenceWindow
 from toolbox.QtEventFilter import GlobalEventFilter
-from toolbox.QtImage import ImageWindow
-from toolbox.QtLabel import LabelWindow
+from toolbox.QtImageWindow import ImageWindow
+from toolbox.QtLabelWindow import LabelWindow
+from toolbox.QtPatchSamplingDialog import PatchSamplingDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
 from toolbox.QtMachineLearning import CreateDatasetDialog
 from toolbox.QtMachineLearning import DeployModelDialog
@@ -20,17 +19,13 @@ from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import TrainModelDialog
-from toolbox.utilities import get_icon_path
+from toolbox.QtSAM import SAMBatchInferenceDialog
+from toolbox.QtSAM import SAMDeployModelDialog
+
+from toolbox.QtIO import IODialog
+
 from toolbox.utilities import get_available_device
-
-from PyQt5.QtWidgets import (QMainWindow, QFileDialog, QApplication, QToolBar, QAction,  QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout,  QSpinBox, QSlider, QDialog, QComboBox,
-                             QPushButton)
-
-from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent
-
-import warnings
+from toolbox.utilities import get_icon_path
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -65,8 +60,10 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
+        self.io_dialog = IODialog(self)
+
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
-        self.uncertainty_thresh = 0.1
+        self.uncertainty_thresh = 0.25
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
@@ -76,7 +73,10 @@ class MainWindow(QMainWindow):
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
 
-        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
+        self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
+        self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
+
+        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -111,50 +111,50 @@ class MainWindow(QMainWindow):
         self.import_menu = self.menu_bar.addMenu("Import")
 
         self.import_images_action = QAction("Import Images", self)
-        self.import_images_action.triggered.connect(self.image_window.import_images)
+        self.import_images_action.triggered.connect(self.io_dialog.import_images)
         self.import_menu.addAction(self.import_images_action)
         self.import_menu.addSeparator()
 
         self.import_labels_action = QAction("Import Labels (JSON)", self)
-        self.import_labels_action.triggered.connect(self.label_window.import_labels)
+        self.import_labels_action.triggered.connect(self.io_dialog.import_labels)
         self.import_menu.addAction(self.import_labels_action)
         self.import_menu.addSeparator()
 
         self.import_annotations_action = QAction("Import Annotations (JSON)", self)
-        self.import_annotations_action.triggered.connect(self.annotation_window.import_annotations)
+        self.import_annotations_action.triggered.connect(self.io_dialog.import_annotations)
         self.import_menu.addAction(self.import_annotations_action)
 
         self.import_coralnet_annotations_action = QAction("Import CoralNet Annotations (CSV)", self)
-        self.import_coralnet_annotations_action.triggered.connect(self.annotation_window.import_coralnet_annotations)
+        self.import_coralnet_annotations_action.triggered.connect(self.io_dialog.import_coralnet_annotations)
         self.import_menu.addAction(self.import_coralnet_annotations_action)
 
         self.import_viscore_annotations_action = QAction("Import Viscore Annotations (CSV)", self)
-        self.import_viscore_annotations_action.triggered.connect(self.annotation_window.import_viscore_annotations)
+        self.import_viscore_annotations_action.triggered.connect(self.io_dialog.import_viscore_annotations)
         self.import_menu.addAction(self.import_viscore_annotations_action)
 
         # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")
 
         self.export_labels_action = QAction("Export Labels (JSON)", self)
-        self.export_labels_action.triggered.connect(self.label_window.export_labels)
+        self.export_labels_action.triggered.connect(self.io_dialog.export_labels)
         self.export_menu.addAction(self.export_labels_action)
         self.export_menu.addSeparator()
 
         self.export_annotations_action = QAction("Export Annotations (JSON)", self)
-        self.export_annotations_action.triggered.connect(self.annotation_window.export_annotations)
+        self.export_annotations_action.triggered.connect(self.io_dialog.export_annotations)
         self.export_menu.addAction(self.export_annotations_action)
 
         self.export_coralnet_annotations_action = QAction("Export CoralNet Annotations (CSV)", self)
-        self.export_coralnet_annotations_action.triggered.connect(self.annotation_window.export_coralnet_annotations)
+        self.export_coralnet_annotations_action.triggered.connect(self.io_dialog.export_coralnet_annotations)
         self.export_menu.addAction(self.export_coralnet_annotations_action)
 
         self.export_viscore_annotations_action = QAction("Export Viscore Annotations (JSON)", self)
-        self.export_viscore_annotations_action.triggered.connect(self.annotation_window.export_viscore_annotations)
+        self.export_viscore_annotations_action.triggered.connect(self.io_dialog.export_viscore_annotations)
         self.export_menu.addAction(self.export_viscore_annotations_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
-        self.annotation_sampling_action.triggered.connect(self.open_annotation_sampling_dialog)
+        self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
 
         # CoralNet menu
@@ -203,6 +203,17 @@ class MainWindow(QMainWindow):
         self.ml_batch_inference_action.triggered.connect(self.open_batch_inference_dialog)
         self.ml_menu.addAction(self.ml_batch_inference_action)
 
+        # SAM menu
+        self.sam_menu = self.menu_bar.addMenu("SAM")
+
+        self.sam_deploy_model_action = QAction("Deploy Model", self)
+        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
+        self.sam_menu.addAction(self.sam_deploy_model_action)
+
+        self.sam_batch_inference_action = QAction("Batch Inference", self)
+        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
+        self.sam_menu.addAction(self.sam_batch_inference_action)
+
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
         self.toolbar.setOrientation(Qt.Vertical)
@@ -220,6 +231,7 @@ class MainWindow(QMainWindow):
         self.select_icon_path = get_icon_path("select.png")
         self.patch_icon_path = get_icon_path("patch.png")
         self.polygon_icon_path = get_icon_path("polygon.png")
+        self.sam_icon_path = get_icon_path("sam.png")
         self.turtle_icon_path = get_icon_path("turtle.png")
         self.rabbit_icon_path = get_icon_path("rabbit.png")
         self.rocket_icon_path = get_icon_path("rocket.png")
@@ -240,6 +252,11 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setCheckable(False)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
+
+        self.sam_tool_action = QAction(QIcon(self.sam_icon_path), "SAM", self)
+        self.sam_tool_action.setCheckable(True)
+        self.sam_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.sam_tool_action)
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()
@@ -367,13 +384,37 @@ class MainWindow(QMainWindow):
         if action == self.select_tool_action:
             if state:
                 self.patch_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
         elif action == self.patch_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("patch")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.polygon_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.toolChanged.emit("polygon")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.sam_tool_action:
+            if not self.sam_deploy_model_dialog.loaded_model:
+                self.sam_tool_action.setChecked(False)
+                QMessageBox.warning(self, "SAM Deploy Model", "You must deploy a model before using the SAM tool.")
+                return
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.toolChanged.emit("sam")
             else:
                 self.toolChanged.emit(None)
 
@@ -381,18 +422,35 @@ class MainWindow(QMainWindow):
         self.select_tool_action.setChecked(False)
         self.patch_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
+        self.sam_tool_action.setChecked(False)
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
         if tool == "select":
             self.select_tool_action.setChecked(True)
             self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+        elif tool == "polygon":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(True)
+            self.sam_tool_action.setChecked(False)
+        elif tool == "sam":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
@@ -457,9 +515,9 @@ class MainWindow(QMainWindow):
             self.uncertaintyChanged.emit(value)
 
     def open_import_images_dialog(self):
-        self.image_window.import_images()
+        self.io_dialog.import_images()
 
-    def open_annotation_sampling_dialog(self):
+    def open_patch_annotation_sampling_dialog(self):
 
         if not self.image_window.image_paths:
             # Check if there are any images in the project
@@ -470,12 +528,12 @@ class MainWindow(QMainWindow):
 
         try:
             # Proceed to open the dialog if images are loaded
-            self.annotation_sampling_dialog.exec_()
+            self.patch_annotation_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-        self.annotation_sampling_dialog = None
-        self.annotation_sampling_dialog = AnnotationSamplingDialog(self)
+        self.patch_annotation_sampling_dialog = None
+        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
     def open_create_dataset_dialog(self):
         # Check if there are loaded images
@@ -549,6 +607,30 @@ class MainWindow(QMainWindow):
 
         try:
             self.batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_sam_deploy_model_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.sam_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_sam_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
