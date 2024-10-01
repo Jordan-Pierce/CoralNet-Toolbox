@@ -178,9 +178,6 @@ class SAMDeployModelDialog(QDialog):
             else:
                 self.loaded_model = SAMPredictor(overrides=overrides)
 
-            # Set the current view
-            self.set_image()
-
             QApplication.restoreOverrideCursor()
             self.status_bar.setText(f"Model loaded")
             QMessageBox.information(self, "Model Loaded", f"Model loaded successfully")
@@ -192,30 +189,9 @@ class SAMDeployModelDialog(QDialog):
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
 
-    def deactivate_model(self):
-        self.loaded_model = None
-        self.model_path = None
-        gc.collect()
-        empty_cache()
-        self.status_bar.setText("No model loaded")
-        QMessageBox.information(self, "Model Deactivated", "Model deactivated")
-
-    def set_image(self):
+    def set_image(self, image):
         if self.loaded_model is not None:
-            # Get the current view of AnnotationWindow
-            view = self.annotation_window.viewport()
-            # Get the scene's visible area in the viewport
-            scene_rect = self.annotation_window.mapToScene(view.rect()).boundingRect()
-            # Convert the scene rect to a QRect in the viewport's coordinate system
-            view_rect = self.annotation_window.mapFromScene(scene_rect).boundingRect()
-            # Capture the current view of AnnotationWindow as a QImage
-            qimage = self.annotation_window.grab(view_rect).toImage()
-            # Convert QImage to QPixmap
-            qpixmap = QPixmap.fromImage(qimage)
-            # Convert QPixmap to numpy array
-            image = pixmap_to_numpy(qpixmap)
-
-            # Set the image in the model
+             # Set the image in the model
             self.loaded_model.set_image(image)
         else:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
@@ -232,14 +208,20 @@ class SAMDeployModelDialog(QDialog):
             points = positive[0]
             labels = [labels[0]]
             results = self.loaded_model(points=points, labels=labels)[0]
-            # Convert the results to a list of QPointF points
-            polygon_points = results.masks.xy[0].tolist()
-            polygon_points = [QPointF(*point) for point in polygon_points]
+
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
             return None
 
-        return polygon_points
+        return results
+
+    def deactivate_model(self):
+        self.loaded_model = None
+        self.model_path = None
+        gc.collect()
+        empty_cache()
+        self.status_bar.setText("No model loaded")
+        QMessageBox.information(self, "Model Deactivated", "Model deactivated")
 
 
 class SAMBatchInferenceDialog(QDialog):

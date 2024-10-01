@@ -1,27 +1,18 @@
-import json
-import os
-import random
-import uuid
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 
-import pandas as pd
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF
-from PyQt5.QtGui import QMouseEvent, QPixmap, QColor
-from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QVBoxLayout, QLabel,
-                             QDialog, QHBoxLayout, QPushButton, QGraphicsPixmapItem, QGraphicsRectItem, QInputDialog,
-                             QLineEdit, QDialogButtonBox)
-
-from toolbox.QtProgressBar import ProgressBar
+from PyQt5.QtGui import QMouseEvent, QPixmap
+from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
 from toolbox.QtPatchAnnotation import PatchAnnotation
 from toolbox.QtPolygonAnnotation import PolygonAnnotation
-
 from toolbox.Tools.QtPanTool import PanTool
-from toolbox.Tools.QtZoomTool import ZoomTool
-from toolbox.Tools.QtSelectTool import SelectTool
 from toolbox.Tools.QtPatchTool import PatchTool
 from toolbox.Tools.QtPolygonTool import PolygonTool
+from toolbox.Tools.QtSAMTool import SAMTool
+from toolbox.Tools.QtSelectTool import SelectTool
+from toolbox.Tools.QtZoomTool import ZoomTool
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -82,7 +73,7 @@ class AnnotationWindow(QGraphicsView):
             "select": SelectTool(self),
             "patch": PatchTool(self),
             "polygon": PolygonTool(self),
-            "sam": None,
+            "sam": SAMTool(self),
         }
 
     def wheelEvent(self, event: QMouseEvent):
@@ -124,14 +115,14 @@ class AnnotationWindow(QGraphicsView):
         super().keyReleaseEvent(event)
 
     def cursorInWindow(self, pos, mapped=False):
-        if not pos:
+        if not pos or not self.image_pixmap:
             return False
-        if self.image_pixmap:
-            image_rect = QGraphicsPixmapItem(self.image_pixmap).boundingRect()
-            if not mapped:
-                pos = self.mapToScene(pos)
-            return image_rect.contains(pos)
-        return False
+
+        image_rect = QGraphicsPixmapItem(self.image_pixmap).boundingRect()
+        if not mapped:
+            pos = self.mapToScene(pos)
+
+        return image_rect.contains(pos)
 
     def set_selected_tool(self, tool):
         if self.selected_tool:
@@ -173,9 +164,6 @@ class AnnotationWindow(QGraphicsView):
             self.selected_annotation.update_annotation_size(scale_factor)
             if self.cursor_annotation:
                 self.cursor_annotation.update_annotation_size(scale_factor)
-
-        # # Update the graphic
-        # self.toggle_cursor_annotation()
 
         if self.selected_annotation:
             self.selected_annotation.create_cropped_image(self.rasterio_image)
