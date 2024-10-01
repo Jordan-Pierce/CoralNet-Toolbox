@@ -14,6 +14,9 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphics
 
 from toolbox.QtProgressBar import ProgressBar
 
+from toolbox.QtPatchAnnotation import PatchAnnotation
+from toolbox.QtPolygonAnnotation import PolygonAnnotation
+
 from toolbox.Tools.QtPanTool import PanTool
 from toolbox.Tools.QtZoomTool import ZoomTool
 from toolbox.Tools.QtSelectTool import SelectTool
@@ -107,8 +110,7 @@ class AnnotationWindow(QGraphicsView):
     def mouseReleaseEvent(self, event: QMouseEvent):
         self.tools["pan"].mouseReleaseEvent(event)
         self.toggle_cursor_annotation()
-        if hasattr(self, 'drag_start_pos'):
-            del self.drag_start_pos
+        self.drag_start_pos = None
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
@@ -137,7 +139,9 @@ class AnnotationWindow(QGraphicsView):
         self.selected_tool = tool
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
+
         self.unselect_annotation()
+        self.toggle_cursor_annotation()
 
     def set_selected_label(self, label):
         self.selected_label = label
@@ -160,14 +164,22 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_size += delta
             self.annotation_size = max(1, self.annotation_size)
 
-        if self.selected_annotation:
+        if isinstance(self.selected_annotation, PatchAnnotation):
             self.selected_annotation.update_annotation_size(self.annotation_size)
-            self.selected_annotation.create_cropped_image(self.rasterio_image)
-            # Notify ConfidenceWindow the selected annotation has changed
-            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+            if self.cursor_annotation:
+                self.cursor_annotation.update_annotation_size(self.annotation_size)
+        elif isinstance(self.selected_annotation, PolygonAnnotation):
+            scale_factor = 1 + delta / 100.0
+            self.selected_annotation.update_annotation_size(scale_factor)
+            if self.cursor_annotation:
+                self.cursor_annotation.update_annotation_size(self.annotation_size)
 
-        if self.cursor_annotation:
-            self.cursor_annotation.update_annotation_size(self.annotation_size)
+        # Update the graphic
+        self.toggle_cursor_annotation()
+
+        if self.selected_annotation:
+            self.selected_annotation.create_cropped_image(self.rasterio_image)
+            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
         # Emit that the annotation size has changed
         self.annotationSizeChanged.emit(self.annotation_size)
@@ -187,25 +199,17 @@ class AnnotationWindow(QGraphicsView):
                     annotation.update_transparency(transparency)
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
-        if scene_pos:
-            # Return if a label is not selected or annotation color is not set
-            if not self.selected_label or not self.annotation_color:
-                return
 
-            # If a cursor doesn't exist
-            if not self.cursor_annotation and scene_pos:
-                self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
-                self.cursor_annotation.create_graphics_item(self.scene)
-            else:
-                # Update the cursor annotation's location, graphics
-                self.cursor_annotation.update_location(scene_pos)
-                self.cursor_annotation.update_graphics_item()
-                self.cursor_annotation.update_transparency(128)
-                pass
-        else:
-            if self.cursor_annotation:
-                self.cursor_annotation.delete()
-                self.cursor_annotation = None
+        if self.cursor_annotation:
+            self.cursor_annotation.delete()
+            self.cursor_annotation = None
+
+        if not self.selected_label or not self.annotation_color:
+            return
+
+        if scene_pos:
+            self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
+            self.cursor_annotation.create_graphics_item(self.scene)
 
     def display_image_item(self, image_item):
         # Clean up
@@ -392,6 +396,7 @@ class AnnotationWindow(QGraphicsView):
         annotation = self.tools[self.selected_tool].create_annotation(scene_pos, finished=True)
 
         if annotation is None:
+            self.toggle_cursor_annotation()
             return
 
         annotation.create_graphics_item(self.scene)

@@ -21,29 +21,55 @@ class PolygonTool(Tool):
         self.cursor = Qt.CrossCursor
         self.points = []
         self.complete = False
+        self.drawing_continuous = False  # Flag to indicate continuous drawing mode
 
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and not self.drawing_continuous:
+            # Start continuous drawing mode
+            self.drawing_continuous = True
+            self.annotation_window.unselect_annotation()
+            self.points.append(self.annotation_window.mapToScene(event.pos()))
+            self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
+        elif event.button() == Qt.LeftButton and self.drawing_continuous:
+            # Finish the current annotation
+            self.points.append(self.annotation_window.mapToScene(event.pos()))
             self.annotation_window.unselect_annotation()
             self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
+            self.drawing_continuous = False
+        elif event.button() == Qt.RightButton and self.drawing_continuous:
+            # Panning the image while drawing
+            pass
+        else:
+            self.cancel_annotation()
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        active_image = self.annotation_window.active_image
-        image_pixmap = self.annotation_window.image_pixmap
-        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-        if active_image and image_pixmap and cursor_in_window and self.points:
-            self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        self.annotation_window.toggle_cursor_annotation()
+        if self.drawing_continuous:
+            # Update the last point in continuous drawing mode
+            self.points.append(self.annotation_window.mapToScene(event.pos()))
+            # Update the annotation graphics
+            active_image = self.annotation_window.active_image
+            image_pixmap = self.annotation_window.image_pixmap
+            cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+            if active_image and image_pixmap and cursor_in_window and self.points:
+                self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
 
     def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key_Space and len(self.points) > 2:
-            self.annotation_window.add_annotation(None)
+        if event.key() == Qt.Key_Space:
+            # Cancel the current annotation
+            self.points = []
+            self.complete = False
+            self.drawing_continuous = False
+            self.annotation_window.toggle_cursor_annotation()
+
+    def cancel_annotation(self):
+        self.points = []
+        self.complete = False
+        self.drawing_continuous = False
+        self.annotation_window.toggle_cursor_annotation()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
 
@@ -60,7 +86,7 @@ class PolygonTool(Tool):
             # Close the polygon
             self.points.append(self.points[0])
             self.complete = True
-        else:
+        elif scene_pos:
             self.points.append(scene_pos)
 
         # Create the annotation

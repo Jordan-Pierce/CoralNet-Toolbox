@@ -28,13 +28,22 @@ class PolygonAnnotation(Annotation):
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
         self.points = points
+        self.center_xy = QPointF(0, 0)
+        self.cropped_bbox = (0, 0, 0, 0)
+
+        self.calculate_centroid()
         self.set_cropped_bbox()
 
     def contains_point(self, point: QPointF) -> bool:
         polygon = QPolygonF(self.points)
         return polygon.containsPoint(point, Qt.OddEvenFill)
 
-    def update_location(self, new_points: list):
+    def calculate_centroid(self):
+        centroid_x = sum(point.x() for point in self.points) / len(self.points)
+        centroid_y = sum(point.y() for point in self.points) / len(self.points)
+        self.center_xy = QPointF(centroid_x, centroid_y)
+
+    def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
             return
@@ -42,7 +51,9 @@ class PolygonAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        self.points = new_points
+        self.calculate_centroid()
+        delta = new_center_xy - self.center_xy
+        self.points = [point + delta for point in self.points]
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
@@ -53,42 +64,32 @@ class PolygonAnnotation(Annotation):
 
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-
-        # Calculate the centroid of the polygon
-        centroid_x = sum(point.x() for point in self.points) / len(self.points)
-        centroid_y = sum(point.y() for point in self.points) / len(self.points)
-
-        # Translate the polygon so that the centroid is at the origin (0, 0)
+        # Update the location, graphic
+        self.calculate_centroid()
+        centroid_x, centroid_y = self.center_xy.x(), self.center_xy.y()
         translated_points = [QPointF(point.x() - centroid_x, point.y() - centroid_y) for point in self.points]
-
-        # Scale the polygon
         scaled_points = [QPointF(point.x() * scale_factor, point.y() * scale_factor) for point in translated_points]
-
-        # Translate the polygon back so that the centroid is at its original position
         self.points = [QPointF(point.x() + centroid_x, point.y() + centroid_y) for point in scaled_points]
-
-        # Update the graphics item
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
-        self.remove_graphics_item()
         polygon = QPolygonF(self.points)
         self.graphics_item = QGraphicsPolygonItem(polygon)
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
 
-    def remove_graphics_item(self):
-        if self.graphics_item:
-            self.graphics_item.scene().removeItem(self.graphics_item)
-            self.graphics_item = None
-
     def update_graphics_item(self):
         if self.graphics_item:
-            # Update the graphic item
+
+            # Remove the old graphic item from the scene
+            if self.graphics_item.scene():
+                self.graphics_item.scene().removeItem(self.graphics_item)
+
+            # Create a new polygon item
             polygon = QPolygonF(self.points)
-            self.graphics_item.setPolygon(polygon)
+            self.graphics_item = QGraphicsPolygonItem(polygon)
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
 
@@ -102,21 +103,17 @@ class PolygonAnnotation(Annotation):
             brush = QBrush(color)
             self.graphics_item.setBrush(brush)
 
-            # Remove previous vertex items (if it already exists
+            # Add the new graphic item to the scene
             if self.graphics_item.scene():
-                for item in self.graphics_item.scene().items():
-                    if isinstance(item, QGraphicsRectItem):
-                        self.graphics_item.scene().removeItem(item)
+                self.graphics_item.scene().addItem(self.graphics_item)
 
-            # Show vertices
-            scene = self.graphics_item.scene()
-            if scene:
-                for point in self.points:
-                    vertex_item = QGraphicsRectItem(point.x() - 2, point.y() - 2, 4, 4)
-                    vertex_color = QColor(self.label.color)
-                    vertex_color.setAlpha(self.transparency)
-                    vertex_item.setBrush(QBrush(vertex_color))
-                    vertex_item.setPen(QPen(vertex_color))
+            # Update the vertex items
+            for point in self.points:
+                vertex_item = QGraphicsRectItem(point.x() - 2, point.y() - 2, 4, 4, parent=self.graphics_item)
+                vertex_color = QColor(self.label.color)
+                vertex_color.setAlpha(self.transparency)
+                vertex_item.setBrush(QBrush(vertex_color))
+                vertex_item.setPen(QPen(vertex_color))
 
             self.graphics_item.update()
 
@@ -130,6 +127,7 @@ class PolygonAnnotation(Annotation):
         max_x = max(point.x() for point in self.points)
         max_y = max(point.y() for point in self.points)
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
+        self.center_xy = QPointF((min_x + max_x) / 2, (min_y + max_y) / 2)
 
     def transform_points_to_cropped_image(self):
         # Get the bounding box of the cropped image in xyxy format

@@ -18,7 +18,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class PatchAnnotation(Annotation):
-    def __init__(self, center_xy: QPointF,
+    def __init__(self,
+                 center_xy: QPointF,
                  annotation_size: int,
                  short_label_code: str,
                  long_label_code: str,
@@ -31,7 +32,7 @@ class PatchAnnotation(Annotation):
         self.center_xy = center_xy
         self.annotation_size = annotation_size
 
-    def contains_point(self, point: QPointF) -> bool:
+    def contains_point(self, point: QPointF):
         half_size = self.annotation_size / 2
         rect = QRectF(self.center_xy.x() - half_size,
                       self.center_xy.y() - half_size,
@@ -91,7 +92,6 @@ class PatchAnnotation(Annotation):
         self.annotation_updated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
-        self.remove_graphics_item()
         half_size = self.annotation_size / 2
         self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
                                                self.center_xy.y() - half_size,
@@ -100,11 +100,6 @@ class PatchAnnotation(Annotation):
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
-
-    def remove_graphics_item(self):
-        if self.graphics_item:
-            self.graphics_item.scene().removeItem(self.graphics_item)
-            self.graphics_item = None
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
