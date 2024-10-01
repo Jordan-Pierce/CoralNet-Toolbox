@@ -167,40 +167,6 @@ class ImageWindow(QWidget):
             self.annotation_window.delete_image_annotations(self.selected_image_path)
             self.main_window.confidence_window.clear_display()
 
-    def import_images(self):
-        file_names, _ = QFileDialog.getOpenFileNames(self,
-                                                     "Open Image Files",
-                                                     "",
-                                                     "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
-        if file_names:
-            # Set the cursor to waiting (busy) cursor
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-
-            progress_bar = ProgressBar(self, title="Importing Images")
-            progress_bar.show()
-            progress_bar.start_progress(len(file_names))
-            progress_bar.set_value(1)
-
-            for i, file_name in enumerate(file_names):
-                if file_name not in set(self.image_paths):
-                    self.add_image(file_name)
-                progress_bar.update_progress()
-
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-            # Update filtered images
-            self.filter_images()
-            # Show the last image
-            self.load_image_by_path(self.image_paths[-1])
-
-            # Restore the cursor to the default cursor
-            QApplication.restoreOverrideCursor()
-
-            QMessageBox.information(self,
-                                    "Image(s) Imported",
-                                    "Image(s) have been successfully imported.")
-
     def add_image(self, image_path):
         if image_path not in self.image_paths:
             self.image_paths.append(image_path)
@@ -491,7 +457,7 @@ class ImageWindow(QWidget):
         self.load_image_by_path(self.filtered_image_paths[new_index])
 
     def debounce_search(self):
-        self.search_timer.start(500)
+        self.search_timer.start(1000)
 
     def filter_images(self):
         search_text = self.search_bar.text().lower()
@@ -509,6 +475,10 @@ class ImageWindow(QWidget):
 
         self.filtered_image_paths = []
 
+        # Initialize the progress bar
+        progress_dialog = ProgressBar(title="Filtering Images")
+        progress_dialog.start_progress(len(self.image_paths))
+
         # Use a ThreadPoolExecutor to filter images in parallel
         with ThreadPoolExecutor() as executor:
             futures = []
@@ -519,13 +489,15 @@ class ImageWindow(QWidget):
                     search_text,
                     has_annotations,
                     needs_review,
-                    no_annotations
+                    no_annotations,
+                    progress_dialog
                 )
                 futures.append(future)
 
             for future in as_completed(futures):
                 if future.result():
                     self.filtered_image_paths.append(future.result())
+                progress_dialog.update_progress()
 
         # Sort the filtered image paths
         self.filtered_image_paths.sort()
@@ -542,7 +514,10 @@ class ImageWindow(QWidget):
         self.update_current_image_index_label()
         self.update_image_count_label()
 
-    def filter_image(self, path, search_text, has_annotations, needs_review, no_annotations):
+        # Stop the progress bar
+        progress_dialog.stop_progress()
+
+    def filter_image(self, path, search_text, has_annotations, needs_review, no_annotations, progress_dialog):
         filename = os.path.basename(path).lower()
         annotations = self.annotation_window.get_image_annotations(path)
         review_annotations = self.annotation_window.get_image_review_annotations(path)

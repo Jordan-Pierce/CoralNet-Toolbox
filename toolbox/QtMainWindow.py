@@ -249,7 +249,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.patch_tool_action)
 
         self.polygon_tool_action = QAction(QIcon(self.polygon_icon_path), "Polygon", self)
-        self.polygon_tool_action.setCheckable(False)
+        self.polygon_tool_action.setCheckable(True)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
 
@@ -495,11 +495,11 @@ class MainWindow(QMainWindow):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
 
     def update_annotation_transparency(self, value):
-        self.annotation_window.update_annotation_transparency(value)
+        self.annotation_window.set_annotation_transparency(value)
         self.update_transparency_slider(value)  # Update the slider value
 
     def update_label_transparency(self, value):
-        self.label_window.update_label_transparency(value)
+        self.label_window.set_label_transparency(value)
         self.update_transparency_slider(value)  # Update the slider value
 
     def update_transparency_slider(self, transparency):

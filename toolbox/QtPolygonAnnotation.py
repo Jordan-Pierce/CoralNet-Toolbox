@@ -72,11 +72,17 @@ class PolygonAnnotation(Annotation):
         self.annotation_updated.emit(self)  # Notify update
 
     def create_graphics_item(self, scene: QGraphicsScene):
+        self.remove_graphics_item()
         polygon = QPolygonF(self.points)
         self.graphics_item = QGraphicsPolygonItem(polygon)
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
+
+    def remove_graphics_item(self):
+        if self.graphics_item:
+            self.graphics_item.scene().removeItem(self.graphics_item)
+            self.graphics_item = None
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -113,6 +119,7 @@ class PolygonAnnotation(Annotation):
                     vertex_item.setPen(QPen(vertex_color))
 
             self.graphics_item.update()
+
             # Update the cropped image
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)

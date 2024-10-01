@@ -5,8 +5,8 @@
 #   - exporting image names for creating dataset
 #   - filter images when creating dataset
 #   - return early while loading old high resolution image
-#   - include imgsz variable when evaluating model
 #   - pass class_mapping to confusion matrix function
+#   - something with export annotations
 
 import traceback
 
