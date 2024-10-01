@@ -28,6 +28,13 @@ class PolygonTool(Tool):
         self.annotation_window.setCursor(Qt.CrossCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
+
+        if not self.annotation_window.selected_label:
+            QMessageBox.warning(self.annotation_window,
+                                "No Label Selected",
+                                "A label must be selected before adding an annotation.")
+            return None
+
         if event.button() == Qt.LeftButton and not self.drawing_continuous:
             # Start continuous drawing mode
             self.drawing_continuous = True
@@ -72,12 +79,6 @@ class PolygonTool(Tool):
         self.annotation_window.toggle_cursor_annotation()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-
-        if not self.annotation_window.selected_label:
-            QMessageBox.warning(self.annotation_window,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
-            return None
 
         if not self.annotation_window.active_image or not self.annotation_window.image_pixmap:
             return None

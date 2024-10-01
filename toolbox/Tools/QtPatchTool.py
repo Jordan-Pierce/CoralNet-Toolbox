@@ -25,6 +25,13 @@ class PatchTool(Tool):
         self.annotation_window.setCursor(Qt.CrossCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
+
+        if not self.annotation_window.selected_label:
+            QMessageBox.warning(self.annotation_window,
+                                "No Label Selected",
+                                "A label must be selected before adding an annotation.")
+            return None
+
         if event.button() == Qt.LeftButton:
             self.annotation_window.unselect_annotation()
             self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
