@@ -27,6 +27,7 @@ class SAMTool(Tool):
         self.cursor = Qt.CrossCursor
         self.points = []
         self.point_graphics = []
+        self.annotation_graphics = None
 
         self.image = None
         self.bbox = []
@@ -202,11 +203,22 @@ class SAMTool(Tool):
                                        self.annotation_window.main_window.label_window.active_label.transparency,
                                        show_msg=False)
 
+        # Ensure the PolygonAnnotation is added to the scene after creation
+        annotation.create_graphics_item(self.annotation_window.scene)
+        self.annotation_window.scene.addItem(annotation.graphics_item)
+
+        if self.annotation_graphics:
+            self.annotation_window.scene.removeItem(self.annotation_graphics)
+        self.annotation_graphics = annotation.graphics_item
+
         return annotation
 
     def cancel_annotation(self):
         for point in self.point_graphics:
             self.annotation_window.scene.removeItem(point)
+
+        if self.annotation_graphics:
+            self.annotation_window.scene.removeItem(self.annotation_graphics)
 
         self.bbox = []
         self.points = []
