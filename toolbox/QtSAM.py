@@ -41,7 +41,6 @@ class SAMDeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("SAM Deploy Model")
-
         self.resize(300, 200)
 
         self.imgsz = 1024
@@ -173,7 +172,8 @@ class SAMDeployModelDialog(QDialog):
                              mode="predict",
                              model=parameters["model_path"],
                              save=False,
-                             imgsz=parameters["imgsz"])
+                             imgsz=parameters["imgsz"],
+                             device=self.main_window.device)
             # Load the model
             if "fast" in parameters["model_path"].lower():
                 self.loaded_model = FastSAMPredictor(overrides=overrides)

@@ -105,13 +105,6 @@ class PolygonAnnotation(Annotation):
             if scene:
                 scene.addItem(self.graphics_item)
 
-            for point in self.points:
-                vertex_item = QGraphicsRectItem(point.x() - 2, point.y() - 2, 4, 4, parent=self.graphics_item)
-                vertex_color = QColor(self.label.color)
-                vertex_color.setAlpha(self.transparency)
-                vertex_item.setBrush(QBrush(vertex_color))
-                vertex_item.setPen(QPen(vertex_color))
-
             self.graphics_item.setData(0, self.id)
             self.graphics_item.update()
 

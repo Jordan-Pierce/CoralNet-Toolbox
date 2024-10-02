@@ -1,7 +1,7 @@
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPixmap
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
@@ -244,6 +244,13 @@ class AnnotationWindow(QGraphicsView):
 
     def update_current_image_path(self, image_path):
         self.current_image_path = image_path
+
+    def viewportToScene(self):
+        # Map the top-left and bottom-right corners of the viewport to the scene coordinates
+        top_left = self.mapToScene(self.viewport().rect().topLeft())
+        bottom_right = self.mapToScene(self.viewport().rect().bottomRight())
+        # Create and return a QRectF object from these points
+        return QRectF(top_left, bottom_right)
 
     def center_on_annotation(self, annotation):
         # Get the bounding rect of the annotation in scene coordinates

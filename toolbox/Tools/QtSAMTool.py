@@ -1,7 +1,7 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QPointF, QRect
-from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QPixmap
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem
 
 from toolbox.Tools.QtTool import Tool
@@ -26,12 +26,16 @@ class SAMTool(Tool):
         self.points = []
         self.point_graphics = []
 
+        self.image = None
+        self.bbox = []
         self.positive_points = []
         self.negative_points = []
 
-        # Working area (dashed rectangle)
         self.working_area = None
-        self.image = None
+
+        self.original_image = None
+        self.original_width = None
+        self.original_height = None
 
         self.complete = False
 
@@ -44,11 +48,10 @@ class SAMTool(Tool):
         self.active = False
         self.annotation_window.setCursor(Qt.ArrowCursor)
         self.sam_dialog = None
-        self.cancel_working_area()
         self.cancel_annotation()
+        self.cancel_working_area()
 
     def mousePressEvent(self, event: QMouseEvent):
-
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",
@@ -58,10 +61,13 @@ class SAMTool(Tool):
         if event.modifiers() == Qt.ControlModifier:
             scene_pos = self.annotation_window.mapToScene(event.pos())
 
+            # Get the adjusted position relative to the working area's top-left corner
+            working_area_top_left = self.working_area.rect().topLeft()
+            adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
+                                   scene_pos.y() - working_area_top_left.y())
+
             if event.button() == Qt.LeftButton:
-                # Add a positive point
-                self.positive_points.append(scene_pos)
-                # Draw a green point on the scene
+                self.positive_points.append(adjusted_pos)
                 point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
                 point.setPen(QPen(Qt.green))
                 point.setBrush(QColor(Qt.green))
@@ -69,112 +75,106 @@ class SAMTool(Tool):
                 self.point_graphics.append(point)
 
             elif event.button() == Qt.RightButton:
-                # Add a negative point
-                self.negative_points.append(scene_pos)
-                # Draw a red point on the scene
+                self.negative_points.append(adjusted_pos)
                 point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
                 point.setPen(QPen(Qt.red))
                 point.setBrush(QColor(Qt.red))
                 self.annotation_window.scene.addItem(point)
                 self.point_graphics.append(point)
 
-        self.annotation_window.viewport().update()  # Force a redraw of the viewport
+        self.annotation_window.viewport().update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         pass
 
     def keyPressEvent(self, event: QKeyEvent):
-        # If no points have been added
         if event.key() == Qt.Key_Space and not len(self.positive_points):
-            # If there isn't a working area, create one and set the image
             if not self.working_area:
-                # Set the working area
                 self.set_working_area()
                 self.sam_dialog.set_image(self.image)
             else:
                 self.cancel_working_area()
                 self.cancel_annotation()
 
-        # If points have been added
         if event.key() == Qt.Key_Space and len(self.positive_points):
-            # Add the annotation
             self.annotation_window.add_annotation()
             self.cancel_annotation()
 
     def set_working_area(self):
-        # Make the cursor busy
         self.annotation_window.setCursor(Qt.WaitCursor)
 
-        # Remove the previous working area
+        # Cancel the current working area if it exists
         self.cancel_working_area()
 
-        # Get the visible rect of the viewport in scene coordinates
-        visible_rect = self.annotation_window.mapToScene(self.annotation_window.viewport().rect()).boundingRect()
+        # Original image (grab current from the annotation window)
+        self.original_image = pixmap_to_numpy(self.annotation_window.image_pixmap)
+        self.original_width = self.annotation_window.image_pixmap.size().width()
+        self.original_height = self.annotation_window.image_pixmap.size().height()
 
-        # Intersect with the image rect to ensure we don't capture areas outside the image
-        if self.annotation_window.image_pixmap:
-            image_rect = self.annotation_window.image_pixmap.rect()
-            scene_rect = self.annotation_window.mapToScene(image_rect).boundingRect()
-            capture_rect = visible_rect.intersected(scene_rect)
-        else:
-            self.annotation_window.setCursor(Qt.CrossCursor)
-            return
+        # Current extent (view)
+        extent = self.annotation_window.viewportToScene()
 
-        # Get the original image data
-        original_image = self.annotation_window.image_pixmap.toImage()
+        top = round(extent.top())
+        left = round(extent.left())
+        width = round(extent.width())
+        height = round(extent.height())
+        bottom = top + height
+        right = left + width
 
-        # Calculate the region to extract from the original image
-        source_rect = QRect(
-            int(capture_rect.left() - scene_rect.left()),
-            int(capture_rect.top() - scene_rect.top()),
-            int(capture_rect.width()),
-            int(capture_rect.height())
-        )
+        # If the current extent includes areas outside the
+        # original image, reduce it to be only the original image
+        if top < 0:
+            top = 0
+        if left < 0:
+            left = 0
+        if bottom > self.original_height:
+            bottom = self.original_height
+        if right > self.original_width:
+            right = self.original_width
 
-        # Extract the relevant portion of the image
-        cropped_image = original_image.copy(source_rect)
+        # Set the working area
+        working_rect = QRectF(left, top, right - left, bottom - top)
 
-        # Convert QImage to numpy array
-        self.image = pixmap_to_numpy(QPixmap.fromImage(cropped_image))
-
-        # Create a green dashed line rectangle around the captured area
+        # Create the graphic
         pen = QPen(Qt.green)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(5)
-        self.working_area = self.annotation_window.scene.addRect(capture_rect, pen=pen)
+        pen.setWidth(10)
+        self.working_area = self.annotation_window.scene.addRect(working_rect, pen=pen)
 
-        # Restore the cursor
+        # Crop the image based on the working_rect
+        self.image = self.original_image[top:bottom, left:right]
+
         self.annotation_window.setCursor(Qt.CrossCursor)
 
-        # Debug output
-        print(f"Working area set: {capture_rect}")
-        print(f"Image shape: {self.image.shape}")
-
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-        import matplotlib.pyplot as plt
-        import numpy as np
 
         if not self.annotation_window.active_image or not self.annotation_window.image_pixmap:
             return None
 
-        # Provide prompt to SAM model in form of numpy array
+        # Adjust points relative to the working area's top-left corner
+        working_area_top_left = self.working_area.rect().topLeft()
         positive = [(point.x(), point.y()) for point in self.positive_points]
         negative = [(point.x(), point.y()) for point in self.negative_points]
         labels = [1] * len(positive) + [0] * len(negative)
         points = positive + negative
 
-        plt.imshow(self.image)
-        plt.scatter(points[0][0], points[0][1], c='red')
-        plt.show()
-
-        # Get the results from SAM model
+        # Predict the mask
         results = self.sam_dialog.predict(None, points, labels)
 
         if not results:
             return None
 
-        # Convert the results to a PolygonAnnotation
-        points = results.masks.xy[0].tolist()
+        # import matplotlib.pyplot as plt
+        #
+        # for mask in results.masks:
+        #     plt.figure()
+        #     points = mask.xy[0]
+        #     plt.imshow(self.image)
+        #     plt.plot(points.T[0], points.T[1], c='red')
+        #     plt.show()
+
+        # Move the points back to the original image space
+        points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in points]
         self.points = [QPointF(*point) for point in points]
 
         # Create the annotation
@@ -186,17 +186,17 @@ class SAMTool(Tool):
                                        self.annotation_window.selected_label.id,
                                        self.annotation_window.main_window.label_window.active_label.transparency,
                                        show_msg=False)
-        self.points = []
-        self.positive_points = []
-        self.negative_points = []
+        # Clear the points
         self.cancel_annotation()
 
         return annotation
 
     def cancel_annotation(self):
-        # Remove the positive and negative points
         for point in self.point_graphics:
             self.annotation_window.scene.removeItem(point)
+
+        self.bbox = []
+        self.points = []
         self.positive_points = []
         self.negative_points = []
         self.point_graphics = []
