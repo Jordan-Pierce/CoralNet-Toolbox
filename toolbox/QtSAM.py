@@ -42,7 +42,6 @@ class SAMDeployModelDialog(QDialog):
         self.predictor = None
 
         self.image = None
-        self.image_tensor = None
 
         # Main layout
         self.main_layout = QVBoxLayout(self)
@@ -134,43 +133,30 @@ class SAMDeployModelDialog(QDialog):
         layout.addWidget(combo_box)
         return tab
 
-    def get_parameters(self):
-        # Get the parameters from the UI
-        self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
-        self.imgsz = self.imgsz_spinbox.value()
-
-        parameters = {
-            "model_path": self.model_path,
-            "imgsz": self.imgsz,
-        }
-
-        return parameters
-
     def load_model(self):
-        # Unpack the selected parameters
-        parameters = self.get_parameters()
-
         try:
             # Make the cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Download the weights if they are not present
-            attempt_download_asset(parameters["model_path"])
+            self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
 
-            if not os.path.exists(parameters["model_path"]):
-                raise FileNotFoundError(f"Model file not downloaded: {parameters['model_path']}")
+            # Download the weights if they are not present
+            attempt_download_asset(self.model_path)
+
+            if not os.path.exists(self.model_path):
+                raise FileNotFoundError(f"Model file not downloaded: {self.model_path}")
 
             # Load the model
-            if "mobile" in parameters["model_path"].lower():
+            if "mobile" in self.model_path.lower():
                 model = "vit_t"
-                self.loaded_model = mobile_sam_model_registry[model](checkpoint=parameters["model_path"])
+                self.loaded_model = mobile_sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = MobileSamPredictor(self.loaded_model)
             else:
-                if "vit_b" in parameters["model_path"].lower():
+                if "vit_b" in self.model_path.lower():
                     model = "vit_b"
                 else:
                     model = "vit_l"
-                self.loaded_model = sam_model_registry[model](checkpoint=parameters["model_path"])
+                self.loaded_model = sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = SamPredictor(self.loaded_model)
 
             self.predictor.model.to(device=self.main_window.device)
@@ -194,7 +180,6 @@ class SAMDeployModelDialog(QDialog):
             # Set the image in the predictor
             self.predictor.set_image(image)
             self.image = image
-            self.image_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
         else:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
 
@@ -215,7 +200,7 @@ class SAMDeployModelDialog(QDialog):
                                                               multimask_output=False)
 
             # Post-process the results
-            results = self.custom_postprocess(mask, score, logit, self.image_tensor, self.image)[0]
+            results = self.custom_postprocess(mask, score, logit, self.image)[0]
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
@@ -224,7 +209,7 @@ class SAMDeployModelDialog(QDialog):
         return results
 
     @staticmethod
-    def custom_postprocess(mask, score, logit, img_tensor, orig_img):
+    def custom_postprocess(mask, score, logit, original_image):
         """
         Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
 
@@ -232,22 +217,21 @@ class SAMDeployModelDialog(QDialog):
             mask (torch.Tensor): Predicted masks with shape (1, 1, H, W).
             score (torch.Tensor): Confidence scores for each mask with shape (1, 1).
             logit (torch.Tensor): Logits for each mask with shape (1, 1, H, W).
-            img_tensor (torch.Tensor): The processed input image tensor with shape (1, C, H, W).
-            orig_img (np.ndarray): The original, unprocessed image.
+            original_image (np.ndarray): The original, unprocessed image.
 
         Returns:
             (Results): Results object containing detection masks, bounding boxes, and other metadata.
         """
         # Ensure the original image is in the correct format
-        if not isinstance(orig_img, np.ndarray):
-            orig_img = orig_img.cpu().numpy()
+        if not isinstance(original_image, np.ndarray):
+            original_image = original_image.cpu().numpy()
 
         # Ensure mask has the correct shape (1, 1, H, W)
         if mask.ndim != 4 or mask.shape[0] != 1 or mask.shape[1] != 1:
             raise ValueError(f"Expected mask to have shape (1, 1, H, W), but got {mask.shape}")
 
         # Scale masks to the original image size
-        scaled_masks = ops.scale_masks(mask.float(), orig_img.shape[:2], padding=False)[0]
+        scaled_masks = ops.scale_masks(mask.float(), original_image.shape[:2], padding=False)[0]
         scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
 
         # Generate bounding boxes from masks using batched_mask_to_box
@@ -264,7 +248,7 @@ class SAMDeployModelDialog(QDialog):
         names = dict(enumerate(str(i) for i in range(len(mask))))
 
         # Create Results object
-        result = Results(orig_img, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
+        result = Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
 
         return result
 
@@ -272,7 +256,6 @@ class SAMDeployModelDialog(QDialog):
         self.loaded_model = None
         self.predictor = None
         self.model_path = None
-        self.image_tensor = None
         self.image = None
         gc.collect()
         torch.cuda.empty_cache()
