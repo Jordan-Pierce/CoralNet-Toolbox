@@ -33,7 +33,9 @@ Enhance your CoralNet experience with these tools:
 - ✏️ Annotate: Create patches manually or from annotations  
 - 👁️ Visualize: See points / patches on images  
 - 🧩 Patches: Extract from annotated images  
-- 📍 Points: Sample using various methods (Uniform, Random, Stratified  
+- 📍  Points: Sample using various methods (Uniform, Random, Stratified  
+- 🟣 Polygons: Create polygons using freehand or automatic methods
+- 🦾 SAM: Use SAM or MobileSAM to create polygons
 - 🧠 Classification: Build local patch-based classifiers  
 - 🔮 Inference: Use trained models for predictions
 - 📊 Metrics: Evaluate model performance
