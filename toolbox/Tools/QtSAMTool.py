@@ -63,6 +63,9 @@ class SAMTool(Tool):
         if event.modifiers() == Qt.ControlModifier:
             scene_pos = self.annotation_window.mapToScene(event.pos())
 
+            if not self.working_area:
+                return
+
             # Get the adjusted position relative to the working area's top-left corner
             working_area_top_left = self.working_area.rect().topLeft()
             adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
@@ -83,6 +86,9 @@ class SAMTool(Tool):
                 point.setBrush(QColor(Qt.red))
                 self.annotation_window.scene.addItem(point)
                 self.point_graphics.append(point)
+
+            # Update the cursor annotation
+            self.annotation_window.toggle_cursor_annotation(event.pos())
 
         self.annotation_window.viewport().update()
 
@@ -166,6 +172,9 @@ class SAMTool(Tool):
         if not results:
             return None
 
+        if results.boxes.conf[0] < self.sam_dialog.conf:
+            return None
+
         # plt.imshow(self.image)
         # plt.scatter(points.T[0], points.T[1])
         # plt.show()
@@ -192,8 +201,6 @@ class SAMTool(Tool):
                                        self.annotation_window.selected_label.id,
                                        self.annotation_window.main_window.label_window.active_label.transparency,
                                        show_msg=False)
-        # Clear the points
-        self.cancel_annotation()
 
         return annotation
 

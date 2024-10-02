@@ -1,3 +1,4 @@
+import os
 import gc
 import warnings
 
@@ -12,9 +13,10 @@ from mobile_sam import SamPredictor as MobileSamPredictor
 from segment_anything import sam_model_registry
 from segment_anything import SamPredictor
 
-from ultralytics.engine.results import Results
 from ultralytics.utils import ops
+from ultralytics.engine.results import Results
 from ultralytics.models.sam.amg import batched_mask_to_box
+from ultralytics.utils.downloads import attempt_download_asset
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -91,11 +93,13 @@ class SAMDeployModelDialog(QDialog):
         value = self.uncertainty_threshold_slider.value() / 100.0
         self.main_window.update_uncertainty_thresh(value)
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
+        self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
     def on_uncertainty_changed(self, value):
         # Update the slider and label when the shared data changes
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
+        self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
     def setup_tabs(self):
         self.tabs = QTabWidget()
@@ -134,12 +138,10 @@ class SAMDeployModelDialog(QDialog):
         # Get the parameters from the UI
         self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
         self.imgsz = self.imgsz_spinbox.value()
-        self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
         parameters = {
             "model_path": self.model_path,
             "imgsz": self.imgsz,
-            "conf": self.conf
         }
 
         return parameters
@@ -152,13 +154,24 @@ class SAMDeployModelDialog(QDialog):
             # Make the cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
+            # Download the weights if they are not present
+            attempt_download_asset(parameters["model_path"])
+
+            if not os.path.exists(parameters["model_path"]):
+                raise FileNotFoundError(f"Model file not downloaded: {parameters['model_path']}")
+
             # Load the model
             if "mobile" in parameters["model_path"].lower():
-                self.loaded_model = mobile_sam_model_registry['vit_t'](checkpoint=parameters["model_path"])
-                self.predictor = MobileSamPredictor(self.loaded_model )
+                model = "vit_t"
+                self.loaded_model = mobile_sam_model_registry[model](checkpoint=parameters["model_path"])
+                self.predictor = MobileSamPredictor(self.loaded_model)
             else:
-                self.loaded_model = sam_model_registry['vit_b'](checkpoint=parameters["model_path"])
-                self.predictor = SamPredictor(self.loaded_model )
+                if "vit_b" in parameters["model_path"].lower():
+                    model = "vit_b"
+                else:
+                    model = "vit_l"
+                self.loaded_model = sam_model_registry[model](checkpoint=parameters["model_path"])
+                self.predictor = SamPredictor(self.loaded_model)
 
             self.predictor.model.to(device=self.main_window.device)
             self.predictor.model.eval()
