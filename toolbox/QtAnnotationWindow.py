@@ -1,24 +1,18 @@
-import json
-import os
-import random
-import uuid
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 
-import pandas as pd
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF
-from PyQt5.QtGui import QMouseEvent, QPixmap, QColor
-from PyQt5.QtWidgets import (QFileDialog, QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QVBoxLayout, QLabel,
-                             QDialog, QHBoxLayout, QPushButton, QGraphicsPixmapItem, QGraphicsRectItem, QInputDialog,
-                             QLineEdit, QDialogButtonBox)
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from PyQt5.QtGui import QMouseEvent, QPixmap
+from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
-from toolbox.QtProgressBar import ProgressBar
 from toolbox.QtPatchAnnotation import PatchAnnotation
-
+from toolbox.QtPolygonAnnotation import PolygonAnnotation
 from toolbox.Tools.QtPanTool import PanTool
-from toolbox.Tools.QtZoomTool import ZoomTool
-from toolbox.Tools.QtSelectTool import SelectTool
 from toolbox.Tools.QtPatchTool import PatchTool
+from toolbox.Tools.QtPolygonTool import PolygonTool
+from toolbox.Tools.QtSAMTool import SAMTool
+from toolbox.Tools.QtSelectTool import SelectTool
+from toolbox.Tools.QtZoomTool import ZoomTool
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -68,7 +62,7 @@ class AnnotationWindow(QGraphicsView):
 
         self.image_pixmap = None
         self.rasterio_image = None
-        self.active_image = False  # Flag to check if the image has been set
+        self.active_image = False
         self.current_image_path = None
 
         self.toolChanged.connect(self.set_selected_tool)
@@ -78,9 +72,57 @@ class AnnotationWindow(QGraphicsView):
             "zoom": ZoomTool(self),
             "select": SelectTool(self),
             "patch": PatchTool(self),
-            "polygon": None,
-            "sam": None,
+            "polygon": PolygonTool(self),
+            "sam": SAMTool(self),
         }
+
+    def wheelEvent(self, event: QMouseEvent):
+        if self.active_image:
+            self.tools["zoom"].wheelEvent(event)
+        if self.selected_tool:
+            self.tools[self.selected_tool].wheelEvent(event)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if self.active_image:
+            self.tools["pan"].mousePressEvent(event)
+        if self.selected_tool:
+            self.tools[self.selected_tool].mousePressEvent(event)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.active_image:
+            self.tools["pan"].mouseMoveEvent(event)
+        if self.selected_tool:
+            self.tools[self.selected_tool].mouseMoveEvent(event)
+        scene_pos = self.mapToScene(event.pos())
+        self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self.tools["pan"].mouseReleaseEvent(event)
+        self.toggle_cursor_annotation()
+        self.drag_start_pos = None
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.active_image and self.selected_tool:
+            self.tools[self.selected_tool].keyPressEvent(event)
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if self.active_image and self.selected_tool:
+            self.tools[self.selected_tool].keyReleaseEvent(event)
+        super().keyReleaseEvent(event)
+
+    def cursorInWindow(self, pos, mapped=False):
+        if not pos or not self.image_pixmap:
+            return False
+
+        image_rect = QGraphicsPixmapItem(self.image_pixmap).boundingRect()
+        if not mapped:
+            pos = self.mapToScene(pos)
+
+        return image_rect.contains(pos)
 
     def set_selected_tool(self, tool):
         if self.selected_tool:
@@ -88,7 +130,9 @@ class AnnotationWindow(QGraphicsView):
         self.selected_tool = tool
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
+
         self.unselect_annotation()
+        self.toggle_cursor_annotation()
 
     def set_selected_label(self, label):
         self.selected_label = label
@@ -111,14 +155,19 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_size += delta
             self.annotation_size = max(1, self.annotation_size)
 
-        if self.selected_annotation:
+        if isinstance(self.selected_annotation, PatchAnnotation):
             self.selected_annotation.update_annotation_size(self.annotation_size)
-            self.selected_annotation.create_cropped_image(self.rasterio_image)
-            # Notify ConfidenceWindow the selected annotation has changed
-            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+            if self.cursor_annotation:
+                self.cursor_annotation.update_annotation_size(self.annotation_size)
+        elif isinstance(self.selected_annotation, PolygonAnnotation):
+            scale_factor = 1 + delta / 100.0
+            self.selected_annotation.update_annotation_size(scale_factor)
+            if self.cursor_annotation:
+                self.cursor_annotation.update_annotation_size(scale_factor)
 
-        if self.cursor_annotation:
-            self.cursor_annotation.update_annotation_size(self.annotation_size)
+        if self.selected_annotation:
+            self.selected_annotation.create_cropped_image(self.rasterio_image)
+            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
         # Emit that the annotation size has changed
         self.annotationSizeChanged.emit(self.annotation_size)
@@ -128,60 +177,27 @@ class AnnotationWindow(QGraphicsView):
             annotation = self.annotations_dict[annotation_id]
             annotation.update_location(new_center_xy)
 
-    def wheelEvent(self, event: QMouseEvent):
-        self.tools["zoom"].wheelEvent(event)
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if self.active_image:
-            self.tools["pan"].mousePressEvent(event)
-
-            if self.selected_tool == "select":
-                self.tools["select"].mousePressEvent(event)
-            elif self.selected_tool == "patch":
-                self.tools["patch"].mousePressEvent(event)
-
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        self.tools["pan"].mouseMoveEvent(event)
-
-        if self.selected_tool == "select":
-            self.tools["select"].mouseMoveEvent(event)
-        elif self.selected_tool == "patch":
-            self.tools["patch"].mouseMoveEvent(event)
-
-        scene_pos = self.mapToScene(event.pos())
-        self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        self.tools["pan"].mouseReleaseEvent(event)
-        self.toggle_cursor_annotation()
-        if hasattr(self, 'drag_start_pos'):
-            del self.drag_start_pos
-        super().mouseReleaseEvent(event)
+    def set_annotation_transparency(self, transparency):
+        if self.selected_annotation:
+            # Update the label's transparency in the LabelWindow
+            self.main_window.label_window.set_label_transparency(transparency)
+            label = self.selected_annotation.label
+            for annotation in self.annotations_dict.values():
+                if annotation.label.id == label.id:
+                    annotation.update_transparency(transparency)
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
-        if scene_pos:
-            # Return if a label is not selected or annotation color is not set
-            if not self.selected_label or not self.annotation_color:
-                return
 
-            # If a cursor doesn't exist
-            if not self.cursor_annotation:
-                if self.selected_tool == "patch":
-                    self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
-                # Create the graphics item
-                self.cursor_annotation.create_graphics_item(self.scene)
-            else:
-                # Update the cursor annotation's location, graphics
-                self.cursor_annotation.update_location(scene_pos)
-                self.cursor_annotation.update_graphics_item()
-                self.cursor_annotation.update_transparency(128)
-        else:
-            if self.cursor_annotation:
-                self.cursor_annotation.delete()
-                self.cursor_annotation = None
+        if self.cursor_annotation:
+            self.cursor_annotation.delete()
+            self.cursor_annotation = None
+
+        if not self.selected_label or not self.annotation_color:
+            return
+
+        if scene_pos:
+            self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
+            self.cursor_annotation.create_graphics_item(self.scene)
 
     def display_image_item(self, image_item):
         # Clean up
@@ -226,15 +242,23 @@ class AnnotationWindow(QGraphicsView):
         self.main_window.confidence_window.clear_display()
         QApplication.processEvents()
 
-    def cursorInWindow(self, pos, mapped=False):
-        if not pos:
-            return False
-        if self.image_pixmap:
-            image_rect = QGraphicsPixmapItem(self.image_pixmap).boundingRect()
-            if not mapped:
-                pos = self.mapToScene(pos)
-            return image_rect.contains(pos)
-        return False
+    def update_current_image_path(self, image_path):
+        self.current_image_path = image_path
+
+    def viewportToScene(self):
+        # Map the top-left and bottom-right corners of the viewport to the scene coordinates
+        top_left = self.mapToScene(self.viewport().rect().topLeft())
+        bottom_right = self.mapToScene(self.viewport().rect().bottomRight())
+        # Create and return a QRectF object from these points
+        return QRectF(top_left, bottom_right)
+
+    def center_on_annotation(self, annotation):
+        # Get the bounding rect of the annotation in scene coordinates
+        annotation_rect = annotation.graphics_item.boundingRect()
+        annotation_center = annotation_rect.center()
+
+        # Center the view on the annotation's center
+        self.centerOn(annotation_center)
 
     def cycle_annotations(self, direction):
         if self.selected_tool == "select" and self.active_image:
@@ -249,17 +273,6 @@ class AnnotationWindow(QGraphicsView):
                 self.select_annotation(annotations[new_index])
                 # Center the view on the new annotation
                 self.center_on_annotation(annotations[new_index])
-
-    def center_on_annotation(self, annotation):
-        # Get the bounding rect of the annotation in scene coordinates
-        annotation_rect = annotation.graphics_item.boundingRect()
-        annotation_center = annotation_rect.center()
-
-        # Center the view on the annotation's center
-        self.centerOn(annotation_center)
-
-    def update_current_image_path(self, image_path):
-        self.current_image_path = image_path
 
     def select_annotation(self, annotation):
         if self.selected_annotation != annotation:
@@ -288,15 +301,6 @@ class AnnotationWindow(QGraphicsView):
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
-
-    def update_annotation_transparency(self, transparency):
-        if self.selected_annotation:
-            # Update the label's transparency in the LabelWindow
-            self.main_window.label_window.update_label_transparency(transparency)
-            label = self.selected_annotation.label
-            for annotation in self.annotations_dict.values():
-                if annotation.label.id == label.id:
-                    annotation.update_transparency(transparency)
 
     def load_annotation(self, annotation):
         # Create the graphics item (scene previously cleared)
@@ -369,7 +373,7 @@ class AnnotationWindow(QGraphicsView):
             if not annotation.cropped_image:
                 annotation.create_cropped_image(rasterio_image)
 
-    def add_annotation(self, scene_pos: QPointF = None, annotation=None):
+    def add_annotation(self, scene_pos: QPointF = None):
         if not self.selected_label:
             QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
             return
@@ -379,18 +383,15 @@ class AnnotationWindow(QGraphicsView):
             return
 
         # Return if the position provided isn't in the window
-        if not self.cursorInWindow(scene_pos, mapped=True):
-            return
+        if scene_pos:
+            if not self.cursorInWindow(scene_pos, mapped=True):
+                return
 
         # Create the annotation for the selected tool
-        if self.selected_tool == 'patch':
-            annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
-
-        elif self.selected_tool in ['polygon', 'sam']:
-            annotation = self.tools[self.selected_tool].create_annotation(self.polygon_points)
-            self.polygon_points = []
+        annotation = self.tools[self.selected_tool].create_annotation(scene_pos, finished=True)
 
         if annotation is None:
+            self.toggle_cursor_annotation()
             return
 
         annotation.create_graphics_item(self.scene)

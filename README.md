@@ -43,8 +43,8 @@ Enhance your CoralNet experience with these tools:
 <details>
   <summary>Watch the Video</summary>
   <p align="center">
-    <a href="https://youtu.be/1Etd_29v4uI">
-      <img src="http://img.youtube.com/vi/1Etd_29v4uI/0.jpg" alt="Video Title">
+    <a href="https://youtu.be/yzGeujzkvas">
+      <img src="http://img.youtube.com/vi/yzGeujzkvas/0.jpg" alt="Video Title">
     </a>
   </p>
 </details>

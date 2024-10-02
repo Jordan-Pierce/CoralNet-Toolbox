@@ -1,30 +1,22 @@
-import datetime
-import gc
-import json
 import os
-import random
-import shutil
+import gc
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from itertools import groupby
-from operator import attrgetter
-from pathlib import Path
 
 import numpy as np
+import torch
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
+                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget)
+from PyQt5.QtCore import Qt
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPointF
-from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent, QPixmap
-from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
-                             QTableWidgetItem, QSlider, QButtonGroup)
+from mobile_sam import sam_model_registry as mobile_sam_model_registry
+from mobile_sam import SamPredictor as MobileSamPredictor
+from segment_anything import sam_model_registry
+from segment_anything import SamPredictor
 
-from torch.cuda import empty_cache
-from ultralytics.models.fastsam import FastSAMPredictor
-from ultralytics.models.sam import Predictor as SAMPredictor
-
-from toolbox.QtProgressBar import ProgressBar
-from toolbox.utilities import pixmap_to_numpy
+from ultralytics.utils import ops
+from ultralytics.engine.results import Results
+from ultralytics.models.sam.amg import batched_mask_to_box
+from ultralytics.utils.downloads import attempt_download_asset
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -41,13 +33,16 @@ class SAMDeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("SAM Deploy Model")
-
-        self.resize(300, 300)
+        self.resize(300, 200)
 
         self.imgsz = 1024
         self.conf = 0.25
         self.model_path = None
         self.loaded_model = None
+        self.predictor = None
+
+        self.image = None
+        self.image_tensor = None
 
         # Main layout
         self.main_layout = QVBoxLayout(self)
@@ -60,7 +55,7 @@ class SAMDeployModelDialog(QDialog):
 
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(640, 2048)
+        self.imgsz_spinbox.setRange(512, 2048)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
@@ -98,26 +93,24 @@ class SAMDeployModelDialog(QDialog):
         value = self.uncertainty_threshold_slider.value() / 100.0
         self.main_window.update_uncertainty_thresh(value)
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
+        self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
     def on_uncertainty_changed(self, value):
         # Update the slider and label when the shared data changes
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
+        self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
     def setup_tabs(self):
         self.tabs = QTabWidget()
 
         # Create tabs
         self.mobile_sam_tab = self.create_model_tab("MobileSAM")
-        self.fast_sam_tab = self.create_model_tab("FastSAM")
         self.sam_tab = self.create_model_tab("SAM")
-        self.sam2_tab = self.create_model_tab("SAM2")
 
         # Add tabs to the tab widget
         self.tabs.addTab(self.mobile_sam_tab, "MobileSAM")
-        self.tabs.addTab(self.fast_sam_tab, "FastSAM")
         self.tabs.addTab(self.sam_tab, "SAM")
-        self.tabs.addTab(self.sam2_tab, "SAM2")
 
         self.main_layout.addWidget(self.tabs)
 
@@ -130,9 +123,7 @@ class SAMDeployModelDialog(QDialog):
         # Define items for each model
         model_items = {
             "MobileSAM": ["mobile_sam.pt"],
-            "FastSAM": ["FastSAM-s.pt", "FastSAM-x.pt"],
-            "SAM": ["sam_b.pt", "sam_l.pt"],
-            "SAM2": ["sam2_t.pt", "sam2_s.pt", "sam2_b.pt", "sam2_l.pt"]
+            "SAM": ["sam_b.pt", "sam_l.pt"]
         }
 
         # Add items to the combo box based on the model name
@@ -147,12 +138,10 @@ class SAMDeployModelDialog(QDialog):
         # Get the parameters from the UI
         self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
         self.imgsz = self.imgsz_spinbox.value()
-        self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
         parameters = {
             "model_path": self.model_path,
             "imgsz": self.imgsz,
-            "conf": self.conf
         }
 
         return parameters
@@ -165,21 +154,27 @@ class SAMDeployModelDialog(QDialog):
             # Make the cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Provide the necessary overrides for the model
-            overrides = dict(conf=parameters["conf"],
-                             task="segment",
-                             mode="predict",
-                             model=parameters["model_path"],
-                             save=False,
-                             imgsz=parameters["imgsz"])
-            # Load the model
-            if "fast" in parameters["model_path"].lower():
-                self.loaded_model = FastSAMPredictor(overrides=overrides)
-            else:
-                self.loaded_model = SAMPredictor(overrides=overrides)
+            # Download the weights if they are not present
+            attempt_download_asset(parameters["model_path"])
 
-            # Set the current view
-            self.set_image()
+            if not os.path.exists(parameters["model_path"]):
+                raise FileNotFoundError(f"Model file not downloaded: {parameters['model_path']}")
+
+            # Load the model
+            if "mobile" in parameters["model_path"].lower():
+                model = "vit_t"
+                self.loaded_model = mobile_sam_model_registry[model](checkpoint=parameters["model_path"])
+                self.predictor = MobileSamPredictor(self.loaded_model)
+            else:
+                if "vit_b" in parameters["model_path"].lower():
+                    model = "vit_b"
+                else:
+                    model = "vit_l"
+                self.loaded_model = sam_model_registry[model](checkpoint=parameters["model_path"])
+                self.predictor = SamPredictor(self.loaded_model)
+
+            self.predictor.model.to(device=self.main_window.device)
+            self.predictor.model.eval()
 
             QApplication.restoreOverrideCursor()
             self.status_bar.setText(f"Model loaded")
@@ -192,54 +187,98 @@ class SAMDeployModelDialog(QDialog):
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
 
-    def deactivate_model(self):
-        self.loaded_model = None
-        self.model_path = None
-        gc.collect()
-        empty_cache()
-        self.status_bar.setText("No model loaded")
-        QMessageBox.information(self, "Model Deactivated", "Model deactivated")
-
-    def set_image(self):
-        if self.loaded_model is not None:
-            # Get the current view of AnnotationWindow
-            view = self.annotation_window.viewport()
-            # Get the scene's visible area in the viewport
-            scene_rect = self.annotation_window.mapToScene(view.rect()).boundingRect()
-            # Convert the scene rect to a QRect in the viewport's coordinate system
-            view_rect = self.annotation_window.mapFromScene(scene_rect).boundingRect()
-            # Capture the current view of AnnotationWindow as a QImage
-            qimage = self.annotation_window.grab(view_rect).toImage()
-            # Convert QImage to QPixmap
-            qpixmap = QPixmap.fromImage(qimage)
-            # Convert QPixmap to numpy array
-            image = pixmap_to_numpy(qpixmap)
-
-            # Set the image in the model
-            self.loaded_model.set_image(image)
+    def set_image(self, image):
+        if self.predictor is not None:
+            # Reset the image in the predictor
+            self.predictor.reset_image()
+            # Set the image in the predictor
+            self.predictor.set_image(image)
+            self.image = image
+            self.image_tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
         else:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
 
-    def predict(self, bboxes, positive, negative):
-        if not self.loaded_model:
+    def predict(self, points, labels):
+        if not self.predictor:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
             return None
         try:
-            # Combine the positive and negative points
-            points = np.stack(positive + negative)
-            labels = [1] * len(positive) + [0] * len(negative)
-            # Make the prediction
-            points = positive[0]
-            labels = [labels[0]]
-            results = self.loaded_model(points=points, labels=labels)[0]
-            # Convert the results to a list of QPointF points
-            polygon_points = results.masks.xy[0].tolist()
-            polygon_points = [QPointF(*point) for point in polygon_points]
+            # Provide prompt to SAM model in form of numpy array
+            input_labels = torch.tensor(labels)
+            input_points = torch.as_tensor(points.astype(int), dtype=torch.int64)
+            input_labels = input_labels.to(self.main_window.device).unsqueeze(0)
+            input_points = input_points.to(self.main_window.device).unsqueeze(0)
+            transformed_points = self.predictor.transform.apply_coords_torch(input_points, self.image.shape[:2])
+
+            mask, score, logit = self.predictor.predict_torch(point_coords=transformed_points,
+                                                              point_labels=input_labels,
+                                                              multimask_output=False)
+
+            # Post-process the results
+            results = self.custom_postprocess(mask, score, logit, self.image_tensor, self.image)[0]
+
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
             return None
 
-        return polygon_points
+        return results
+
+    @staticmethod
+    def custom_postprocess(mask, score, logit, img_tensor, orig_img):
+        """
+        Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
+
+        Args:
+            mask (torch.Tensor): Predicted masks with shape (1, 1, H, W).
+            score (torch.Tensor): Confidence scores for each mask with shape (1, 1).
+            logit (torch.Tensor): Logits for each mask with shape (1, 1, H, W).
+            img_tensor (torch.Tensor): The processed input image tensor with shape (1, C, H, W).
+            orig_img (np.ndarray): The original, unprocessed image.
+
+        Returns:
+            (Results): Results object containing detection masks, bounding boxes, and other metadata.
+        """
+        # Ensure the original image is in the correct format
+        if not isinstance(orig_img, np.ndarray):
+            orig_img = orig_img.cpu().numpy()
+
+        # Ensure mask has the correct shape (1, 1, H, W)
+        if mask.ndim != 4 or mask.shape[0] != 1 or mask.shape[1] != 1:
+            raise ValueError(f"Expected mask to have shape (1, 1, H, W), but got {mask.shape}")
+
+        # Scale masks to the original image size
+        scaled_masks = ops.scale_masks(mask.float(), orig_img.shape[:2], padding=False)[0]
+        scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
+
+        # Generate bounding boxes from masks using batched_mask_to_box
+        pred_bboxes = batched_mask_to_box(scaled_masks)
+
+        # Ensure score and cls have the correct shape
+        score = score.squeeze(1)  # Remove the extra dimension
+        cls = torch.arange(len(mask), dtype=torch.int32, device=mask.device)
+
+        # Combine bounding boxes, scores, and class labels
+        pred_bboxes = torch.cat([pred_bboxes, score[:, None], cls[:, None]], dim=-1)
+
+        # Create names dictionary (placeholder for consistency)
+        names = dict(enumerate(str(i) for i in range(len(mask))))
+
+        # Create Results object
+        result = Results(orig_img, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
+
+        return result
+
+    def deactivate_model(self):
+        self.loaded_model = None
+        self.predictor = None
+        self.model_path = None
+        self.image_tensor = None
+        self.image = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        self.main_window.untoggle_all_tools()
+        self.status_bar.setText("No model loaded")
+        QMessageBox.information(self, "Model Deactivated", "Model deactivated")
 
 
 class SAMBatchInferenceDialog(QDialog):

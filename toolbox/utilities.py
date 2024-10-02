@@ -41,6 +41,12 @@ def get_available_device():
 
 
 def pixmap_to_numpy(pixmap):
+    """
+    Convert a QPixmap to a NumPy array.
+
+    :param pixmap:
+    :return:
+    """
     # Convert QPixmap to QImage
     image = pixmap.toImage()
     # Get image dimensions
@@ -56,6 +62,21 @@ def pixmap_to_numpy(pixmap):
         numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
 
     return numpy_array[:, :, :3]
+
+
+def qimage_to_numpy(qimage):
+    """
+    Convert a QImage to a NumPy array.
+
+    :param qimage:
+    :return:
+    """
+    width = qimage.width()
+    height = qimage.height()
+    bytes_per_line = qimage.bytesPerLine()
+    byte_array = qimage.bits().asstring(height * bytes_per_line)
+    image = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+    return image[:, :, :3]  # Remove the alpha channel if present
 
 
 def console_user(error_msg):

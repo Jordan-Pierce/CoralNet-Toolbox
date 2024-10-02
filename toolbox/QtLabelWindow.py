@@ -181,16 +181,16 @@ class LabelWindow(QWidget):
         # Top bar with Add Label, Edit Label, and Delete Label buttons
         self.top_bar = QHBoxLayout()
         self.add_label_button = QPushButton("Add Label")
-        self.add_label_button.setFixedSize(80, 30)
+        self.add_label_button.setFixedSize(100, 30)
         self.top_bar.addWidget(self.add_label_button)
 
         self.edit_label_button = QPushButton("Edit Label")
-        self.edit_label_button.setFixedSize(80, 30)
+        self.edit_label_button.setFixedSize(100, 30)
         self.edit_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.edit_label_button)
 
         self.delete_label_button = QPushButton("Delete Label")
-        self.delete_label_button.setFixedSize(80, 30)
+        self.delete_label_button.setFixedSize(100, 30)
         self.delete_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.delete_label_button)
 
@@ -310,15 +310,7 @@ class LabelWindow(QWidget):
         self.update_annotations_with_label(selected_label)
         self.adjust_scrollbar_for_active_label()
 
-    def deselect_active_label(self):
-        if self.active_label:
-            self.active_label.deselect()
-
-    def delete_active_label(self):
-        if self.active_label:
-            self.delete_label(self.active_label)
-
-    def update_label_transparency(self, transparency):
+    def set_label_transparency(self, transparency):
         if self.active_label:
             # Update the active label's transparency
             self.active_label.update_transparency(transparency)
@@ -327,6 +319,14 @@ class LabelWindow(QWidget):
             for annotation in self.annotation_window.annotations_dict.values():
                 if annotation.label.id == label.id:
                     annotation.update_transparency(transparency)
+
+    def deselect_active_label(self):
+        if self.active_label:
+            self.active_label.deselect()
+
+    def delete_active_label(self):
+        if self.active_label:
+            self.delete_label(self.active_label)
 
     def update_annotations_with_label(self, label):
         for annotation in self.annotation_window.annotations_dict.values():

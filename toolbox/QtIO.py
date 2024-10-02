@@ -20,6 +20,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class IODialog:
     def __init__(self, main_window):
+        self.main_window = main_window
         self.image_window = main_window.image_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
@@ -81,6 +82,8 @@ class IODialog:
                                     f"An error occurred while importing labels: {str(e)}")
 
     def import_labels(self):
+        self.main_window.untoggle_all_tools()
+
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self.label_window,
                                                    "Import Labels",
@@ -156,8 +159,7 @@ class IODialog:
             QApplication.restoreOverrideCursor()
 
     def import_annotations(self):
-        self.annotation_window.set_selected_tool(None)
-        self.annotation_window.toolChanged.emit(None)
+        self.main_window.untoggle_all_tools()
 
         if not self.annotation_window.active_image:
             QMessageBox.warning(self.annotation_window,
@@ -284,8 +286,7 @@ class IODialog:
             QApplication.restoreOverrideCursor()
 
     def import_coralnet_annotations(self):
-        self.annotation_window.set_selected_tool(None)
-        self.annotation_window.toolChanged.emit(None)
+        self.main_window.untoggle_all_tools()
 
         if not self.annotation_window.active_image:
             QMessageBox.warning(self.annotation_window,
@@ -596,6 +597,7 @@ class IODialog:
             QApplication.restoreOverrideCursor()
 
     def import_viscore_annotations(self):
+        self.main_window.untoggle_all_tools()
 
         def browse_csv_file(file_path_input):
             options = QFileDialog.Options()

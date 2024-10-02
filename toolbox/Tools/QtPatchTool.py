@@ -25,22 +25,6 @@ class PatchTool(Tool):
         self.annotation_window.setCursor(Qt.CrossCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self.annotation_window.unselect_annotation()
-            self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if (self.annotation_window.active_image and
-                self.annotation_window.image_pixmap and
-                self.annotation_window.cursorInWindow(event.pos())):
-            self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
-        else:
-            self.annotation_window.toggle_cursor_annotation()
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        self.annotation_window.toggle_cursor_annotation()
-
-    def create_annotation(self, scene_pos: QPointF):
 
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
@@ -48,10 +32,21 @@ class PatchTool(Tool):
                                 "A label must be selected before adding an annotation.")
             return None
 
-        if (not self.annotation_window.active_image or
-                not self.annotation_window.image_pixmap or
-                not self.annotation_window.cursorInWindow(scene_pos, mapped=True)):
-            return None
+        if event.button() == Qt.LeftButton:
+            self.annotation_window.unselect_annotation()
+            self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        active_image = self.annotation_window.active_image
+        image_pixmap = self.annotation_window.image_pixmap
+        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+        if active_image and image_pixmap and cursor_in_window:
+            self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self.annotation_window.toggle_cursor_annotation()
+
+    def create_annotation(self, scene_pos: QPointF, finished: bool = False):
 
         annotation = PatchAnnotation(scene_pos,
                                      self.annotation_window.annotation_size,

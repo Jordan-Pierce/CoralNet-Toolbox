@@ -1,8 +1,11 @@
 import warnings
 
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame
+from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor, QPen, QPolygonF, QBrush
+from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame,
+                             QGraphicsPolygonItem)
+
+from toolbox.QtPolygonAnnotation import PolygonAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -130,6 +133,10 @@ class ConfidenceWindow(QWidget):
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 self.create_bar_chart()
+
+                if isinstance(self.annotation, PolygonAnnotation):
+                    # Display the annotation points on the cropped image
+                    self.display_annotation_points()
         except:
             # Cropped image is None or some other error occurred
             pass
@@ -166,6 +173,21 @@ class ConfidenceWindow(QWidget):
         bar_layout.addWidget(percentage_label)
 
         self.bar_chart_layout.addWidget(bar_widget)
+
+    def display_annotation_points(self):
+        # Transform the points to the cropped image's coordinate system
+        transformed_points = self.annotation.transform_points_to_cropped_image()
+        polygon = QPolygonF(transformed_points)
+
+        # Create a QGraphicsPolygonItem with the desired transparency
+        polygon_item = QGraphicsPolygonItem(polygon)
+        color = self.annotation.label.color
+        brush = QBrush(QColor(color.red(), color.green(), color.blue(), 64))  # Semi-transparent color
+        polygon_item.setBrush(brush)
+        polygon_item.setPen(QPen(Qt.NoPen))  # No border
+
+        # Add the polygon item to the scene
+        self.scene.addItem(polygon_item)
 
     def clear_layout(self, layout):
         for i in reversed(range(layout.count())):
