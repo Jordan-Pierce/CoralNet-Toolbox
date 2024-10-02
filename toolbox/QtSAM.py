@@ -61,7 +61,7 @@ class SAMDeployModelDialog(QDialog):
 
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(640, 2048)
+        self.imgsz_spinbox.setRange(512, 2048)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
@@ -202,16 +202,19 @@ class SAMDeployModelDialog(QDialog):
         else:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
 
-    def predict(self, bboxes, points, labels):
+    def predict(self, points, labels):
         if not self.loaded_model:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
             return None
         try:
             # Provide prompt to SAM model in form of numpy array
             if "fast" in self.model_path.lower():
-                results = self.loaded_model.prompt(self.everything_results, points=points, labels=labels)[0]
+                results = self.loaded_model.prompt(self.everything_results,
+                                                   points=points,
+                                                   labels=labels)[0]
             else:
-                results = self.loaded_model(points=points, labels=labels)[0]
+                results = self.loaded_model(points=points,
+                                            labels=labels)[0]
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")

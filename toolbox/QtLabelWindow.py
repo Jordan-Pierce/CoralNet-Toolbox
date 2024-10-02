@@ -181,16 +181,16 @@ class LabelWindow(QWidget):
         # Top bar with Add Label, Edit Label, and Delete Label buttons
         self.top_bar = QHBoxLayout()
         self.add_label_button = QPushButton("Add Label")
-        self.add_label_button.setFixedSize(80, 30)
+        self.add_label_button.setFixedSize(100, 30)
         self.top_bar.addWidget(self.add_label_button)
 
         self.edit_label_button = QPushButton("Edit Label")
-        self.edit_label_button.setFixedSize(80, 30)
+        self.edit_label_button.setFixedSize(100, 30)
         self.edit_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.edit_label_button)
 
         self.delete_label_button = QPushButton("Delete Label")
-        self.delete_label_button.setFixedSize(80, 30)
+        self.delete_label_button.setFixedSize(100, 30)
         self.delete_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.delete_label_button)
 

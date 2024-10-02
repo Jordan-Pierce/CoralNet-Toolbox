@@ -182,7 +182,7 @@ class ConfidenceWindow(QWidget):
         # Create a QGraphicsPolygonItem with the desired transparency
         polygon_item = QGraphicsPolygonItem(polygon)
         color = self.annotation.label.color
-        brush = QBrush(QColor(color.red(), color.green(), color.blue(), 128))  # Semi-transparent color
+        brush = QBrush(QColor(color.red(), color.green(), color.blue(), 64))  # Semi-transparent color
         polygon_item.setBrush(brush)
         polygon_item.setPen(QPen(Qt.NoPen))  # No border
 

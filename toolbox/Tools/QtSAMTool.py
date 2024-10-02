@@ -84,9 +84,6 @@ class SAMTool(Tool):
 
         self.annotation_window.viewport().update()
 
-    def mouseMoveEvent(self, event: QMouseEvent):
-        pass
-
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Space and not len(self.positive_points):
             if not self.working_area:
@@ -159,7 +156,7 @@ class SAMTool(Tool):
         points = positive + negative
 
         # Predict the mask
-        results = self.sam_dialog.predict(None, points, labels)
+        results = self.sam_dialog.predict(points, labels)
 
         if not results:
             return None
@@ -174,6 +171,7 @@ class SAMTool(Tool):
         #     plt.show()
 
         # Move the points back to the original image space
+        points = results[-1].masks.xy[0]
         points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in points]
         self.points = [QPointF(*point) for point in points]
 

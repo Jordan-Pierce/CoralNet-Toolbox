@@ -62,7 +62,7 @@ class AnnotationWindow(QGraphicsView):
 
         self.image_pixmap = None
         self.rasterio_image = None
-        self.active_image = False  # Flag to check if the image has been set
+        self.active_image = False
         self.current_image_path = None
 
         self.toolChanged.connect(self.set_selected_tool)
