@@ -71,9 +71,12 @@ def qimage_to_numpy(qimage):
     :param qimage:
     :return:
     """
+    # Get image dimensions
     width = qimage.width()
     height = qimage.height()
+    # Get the number of bytes per line
     bytes_per_line = qimage.bytesPerLine()
+    # Convert QImage to numpy array
     byte_array = qimage.bits().asstring(height * bytes_per_line)
     image = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
     return image[:, :, :3]  # Remove the alpha channel if present

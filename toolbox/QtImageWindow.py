@@ -305,6 +305,8 @@ class ImageWindow(QWidget):
                 # Get the original size of the image
                 original_width = src.width
                 original_height = src.height
+                # Determine the number of bands
+                num_bands = src.count
 
                 # Calculate the scaled size
                 scaled_width = original_width // 100
@@ -313,24 +315,21 @@ class ImageWindow(QWidget):
                 # Read a downsampled version of the image
                 # We use a window to read a subset of the image and then resize it
                 window = Window(0, 0, original_width, original_height)
-                if src.count == 3:
-                    # Read bands in the correct order (RGB)
-                    downsampled_image = src.read([1, 2, 3], window=window, out_shape=(scaled_height, scaled_width))
-                else:
+
+                if num_bands == 1:
+                    # Read a single band
                     downsampled_image = src.read(window=window, out_shape=(scaled_height, scaled_width))
 
-                # Determine the number of bands
-                num_bands = src.count
-
-                # Convert the downsampled image to a QImage
-                if num_bands == 1:
                     # Grayscale image
                     qimage = QImage(downsampled_image.data.tobytes(),
                                     scaled_width,
                                     scaled_height,
                                     QImage.Format_Grayscale8)
-                elif num_bands == 3:
-                    # RGB image
+
+                elif num_bands == 3 or num_bands == 4:
+                    # Read bands in the correct order (RGB)
+                    downsampled_image = src.read([1, 2, 3], window=window, out_shape=(scaled_height, scaled_width))
+
                     # Convert to uint8 if it's not already
                     rgb_image = downsampled_image.astype(np.uint8)
                     # Ensure the bands are in the correct order (RGB)

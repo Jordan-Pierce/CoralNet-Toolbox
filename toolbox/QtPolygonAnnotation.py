@@ -151,32 +151,53 @@ class PolygonAnnotation(Annotation):
         data = rasterio_src.read(window=window)
 
         # Ensure the data is in the correct format for QImage
-        if data.shape[0] == 3:  # RGB image
-            data = np.transpose(data, (1, 2, 0))
-        elif data.shape[0] == 1:  # Grayscale image
-            data = np.squeeze(data)
-
-        # Normalize data to 0-255 range if it's not already
-        if data.dtype != np.uint8:
-            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
+        data = self._prepare_data_for_qimage(data)
 
         # Convert numpy array to QImage
-        height, width = data.shape[:2]
-        bytes_per_line = 3 * width if len(data.shape) == 3 else width
-        image_format = QImage.Format_RGB888 if len(data.shape) == 3 else QImage.Format_Grayscale8
-
-        # Convert numpy array to bytes
-        if len(data.shape) == 3:
-            data = data.tobytes()
-        else:
-            data = np.expand_dims(data, -1).tobytes()
-
-        q_image = QImage(data, width, height, bytes_per_line, image_format)
+        q_image = self._convert_to_qimage(data)
 
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
         self.annotation_updated.emit(self)  # Notify update
+
+    def _prepare_data_for_qimage(self, data):
+        if data.shape[0] == 3:  # RGB image
+            data = np.transpose(data, (1, 2, 0))
+        elif data.shape[0] == 1:  # Grayscale image
+            data = np.squeeze(data)
+        elif data.shape[0] == 4:  # RGBA image
+            data = np.transpose(data, (1, 2, 0))
+
+        # Normalize data to 0-255 range if it's not already
+        if data.dtype != np.uint8:
+            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
+
+        return data
+
+    def _convert_to_qimage(self, data):
+        height, width = data.shape[:2]
+        if len(data.shape) == 3:
+            if data.shape[2] == 3:  # RGB image
+                bytes_per_line = 3 * width
+                image_format = QImage.Format_RGB888
+            elif data.shape[2] == 4:  # RGBA image
+                bytes_per_line = 4 * width
+                image_format = QImage.Format_RGBA8888
+        else:  # Grayscale image
+            bytes_per_line = width
+            image_format = QImage.Format_Grayscale8
+
+        # Convert numpy array to bytes
+        if len(data.shape) == 3:
+            if data.shape[2] == 3:  # RGB image
+                data = data.tobytes()
+            elif data.shape[2] == 4:  # RGBA image
+                data = data.tobytes()
+        else:  # Grayscale image
+            data = np.expand_dims(data, -1).tobytes()
+
+        return QImage(data, width, height, bytes_per_line, image_format)
 
     def to_dict(self):
         base_dict = super().to_dict()

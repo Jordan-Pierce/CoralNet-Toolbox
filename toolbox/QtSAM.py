@@ -152,10 +152,11 @@ class SAMDeployModelDialog(QDialog):
                 self.loaded_model = mobile_sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = MobileSamPredictor(self.loaded_model)
             else:
-                if "vit_b" in self.model_path.lower():
+                if "sam_b" in self.model_path.lower():
                     model = "vit_b"
-                else:
+                elif "sam_l" in self.model_path.lower():
                     model = "vit_l"
+                else: raise ValueError(f"Model not recognized: {self.model_path}")
                 self.loaded_model = sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = SamPredictor(self.loaded_model)
 
