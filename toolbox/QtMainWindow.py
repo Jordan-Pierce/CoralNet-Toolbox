@@ -515,6 +515,7 @@ class MainWindow(QMainWindow):
             self.uncertaintyChanged.emit(value)
 
     def open_import_images_dialog(self):
+        self.untoggle_all_tools()
         self.io_dialog.import_images()
 
     def open_patch_annotation_sampling_dialog(self):
@@ -528,6 +529,7 @@ class MainWindow(QMainWindow):
 
         try:
             # Proceed to open the dialog if images are loaded
+            self.untoggle_all_tools()
             self.patch_annotation_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
@@ -551,36 +553,42 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self.untoggle_all_tools()
             self.create_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_merge_datasets_dialog(self):
         try:
+            self.untoggle_all_tools()
             self.merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_train_model_dialog(self):
         try:
+            self.untoggle_all_tools()
             self.train_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_evaluate_model_dialog(self):
         try:
+            self.untoggle_all_tools()
             self.evaluate_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_optimize_model_dialog(self):
         try:
+            self.untoggle_all_tools()
             self.optimize_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_deploy_model_dialog(self):
         try:
+            self.untoggle_all_tools()
             self.deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
@@ -606,6 +614,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self.untoggle_all_tools()
             self.batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
@@ -618,6 +627,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self.untoggle_all_tools()
             self.sam_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
@@ -630,6 +640,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            self.untoggle_all_tools()
             self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
