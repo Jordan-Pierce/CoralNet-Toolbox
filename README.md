@@ -42,11 +42,11 @@ Enhance your CoralNet experience with these tools:
 - 🚀 Optimize: Productionize models for faster inferencing
 - 📦 Toolshed: Access tools from the old repository
 
-<details>
+<details open>
   <summary><h2><b>Watch the Video</b></h2></summary>
   <p align="center">
     <a href="https://youtu.be/yzGeujzkvas">
-      <img src="http://img.youtube.com/vi/yzGeujzkvas/0.jpg" alt="Video Title" width="50%">
+      <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="50%">
     </a>
   </p>
 </details>
