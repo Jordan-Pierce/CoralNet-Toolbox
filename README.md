@@ -7,7 +7,7 @@
 The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on
 [CoralNet](https://coralnet.ucsd.edu/). It uses ✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a 
 base, which is an open-source library for computer vision and deep learning built in `PyTorch`. For more information on
-their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE).
+their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). It also uses [`SAM`](https://github.com/facebookresearch/segment-anything) and [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM) for polygon creation.
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Extract from annotated images  
 - 📍  Points: Sample using various methods (Uniform, Random, Stratified  
 - 🟣 Polygons: Create polygons using freehand or automatic methods
-- 🦾 SAM: Use SAM or MobileSAM to create polygons
+- 🦾 SAM: Use [`SAM`](https://github.com/facebookresearch/segment-anything) or [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM) to create polygons
 - 🧠 Classification: Build local patch-based classifiers  
 - 🔮 Inference: Use trained models for predictions
 - 📊 Metrics: Evaluate model performance
@@ -43,10 +43,10 @@ Enhance your CoralNet experience with these tools:
 - 📦 Toolshed: Access tools from the old repository
 
 <details>
-  <summary>Watch the Video</summary>
+  <summary><h2><b>Watch the Video</b></h2></summary>
   <p align="center">
     <a href="https://youtu.be/yzGeujzkvas">
-      <img src="http://img.youtube.com/vi/yzGeujzkvas/0.jpg" alt="Video Title">
+      <img src="http://img.youtube.com/vi/yzGeujzkvas/0.jpg" alt="Video Title" width="50%">
     </a>
   </p>
 </details>
@@ -76,9 +76,9 @@ conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
 # Example for torch 2.0.0 and torchvision 0.15.1 w/ CUDA 11.8
 pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 ```
-If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `rabbit` icon in the 
-`toolbox` instead of a `turtle`; if you have multiple `CUDA` devices available, you should see a `rocket ship` icon, 
-and if you're using a Mac with Metal, you should see an `apple` icon.
+If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the 
+`toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon, 
+and if you're using a Mac with `Metal`, you should see an `🍎` icon.
 
 See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
 
