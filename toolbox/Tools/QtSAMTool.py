@@ -1,5 +1,7 @@
 import warnings
 
+import numpy as np
+
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem
@@ -148,12 +150,15 @@ class SAMTool(Tool):
         if not self.annotation_window.active_image or not self.annotation_window.image_pixmap:
             return None
 
+        import matplotlib.pyplot as plt
+
         # Adjust points relative to the working area's top-left corner
         working_area_top_left = self.working_area.rect().topLeft()
-        positive = [(point.x(), point.y()) for point in self.positive_points]
-        negative = [(point.x(), point.y()) for point in self.negative_points]
-        labels = [1] * len(positive) + [0] * len(negative)
-        points = positive + negative
+        positive = [[point.x(), point.y()] for point in self.positive_points]
+        negative = [[point.x(), point.y()] for point in self.negative_points]
+        # Create the labels and points as numpy arrays
+        labels = np.array([1] * len(positive) + [0] * len(negative))
+        points = np.array(positive + negative)
 
         # Predict the mask
         results = self.sam_dialog.predict(points, labels)
@@ -161,7 +166,9 @@ class SAMTool(Tool):
         if not results:
             return None
 
-        # import matplotlib.pyplot as plt
+        # plt.imshow(self.image)
+        # plt.scatter(points.T[0], points.T[1])
+        # plt.show()
         #
         # for mask in results.masks:
         #     plt.figure()
@@ -171,7 +178,8 @@ class SAMTool(Tool):
         #     plt.show()
 
         # Move the points back to the original image space
-        points = results[-1].masks.xy[0]
+        top1_index = np.argmax(results.boxes.conf)
+        points = results[top1_index].masks.xy[0]
         points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in points]
         self.points = [QPointF(*point) for point in points]
 

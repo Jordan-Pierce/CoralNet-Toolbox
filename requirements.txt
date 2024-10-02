@@ -2,5 +2,7 @@ wheel
 setuptools
 PyQt5
 ultralytics==8.2.103
+git+https://github.com/ChaoningZhang/MobileSAM.git@main
+git+https://github.com/facebookresearch/segment-anything.git@main
 rasterio
 dill
