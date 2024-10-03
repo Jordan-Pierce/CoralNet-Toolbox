@@ -10,10 +10,7 @@ with open('requirements.txt') as f:
 
 # Filter out any empty lines or comments
 required_packages = [line for line in required_packages if line and not line.startswith('#')]
-
-# Separate Git dependencies
-git_dependencies = [pkg for pkg in required_packages if pkg.startswith('git+')]
-regular_dependencies = [pkg for pkg in required_packages if not pkg.startswith('git+')]
+required_packages = [line for line in required_packages if not line.startswith("git+")]
 
 # Setup
 setup(
@@ -24,15 +21,17 @@ setup(
     author='Jordan Pierce',
     author_email='jordan.pierce@noaa.gov',
     packages=find_packages(),
-    install_requires=regular_dependencies,
-    dependency_links=git_dependencies,
+    install_requires=required_packages + [
+        "mobile-sam @ git+https://git@github.com/ChaoningZhang/MobileSAM.git",
+        "segment-anything @ git+https://git@github.com/facebookresearch/segment-anything.git"
+    ],
     python_requires='>=3.8',
     entry_points={
         "console_scripts": [
-            "coralnet-toolbox = toolbox:run"
+            "coralnet-toolbox = toolbox:run"  # Ensure 'toolbox:run' is correct
         ]
     },
     package_data={
-        'toolbox': ['icons/*']
+        'toolbox': ['icons/*']  # Ensure 'icons/*' is correct
     },
 )
