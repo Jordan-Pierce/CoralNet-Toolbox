@@ -3,11 +3,11 @@ import warnings
 
 import numpy as np
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QImage, QPixmap, QColor, QPen, QBrush
+from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsRectItem)
 from rasterio.windows import Window
 
-from toolbox.QtAnnotation import Annotation
+from toolbox.Annotations.QtAnnotation import Annotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -73,44 +73,6 @@ class PatchAnnotation(Annotation):
 
         self.annotation_updated.emit(self)  # Notify update
 
-    def _prepare_data_for_qimage(self, data):
-        if data.shape[0] == 3:  # RGB image
-            data = np.transpose(data, (1, 2, 0))
-        elif data.shape[0] == 1:  # Grayscale image
-            data = np.squeeze(data)
-        elif data.shape[0] == 4:  # RGBA image
-            data = np.transpose(data, (1, 2, 0))
-
-        # Normalize data to 0-255 range if it's not already
-        if data.dtype != np.uint8:
-            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
-
-        return data
-
-    def _convert_to_qimage(self, data):
-        height, width = data.shape[:2]
-        if len(data.shape) == 3:
-            if data.shape[2] == 3:  # RGB image
-                bytes_per_line = 3 * width
-                image_format = QImage.Format_RGB888
-            elif data.shape[2] == 4:  # RGBA image
-                bytes_per_line = 4 * width
-                image_format = QImage.Format_RGBA8888
-        else:  # Grayscale image
-            bytes_per_line = width
-            image_format = QImage.Format_Grayscale8
-
-        # Convert numpy array to bytes
-        if len(data.shape) == 3:
-            if data.shape[2] == 3:  # RGB image
-                data = data.tobytes()
-            elif data.shape[2] == 4:  # RGBA image
-                data = data.tobytes()
-        else:  # Grayscale image
-            data = np.expand_dims(data, -1).tobytes()
-
-        return QImage(data, width, height, bytes_per_line, image_format)
-
     def create_graphics_item(self, scene: QGraphicsScene):
         half_size = self.annotation_size / 2
         self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
@@ -120,30 +82,6 @@ class PatchAnnotation(Annotation):
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
-
-    def update_location(self, new_center_xy: QPointF):
-        if self.machine_confidence and self.show_message:
-            self.show_warning_message()
-            return
-
-        # Clear the machine confidence
-        self.update_user_confidence(self.label)
-        # Update the location, graphic
-        self.center_xy = new_center_xy
-        self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
-
-    def update_annotation_size(self, size):
-        if self.machine_confidence and self.show_message:
-            self.show_warning_message()
-            return
-
-        # Clear the machine confidence
-        self.update_user_confidence(self.label)
-        # Update the size, graphic
-        self.annotation_size = size
-        self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -169,6 +107,30 @@ class PatchAnnotation(Annotation):
             # Update the cropped image
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
+
+    def update_location(self, new_center_xy: QPointF):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+        # Update the location, graphic
+        self.center_xy = new_center_xy
+        self.update_graphics_item()
+        self.annotation_updated.emit(self)  # Notify update
+
+    def update_annotation_size(self, size):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+        # Update the size, graphic
+        self.annotation_size = size
+        self.update_graphics_item()
+        self.annotation_updated.emit(self)  # Notify update
 
     def to_coralnet_format(self):
         # Extract machine confidence values and suggestions

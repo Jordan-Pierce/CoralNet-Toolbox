@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialo
 from toolbox.QtProgressBar import ProgressBar
 
 from toolbox.QtLabelWindow import Label
-from toolbox.QtPatchAnnotation import PatchAnnotation
+from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

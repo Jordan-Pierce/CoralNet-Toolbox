@@ -5,7 +5,7 @@ from PyQt5.QtGui import QMouseEvent, QKeyEvent
 from PyQt5.QtWidgets import QMessageBox
 
 from toolbox.Tools.QtTool import Tool
-from toolbox.QtPolygonAnnotation import PolygonAnnotation
+from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -20,7 +20,6 @@ class PolygonTool(Tool):
         super().__init__(annotation_window)
         self.cursor = Qt.CrossCursor
         self.points = []
-        self.complete = False
         self.drawing_continuous = False  # Flag to indicate continuous drawing mode
 
     def activate(self):
@@ -28,7 +27,6 @@ class PolygonTool(Tool):
         self.annotation_window.setCursor(Qt.CrossCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
-
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",
@@ -68,27 +66,21 @@ class PolygonTool(Tool):
         if event.key() == Qt.Key_Space:
             # Cancel the current annotation
             self.points = []
-            self.complete = False
             self.drawing_continuous = False
             self.annotation_window.toggle_cursor_annotation()
 
     def cancel_annotation(self):
         self.points = []
-        self.complete = False
         self.drawing_continuous = False
         self.annotation_window.toggle_cursor_annotation()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-
         if not self.annotation_window.active_image or not self.annotation_window.image_pixmap:
             return None
 
         if finished and len(self.points) > 2:
             # Close the polygon
             self.points.append(self.points[0])
-            self.complete = True
-        elif scene_pos:
-            self.points.append(scene_pos)
 
         # Create the annotation
         annotation = PolygonAnnotation(self.points,
@@ -100,8 +92,9 @@ class PolygonTool(Tool):
                                        self.annotation_window.main_window.label_window.active_label.transparency,
                                        show_msg=False)
 
-        if self.complete:
+        if finished:
+            # Reset the tool
             self.points = []
-            self.complete = False
+            self.drawing_continuous = False
 
         return annotation

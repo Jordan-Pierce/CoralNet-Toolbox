@@ -7,7 +7,7 @@ from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem
 
 from toolbox.Tools.QtTool import Tool
-from toolbox.QtPolygonAnnotation import PolygonAnnotation
+from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from toolbox.utilities import pixmap_to_numpy
 
