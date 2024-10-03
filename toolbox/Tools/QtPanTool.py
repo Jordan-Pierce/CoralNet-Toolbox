@@ -23,6 +23,7 @@ class PanTool(Tool):
             self.annotation_window.pan_active = True
             self.annotation_window.pan_start = event.pos()
             self.annotation_window.setCursor(self.cursor)
+            self.annotation_window.tools["sam"].stop_hover_timer()  # Stop hover timer
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.annotation_window.pan_active:
@@ -32,6 +33,7 @@ class PanTool(Tool):
         if event.button() == Qt.RightButton:
             self.annotation_window.pan_active = False
             self.annotation_window.setCursor(Qt.ArrowCursor)
+            self.annotation_window.tools["sam"].start_hover_timer(event.pos())  # Restart hover timer
 
     def pan(self, pos):
         delta = pos - self.annotation_window.pan_start

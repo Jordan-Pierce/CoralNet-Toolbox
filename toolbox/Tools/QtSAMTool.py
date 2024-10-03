@@ -42,15 +42,19 @@ class SAMTool(Tool):
 
         self.complete = False
 
-        self.hover_points = []  # P2f94
-        self.hover_timer = QTimer()  # P2b3f
+        self.hover_pos = None
+        self.hover_point = None
+        self.hover_timer = QTimer()
         self.hover_timer.setSingleShot(True)
-        self.hover_timer.timeout.connect(self.hover_timeout)
+        self.hover_timer.timeout.connect(self.display_hover_annotation)
+
+        self.hover_active = True  # Flag to control hover timer
 
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.sam_dialog = self.annotation_window.main_window.sam_deploy_model_dialog
+        self.hover_active = True  # Ensure hover is active when SAMTool is activated
 
     def deactivate(self):
         self.active = False
@@ -58,6 +62,34 @@ class SAMTool(Tool):
         self.sam_dialog = None
         self.cancel_annotation()
         self.cancel_working_area()
+        self.hover_active = False  # Ensure hover is inactive when SAMTool is deactivated
+
+    def start_hover_timer(self, pos):
+        if self.hover_active:
+            self.hover_timer.start(3000)
+            self.hover_pos = pos
+
+    def stop_hover_timer(self):
+        self.hover_timer.stop()
+        self.display_hover_annotation()
+
+    def display_hover_annotation(self):
+        if self.working_area and self.hover_active:
+            # Adjust points relative to the working area's top-left corner
+            working_area_top_left = self.working_area.rect().topLeft()
+            adjusted_pos = QPointF(self.hover_pos.x() - working_area_top_left.x(),
+                                   self.hover_pos.y() - working_area_top_left.y())
+
+            # Add the adjusted point to the list
+            self.hover_point = adjusted_pos
+            # Toggle the cursor annotation
+            self.annotation_window.toggle_cursor_annotation(adjusted_pos)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.annotation_window.cursorInWindow(event.pos()):
+            self.start_hover_timer(event.pos())
+        else:
+            self.stop_hover_timer()
 
     def mousePressEvent(self, event: QMouseEvent):
         if not self.annotation_window.selected_label:
@@ -105,11 +137,11 @@ class SAMTool(Tool):
                 self.sam_dialog.set_image(self.image)
             else:
                 self.cancel_working_area()
-                self.cancel_annotation()
 
         if event.key() == Qt.Key_Space and len(self.positive_points):
             self.annotation_window.add_annotation()
-            self.cancel_annotation()
+
+        self.cancel_annotation()
 
     def set_working_area(self):
         self.annotation_window.setCursor(Qt.WaitCursor)
@@ -162,17 +194,12 @@ class SAMTool(Tool):
         if not self.annotation_window.active_image or not self.annotation_window.image_pixmap:
             return None
 
-        import matplotlib.pyplot as plt
+        positive = [[point.x(), point.y()] for point in self.positive_points]
+        negative = [[point.x(), point.y()] for point in self.negative_points]
 
-        # Adjust points relative to the working area's top-left corner
-        working_area_top_left = self.working_area.rect().topLeft()
-        if self.hover_points:
-            positive = [[point.x() - working_area_top_left.x(), point.y() - working_area_top_left.y()] for point in self.hover_points]
-            negative = []
-            self.cancel_hover_annotations()
-        else:
-            positive = [[point.x(), point.y()] for point in self.positive_points]
-            negative = [[point.x(), point.y()] for point in self.negative_points]
+        if self.hover_point:
+            positive.append([self.hover_point.x(), self.hover_point.y()])
+            self.cancel_hover_annotation()
         
         # Create the labels and points as numpy arrays
         labels = np.array([1] * len(positive) + [0] * len(negative))
@@ -187,20 +214,12 @@ class SAMTool(Tool):
         if results.boxes.conf[0] < self.sam_dialog.conf:
             return None
 
-        # plt.imshow(self.image)
-        # plt.scatter(points.T[0], points.T[1])
-        # plt.show()
-        #
-        # for mask in results.masks:
-        #     plt.figure()
-        #     points = mask.xy[0]
-        #     plt.imshow(self.image)
-        #     plt.plot(points.T[0], points.T[1], c='red')
-        #     plt.show()
-
-        # Move the points back to the original image space
+        # Get the points of the top1 mask
         top1_index = np.argmax(results.boxes.conf)
         points = results[top1_index].masks.xy[0]
+
+        # Move the points back to the original image space
+        working_area_top_left = self.working_area.rect().topLeft()
         points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in points]
         self.points = [QPointF(*point) for point in points]
 
@@ -218,11 +237,15 @@ class SAMTool(Tool):
         annotation.create_graphics_item(self.annotation_window.scene)
         self.annotation_window.scene.addItem(annotation.graphics_item)
 
+        # Remove the previous annotation graphics
         if self.annotation_graphics:
             self.annotation_window.scene.removeItem(self.annotation_graphics)
         self.annotation_graphics = annotation.graphics_item
 
         return annotation
+
+    def cancel_hover_annotation(self):
+        self.hover_point = None
 
     def cancel_annotation(self):
         for point in self.point_graphics:
@@ -236,31 +259,10 @@ class SAMTool(Tool):
         self.positive_points = []
         self.negative_points = []
         self.point_graphics = []
-
+        self.cancel_hover_annotation()
+    
     def cancel_working_area(self):
         if self.working_area:
             self.annotation_window.scene.removeItem(self.working_area)
             self.working_area = None
             self.image = None
-    
-    def cancel_hover_annotations(self):
-        for point in self.hover_points:
-            self.annotation_window.toggle_cursor_annotation(point)
-        self.hover_points = []
-
-    def start_hover_timer(self, pos):
-        self.hover_timer.start(2000)
-        self.hover_pos = pos
-
-    def stop_hover_timer(self):
-        self.hover_timer.stop()
-
-    def hover_timeout(self):
-        self.hover_points.append(self.hover_pos)
-        self.annotation_window.toggle_cursor_annotation(self.hover_pos)
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if self.annotation_window.cursorInWindow(event.pos()):
-            self.start_hover_timer(event.pos())
-        else:
-            self.stop_hover_timer()

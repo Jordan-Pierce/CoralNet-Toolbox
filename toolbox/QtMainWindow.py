@@ -98,9 +98,9 @@ class MainWindow(QMainWindow):
         self.label_window.transparencyChanged.connect(self.update_label_transparency)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
-        # Connect the hover_points signal from AnnotationWindow to the start_hover_timer and stop_hover_timer methods in SAMTool
-        self.annotation_window.hover_points.connect(self.annotation_window.tools["sam"].start_hover_timer)
-        self.annotation_window.hover_points.connect(self.annotation_window.tools["sam"].stop_hover_timer)
+        # Connect the hover_point signal from AnnotationWindow to the methods in SAMTool
+        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].start_hover_timer)
+        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].stop_hover_timer)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)

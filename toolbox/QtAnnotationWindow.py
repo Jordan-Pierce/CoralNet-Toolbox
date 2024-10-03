@@ -30,7 +30,7 @@ class AnnotationWindow(QGraphicsView):
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     transparencyChanged = pyqtSignal(int)  # Signal to emit when transparency changes
-    hover_points = pyqtSignal(QPointF)  # Pf3f2
+    hover_point = pyqtSignal(QPointF)  # Pf3f2
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -88,16 +88,18 @@ class AnnotationWindow(QGraphicsView):
             self.tools["pan"].mousePressEvent(event)
         if self.selected_tool:
             self.tools[self.selected_tool].mousePressEvent(event)
+
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.active_image:
             self.tools["pan"].mouseMoveEvent(event)
         if self.selected_tool:
-            self.tools[self.selected_tool].mouseMoveEvent(event)
+             self.tools[self.selected_tool].mouseMoveEvent(event)
+
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
-        self.hover_points.emit(scene_pos)  # P7b50
+        self.hover_point.emit(scene_pos)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):

@@ -2,7 +2,6 @@ import os
 import gc
 import warnings
 
-import cv2
 import torch
 import numpy as np
 
@@ -65,7 +64,7 @@ class SAMDeployModelDialog(QDialog):
 
         # Add resize image checkbox
         self.resize_image_checkbox = QCheckBox("Resize Image")
-        self.resize_image_checkbox.setChecked(False)
+        self.resize_image_checkbox.setChecked(True)
         self.form_layout.addRow("Resize Image:", self.resize_image_checkbox)
 
         # Set the threshold slider for uncertainty
