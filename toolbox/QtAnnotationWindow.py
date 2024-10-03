@@ -196,8 +196,11 @@ class AnnotationWindow(QGraphicsView):
             return
 
         if scene_pos:
-            self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
-            self.cursor_annotation.create_graphics_item(self.scene)
+            try:
+                self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
+                self.cursor_annotation.create_graphics_item(self.scene)
+            except Exception as e:
+                pass
 
     def display_image_item(self, image_item):
         # Clean up

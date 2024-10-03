@@ -96,6 +96,8 @@ class MainWindow(QMainWindow):
         self.annotation_window.transparencyChanged.connect(self.update_annotation_transparency)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
         self.label_window.transparencyChanged.connect(self.update_label_transparency)
+        # Connect the imageChanged signal from ImageWindow to cancel SAM working area
+        self.image_window.imageChanged.connect(self.handle_image_changed)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -487,6 +489,10 @@ class MainWindow(QMainWindow):
 
             self.device_tool_action.setIcon(device_icon)
             self.device_tool_action.setToolTip(device_tooltip)
+
+    def handle_image_changed(self):
+        if self.annotation_window.selected_tool == 'sam':
+            self.annotation_window.tools['sam'].cancel_working_area()
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {height} x {width}")

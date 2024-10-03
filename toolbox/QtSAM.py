@@ -2,11 +2,15 @@ import os
 import gc
 import warnings
 
-import numpy as np
+import cv2
 import torch
+import numpy as np
+
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget)
+                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
 from PyQt5.QtCore import Qt
+
+from toolbox.QtProgressBar import ProgressBar
 
 from mobile_sam import sam_model_registry as mobile_sam_model_registry
 from mobile_sam import SamPredictor as MobileSamPredictor
@@ -41,7 +45,8 @@ class SAMDeployModelDialog(QDialog):
         self.loaded_model = None
         self.predictor = None
 
-        self.image = None
+        self.original_image = None
+        self.resized_image = None
 
         # Main layout
         self.main_layout = QVBoxLayout(self)
@@ -57,6 +62,11 @@ class SAMDeployModelDialog(QDialog):
         self.imgsz_spinbox.setRange(512, 2048)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
+
+        # Add resize image checkbox
+        self.resize_image_checkbox = QCheckBox("Resize Image")
+        self.resize_image_checkbox.setChecked(False)
+        self.form_layout.addRow("Resize Image:", self.resize_image_checkbox)
 
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -134,10 +144,12 @@ class SAMDeployModelDialog(QDialog):
         return tab
 
     def load_model(self):
+        # Make the cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Show a progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
+        progress_bar.show()
         try:
-            # Make the cursor busy
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-
             self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
 
             # Download the weights if they are not present
@@ -163,45 +175,92 @@ class SAMDeployModelDialog(QDialog):
             self.predictor.model.to(device=self.main_window.device)
             self.predictor.model.eval()
 
-            QApplication.restoreOverrideCursor()
             self.status_bar.setText(f"Model loaded")
             QMessageBox.information(self, "Model Loaded", f"Model loaded successfully")
 
-            # Exit the dialog box
-            self.accept()
-
         except Exception as e:
-            QApplication.restoreOverrideCursor()
             QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
 
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
+        # Reset the cursor
+        QApplication.restoreOverrideCursor()
+        # Exit the dialog box
+        self.accept()
+
+    def resize_image(self, image):
+        # Get the current image size
+        imgsz = self.imgsz_spinbox.value()
+        # Determine the target shape based on the long side
+        h, w = image.shape[:2]
+        if h > w:
+            target_shape = (imgsz, int(w * (imgsz / h)))
+        else:
+            target_shape = (int(h * (imgsz / w)), imgsz)
+
+        # Use scale_image to resize and pad the image
+        resized_image = ops.scale_image(image, target_shape)
+        return resized_image
+
     def set_image(self, image):
+        # Make the cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Show a progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Setting Image")
+        progress_bar.show()
+
         if self.predictor is not None:
             # Reset the image in the predictor
             self.predictor.reset_image()
+            self.original_image = image
+            # Resize the image if the checkbox is checked
+            if self.resize_image_checkbox.isChecked():
+                image = self.resize_image(image)
             # Set the image in the predictor
             self.predictor.set_image(image)
-            self.image = image
+            self.resized_image = image
         else:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
+
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
+        # Reset the cursor
+        QApplication.restoreOverrideCursor()
 
     def predict(self, points, labels):
         if not self.predictor:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
             return None
         try:
-            # Provide prompt to SAM model in form of numpy array
             input_labels = torch.tensor(labels)
+            point_labels = input_labels.to(self.main_window.device).unsqueeze(0)
+            # Provide prompt to SAM model in form of numpy array
             input_points = torch.as_tensor(points.astype(int), dtype=torch.int64)
-            input_labels = input_labels.to(self.main_window.device).unsqueeze(0)
             input_points = input_points.to(self.main_window.device).unsqueeze(0)
-            transformed_points = self.predictor.transform.apply_coords_torch(input_points, self.image.shape[:2])
 
-            mask, score, logit = self.predictor.predict_torch(point_coords=transformed_points,
-                                                              point_labels=input_labels,
+            # Calculate scaling factors
+            original_height, original_width = self.original_image.shape[:2]
+            resized_height, resized_width = self.resized_image.shape[:2]
+            scale_x = resized_width / original_width
+            scale_y = resized_height / original_height
+
+            # Scale the points based on the original image dimensions
+            scaled_points = input_points.clone().float()  # Cast to float32
+            scaled_points[:, :, 0] *= scale_x
+            scaled_points[:, :, 1] *= scale_y
+            scaled_points = scaled_points.long()  # Cast back to int64
+
+            # Apply the scaled points to the predictor
+            point_coords = self.predictor.transform.apply_coords_torch(scaled_points, self.resized_image.shape[:2])
+
+            mask, score, logit = self.predictor.predict_torch(point_coords=point_coords,
+                                                              point_labels=point_labels,
                                                               multimask_output=False)
 
             # Post-process the results
-            results = self.custom_postprocess(mask, score, logit, self.image)[0]
+            results = self.custom_postprocess(mask, score, logit, self.resized_image, self.original_image)[0]
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
@@ -210,7 +269,7 @@ class SAMDeployModelDialog(QDialog):
         return results
 
     @staticmethod
-    def custom_postprocess(mask, score, logit, original_image):
+    def custom_postprocess(mask, score, logit, resized_image, original_image):
         """
         Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
 
@@ -218,6 +277,7 @@ class SAMDeployModelDialog(QDialog):
             mask (torch.Tensor): Predicted masks with shape (1, 1, H, W).
             score (torch.Tensor): Confidence scores for each mask with shape (1, 1).
             logit (torch.Tensor): Logits for each mask with shape (1, 1, H, W).
+            resized_image (np.ndarray): The resized image used for inference.
             original_image (np.ndarray): The original, unprocessed image.
 
         Returns:
@@ -239,11 +299,11 @@ class SAMDeployModelDialog(QDialog):
         pred_bboxes = batched_mask_to_box(scaled_masks)
 
         # Ensure score and cls have the correct shape
-        score = score.squeeze(1)  # Remove the extra dimension
-        cls = torch.arange(len(mask), dtype=torch.int32, device=mask.device)
+        score_ = score.squeeze(1)  # Remove the extra dimension
+        cls_ = torch.arange(len(mask), dtype=torch.int32, device=mask.device)
 
         # Combine bounding boxes, scores, and class labels
-        pred_bboxes = torch.cat([pred_bboxes, score[:, None], cls[:, None]], dim=-1)
+        pred_bboxes = torch.cat([pred_bboxes, score_[:, None], cls_[:, None]], dim=-1)
 
         # Create names dictionary (placeholder for consistency)
         names = dict(enumerate(str(i) for i in range(len(mask))))

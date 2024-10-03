@@ -53,6 +53,7 @@ class LoadFullResolutionImageWorker(QThread):
 
 class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)
+    imageChanged = pyqtSignal()  # New signal for image change
     MAX_CONCURRENT_THREADS = 8  # Maximum number of concurrent threads
     THROTTLE_INTERVAL = 50  # Minimum time (in milliseconds) between image selection
 
@@ -239,6 +240,7 @@ class ImageWindow(QWidget):
 
         # Start processing the queue if we're under the thread limit
         self._process_image_queue()
+        self.imageChanged.emit()  # Emit the signal when a new image is chosen
 
     def _process_image_queue(self):
         if self.image_load_queue.empty():
