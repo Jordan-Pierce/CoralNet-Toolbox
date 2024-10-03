@@ -30,7 +30,6 @@ class SAMTool(Tool):
         self.annotation_graphics = None
 
         self.image = None
-        self.bbox = []
         self.positive_points = []
         self.negative_points = []
 
@@ -40,10 +39,9 @@ class SAMTool(Tool):
         self.original_width = None
         self.original_height = None
 
-        self.complete = False
-
         self.hover_pos = None
         self.hover_point = None
+        self.hover_graphics = None
         self.hover_timer = QTimer()
         self.hover_timer.setSingleShot(True)
         self.hover_timer.timeout.connect(self.display_hover_annotation)
@@ -74,7 +72,7 @@ class SAMTool(Tool):
         self.display_hover_annotation()
 
     def display_hover_annotation(self):
-        if self.working_area and self.hover_active:
+        if self.working_area and self.hover_active and self.annotation_window.cursorInWindow(self.hover_pos, mapped=True):
             # Adjust points relative to the working area's top-left corner
             working_area_top_left = self.working_area.rect().topLeft()
             adjusted_pos = QPointF(self.hover_pos.x() - working_area_top_left.x(),
@@ -89,6 +87,7 @@ class SAMTool(Tool):
         if self.annotation_window.cursorInWindow(event.pos()):
             self.start_hover_timer(event.pos())
         else:
+            self.cancel_hover_annotation()
             self.stop_hover_timer()
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -135,13 +134,14 @@ class SAMTool(Tool):
             if not self.working_area:
                 self.set_working_area()
                 self.sam_dialog.set_image(self.image)
+                self.cancel_annotation()
             else:
+                self.cancel_annotation()
                 self.cancel_working_area()
 
         if event.key() == Qt.Key_Space and len(self.positive_points):
             self.annotation_window.add_annotation()
-
-        self.cancel_annotation()
+            self.cancel_annotation()
 
     def set_working_area(self):
         self.annotation_window.setCursor(Qt.WaitCursor)
@@ -199,7 +199,6 @@ class SAMTool(Tool):
 
         if self.hover_point:
             positive.append([self.hover_point.x(), self.hover_point.y()])
-            self.cancel_hover_annotation()
         
         # Create the labels and points as numpy arrays
         labels = np.array([1] * len(positive) + [0] * len(negative))
@@ -237,15 +236,24 @@ class SAMTool(Tool):
         annotation.create_graphics_item(self.annotation_window.scene)
         self.annotation_window.scene.addItem(annotation.graphics_item)
 
-        # Remove the previous annotation graphics
-        if self.annotation_graphics:
-            self.annotation_window.scene.removeItem(self.annotation_graphics)
-        self.annotation_graphics = annotation.graphics_item
+        # Handle hover graphics separately
+        if self.hover_point:
+            self.cancel_hover_annotation()
+            self.hover_graphics = annotation.graphics_item
+        else:
+            # Remove the previous annotation graphics
+            if self.annotation_graphics:
+                self.annotation_window.scene.removeItem(self.annotation_graphics)
+            self.annotation_graphics = annotation.graphics_item
 
         return annotation
 
     def cancel_hover_annotation(self):
+        if self.hover_graphics:
+            self.annotation_window.scene.removeItem(self.hover_graphics)
+
         self.hover_point = None
+        self.hover_graphics = None
 
     def cancel_annotation(self):
         for point in self.point_graphics:
@@ -254,11 +262,14 @@ class SAMTool(Tool):
         if self.annotation_graphics:
             self.annotation_window.scene.removeItem(self.annotation_graphics)
 
-        self.bbox = []
+        if self.hover_graphics:
+            self.annotation_window.scene.removeItem(self.hover_graphics)
+
         self.points = []
         self.positive_points = []
         self.negative_points = []
         self.point_graphics = []
+
         self.cancel_hover_annotation()
     
     def cancel_working_area(self):

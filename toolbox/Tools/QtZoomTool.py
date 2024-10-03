@@ -19,8 +19,6 @@ class ZoomTool(Tool):
         self.cursor = Qt.ArrowCursor
 
     def wheelEvent(self, event: QMouseEvent):
-        self.annotation_window.tools["sam"].stop_hover_timer()  # Stop hover timer
-
         if event.angleDelta().y() > 0:
             factor = 1.1
         else:
@@ -35,5 +33,3 @@ class ZoomTool(Tool):
         else:
             # Use the default cursor
             self.annotation_window.setCursor(Qt.ArrowCursor)
-
-        self.annotation_window.tools["sam"].start_hover_timer(event.pos())  # Restart hover timer
