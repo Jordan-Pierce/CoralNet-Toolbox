@@ -32,13 +32,14 @@ Enhance your CoralNet experience with these tools:
 - 📤 Upload: Add images and annotations to CoralNet
 - ✏️ Annotate: Create patches manually or from annotations  
 - 👁️ Visualize: See points / patches on images  
-- 🧩 Patches: Extract from annotated images  
-- 📍  Points: Sample using various methods (Uniform, Random, Stratified  
-- 🟣 Polygons: Create polygons using freehand or automatic methods
+- 🧩 Patches: Create patches (points)  
+- 📍  Sample: Sample patches using various methods (Uniform, Random, Stratified)  
+- 🔳 Rectangles: Create rectangles (bounding boxes)
+- 🟣 Polygons: Create polygons (instance masks) using freehand or automatic methods
 - 🦾 SAM: Use [`SAM`](https://github.com/facebookresearch/segment-anything) or [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM) to create polygons
-- 🧠 Classification: Build local patch-based classifiers  
-- 🔮 Inference: Use trained models for predictions
-- 📊 Metrics: Evaluate model performance
+- 🧠 Train: Build local patch-based classifiers  
+- 🔮 Deploy: Use trained models for predictions
+- 📊 Evaluation: Evaluate model performance
 - 🚀 Optimize: Productionize models for faster inferencing
 - 📦 Toolshed: Access tools from the old repository
 
