@@ -45,7 +45,7 @@ Enhance your CoralNet experience with these tools:
 <details open>
   <summary><h2><b>Watch the Video</b></h2></summary>
   <p align="center">
-    <a href="https://youtu.be/yzGeujzkvas">
+    <a href="https://youtu.be/Zzc0lL1adNE">
       <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="50%">
     </a>
   </p>

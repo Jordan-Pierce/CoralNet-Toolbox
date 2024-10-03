@@ -72,16 +72,17 @@ class SAMTool(Tool):
         self.display_hover_annotation()
 
     def display_hover_annotation(self):
-        if self.working_area and self.hover_active and self.annotation_window.cursorInWindow(self.hover_pos, mapped=True):
-            # Adjust points relative to the working area's top-left corner
-            working_area_top_left = self.working_area.rect().topLeft()
-            adjusted_pos = QPointF(self.hover_pos.x() - working_area_top_left.x(),
-                                   self.hover_pos.y() - working_area_top_left.y())
+        if self.working_area and self.hover_active:
+            if self.annotation_window.cursorInWindow(self.hover_pos, mapped=True):
+                # Adjust points relative to the working area's top-left corner
+                working_area_top_left = self.working_area.rect().topLeft()
+                adjusted_pos = QPointF(self.hover_pos.x() - working_area_top_left.x(),
+                                       self.hover_pos.y() - working_area_top_left.y())
 
-            # Add the adjusted point to the list
-            self.hover_point = adjusted_pos
-            # Toggle the cursor annotation
-            self.annotation_window.toggle_cursor_annotation(adjusted_pos)
+                # Add the adjusted point to the list
+                self.hover_point = adjusted_pos
+                # Toggle the cursor annotation
+                self.annotation_window.toggle_cursor_annotation(adjusted_pos)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.annotation_window.cursorInWindow(event.pos()):
