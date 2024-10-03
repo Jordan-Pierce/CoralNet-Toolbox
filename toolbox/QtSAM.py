@@ -295,14 +295,14 @@ class SAMDeployModelDialog(QDialog):
         scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
 
         # Generate bounding boxes from masks using batched_mask_to_box
-        pred_bboxes = batched_mask_to_box(scaled_masks)
+        pred_bboxes = batched_mask_to_box(scaled_masks).cpu()
 
         # Ensure score and cls have the correct shape
-        score_ = score.squeeze(1)  # Remove the extra dimension
-        cls_ = torch.arange(len(mask), dtype=torch.int32, device=mask.device)
+        score_ = score.squeeze(1).cpu()  # Remove the extra dimension
+        cls_ = torch.arange(len(mask), dtype=torch.int32).cpu()
 
         # Combine bounding boxes, scores, and class labels
-        pred_bboxes = torch.cat([pred_bboxes, score_[:, None], cls_[:, None]], dim=-1)
+        pred_bboxes = torch.cat([pred_bboxes, score_[:, None], cls_[:, None]], dim=-1).cpu()
 
         # Create names dictionary (placeholder for consistency)
         names = dict(enumerate(str(i) for i in range(len(mask))))
@@ -316,7 +316,8 @@ class SAMDeployModelDialog(QDialog):
         self.loaded_model = None
         self.predictor = None
         self.model_path = None
-        self.image = None
+        self.original_image = None
+        self.resized_image = None
         gc.collect()
         torch.cuda.empty_cache()
         self.main_window.untoggle_all_tools()

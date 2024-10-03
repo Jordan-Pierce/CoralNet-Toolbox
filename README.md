@@ -43,9 +43,9 @@ Enhance your CoralNet experience with these tools:
 - 📦 Toolshed: Access tools from the old repository
 
 <details open>
-  <summary><h2><b>Watch the Video</b></h2></summary>
+  <summary><h2><b>Watch the Video Demos</b></h2></summary>
   <p align="center">
-    <a href="https://youtu.be/Zzc0lL1adNE">
+    <a href="https://youtube.com/playlist?list=PLG5z9IbwhS5NQT3B2jrg3hxQgilDeZak9&feature=shared">
       <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="50%">
     </a>
   </p>
