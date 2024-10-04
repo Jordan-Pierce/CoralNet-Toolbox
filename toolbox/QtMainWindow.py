@@ -11,7 +11,7 @@ from toolbox.QtConfidenceWindow import ConfidenceWindow
 from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
-from toolbox.QtPatchSamplingDialog import PatchSamplingDialog
+from toolbox.QtPatchSampling import PatchSamplingDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
 from toolbox.QtMachineLearning import CreateDatasetDialog
 from toolbox.QtMachineLearning import DeployModelDialog
@@ -235,6 +235,7 @@ class MainWindow(QMainWindow):
         # Define icon paths
         self.select_icon_path = get_icon_path("select.png")
         self.patch_icon_path = get_icon_path("patch.png")
+        self.rectangle_icon_path = get_icon_path("rectangle.png")
         self.polygon_icon_path = get_icon_path("polygon.png")
         self.sam_icon_path = get_icon_path("sam.png")
         self.turtle_icon_path = get_icon_path("turtle.png")
@@ -252,6 +253,11 @@ class MainWindow(QMainWindow):
         self.patch_tool_action.setCheckable(True)
         self.patch_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.patch_tool_action)
+
+        self.rectangle_tool_action = QAction(QIcon(self.rectangle_icon_path), "Rectangle", self)
+        self.rectangle_tool_action.setCheckable(True)
+        self.rectangle_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.rectangle_tool_action)
 
         self.polygon_tool_action = QAction(QIcon(self.polygon_icon_path), "Polygon", self)
         self.polygon_tool_action.setCheckable(True)
@@ -389,6 +395,7 @@ class MainWindow(QMainWindow):
         if action == self.select_tool_action:
             if state:
                 self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
@@ -397,15 +404,26 @@ class MainWindow(QMainWindow):
         elif action == self.patch_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("patch")
+            else:
+                self.toolChanged.emit(None)
+        elif action == self.rectangle_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
         elif action == self.polygon_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("polygon")
             else:
@@ -418,6 +436,7 @@ class MainWindow(QMainWindow):
             if state:
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.toolChanged.emit("sam")
             else:
@@ -426,6 +445,7 @@ class MainWindow(QMainWindow):
     def untoggle_all_tools(self):
         self.select_tool_action.setChecked(False)
         self.patch_tool_action.setChecked(False)
+        self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
         self.toolChanged.emit(None)
@@ -434,26 +454,37 @@ class MainWindow(QMainWindow):
         if tool == "select":
             self.select_tool_action.setChecked(True)
             self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+        elif tool == "rectangle":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
 

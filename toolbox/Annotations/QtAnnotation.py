@@ -1,9 +1,11 @@
 import uuid
 import warnings
 
+import numpy as np
+
 from PyQt5.QtCore import pyqtSignal, QObject
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QMessageBox)
+from PyQt5.QtGui import QColor, QImage
+from PyQt5.QtWidgets import QMessageBox
 
 from toolbox.QtLabelWindow import Label
 
@@ -95,6 +97,44 @@ class Annotation(QObject):
     def update_transparency(self, transparency: int):
         self.transparency = transparency
         self.update_graphics_item()
+
+    def _prepare_data_for_qimage(self, data):
+        if data.shape[0] == 3:  # RGB image
+            data = np.transpose(data, (1, 2, 0))
+        elif data.shape[0] == 1:  # Grayscale image
+            data = np.squeeze(data)
+        elif data.shape[0] == 4:  # RGBA image
+            data = np.transpose(data, (1, 2, 0))
+
+        # Normalize data to 0-255 range if it's not already
+        if data.dtype != np.uint8:
+            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
+
+        return data
+
+    def _convert_to_qimage(self, data):
+        height, width = data.shape[:2]
+        if len(data.shape) == 3:
+            if data.shape[2] == 3:  # RGB image
+                bytes_per_line = 3 * width
+                image_format = QImage.Format_RGB888
+            elif data.shape[2] == 4:  # RGBA image
+                bytes_per_line = 4 * width
+                image_format = QImage.Format_RGBA8888
+        else:  # Grayscale image
+            bytes_per_line = width
+            image_format = QImage.Format_Grayscale8
+
+        # Convert numpy array to bytes
+        if len(data.shape) == 3:
+            if data.shape[2] == 3:  # RGB image
+                data = data.tobytes()
+            elif data.shape[2] == 4:  # RGBA image
+                data = data.tobytes()
+        else:  # Grayscale image
+            data = np.expand_dims(data, -1).tobytes()
+
+        return QImage(data, width, height, bytes_per_line, image_format)
 
     def to_dict(self):
         return {

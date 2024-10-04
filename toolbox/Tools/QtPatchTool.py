@@ -5,7 +5,7 @@ from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QMessageBox
 
 from toolbox.Tools.QtTool import Tool
-from toolbox.QtPatchAnnotation import PatchAnnotation
+from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

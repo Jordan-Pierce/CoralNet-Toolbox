@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QCheck
                              QHBoxLayout, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem,
                              QFormLayout, QButtonGroup)
 
-from toolbox.QtPatchAnnotation import PatchAnnotation
+from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)

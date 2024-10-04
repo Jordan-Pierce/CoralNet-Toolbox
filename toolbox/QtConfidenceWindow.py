@@ -1,11 +1,12 @@
 import warnings
 
-from PyQt5.QtCore import Qt, pyqtSignal, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor, QPen, QPolygonF, QBrush
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFrame,
                              QGraphicsPolygonItem)
 
-from toolbox.QtPolygonAnnotation import PolygonAnnotation
+from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -134,12 +135,39 @@ class ConfidenceWindow(QWidget):
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 self.create_bar_chart()
 
-                if isinstance(self.annotation, PolygonAnnotation):
+                if isinstance(self.annotation, RectangleAnnotation):
+                    # Display the annotation points on the cropped image
+                    self.display_annotation_points()
+                elif isinstance(self.annotation, PolygonAnnotation):
                     # Display the annotation points on the cropped image
                     self.display_annotation_points()
         except:
             # Cropped image is None or some other error occurred
             pass
+
+    def display_annotation_points(self):
+        # Transform the points to the cropped image's coordinate system
+        transformed_points = self.annotation.transform_points_to_cropped_image()
+
+        if isinstance(self.annotation, RectangleAnnotation):
+            polygon = QPolygonF([transformed_points[0], QPointF(transformed_points[1].x(), transformed_points[0].y()),
+                                 transformed_points[1], QPointF(transformed_points[0].x(), transformed_points[1].y())])
+
+        elif isinstance(self.annotation, PolygonAnnotation):
+            polygon = QPolygonF(transformed_points)
+
+        else:
+            return
+
+        # Create a QGraphicsPolygonItem with the desired transparency
+        polygon_item = QGraphicsPolygonItem(polygon)
+        color = self.annotation.label.color
+        brush = QBrush(QColor(color.red(), color.green(), color.blue(), 64))  # Semi-transparent color
+        polygon_item.setBrush(brush)
+        polygon_item.setPen(QPen(Qt.NoPen))  # No border
+
+        # Add the polygon item to the scene
+        self.scene.addItem(polygon_item)
 
     def create_bar_chart(self):
         self.clear_layout(self.bar_chart_layout)
@@ -173,21 +201,6 @@ class ConfidenceWindow(QWidget):
         bar_layout.addWidget(percentage_label)
 
         self.bar_chart_layout.addWidget(bar_widget)
-
-    def display_annotation_points(self):
-        # Transform the points to the cropped image's coordinate system
-        transformed_points = self.annotation.transform_points_to_cropped_image()
-        polygon = QPolygonF(transformed_points)
-
-        # Create a QGraphicsPolygonItem with the desired transparency
-        polygon_item = QGraphicsPolygonItem(polygon)
-        color = self.annotation.label.color
-        brush = QBrush(QColor(color.red(), color.green(), color.blue(), 64))  # Semi-transparent color
-        polygon_item.setBrush(brush)
-        polygon_item.setPen(QPen(Qt.NoPen))  # No border
-
-        # Add the polygon item to the scene
-        self.scene.addItem(polygon_item)
 
     def clear_layout(self, layout):
         for i in reversed(range(layout.count())):

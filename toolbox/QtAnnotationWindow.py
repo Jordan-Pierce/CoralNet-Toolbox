@@ -5,10 +5,13 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPixmap
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
-from toolbox.QtPatchAnnotation import PatchAnnotation
-from toolbox.QtPolygonAnnotation import PolygonAnnotation
+from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+
 from toolbox.Tools.QtPanTool import PanTool
 from toolbox.Tools.QtPatchTool import PatchTool
+from toolbox.Tools.QtRectangleTool import RectangleTool
 from toolbox.Tools.QtPolygonTool import PolygonTool
 from toolbox.Tools.QtSAMTool import SAMTool
 from toolbox.Tools.QtSelectTool import SelectTool
@@ -73,6 +76,7 @@ class AnnotationWindow(QGraphicsView):
             "zoom": ZoomTool(self),
             "select": SelectTool(self),
             "patch": PatchTool(self),
+            "rectangle": RectangleTool(self),
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
         }
@@ -152,6 +156,11 @@ class AnnotationWindow(QGraphicsView):
             if self.cursor_annotation.label.id != label.id:
                 self.toggle_cursor_annotation()
 
+    def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
+        if annotation_id in self.annotations_dict:
+            annotation = self.annotations_dict[annotation_id]
+            annotation.update_location(new_center_xy)
+
     def set_annotation_size(self, size=None, delta=0):
         if size is not None:
             self.annotation_size = size
@@ -168,6 +177,11 @@ class AnnotationWindow(QGraphicsView):
             self.selected_annotation.update_annotation_size(scale_factor)
             if self.cursor_annotation:
                 self.cursor_annotation.update_annotation_size(scale_factor)
+        elif isinstance(self.selected_annotation, RectangleAnnotation):
+            scale_factor = 1 + delta / 100.0
+            self.selected_annotation.update_annotation_size(scale_factor)
+            if self.cursor_annotation:
+                self.cursor_annotation.update_annotation_size(scale_factor)
 
         if self.selected_annotation:
             self.selected_annotation.create_cropped_image(self.rasterio_image)
@@ -175,11 +189,6 @@ class AnnotationWindow(QGraphicsView):
 
         # Emit that the annotation size has changed
         self.annotationSizeChanged.emit(self.annotation_size)
-
-    def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
-        if annotation_id in self.annotations_dict:
-            annotation = self.annotations_dict[annotation_id]
-            annotation.update_location(new_center_xy)
 
     def set_annotation_transparency(self, transparency):
         if self.selected_annotation:
