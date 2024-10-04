@@ -26,12 +26,15 @@ class PolygonAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.points = points
+        self.points = self._reduce_precision(points)
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
 
         self.calculate_centroid()
         self.set_cropped_bbox()
+
+    def _reduce_precision(self, points: list) -> list:
+        return [QPointF(round(point.x(), 2), round(point.y(), 2)) for point in points]
 
     def contains_point(self, point: QPointF) -> bool:
         polygon = QPolygonF(self.points)
