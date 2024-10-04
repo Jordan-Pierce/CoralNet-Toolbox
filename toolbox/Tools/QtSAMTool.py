@@ -198,9 +198,12 @@ class SAMTool(Tool):
         positive = [[point.x(), point.y()] for point in self.positive_points]
         negative = [[point.x(), point.y()] for point in self.negative_points]
 
+        transparency = self.annotation_window.main_window.label_window.active_label.transparency
+
         if self.hover_point:
             positive.append([self.hover_point.x(), self.hover_point.y()])
-        
+            transparency //= 4
+
         # Create the labels and points as numpy arrays
         labels = np.array([1] * len(positive) + [0] * len(negative))
         points = np.array(positive + negative)
@@ -230,7 +233,7 @@ class SAMTool(Tool):
                                        self.annotation_window.selected_label.color,
                                        self.annotation_window.current_image_path,
                                        self.annotation_window.selected_label.id,
-                                       self.annotation_window.main_window.label_window.active_label.transparency,
+                                       transparency,
                                        show_msg=False)
 
         # Ensure the PolygonAnnotation is added to the scene after creation

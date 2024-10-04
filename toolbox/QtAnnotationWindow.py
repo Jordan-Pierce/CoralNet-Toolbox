@@ -17,6 +17,8 @@ from toolbox.Tools.QtSAMTool import SAMTool
 from toolbox.Tools.QtSelectTool import SelectTool
 from toolbox.Tools.QtZoomTool import ZoomTool
 
+from toolbox.QtProgressBar import ProgressBar
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -107,7 +109,11 @@ class AnnotationWindow(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        self.tools["pan"].mouseReleaseEvent(event)
+        if self.active_image:
+            self.tools["pan"].mouseReleaseEvent(event)
+        if self.selected_tool:
+            self.tools[self.selected_tool].mouseReleaseEvent(event)
+
         self.toggle_cursor_annotation()
         self.drag_start_pos = None
         super().mouseReleaseEvent(event)
@@ -330,18 +336,47 @@ class AnnotationWindow(QGraphicsView):
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_image_annotations(return_annotations=True)
 
+        # Initialize the progress bar
+        progress_bar = ProgressBar(self, title="Loading Annotations")
+        progress_bar.start_progress(len(annotations))
+        progress_bar.show()
+
         # Connect update signals for all the annotations
         for annotation in annotations:
+            if progress_bar.wasCanceled():
+                break
             self.load_annotation(annotation)
+            progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def load_annotations_parallel(self):
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_image_annotations(return_annotations=True)
 
+        # Initialize the progress bar
+        progress_bar = ProgressBar(self, title="Loading Annotations (Parallel)")
+        progress_bar.start_progress(len(annotations))
+        progress_bar.show()
+
         # Use ThreadPoolExecutor to process annotations in parallel
         with ThreadPoolExecutor() as executor:
+            futures = []
             for annotation in annotations:
-                executor.submit(self.load_annotation, annotation)
+                if progress_bar.wasCanceled():
+                    break
+                future = executor.submit(self.load_annotation, annotation)
+                futures.append(future)
+
+            for future in futures:
+                future.result()
+                progress_bar.update_progress()
+                if progress_bar.wasCanceled():
+                    break
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def get_image_annotations(self, image_path=None):
         if not image_path:

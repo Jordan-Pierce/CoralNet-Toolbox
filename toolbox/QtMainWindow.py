@@ -115,47 +115,88 @@ class MainWindow(QMainWindow):
         # Import menu
         self.import_menu = self.menu_bar.addMenu("Import")
 
-        self.import_images_action = QAction("Import Images", self)
+        # Media submenu
+        self.import_media_menu = self.import_menu.addMenu("Media")
+
+        self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.io_dialog.import_images)
-        self.import_menu.addAction(self.import_images_action)
-        self.import_menu.addSeparator()
+        self.import_media_menu.addAction(self.import_images_action)
 
-        self.import_labels_action = QAction("Import Labels (JSON)", self)
+        self.import_frames_action = QAction("Frames", self)
+        self.import_frames_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "Frames import is not yet implemented."))
+        self.import_media_menu.addAction(self.import_frames_action)
+
+        # Labels submenu
+        self.import_labels_menu = self.import_menu.addMenu("Labels")
+
+        self.import_labels_action = QAction("Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.io_dialog.import_labels)
-        self.import_menu.addAction(self.import_labels_action)
-        self.import_menu.addSeparator()
+        self.import_labels_menu.addAction(self.import_labels_action)
 
-        self.import_annotations_action = QAction("Import Annotations (JSON)", self)
+        # Annotations submenu
+        self.import_annotations_menu = self.import_menu.addMenu("Annotations")
+
+        self.import_annotations_action = QAction("Annotations (JSON)", self)
         self.import_annotations_action.triggered.connect(self.io_dialog.import_annotations)
-        self.import_menu.addAction(self.import_annotations_action)
+        self.import_annotations_menu.addAction(self.import_annotations_action)
 
-        self.import_coralnet_annotations_action = QAction("Import CoralNet Annotations (CSV)", self)
+        self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_annotations_action.triggered.connect(self.io_dialog.import_coralnet_annotations)
-        self.import_menu.addAction(self.import_coralnet_annotations_action)
+        self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
 
-        self.import_viscore_annotations_action = QAction("Import Viscore Annotations (CSV)", self)
+        self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.import_viscore_annotations_action.triggered.connect(self.io_dialog.import_viscore_annotations)
-        self.import_menu.addAction(self.import_viscore_annotations_action)
+        self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
+
+        self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
+        self.import_taglab_annotations_action.triggered.connect(self.io_dialog.import_taglab_annotations)
+        self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
+
+        # Dataset submenu
+        self.import_dataset_menu = self.import_menu.addMenu("Dataset")
+
+        self.import_yolo_action = QAction("YOLO (TXT)", self)
+        self.import_yolo_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "YOLO dataset import is not yet implemented."))
+        self.import_dataset_menu.addAction(self.import_yolo_action)
 
         # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")
 
-        self.export_labels_action = QAction("Export Labels (JSON)", self)
+        # Labels submenu
+        self.export_labels_menu = self.export_menu.addMenu("Labels")
+
+        self.export_labels_action = QAction("Labels (JSON)", self)
         self.export_labels_action.triggered.connect(self.io_dialog.export_labels)
-        self.export_menu.addAction(self.export_labels_action)
-        self.export_menu.addSeparator()
+        self.export_labels_menu.addAction(self.export_labels_action)
 
-        self.export_annotations_action = QAction("Export Annotations (JSON)", self)
+        # Annotations submenu
+        self.export_annotations_menu = self.export_menu.addMenu("Annotations")
+
+        self.export_annotations_action = QAction("Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.io_dialog.export_annotations)
-        self.export_menu.addAction(self.export_annotations_action)
+        self.export_annotations_menu.addAction(self.export_annotations_action)
 
-        self.export_coralnet_annotations_action = QAction("Export CoralNet Annotations (CSV)", self)
+        self.export_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.export_coralnet_annotations_action.triggered.connect(self.io_dialog.export_coralnet_annotations)
-        self.export_menu.addAction(self.export_coralnet_annotations_action)
+        self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
-        self.export_viscore_annotations_action = QAction("Export Viscore Annotations (JSON)", self)
+        self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.export_viscore_annotations_action.triggered.connect(self.io_dialog.export_viscore_annotations)
-        self.export_menu.addAction(self.export_viscore_annotations_action)
+        self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
+
+        self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
+        self.export_taglab_annotations_action.triggered.connect(self.io_dialog.export_taglab_annotations)
+        self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
+
+        # Dataset submenu
+        self.export_dataset_menu = self.export_menu.addMenu("Dataset")
+
+        self.export_yolo_action = QAction("YOLO (TXT)", self)
+        self.export_yolo_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "YOLO dataset export is not yet implemented."))
+        self.export_dataset_menu.addAction(self.export_yolo_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)

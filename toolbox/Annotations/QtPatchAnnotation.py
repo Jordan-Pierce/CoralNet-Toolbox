@@ -172,7 +172,7 @@ class PatchAnnotation(Annotation):
         return base_dict
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, label_window):
         annotation = cls(QPointF(*data['center_xy']),
                          data['annotation_size'],
                          data['label_short_code'],
@@ -181,7 +181,15 @@ class PatchAnnotation(Annotation):
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
-        annotation.machine_confidence = data.get('machine_confidence', {})
+
+        # Convert machine_confidence keys back to Label objects
+        machine_confidence = {}
+        for short_label_code, confidence in data.get('machine_confidence', {}).items():
+            label = label_window.get_label_by_short_code(short_label_code)
+            if label:
+                machine_confidence[label] = confidence
+        annotation.machine_confidence = machine_confidence
+
         return annotation
 
     def __repr__(self):

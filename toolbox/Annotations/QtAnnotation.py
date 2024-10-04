@@ -137,6 +137,10 @@ class Annotation(QObject):
         return QImage(data, width, height, bytes_per_line, image_format)
 
     def to_dict(self):
+        # Convert machine_confidence keys to short_label_code
+        machine_confidence = {label.short_label_code: confidence for label, confidence in
+                              self.machine_confidence.items()}
+
         return {
             'id': self.id,
             'label_short_code': self.label.short_label_code,
@@ -145,18 +149,26 @@ class Annotation(QObject):
             'image_path': self.image_path,
             'label_id': self.label.id,
             'data': self.data,
-            'machine_confidence': self.machine_confidence
+            'machine_confidence': machine_confidence
         }
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, label_window):
         annotation = cls(data['label_short_code'],
                          data['label_long_code'],
                          QColor(*data['annotation_color']),
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
-        annotation.machine_confidence = data.get('machine_confidence', {})
+
+        # Convert machine_confidence keys back to Label objects
+        machine_confidence = {}
+        for short_label_code, confidence in data.get('machine_confidence', {}).items():
+            label = label_window.get_label_by_short_code(short_label_code)
+            if label:
+                machine_confidence[label] = confidence
+        annotation.machine_confidence = machine_confidence
+
         return annotation
 
     def __repr__(self):

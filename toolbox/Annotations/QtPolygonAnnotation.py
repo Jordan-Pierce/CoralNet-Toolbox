@@ -42,6 +42,25 @@ class PolygonAnnotation(Annotation):
         centroid_y = sum(point.y() for point in self.points) / len(self.points)
         self.center_xy = QPointF(centroid_x, centroid_y)
 
+    def calculate_polygon_area(self):
+        n = len(self.points)
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += self.points[i].x() * self.points[j].y()
+            area -= self.points[j].x() * self.points[i].y()
+        area = abs(area) / 2.0
+        return area
+
+    def calculate_polygon_perimeter(self):
+        n = len(self.points)
+        perimeter = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            perimeter += ((self.points[j].x() - self.points[i].x()) ** 2 +
+                          (self.points[j].y() - self.points[i].y()) ** 2) ** 0.5
+        return perimeter
+
     def set_cropped_bbox(self):
         min_x = min(point.x() for point in self.points)
         min_y = min(point.y() for point in self.points)
@@ -168,7 +187,7 @@ class PolygonAnnotation(Annotation):
         return base_dict
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, label_window):
         points = [QPointF(x, y) for x, y in data['points']]
         annotation = cls(points,
                          data['label_short_code'],
@@ -177,7 +196,15 @@ class PolygonAnnotation(Annotation):
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
-        annotation.machine_confidence = data.get('machine_confidence', {})
+
+        # Convert machine_confidence keys back to Label objects
+        machine_confidence = {}
+        for short_label_code, confidence in data.get('machine_confidence', {}).items():
+            label = label_window.get_label_by_short_code(short_label_code)
+            if label:
+                machine_confidence[label] = confidence
+        annotation.machine_confidence = machine_confidence
+
         return annotation
 
     def __repr__(self):

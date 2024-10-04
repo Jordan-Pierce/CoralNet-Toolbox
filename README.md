@@ -22,6 +22,11 @@ pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
 coralnet-toolbox
 ```
 
+<p align="center">
+  <img src="figures/SAM_GPU_001.gif" alt="CoralNet-Toolbox">
+</p>
+
+
 For further instructions, see [How to Install](); for information on how to use, check out the [docs](./docs).
 
 ## Tools
@@ -42,6 +47,7 @@ Enhance your CoralNet experience with these tools:
 - 📊 Evaluation: Evaluate model performance
 - 🚀 Optimize: Productionize models for faster inferencing
 - 📦 Toolshed: Access tools from the old repository
+- ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
 
 <details open>
   <summary><h2><b>Watch the Video Demos</b></h2></summary>

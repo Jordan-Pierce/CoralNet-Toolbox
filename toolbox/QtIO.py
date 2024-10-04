@@ -14,6 +14,8 @@ from toolbox.QtProgressBar import ProgressBar
 
 from toolbox.QtLabelWindow import Label
 from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -136,8 +138,27 @@ class IODialog:
                     image_path = annotation.image_path
                     if image_path not in export_dict:
                         export_dict[image_path] = []
-                    export_dict[image_path].append(annotation.to_dict())
 
+                    # Convert annotation to dictionary based on its type
+                    if isinstance(annotation, PatchAnnotation):
+                        annotation_dict = {
+                            'type': 'PatchAnnotation',
+                            **annotation.to_dict()
+                        }
+                    elif isinstance(annotation, PolygonAnnotation):
+                        annotation_dict = {
+                            'type': 'PolygonAnnotation',
+                            **annotation.to_dict()
+                        }
+                    elif isinstance(annotation, RectangleAnnotation):
+                        annotation_dict = {
+                            'type': 'RectangleAnnotation',
+                            **annotation.to_dict()
+                        }
+                    else:
+                        raise ValueError(f"Unknown annotation type: {type(annotation)}")
+
+                    export_dict[image_path].append(annotation_dict)
                     progress_bar.update_progress()
 
                 with open(file_path, 'w') as file:
@@ -201,10 +222,7 @@ class IODialog:
                         color = QColor(*annotation_data['annotation_color'])
 
                         label_id = annotation_data['label_id']
-                        self.label_window.add_label_if_not_exists(short_label,
-                                                                  long_label,
-                                                                  color,
-                                                                  label_id)
+                        self.label_window.add_label_if_not_exists(short_label, long_label, color, label_id)
 
                         existing_color = self.label_window.get_label_color(short_label, long_label)
 
@@ -224,7 +242,17 @@ class IODialog:
                     for annotation_data in annotations:
                         if not all(key in annotation_data for key in keys):
                             continue
-                        annotation = PatchAnnotation.from_dict(annotation_data)
+
+                        annotation_type = annotation_data.get('type')
+                        if annotation_type == 'PatchAnnotation':
+                            annotation = PatchAnnotation.from_dict(annotation_data, self.label_window)
+                        elif annotation_type == 'PolygonAnnotation':
+                            annotation = PolygonAnnotation.from_dict(annotation_data, self.label_window)
+                        elif annotation_type == 'RectangleAnnotation':
+                            annotation = RectangleAnnotation.from_dict(annotation_data, self.label_window)
+                        else:
+                            raise ValueError(f"Unknown annotation type: {annotation_type}")
+
                         self.annotation_window.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()
 
@@ -233,7 +261,7 @@ class IODialog:
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-                self.annotation_window.load_annotations()
+                self.annotation_window.load_annotations_parallel()
 
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Imported",
@@ -254,25 +282,22 @@ class IODialog:
                                                    "CSV Files (*.csv);;All Files (*)",
                                                    options=options)
         if file_path:
+
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            progress_bar = ProgressBar(self.annotation_window, title="Exporting CoralNet Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(len(self.annotation_window.annotations_dict))
+
             try:
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-
-                data = []
-                total_annotations = len(self.annotation_window.annotations_dict)
-
-                progress_bar = ProgressBar(self.annotation_window, title="Exporting CoralNet Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(total_annotations)
+                df = []
 
                 for annotation in self.annotation_window.annotations_dict.values():
-                    data.append(annotation.to_coralnet_format())
-                    progress_bar.update_progress()
+                    if isinstance(annotation, PatchAnnotation):
+                        df.append(annotation.to_coralnet_format())
+                        progress_bar.update_progress()
 
-                df = pd.DataFrame(data)
+                df = pd.DataFrame(df)
                 df.to_csv(file_path, index=False)
-
-                progress_bar.stop_progress()
-                progress_bar.close()
 
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Exported",
@@ -283,6 +308,8 @@ class IODialog:
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
+            progress_bar.stop_progress()
+            progress_bar.close()
             QApplication.restoreOverrideCursor()
 
     def import_coralnet_annotations(self):
@@ -333,11 +360,10 @@ class IODialog:
             if df.empty:
                 raise Exception("No annotations found for loaded images.")
 
-            total_annotations = len(df)
-
+            # Start the import process
             progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
             progress_bar.show()
-            progress_bar.start_progress(total_annotations)
+            progress_bar.start_progress(len(df))
 
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -408,10 +434,10 @@ class IODialog:
 
                 self.image_window.update_image_annotations(image_path)
 
+            # Load the annotations for current image
+            self.annotation_window.load_annotations_parallel()
             progress_bar.stop_progress()
             progress_bar.close()
-
-            self.annotation_window.load_annotations()
 
             QMessageBox.information(self.annotation_window,
                                     "Annotations Imported",
@@ -425,179 +451,52 @@ class IODialog:
         QApplication.restoreOverrideCursor()
 
     def export_viscore_annotations(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(self.annotation_window,
+                                                   "Export Viscore Annotations",
+                                                   "",
+                                                   "CSV Files (*.csv);;All Files (*)",
+                                                   options=options)
+        if file_path:
 
-        def get_qclass_mapping(qclasses_data, use_short_code=True):
-            qclass_mapping = {}
-            for item in qclasses_data['classlist']:
-                id_number, short_code, long_code = item
-                if use_short_code:
-                    qclass_mapping[short_code] = id_number
-                else:
-                    qclass_mapping[long_code] = id_number
-            return qclass_mapping
-
-        def browse_user_file(user_file_input):
-            options = QFileDialog.Options()
-            file_path, _ = QFileDialog.getOpenFileName(self.annotation_window,
-                                                       "Select User File",
-                                                       "",
-                                                       "JSON Files (*.json);;All Files (*)",
-                                                       options=options)
-            if file_path:
-                user_file_input.setText(file_path)
-
-        def browse_qclasses_file(qclasses_file_input):
-            options = QFileDialog.Options()
-            file_path, _ = QFileDialog.getOpenFileName(self.annotation_window,
-                                                       "Select QClasses File",
-                                                       "",
-                                                       "JSON Files (*.json);;All Files (*)",
-                                                       options=options)
-            if file_path:
-                qclasses_file_input.setText(file_path)
-
-        def browse_output_directory(output_directory_input):
-            options = QFileDialog.Options()
-            directory = QFileDialog.getExistingDirectory(self.annotation_window,
-                                                         "Select Output Directory",
-                                                         "",
-                                                         options=options)
-            if directory:
-                output_directory_input.setText(directory)
-
-        dialog = QDialog(self.annotation_window)
-        dialog.setWindowTitle("Export Viscore Annotations")
-        dialog.resize(400, 300)
-
-        layout = QVBoxLayout(dialog)
-
-        user_file_label = QLabel("User File (JSON):")
-        user_file_input = QLineEdit()
-        user_file_button = QPushButton("Browse")
-        user_file_button.clicked.connect(lambda: browse_user_file(user_file_input))
-        user_file_layout = QHBoxLayout()
-        user_file_layout.addWidget(user_file_input)
-        user_file_layout.addWidget(user_file_button)
-        layout.addWidget(user_file_label)
-        layout.addLayout(user_file_layout)
-
-        qclasses_file_label = QLabel("QClasses File (JSON):")
-        qclasses_file_input = QLineEdit()
-        qclasses_file_button = QPushButton("Browse")
-        qclasses_file_button.clicked.connect(lambda: browse_qclasses_file(qclasses_file_input))
-        qclasses_file_layout = QHBoxLayout()
-        qclasses_file_layout.addWidget(qclasses_file_input)
-        qclasses_file_layout.addWidget(qclasses_file_button)
-        layout.addWidget(qclasses_file_label)
-        layout.addLayout(qclasses_file_layout)
-
-        username_label = QLabel("Username:")
-        username_input = QLineEdit()
-        username_input.setPlaceholderText("robot")
-        layout.addWidget(username_label)
-        layout.addWidget(username_input)
-
-        output_directory_label = QLabel("Output Directory:")
-        output_directory_input = QLineEdit()
-        output_directory_button = QPushButton("Browse")
-        output_directory_button.clicked.connect(lambda: browse_output_directory(output_directory_input))
-        output_directory_layout = QHBoxLayout()
-        output_directory_layout.addWidget(output_directory_input)
-        output_directory_layout.addWidget(output_directory_button)
-        layout.addWidget(output_directory_label)
-        layout.addLayout(output_directory_layout)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        layout.addWidget(button_box)
-
-        if dialog.exec_() == QDialog.Accepted:
-            user_file_path = user_file_input.text()
-            qclasses_file_path = qclasses_file_input.text()
-            username = username_input.text()
-            output_directory = output_directory_input.text()
-
-            if not username:
-                username = "robot"
-
-            if not os.path.exists(user_file_path):
-                QMessageBox.warning(self.annotation_window,
-                                    "File Not Found",
-                                    f"User file not found: {user_file_path}")
-                return
-
-            if not os.path.exists(qclasses_file_path):
-                QMessageBox.warning(self.annotation_window,
-                                    "File Not Found",
-                                    f"QClasses file not found: {qclasses_file_path}")
-                return
-
-            if not os.path.exists(output_directory):
-                QMessageBox.warning(self.annotation_window,
-                                    "Directory Not Found",
-                                    f"Output directory not found: {output_directory}")
-                return
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            progress_bar = ProgressBar(self.annotation_window, title="Exporting Viscore Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(len(self.annotation_window.annotations_dict))
 
             try:
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                progress_bar = ProgressBar(self.annotation_window, title="Exporting Viscore Annotations")
-                progress_bar.show()
+                df = []
 
-                with open(user_file_path, 'r') as user_file:
-                    user_data = json.load(user_file)
+                for annotation in self.annotation_window.annotations_dict.values():
+                    if isinstance(annotation, PatchAnnotation):
+                        if 'Dot' in annotation.data:
+                            df.append(annotation.to_coralnet_format())
+                            progress_bar.update_progress()
 
-                with open(qclasses_file_path, 'r') as qclasses_file:
-                    qclasses_data = json.load(qclasses_file)
-
-                qclasses_mapping_short = get_qclass_mapping(qclasses_data, use_short_code=True)
-                qclasses_mapping_long = get_qclass_mapping(qclasses_data, use_short_code=False)
-
-                annotations = [a for a in self.annotation_window.annotations_dict.values() if "Dot" in a.data]
-
-                dot_annotations = {}
-                for annotation in annotations:
-                    dot_id = annotation.data["Dot"]
-                    dot_annotations.setdefault(dot_id, []).append(annotation)
-
-                def get_mode_label_id(annotations):
-                    labels = [a.label.id for a in annotations]
-                    return max(set(labels), key=labels.count)
-
-                dot_labels = {d_id: get_mode_label_id(anns) for d_id, anns in dot_annotations.items()}
-
-                for index in range(len(user_data['cl'])):
-                    label_id = dot_labels.get(index)
-                    if label_id is not None:
-                        label = self.label_window.get_label_by_id(label_id)
-                        updated_label = qclasses_mapping_long.get(label.long_label_code)
-                        if updated_label is None:
-                            updated_label = qclasses_mapping_short.get(label.short_label_code)
-                        if updated_label is None:
-                            updated_label = -1
-                        user_data['cl'][index] = updated_label
-
-                output_file_path = os.path.join(output_directory, f"samples.cl.user.{username}.json")
-
-                with open(output_file_path, 'w') as output_file:
-                    json.dump(user_data, output_file, indent=4)
-
-                progress_bar.stop_progress()
-                progress_bar.close()
+                df = pd.DataFrame(df)
+                df.to_csv(file_path, index=False)
 
                 QMessageBox.information(self.annotation_window,
-                                        "Export Successful",
-                                        f"Annotations have been successfully exported.")
+                                        "Viscore Annotations Exported",
+                                        "Annotations have been successfully exported.")
 
             except Exception as e:
-                QMessageBox.critical(self.annotation_window,
-                                     "Export Failed",
-                                     f"An error occurred while exporting annotations: {e}")
+                QMessageBox.warning(self.annotation_window,
+                                    "Error Exporting Viscore Annotations",
+                                    f"An error occurred while exporting annotations: {str(e)}")
 
+            progress_bar.stop_progress()
+            progress_bar.close()
             QApplication.restoreOverrideCursor()
 
     def import_viscore_annotations(self):
         self.main_window.untoggle_all_tools()
+
+        if not self.annotation_window.active_image:
+            QMessageBox.warning(self.annotation_window,
+                                "No Images Loaded",
+                                "Please load images first before importing annotations.")
+            return
 
         def browse_csv_file(file_path_input):
             options = QFileDialog.Options()
@@ -704,7 +603,7 @@ class IODialog:
             try:
                 progress_bar = ProgressBar(self.annotation_window, title="Reading CSV File")
                 progress_bar.show()
-                df = pd.read_csv(file_path)
+                df = pd.read_csv(file_path, index_col=False)
                 progress_bar.close()
 
                 if df.empty:
@@ -715,11 +614,7 @@ class IODialog:
                                     'Row',
                                     'Column',
                                     'Label',
-                                    'Dot',
-                                    'RandSubCeil',
-                                    'ReprojectionError',
-                                    'ViewIndex',
-                                    'ViewCount']
+                                    'Dot']
 
                 if not all(col in df.columns for col in required_columns):
                     QMessageBox.warning(self.annotation_window,
@@ -728,11 +623,11 @@ class IODialog:
                     return
 
                 df = df[required_columns]
-                df_filtered = df.dropna(how='any')
-                df_filtered = df_filtered.assign(Row=df_filtered['Row'].astype(int))
-                df_filtered = df_filtered.assign(Column=df_filtered['Column'].astype(int))
+                df = df.dropna(how='any')
+                df = df.assign(Row=df['Row'].astype(int))
+                df = df.assign(Column=df['Column'].astype(int))
 
-                image_paths = df_filtered['Name'].unique()
+                image_paths = df['Name'].unique()
                 image_paths = [path for path in image_paths if os.path.exists(path)]
 
                 if not image_paths and not self.annotation_window.active_image:
@@ -741,16 +636,18 @@ class IODialog:
                                         "Please load an image before importing annotations.")
                     return
 
-                mask = (
-                        (df_filtered['RandSubCeil'] <= rand_sub_ceil) &
-                        (df_filtered['ReprojectionError'] <= reprojection_error) &
-                        (df_filtered['ViewIndex'] <= view_index) &
-                        (df_filtered['ViewCount'] >= view_count)
-                )
-                filtered_df = df_filtered[mask]
+                # Perform the filtering
+                if 'RandSubCeil' in df.columns:
+                    df = df[df['RandSubCeil'] <= rand_sub_ceil]
+                if 'ReprojectionError' in df.columns:
+                    df = df[df['ReprojectionError'] <= reprojection_error]
+                if 'ViewIndex' in df.columns:
+                    df = df[df['ViewIndex'] <= view_index]
+                if 'ViewCount' in df.columns:
+                    df = df[df['ViewCount'] >= view_count]
 
-                num_images = filtered_df['Name'].nunique()
-                num_annotations = len(filtered_df)
+                num_images = df['Name'].nunique()
+                num_annotations = len(df)
 
                 msg_box = QMessageBox(self.annotation_window)
                 msg_box.setWindowTitle("Filtered Data Summary")
@@ -771,40 +668,16 @@ class IODialog:
                 if not ok:
                     return
 
-                if image_paths:
-                    progress_bar = ProgressBar(self.annotation_window, title="Importing Images")
-                    progress_bar.show()
-                    progress_bar.start_progress(len(image_paths))
-
-                    for i, image_path in enumerate(image_paths):
-                        if image_path not in set(self.image_window.image_paths):
-                            self.image_window.add_image(image_path)
-                            progress_bar.update_progress()
-
-                    progress_bar.stop_progress()
-                    progress_bar.close()
-
-                    self.image_window.load_image_by_path(image_paths[-1])
-                else:
-                    loaded_images = {os.path.basename(path) for path in self.image_window.image_paths}
-                    filtered_df.loc[:, 'Name'] = filtered_df['Name'].apply(os.path.basename)
-                    filtered_df = filtered_df[filtered_df['Name'].isin(loaded_images)]
-
-                    if filtered_df.empty:
-                        QMessageBox.warning(self.annotation_window,
-                                            "No Matching Images",
-                                            "None of the image names in the CSV match loaded images.")
-                        return
-
+                # Start the import process
                 QApplication.setOverrideCursor(Qt.WaitCursor)
-
-                image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
-
                 progress_bar = ProgressBar(self.annotation_window, title="Importing Viscore Annotations")
                 progress_bar.show()
-                progress_bar.start_progress(len(filtered_df))
+                progress_bar.start_progress(len(df))
 
-                for image_name, group in filtered_df.groupby('Name'):
+                # Map image names to image paths
+                image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
+
+                for image_name, group in df.groupby('Name'):
                     image_path = image_path_map.get(image_name)
                     if not image_path:
                         continue
@@ -839,17 +712,42 @@ class IODialog:
                                                      image_path,
                                                      label_id)
 
-                        annotation.data['Dot'] = row['Dot']
+                        machine_confidence = {}
+
+                        for i in range(1, 6):
+                            confidence_col = f'Machine confidence {i}'
+                            suggestion_col = f'Machine suggestion {i}'
+                            if confidence_col in row and suggestion_col in row:
+                                if pd.isna(row[confidence_col]) or pd.isna(row[suggestion_col]):
+                                    continue
+
+                                confidence = float(row[confidence_col])
+                                suggestion = str(row[suggestion_col])
+
+                                suggested_label = self.label_window.get_label_by_short_code(suggestion)
+
+                                if not suggested_label:
+                                    color = QColor(random.randint(0, 255),
+                                                   random.randint(0, 255),
+                                                   random.randint(0, 255))
+
+                                    self.label_window.add_label_if_not_exists(suggestion, suggestion, color)
+
+                                suggested_label = self.label_window.get_label_by_short_code(suggestion)
+                                machine_confidence[suggested_label] = confidence
+
+                        if machine_confidence:
+                            annotation.update_machine_confidence(machine_confidence)
 
                         self.annotation_window.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()
 
                     self.image_window.update_image_annotations(image_path)
 
+                # Load the annotations for current image
+                self.annotation_window.load_annotations_parallel()
                 progress_bar.stop_progress()
                 progress_bar.close()
-
-                self.annotation_window.load_annotations()
 
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Imported",
@@ -857,3 +755,234 @@ class IODialog:
 
             except Exception as e:
                 QMessageBox.critical(self.annotation_window, "Critical Error", f"Failed to import annotations: {e}")
+
+        # Make the cursor active
+        QApplication.restoreOverrideCursor()
+
+    def export_taglab_annotations(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(self.annotation_window,
+                                                   "Export TagLab Annotations",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
+                                                   options=options)
+        if file_path:
+            try:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+
+                total_annotations = len(list(self.annotation_window.annotations_dict.values()))
+                progress_bar = ProgressBar(self.annotation_window, title="Exporting TagLab Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(total_annotations)
+
+                taglab_data = {
+                    "filename": "exported_annotations.json",
+                    "working_area": None,
+                    "dictionary_name": "scripps",
+                    "dictionary_description": "These color codes are the ones typically used by the "
+                                              "Scripps Institution of Oceanography (UCSD)",
+                    "labels": {},
+                    "images": []
+                }
+
+                # Collect all labels
+                for annotation in self.annotation_window.annotations_dict.values():
+                    label_id = annotation.label.id
+                    if label_id not in taglab_data["labels"]:
+                        label_info = {
+                            "id": label_id,
+                            "name": annotation.label.short_label_code,
+                            "description": None,
+                            "fill": annotation.label.color.getRgb()[:3],
+                            "border": [200, 200, 200],
+                            "visible": True
+                        }
+                        taglab_data["labels"][label_id] = label_info
+
+                # Collect all images and their annotations
+                image_annotations = {}
+                for annotation in self.annotation_window.annotations_dict.values():
+                    if not isinstance(annotation, PolygonAnnotation):
+                        continue
+
+                    image_path = annotation.image_path
+                    if image_path not in image_annotations:
+                        image_annotations[image_path] = {
+                            "rect": [0.0, 0.0, 0.0, 0.0],
+                            "map_px_to_mm_factor": "1",
+                            "width": 0,
+                            "height": 0,
+                            "annotations": [],
+                            "layers": [],
+                            "channels": [
+                                {"filename": image_path, "type": "RGB"}
+                            ],
+                            "id": os.path.basename(image_path),
+                            "name": os.path.basename(image_path),
+                            "workspace": [],
+                            "export_dataset_area": [],
+                            "acquisition_date": "2000-01-01",
+                            "georef_filename": "",
+                            "metadata": {},
+                            "grid": None
+                        }
+
+                    # Calculate bounding box, centroid, area, perimeter, and contour
+                    points = annotation.points
+                    min_x = min(point.x() for point in points)
+                    min_y = min(point.y() for point in points)
+                    max_x = max(point.x() for point in points)
+                    max_y = max(point.y() for point in points)
+                    centroid_x = sum(point.x() for point in points) / len(points)
+                    centroid_y = sum(point.y() for point in points) / len(points)
+                    area = annotation.calculate_polygon_area()
+                    perimeter = annotation.calculate_polygon_perimeter()
+                    contour = " ".join(f"{int(point.x())} {int(point.y())}" for point in points)
+
+                    annotation_dict = {
+                        "bbox": [min_x, min_y, max_x, max_y],
+                        "centroid": [centroid_x, centroid_y],
+                        "area": area,
+                        "perimeter": perimeter,
+                        "contour": contour,
+                        "inner contours": [],
+                        "class name": annotation.label.short_label_code,
+                        "instance name": "coral0",  # Placeholder, update as needed
+                        "blob name": f"c-0-{annotation.label.short_label_code}x-{annotation.label.short_label_code}y",
+                        # Placeholder, update as needed
+                        "id": annotation.id,
+                        "note": "",  # Placeholder, update as needed
+                        "data": {}  # Placeholder, update as needed
+                    }
+                    image_annotations[image_path]["annotations"].append(annotation_dict)
+                    progress_bar.update_progress()
+
+                # Add images to the main data structure
+                taglab_data["images"] = list(image_annotations.values())
+
+                # Save the JSON data to the selected file
+                with open(file_path, 'w') as file:
+                    json.dump(taglab_data, file, indent=4)
+                    file.flush()
+
+                progress_bar.stop_progress()
+                progress_bar.close()
+
+                QMessageBox.information(self.annotation_window,
+                                        "Annotations Exported",
+                                        "Annotations have been successfully exported.")
+
+            except Exception as e:
+                QMessageBox.warning(self.annotation_window,
+                                    "Error Exporting Annotations",
+                                    f"An error occurred while exporting annotations: {str(e)}")
+
+            QApplication.restoreOverrideCursor()
+
+    def import_taglab_annotations(self):
+
+        def parse_contour(contour_str):
+            """Parse the contour string into a list of QPointF objects."""
+            points = []
+            coords = contour_str.split()
+            for i in range(0, len(coords), 2):
+                x = int(coords[i])
+                y = int(coords[i + 1])
+                points.append(QPointF(x, y))
+            return points
+
+        self.main_window.untoggle_all_tools()
+
+        if not self.annotation_window.active_image:
+            QMessageBox.warning(self.annotation_window,
+                                "No Images Loaded",
+                                "Please load images first before importing annotations.")
+            return
+
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self.annotation_window,
+                                                   "Import TagLab Annotations",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
+                                                   options=options)
+
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r') as file:
+                taglab_data = json.load(file)
+
+            required_keys = ['labels', 'images']
+            if not all(key in taglab_data for key in required_keys):
+                QMessageBox.warning(self.annotation_window,
+                                    "Invalid JSON Format",
+                                    "The selected JSON file does not match the expected TagLab format.")
+                return
+
+            # Map image names to image paths
+            image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
+
+            progress_bar = ProgressBar(self.annotation_window, title="Importing TagLab Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(len(taglab_data['images']))
+
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            for image in taglab_data['images']:
+                image_basename = os.path.basename(image['channels'][0]['filename'])
+                image_full_path = image_path_map[image_basename]
+
+                if not image_full_path:
+                    QMessageBox.warning(self.annotation_window,
+                                        "Image Not Found",
+                                        f"The image '{image_basename}' "
+                                        f"from the TagLab annotations was not found in the project.")
+                    continue
+
+                for annotation in image['annotations']:
+                    label_id = annotation['class name']
+                    label_info = taglab_data['labels'][label_id]
+                    short_label_code = label_info['name']
+                    long_label_code = label_info['name']
+                    color = QColor(*label_info['fill'])
+
+                    # Convert contour string to points
+                    points = parse_contour(annotation['contour'])
+
+                    existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
+
+                    if existing_label:
+                        label_id = existing_label.id
+                    else:
+                        label_id = str(uuid.uuid4())
+                        self.label_window.add_label_if_not_exists(short_label_code, long_label_code, color, label_id)
+
+                    polygon_annotation = PolygonAnnotation(
+                        points=points,
+                        short_label_code=short_label_code,
+                        long_label_code=long_label_code,
+                        color=color,
+                        image_path=image_full_path,
+                        label_id=label_id
+                    )
+
+                    self.annotation_window.annotations_dict[polygon_annotation.id] = polygon_annotation
+                    progress_bar.update_progress()
+
+                self.image_window.update_image_annotations(image_full_path)
+
+            self.annotation_window.load_annotations_parallel()
+            progress_bar.stop_progress()
+            progress_bar.close()
+
+            QMessageBox.information(self.annotation_window,
+                                    "Annotations Imported",
+                                    "Annotations have been successfully imported.")
+
+        except Exception as e:
+            QMessageBox.warning(self.annotation_window,
+                                "Error Importing Annotations",
+                                f"An error occurred while importing annotations: {str(e)}")
+
+        QApplication.restoreOverrideCursor()

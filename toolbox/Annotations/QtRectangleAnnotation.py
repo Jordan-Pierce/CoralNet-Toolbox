@@ -27,9 +27,13 @@ class RectangleAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+
         self.top_left = QPointF(min(top_left.x(), bottom_right.x()), min(top_left.y(), bottom_right.y()))
         self.bottom_right = QPointF(max(top_left.x(), bottom_right.x()), max(top_left.y(), bottom_right.y()))
-        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2, (self.top_left.y() + self.bottom_right.y()) / 2)
+
+        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
+                                 (self.top_left.y() + self.bottom_right.y()) / 2)
+
         self.cropped_bbox = (self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y())
 
     def contains_point(self, point: QPointF) -> bool:
@@ -162,7 +166,7 @@ class RectangleAnnotation(Annotation):
         return base_dict
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, label_window):
         top_left = QPointF(data['top_left'][0], data['top_left'][1])
         bottom_right = QPointF(data['bottom_right'][0], data['bottom_right'][1])
         annotation = cls(top_left, bottom_right,
@@ -172,7 +176,15 @@ class RectangleAnnotation(Annotation):
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
-        annotation.machine_confidence = data.get('machine_confidence', {})
+
+        # Convert machine_confidence keys back to Label objects
+        machine_confidence = {}
+        for short_label_code, confidence in data.get('machine_confidence', {}).items():
+            label = label_window.get_label_by_short_code(short_label_code)
+            if label:
+                machine_confidence[label] = confidence
+        annotation.machine_confidence = machine_confidence
+
         return annotation
 
     def __repr__(self):
