@@ -109,6 +109,10 @@ class PatchSamplingDialog(QDialog):
 
         self.sampled_annotations = []
 
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setDragMode(QGraphicsView.NoDrag)
+
     def showEvent(self, event):
         super().showEvent(event)
         self.reset_defaults()
@@ -350,3 +354,23 @@ class PatchSamplingDialog(QDialog):
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
+
+    def wheelEvent(self, event):
+        factor = 1.1 if event.angleDelta().y() > 0 else 0.9
+        self.preview_view.scale(factor, factor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.preview_view.setDragMode(QGraphicsView.ScrollHandDrag)
+            self.preview_view.viewport().setCursor(Qt.ClosedHandCursor)
+            self.preview_view.mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.preview_view.dragMode() == QGraphicsView.ScrollHandDrag:
+            self.preview_view.mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.preview_view.setDragMode(QGraphicsView.NoDrag)
+            self.preview_view.viewport().setCursor(Qt.ArrowCursor)
+            self.preview_view.mouseReleaseEvent(event)
