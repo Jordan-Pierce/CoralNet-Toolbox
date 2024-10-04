@@ -1,7 +1,7 @@
 import random
 import warnings
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF
 from PyQt5.QtGui import QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QCheckBox, QVBoxLayout, QLabel, QDialog,
                              QHBoxLayout, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem,
@@ -86,11 +86,6 @@ class PatchSamplingDialog(QDialog):
         self.apply_group.addButton(self.apply_all_checkbox)
         self.apply_group.setExclusive(False)
 
-        # Select Region Button
-        self.select_region_button = QPushButton("Select Region")
-        self.select_region_button.clicked.connect(self.toggle_select_region_mode)
-        self.layout.addWidget(self.select_region_button)
-
         # Preview Button
         self.preview_button = QPushButton("Preview")
         self.preview_button.clicked.connect(self.preview_annotations)
@@ -114,16 +109,6 @@ class PatchSamplingDialog(QDialog):
 
         self.sampled_annotations = []
 
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setDragMode(QGraphicsView.NoDrag)
-
-        self.select_region_mode = False
-        self.selected_region = None
-        self.region_start_point = None
-        self.region_end_point = None
-        self.region_rect_item = None
-
     def showEvent(self, event):
         super().showEvent(event)
         self.reset_defaults()
@@ -140,11 +125,6 @@ class PatchSamplingDialog(QDialog):
         self.apply_prev_checkbox.setChecked(False)
         self.apply_next_checkbox.setChecked(False)
         self.apply_all_checkbox.setChecked(False)
-        self.select_region_mode = False
-        self.selected_region = None
-        self.region_start_point = None
-        self.region_end_point = None
-        self.region_rect_item = None
 
     def create_margin_spinbox(self, label_text, layout):
         label = QLabel(label_text + ":")
@@ -154,24 +134,16 @@ class PatchSamplingDialog(QDialog):
         layout.addRow(label, spinbox)
         return spinbox
 
-    def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height, region=None):
+    def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins
         margin_x_min, margin_y_min, margin_x_max, margin_y_max = margins
 
         annotations = []
 
-        if region:
-            region_x_min, region_y_min, region_x_max, region_y_max = region
-            image_width = region_x_max - region_x_min
-            image_height = region_y_max - region_y_min
-
         if method == "Random":
             for _ in range(num_annotations):
                 x = random.randint(margin_x_min, image_width - annotation_size - margin_x_max)
                 y = random.randint(margin_y_min, image_height - annotation_size - margin_y_max)
-                if region:
-                    x += region_x_min
-                    y += region_y_min
                 annotations.append((x, y, annotation_size))
 
         if method == "Uniform":
@@ -182,9 +154,6 @@ class PatchSamplingDialog(QDialog):
                 for j in range(grid_size):
                     x = margin_x_min + int(i * x_step + annotation_size / 2)
                     y = margin_y_min + int(j * y_step + annotation_size / 2)
-                    if region:
-                        x += region_x_min
-                        y += region_y_min
                     annotations.append((x, y, annotation_size))
 
         if method == "Stratified Random":
@@ -197,9 +166,6 @@ class PatchSamplingDialog(QDialog):
                         i * x_step + random.uniform(annotation_size / 2, x_step - annotation_size / 2))
                     y = margin_y_min + int(
                         j * y_step + random.uniform(annotation_size / 2, y_step - annotation_size / 2))
-                    if region:
-                        x += region_x_min
-                        y += region_y_min
                     annotations.append((x, y, annotation_size))
 
         return annotations
@@ -220,8 +186,7 @@ class PatchSamplingDialog(QDialog):
                                                            annotation_size,
                                                            margins,
                                                            self.annotation_window.image_pixmap.width(),
-                                                           self.annotation_window.image_pixmap.height(),
-                                                           self.selected_region)
+                                                           self.annotation_window.image_pixmap.height())
 
         self.draw_annotation_previews(margins)
 
@@ -290,13 +255,6 @@ class PatchSamplingDialog(QDialog):
             bottom_overlay.setPen(QPen(Qt.NoPen))
             self.preview_scene.addItem(bottom_overlay)
 
-            # Draw selected region
-            if self.selected_region:
-                region_x_min, region_y_min, region_x_max, region_y_max = self.selected_region
-                region_rect_item = QGraphicsRectItem(region_x_min, region_y_min, region_x_max - region_x_min, region_y_max - region_y_min)
-                region_rect_item.setPen(QPen(Qt.green, 4))
-                self.preview_scene.addItem(region_rect_item)
-
             self.preview_view.fitInView(self.preview_scene.sceneRect(), Qt.KeepAspectRatio)
 
     def accept_annotations(self):
@@ -359,8 +317,7 @@ class PatchSamplingDialog(QDialog):
                                                   annotation_size,
                                                   margins,
                                                   width,
-                                                  height,
-                                                  self.selected_region)
+                                                  height)
 
             for annotation in annotations:
                 x, y, size = annotation
@@ -393,51 +350,3 @@ class PatchSamplingDialog(QDialog):
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-
-    def toggle_select_region_mode(self):
-        self.select_region_mode = not self.select_region_mode
-        if self.select_region_mode:
-            self.select_region_button.setText("Cancel Region Selection")
-        else:
-            self.select_region_button.setText("Select Region")
-            self.region_start_point = None
-            self.region_end_point = None
-            if self.region_rect_item:
-                self.preview_scene.removeItem(self.region_rect_item)
-                self.region_rect_item = None
-
-    def wheelEvent(self, event):
-        factor = 1.1 if event.angleDelta().y() > 0 else 0.9
-        self.preview_view.scale(factor, factor)
-
-    def mousePressEvent(self, event):
-        if self.select_region_mode and event.button() == Qt.LeftButton:
-            self.region_start_point = self.preview_view.mapToScene(event.pos())
-        elif event.button() == Qt.RightButton:
-            self.preview_view.setDragMode(QGraphicsView.ScrollHandDrag)
-            self.preview_view.viewport().setCursor(Qt.ClosedHandCursor)
-            self.preview_view.mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self.select_region_mode and self.region_start_point:
-            self.region_end_point = self.preview_view.mapToScene(event.pos())
-            if self.region_rect_item:
-                self.preview_scene.removeItem(self.region_rect_item)
-            rect = QRectF(self.region_start_point, self.region_end_point).normalized()
-            self.region_rect_item = QGraphicsRectItem(rect)
-            self.region_rect_item.setPen(QPen(Qt.green, 4))
-            self.preview_scene.addItem(self.region_rect_item)
-        elif self.preview_view.dragMode() == QGraphicsView.ScrollHandDrag:
-            self.preview_view.mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if self.select_region_mode and event.button() == Qt.LeftButton:
-            self.region_end_point = self.preview_view.mapToScene(event.pos())
-            self.selected_region = (int(self.region_start_point.x()), int(self.region_start_point.y()),
-                                    int(self.region_end_point.x()), int(self.region_end_point.y()))
-            self.select_region_mode = False
-            self.select_region_button.setText("Select Region")
-        elif event.button() == Qt.RightButton:
-            self.preview_view.setDragMode(QGraphicsView.NoDrag)
-            self.preview_view.viewport().setCursor(Qt.ArrowCursor)
-            self.preview_view.mouseReleaseEvent(event)
