@@ -148,7 +148,7 @@ class PolygonAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        delta = new_center_xy - self.center_xy
+        delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2), round(new_center_xy.y() - self.center_xy.y(), 2))
         self.points = [point + delta for point in self.points]
         self.calculate_centroid()
         self.update_graphics_item()

@@ -29,7 +29,7 @@ class PatchAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.center_xy = center_xy
+        self.center_xy = QPointF(round(center_xy.x(), 2), round(center_xy.y(), 2))  # Reduce to two significant digits
         self.annotation_size = annotation_size
 
     def contains_point(self, point: QPointF):
@@ -53,10 +53,10 @@ class PatchAnnotation(Annotation):
 
         # Calculate the window for rasterio
         window = Window(
-            col_off=max(0, pixel_x - half_size),
-            row_off=max(0, pixel_y - half_size),
-            width=min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
-            height=min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
+            col_off(max(0, pixel_x - half_size),
+            row_off(max(0, pixel_y - half_size),
+            width(min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
+            height(min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
         )
 
         # Read the data from rasterio
@@ -116,7 +116,7 @@ class PatchAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        self.center_xy = new_center_xy
+        self.center_xy = QPointF(round(new_center_xy.x(), 2), round(new_center_xy.y(), 2))  # Reduce to two significant digits
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 

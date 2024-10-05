@@ -28,8 +28,8 @@ class RectangleAnnotation(Annotation):
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
 
-        self.top_left = QPointF(min(top_left.x(), bottom_right.x()), min(top_left.y(), bottom_right.y()))
-        self.bottom_right = QPointF(max(top_left.x(), bottom_right.x()), max(top_left.y(), bottom_right.y()))
+        self.top_left = QPointF(round(min(top_left.x(), bottom_right.x()), 2), round(min(top_left.y(), bottom_right.y()), 2))
+        self.bottom_right = QPointF(round(max(top_left.x(), bottom_right.x()), 2), round(max(top_left.y(), bottom_right.y()), 2))
 
         self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
                                  (self.top_left.y() + self.bottom_right.y()) / 2)
@@ -129,7 +129,7 @@ class RectangleAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        delta = new_center_xy - self.center_xy
+        delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2), round(new_center_xy.y() - self.center_xy.y(), 2))
         self.top_left += delta
         self.bottom_right += delta
         self.center_xy = new_center_xy
