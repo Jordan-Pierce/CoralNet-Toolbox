@@ -53,10 +53,10 @@ class PatchAnnotation(Annotation):
 
         # Calculate the window for rasterio
         window = Window(
-            col_off(max(0, pixel_x - half_size),
-            row_off(max(0, pixel_y - half_size),
-            width(min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
-            height(min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
+            col_off=max(0, pixel_x - half_size),
+            row_off=max(0, pixel_y - half_size),
+            width=min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
+            height=min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
         )
 
         # Read the data from rasterio
@@ -83,6 +83,13 @@ class PatchAnnotation(Annotation):
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
 
+        # Create separate graphics items for center/centroid, bounding box, and brush/mask
+        self.create_center_graphics_item(self.center_xy, scene)
+        self.create_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
+                                               QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),
+                                               scene)
+        self.create_brush_graphics_item(self.graphics_item.rect(), scene)
+
     def update_graphics_item(self):
         if self.graphics_item:
             # Update the graphic item
@@ -107,6 +114,12 @@ class PatchAnnotation(Annotation):
             # Update the cropped image
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
+
+            # Update separate graphics items for center/centroid, bounding box, and brush/mask
+            self.update_center_graphics_item(self.center_xy)
+            self.update_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
+                                                   QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size))
+            self.update_brush_graphics_item(self.graphics_item.rect())
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:

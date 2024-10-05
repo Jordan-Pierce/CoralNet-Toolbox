@@ -1,8 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
+from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem, QGraphicsPolygonItem
 from rasterio.windows import Window
 
 from toolbox.Annotations.QtAnnotation import Annotation
@@ -88,6 +88,14 @@ class RectangleAnnotation(Annotation):
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
 
+        # Create separate graphics items for center/centroid, bounding box, and brush/mask
+        self.create_center_graphics_item(self.center_xy, scene)
+        self.create_bounding_box_graphics_item(self.top_left, self.bottom_right, scene)
+        self.create_brush_graphics_item(QPolygonF([self.top_left, 
+                                                   QPointF(self.bottom_right.x(), self.top_left.y()), 
+                                                   self.bottom_right, 
+                                                   QPointF(self.top_left.x(), self.bottom_right.y())]), scene)
+
     def update_graphics_item(self):
         if self.graphics_item:
             scene = self.graphics_item.scene()
@@ -120,6 +128,14 @@ class RectangleAnnotation(Annotation):
 
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
+
+            # Update separate graphics items for center/centroid, bounding box, and brush/mask
+            self.update_center_graphics_item(self.center_xy)
+            self.update_bounding_box_graphics_item(self.top_left, self.bottom_right)
+            self.update_brush_graphics_item(QPolygonF([self.top_left, 
+                                                       QPointF(self.bottom_right.x(), self.top_left.y()), 
+                                                       self.bottom_right, 
+                                                       QPointF(self.top_left.x(), self.bottom_right.y())]))
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
