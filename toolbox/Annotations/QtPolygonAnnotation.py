@@ -72,7 +72,7 @@ class PolygonAnnotation(Annotation):
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
         self.center_xy = QPointF((min_x + max_x) / 2, (min_y + max_y) / 2)
 
-    def create_cropped_image(self, rasterio_src):
+    def create_cropped_image(self, rasterio_src, downscale_factor=1.0):
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation
@@ -94,6 +94,11 @@ class PolygonAnnotation(Annotation):
         # Ensure the data is in the correct format for QImage
         data = self._prepare_data_for_qimage(data)
 
+        # Downscale the data if downscale_factor is not 1.0
+        if downscale_factor != 1.0:
+            new_size = (int(data.shape[1] * downscale_factor), int(data.shape[0] * downscale_factor))
+            data = np.array(Image.fromarray(data).resize(new_size, Image.ANTIALIAS))
+
         # Convert numpy array to QImage
         q_image = self._convert_to_qimage(data)
 
@@ -102,12 +107,31 @@ class PolygonAnnotation(Annotation):
 
         self.annotation_updated.emit(self)  # Notify update
 
+    def get_cropped_image(self, downscaling_factor=1.0):
+        if self.cropped_image is None:
+            return None
+
+        # Downscale the cropped image if downscaling_factor is not 1.0
+        if downscaling_factor != 1.0:
+            new_size = (int(self.cropped_image.width() * downscaling_factor),
+                        int(self.cropped_image.height() * downscaling_factor))
+            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+
+        return self.cropped_image
+
     def create_graphics_item(self, scene: QGraphicsScene):
         polygon = QPolygonF(self.points)
         self.graphics_item = QGraphicsPolygonItem(polygon)
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
+
+        # Create separate graphics items for center/centroid, bounding box, and brush/mask
+        self.create_center_graphics_item(self.center_xy, scene)
+        self.create_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
+                                               QPointF(self.cropped_bbox[2], self.cropped_bbox[3]),
+                                               scene)
+        self.create_brush_graphics_item(QPolygonF(self.points), scene)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -139,6 +163,12 @@ class PolygonAnnotation(Annotation):
 
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
+
+            # Update separate graphics items for center/centroid, bounding box, and brush/mask
+            self.update_center_graphics_item(self.center_xy)
+            self.update_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
+                                                   QPointF(self.cropped_bbox[2], self.cropped_bbox[3]))
+            self.update_brush_graphics_item(QPolygonF(self.points))
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:

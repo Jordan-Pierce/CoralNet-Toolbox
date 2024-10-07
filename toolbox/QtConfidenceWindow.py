@@ -129,8 +129,10 @@ class ConfidenceWindow(QWidget):
             self.clear_display()  # Clear the current display before updating
             self.update_annotation(annotation)
             if self.cropped_image:  # Ensure cropped_image is not None
-                self.scene.addPixmap(self.cropped_image)
-                self.scene.setSceneRect(QRectF(self.cropped_image.rect()))
+                downscale_factor = 0.5  # Example downscale factor
+                annotation.create_cropped_image(annotation.rasterio_src, downscale_factor)
+                self.scene.addPixmap(annotation.cropped_image)
+                self.scene.setSceneRect(QRectF(annotation.cropped_image.rect()))
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 self.create_bar_chart()

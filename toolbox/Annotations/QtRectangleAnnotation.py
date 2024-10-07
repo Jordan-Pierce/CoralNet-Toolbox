@@ -1,9 +1,10 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
+from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem, QGraphicsPolygonItem
 from rasterio.windows import Window
+from PIL import Image  # Import the Image module from PIL
 
 from toolbox.Annotations.QtAnnotation import Annotation
 
@@ -49,7 +50,7 @@ class RectangleAnnotation(Annotation):
         self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
                                  (self.top_left.y() + self.bottom_right.y()) / 2)
 
-    def create_cropped_image(self, rasterio_src):
+    def create_cropped_image(self, rasterio_src, downscale_factor=1.0):
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation
@@ -71,6 +72,11 @@ class RectangleAnnotation(Annotation):
         # Ensure the data is in the correct format for QImage
         data = self._prepare_data_for_qimage(data)
 
+        # Downscale the data if downscale_factor is not 1.0
+        if downscale_factor != 1.0:
+            new_size = (int(data.shape[1] * downscale_factor), int(data.shape[0] * downscale_factor))
+            data = np.array(Image.fromarray(data).resize(new_size, Image.ANTIALIAS))
+
         # Convert numpy array to QImage
         q_image = self._convert_to_qimage(data)
 
@@ -78,6 +84,18 @@ class RectangleAnnotation(Annotation):
         self.cropped_image = QPixmap.fromImage(q_image)
 
         self.annotation_updated.emit(self)  # Notify update
+
+    def get_cropped_image(self, downscaling_factor=1.0):
+        if self.cropped_image is None:
+            return None
+
+        # Downscale the cropped image if downscaling_factor is not 1.0
+        if downscaling_factor != 1.0:
+            new_size = (int(self.cropped_image.width() * downscaling_factor),
+                        int(self.cropped_image.height() * downscaling_factor))
+            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+
+        return self.cropped_image
 
     def create_graphics_item(self, scene: QGraphicsScene):
         rect = QGraphicsRectItem(self.top_left.x(), self.top_left.y(),
@@ -87,6 +105,14 @@ class RectangleAnnotation(Annotation):
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
+
+        # Create separate graphics items for center/centroid, bounding box, and brush/mask
+        self.create_center_graphics_item(self.center_xy, scene)
+        self.create_bounding_box_graphics_item(self.top_left, self.bottom_right, scene)
+        self.create_brush_graphics_item(QPolygonF([self.top_left, 
+                                                   QPointF(self.bottom_right.x(), self.top_left.y()), 
+                                                   self.bottom_right, 
+                                                   QPointF(self.top_left.x(), self.bottom_right.y())]), scene)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -120,6 +146,14 @@ class RectangleAnnotation(Annotation):
 
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
+
+            # Update separate graphics items for center/centroid, bounding box, and brush/mask
+            self.update_center_graphics_item(self.center_xy)
+            self.update_bounding_box_graphics_item(self.top_left, self.bottom_right)
+            self.update_brush_graphics_item(QPolygonF([self.top_left, 
+                                                       QPointF(self.bottom_right.x(), self.top_left.y()), 
+                                                       self.bottom_right, 
+                                                       QPointF(self.top_left.x(), self.bottom_right.y())]))
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:

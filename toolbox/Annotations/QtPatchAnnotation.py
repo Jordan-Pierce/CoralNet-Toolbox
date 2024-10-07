@@ -40,7 +40,7 @@ class PatchAnnotation(Annotation):
                       self.annotation_size)
         return rect.contains(point)
 
-    def create_cropped_image(self, rasterio_src):
+    def create_cropped_image(self, rasterio_src, downscale_factor=1.0):
         # Provide the rasterio source to the annotation for the first time
         self.rasterio_src = rasterio_src
 
@@ -53,10 +53,10 @@ class PatchAnnotation(Annotation):
 
         # Calculate the window for rasterio
         window = Window(
-            col_off(max(0, pixel_x - half_size),
-            row_off(max(0, pixel_y - half_size),
-            width(min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
-            height(min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
+            col_off=max(0, pixel_x - half_size),
+            row_off=max(0, pixel_y - half_size),
+            width=min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
+            height=min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
         )
 
         # Read the data from rasterio
@@ -65,6 +65,11 @@ class PatchAnnotation(Annotation):
         # Ensure the data is in the correct format for QImage
         data = self._prepare_data_for_qimage(data)
 
+        # Downscale the data if downscale_factor is not 1.0
+        if downscale_factor != 1.0:
+            new_size = (int(data.shape[1] * downscale_factor), int(data.shape[0] * downscale_factor))
+            data = np.array(Image.fromarray(data).resize(new_size, Image.ANTIALIAS))
+
         # Convert numpy array to QImage
         q_image = self._convert_to_qimage(data)
 
@@ -72,6 +77,18 @@ class PatchAnnotation(Annotation):
         self.cropped_image = QPixmap.fromImage(q_image)
 
         self.annotation_updated.emit(self)  # Notify update
+
+    def get_cropped_image(self, downscaling_factor=1.0):
+        if self.cropped_image is None:
+            return None
+
+        # Downscale the cropped image if downscaling_factor is not 1.0
+        if downscaling_factor != 1.0:
+            new_size = (int(self.cropped_image.width() * downscaling_factor),
+                        int(self.cropped_image.height() * downscaling_factor))
+            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+
+        return self.cropped_image
 
     def create_graphics_item(self, scene: QGraphicsScene):
         half_size = self.annotation_size / 2
@@ -82,6 +99,13 @@ class PatchAnnotation(Annotation):
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
+
+        # Create separate graphics items for center/centroid, bounding box, and brush/mask
+        self.create_center_graphics_item(self.center_xy, scene)
+        self.create_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
+                                               QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),
+                                               scene)
+        self.create_brush_graphics_item(self.graphics_item.rect(), scene)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -107,6 +131,12 @@ class PatchAnnotation(Annotation):
             # Update the cropped image
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
+
+            # Update separate graphics items for center/centroid, bounding box, and brush/mask
+            self.update_center_graphics_item(self.center_xy)
+            self.update_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
+                                                   QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size))
+            self.update_brush_graphics_item(self.graphics_item.rect())
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:

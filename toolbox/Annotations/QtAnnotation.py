@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 
 from PyQt5.QtCore import pyqtSignal, QObject
-from PyQt5.QtGui import QColor, QImage
+from PyQt5.QtGui import QColor, QImage, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem
 from PyQt5.QtWidgets import QMessageBox
 
 from toolbox.QtLabelWindow import Label
@@ -45,6 +45,11 @@ class Annotation(QObject):
 
         self.show_message = show_msg
 
+        # Attributes to store the graphics items for center/centroid, bounding box, and brush/mask
+        self.center_graphics_item = None
+        self.bounding_box_graphics_item = None
+        self.brush_graphics_item = None
+
     def show_warning_message(self):
         msg_box = QMessageBox()
         msg_box.setIcon(QMessageBox.Warning)
@@ -69,6 +74,19 @@ class Annotation(QObject):
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
+
+        # Remove the center, bounding box, and brush graphics items
+        if self.center_graphics_item and self.center_graphics_item.scene():
+            self.center_graphics_item.scene().removeItem(self.center_graphics_item)
+            self.center_graphics_item = None
+
+        if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
+            self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
+            self.bounding_box_graphics_item = None
+
+        if self.brush_graphics_item and self.brush_graphics_item.scene():
+            self.brush_graphics_item.scene().removeItem(self.brush_graphics_item)
+            self.brush_graphics_item = None
 
     def update_machine_confidence(self, prediction: dict):
         # Set user confidence to None
@@ -136,6 +154,46 @@ class Annotation(QObject):
 
         return QImage(data, width, height, bytes_per_line, image_format)
 
+    def create_center_graphics_item(self, center_xy, scene):
+        if self.center_graphics_item:
+            scene.removeItem(self.center_graphics_item)
+        self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
+        self.center_graphics_item.setBrush(QColor(255, 0, 0, self.transparency))
+        scene.addItem(self.center_graphics_item)
+
+    def create_bounding_box_graphics_item(self, top_left, bottom_right, scene):
+        if self.bounding_box_graphics_item:
+            scene.removeItem(self.bounding_box_graphics_item)
+        self.bounding_box_graphics_item = QGraphicsRectItem(top_left.x(), top_left.y(),
+                                                            bottom_right.x() - top_left.x(),
+                                                            bottom_right.y() - top_left.y())
+        self.bounding_box_graphics_item.setPen(QColor(0, 255, 0, self.transparency))
+        scene.addItem(self.bounding_box_graphics_item)
+
+    def create_brush_graphics_item(self, points, scene):
+        if self.brush_graphics_item:
+            scene.removeItem(self.brush_graphics_item)
+        self.brush_graphics_item = QGraphicsPolygonItem(points)
+        self.brush_graphics_item.setBrush(QColor(0, 0, 255, self.transparency))
+        scene.addItem(self.brush_graphics_item)
+
+    def update_center_graphics_item(self, center_xy):
+        if self.center_graphics_item:
+            self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
+            self.center_graphics_item.setBrush(QColor(255, 0, 0, self.transparency))
+
+    def update_bounding_box_graphics_item(self, top_left, bottom_right):
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setRect(top_left.x(), top_left.y(),
+                                                    bottom_right.x() - top_left.x(),
+                                                    bottom_right.y() - top_left.y())
+            self.bounding_box_graphics_item.setPen(QColor(0, 255, 0, self.transparency))
+
+    def update_brush_graphics_item(self, points):
+        if self.brush_graphics_item:
+            self.brush_graphics_item.setPolygon(points)
+            self.brush_graphics_item.setBrush(QColor(0, 0, 255, self.transparency))
+
     def to_dict(self):
         # Convert machine_confidence keys to short_label_code
         machine_confidence = {label.short_label_code: confidence for label, confidence in
@@ -170,6 +228,18 @@ class Annotation(QObject):
         annotation.machine_confidence = machine_confidence
 
         return annotation
+
+    def get_cropped_image(self, downscaling_factor=1.0):
+        if self.cropped_image is None:
+            return None
+
+        # Downscale the cropped image if downscaling_factor is not 1.0
+        if downscaling_factor != 1.0:
+            new_size = (int(self.cropped_image.width() * downscaling_factor),
+                        int(self.cropped_image.height() * downscaling_factor))
+            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+
+        return self.cropped_image
 
     def __repr__(self):
         return (f"Annotation(id={self.id}, "
