@@ -4,8 +4,8 @@ import warnings
 import numpy as np
 
 from PyQt5.QtCore import pyqtSignal, QObject
-from PyQt5.QtGui import QColor, QImage, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtGui import QColor, QImage, QPolygonF
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem
 
 from toolbox.QtLabelWindow import Label
 
@@ -157,42 +157,70 @@ class Annotation(QObject):
     def create_center_graphics_item(self, center_xy, scene):
         if self.center_graphics_item:
             scene.removeItem(self.center_graphics_item)
+
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
-        self.center_graphics_item.setBrush(QColor(255, 0, 0, self.transparency))
+        self.center_graphics_item.setBrush(QColor(self.label.color.red(),
+                                                  self.label.color.green(),
+                                                  self.label.color.blue(),
+                                                  self.transparency))
         scene.addItem(self.center_graphics_item)
 
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene):
         if self.bounding_box_graphics_item:
             scene.removeItem(self.bounding_box_graphics_item)
+
         self.bounding_box_graphics_item = QGraphicsRectItem(top_left.x(), top_left.y(),
                                                             bottom_right.x() - top_left.x(),
                                                             bottom_right.y() - top_left.y())
-        self.bounding_box_graphics_item.setPen(QColor(0, 255, 0, self.transparency))
+
+        self.bounding_box_graphics_item.setPen(QColor(self.label.color.red(),
+                                                      self.label.color.green(),
+                                                      self.label.color.blue(),
+                                                      self.transparency))
         scene.addItem(self.bounding_box_graphics_item)
 
     def create_brush_graphics_item(self, points, scene):
         if self.brush_graphics_item:
             scene.removeItem(self.brush_graphics_item)
-        self.brush_graphics_item = QGraphicsPolygonItem(points)
-        self.brush_graphics_item.setBrush(QColor(0, 0, 255, self.transparency))
+
+        polygon = QPolygonF(points)
+        self.brush_graphics_item = QGraphicsPolygonItem(polygon)
+        self.brush_graphics_item.setBrush(QColor(self.label.color.red(),
+                                                 self.label.color.green(),
+                                                 self.label.color.blue(),
+                                                 self.transparency))
         scene.addItem(self.brush_graphics_item)
 
     def update_center_graphics_item(self, center_xy):
         if self.center_graphics_item:
-            self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
-            self.center_graphics_item.setBrush(QColor(255, 0, 0, self.transparency))
+            self.center_graphics_item.setRect(center_xy.x() - 10, center_xy.y() - 10, 20, 20)
+            self.center_graphics_item.setBrush(QColor(self.label.color.red(),
+                                                      self.label.color.green(),
+                                                      self.label.color.blue(),
+                                                      self.transparency))
 
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         if self.bounding_box_graphics_item:
             self.bounding_box_graphics_item.setRect(top_left.x(), top_left.y(),
                                                     bottom_right.x() - top_left.x(),
                                                     bottom_right.y() - top_left.y())
-            self.bounding_box_graphics_item.setPen(QColor(0, 255, 0, self.transparency))
+
+            self.bounding_box_graphics_item.setPen(QColor(self.label.color.red(),
+                                                          self.label.color.green(),
+                                                          self.label.color.blue(),
+                                                          self.transparency))
 
     def update_brush_graphics_item(self, points):
         if self.brush_graphics_item:
-            self.brush_graphics_item.setPolygon(points)
-            self.brush_graphics_item.setBrush(QColor(0, 0, 255, self.transparency))
+            polygon = QPolygonF(points)
+            self.brush_graphics_item.setPolygon(polygon)
+            self.brush_graphics_item.setBrush(QColor(self.label.color.red(),
+                                                     self.label.color.green(),
+                                                     self.label.color.blue(),
+                                                     self.transparency))
+
+    def update_graphics_item(self):
+        pass
 
     def to_dict(self):
         # Convert machine_confidence keys to short_label_code

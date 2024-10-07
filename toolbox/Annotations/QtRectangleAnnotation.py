@@ -2,9 +2,8 @@ import warnings
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem, QGraphicsPolygonItem
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
 from rasterio.windows import Window
-from PIL import Image  # Import the Image module from PIL
 
 from toolbox.Annotations.QtAnnotation import Annotation
 
@@ -29,8 +28,11 @@ class RectangleAnnotation(Annotation):
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
 
-        self.top_left = QPointF(round(min(top_left.x(), bottom_right.x()), 2), round(min(top_left.y(), bottom_right.y()), 2))
-        self.bottom_right = QPointF(round(max(top_left.x(), bottom_right.x()), 2), round(max(top_left.y(), bottom_right.y()), 2))
+        self.top_left = QPointF(round(min(top_left.x(), bottom_right.x()), 2),
+                                round(min(top_left.y(), bottom_right.y()), 2))
+
+        self.bottom_right = QPointF(round(max(top_left.x(), bottom_right.x()), 2),
+                                    round(max(top_left.y(), bottom_right.y()), 2))
 
         self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
                                  (self.top_left.y() + self.bottom_right.y()) / 2)
@@ -50,7 +52,7 @@ class RectangleAnnotation(Annotation):
         self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
                                  (self.top_left.y() + self.bottom_right.y()) / 2)
 
-    def create_cropped_image(self, rasterio_src, downscale_factor=1.0):
+    def create_cropped_image(self, rasterio_src):
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation
@@ -71,11 +73,6 @@ class RectangleAnnotation(Annotation):
 
         # Ensure the data is in the correct format for QImage
         data = self._prepare_data_for_qimage(data)
-
-        # Downscale the data if downscale_factor is not 1.0
-        if downscale_factor != 1.0:
-            new_size = (int(data.shape[1] * downscale_factor), int(data.shape[0] * downscale_factor))
-            data = np.array(Image.fromarray(data).resize(new_size, Image.ANTIALIAS))
 
         # Convert numpy array to QImage
         q_image = self._convert_to_qimage(data)
@@ -184,12 +181,6 @@ class RectangleAnnotation(Annotation):
         self.bottom_right = QPointF(self.center_xy.x() + width / 2, self.center_xy.y() + height / 2)
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
-
-    def transform_points_to_cropped_image(self):
-        min_x, min_y, max_x, max_y = self.cropped_bbox
-        transformed_top_left = QPointF(self.top_left.x() - min_x, self.top_left.y() - min_y)
-        transformed_bottom_right = QPointF(self.bottom_right.x() - min_x, self.bottom_right.y() - min_y)
-        return [transformed_top_left, transformed_bottom_right]
 
     def to_dict(self):
         base_dict = super().to_dict()

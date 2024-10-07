@@ -72,7 +72,7 @@ class PolygonAnnotation(Annotation):
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
         self.center_xy = QPointF((min_x + max_x) / 2, (min_y + max_y) / 2)
 
-    def create_cropped_image(self, rasterio_src, downscale_factor=1.0):
+    def create_cropped_image(self, rasterio_src):
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation
@@ -93,11 +93,6 @@ class PolygonAnnotation(Annotation):
 
         # Ensure the data is in the correct format for QImage
         data = self._prepare_data_for_qimage(data)
-
-        # Downscale the data if downscale_factor is not 1.0
-        if downscale_factor != 1.0:
-            new_size = (int(data.shape[1] * downscale_factor), int(data.shape[0] * downscale_factor))
-            data = np.array(Image.fromarray(data).resize(new_size, Image.ANTIALIAS))
 
         # Convert numpy array to QImage
         q_image = self._convert_to_qimage(data)
@@ -131,7 +126,7 @@ class PolygonAnnotation(Annotation):
         self.create_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
                                                QPointF(self.cropped_bbox[2], self.cropped_bbox[3]),
                                                scene)
-        self.create_brush_graphics_item(QPolygonF(self.points), scene)
+        self.create_brush_graphics_item(self.points, scene)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -168,7 +163,7 @@ class PolygonAnnotation(Annotation):
             self.update_center_graphics_item(self.center_xy)
             self.update_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
                                                    QPointF(self.cropped_bbox[2], self.cropped_bbox[3]))
-            self.update_brush_graphics_item(QPolygonF(self.points))
+            self.update_brush_graphics_item(self.points)
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
@@ -178,7 +173,9 @@ class PolygonAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2), round(new_center_xy.y() - self.center_xy.y(), 2))
+        delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2),
+                        round(new_center_xy.y() - self.center_xy.y(), 2))
+
         self.points = [point + delta for point in self.points]
         self.calculate_centroid()
         self.update_graphics_item()
@@ -199,18 +196,6 @@ class PolygonAnnotation(Annotation):
         self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
-
-    def transform_points_to_cropped_image(self):
-        # Get the bounding box of the cropped image in xyxy format
-        min_x, min_y, max_x, max_y = self.cropped_bbox
-
-        # Transform the points
-        transformed_points = []
-        for point in self.points:
-            transformed_point = QPointF(point.x() - min_x, point.y() - min_y)
-            transformed_points.append(transformed_point)
-
-        return transformed_points
 
     def to_dict(self):
         base_dict = super().to_dict()

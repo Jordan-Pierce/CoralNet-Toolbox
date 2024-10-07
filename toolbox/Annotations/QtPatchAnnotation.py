@@ -29,7 +29,7 @@ class PatchAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.center_xy = QPointF(round(center_xy.x(), 2), round(center_xy.y(), 2))  # Reduce to two significant digits
+        self.center_xy = QPointF(round(center_xy.x(), 2), round(center_xy.y(), 2))
         self.annotation_size = annotation_size
 
     def contains_point(self, point: QPointF):
@@ -40,7 +40,7 @@ class PatchAnnotation(Annotation):
                       self.annotation_size)
         return rect.contains(point)
 
-    def create_cropped_image(self, rasterio_src, downscale_factor=1.0):
+    def create_cropped_image(self, rasterio_src):
         # Provide the rasterio source to the annotation for the first time
         self.rasterio_src = rasterio_src
 
@@ -65,11 +65,6 @@ class PatchAnnotation(Annotation):
         # Ensure the data is in the correct format for QImage
         data = self._prepare_data_for_qimage(data)
 
-        # Downscale the data if downscale_factor is not 1.0
-        if downscale_factor != 1.0:
-            new_size = (int(data.shape[1] * downscale_factor), int(data.shape[0] * downscale_factor))
-            data = np.array(Image.fromarray(data).resize(new_size, Image.ANTIALIAS))
-
         # Convert numpy array to QImage
         q_image = self._convert_to_qimage(data)
 
@@ -86,6 +81,7 @@ class PatchAnnotation(Annotation):
         if downscaling_factor != 1.0:
             new_size = (int(self.cropped_image.width() * downscaling_factor),
                         int(self.cropped_image.height() * downscaling_factor))
+
             self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
 
         return self.cropped_image
@@ -105,7 +101,7 @@ class PatchAnnotation(Annotation):
         self.create_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
                                                QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),
                                                scene)
-        self.create_brush_graphics_item(self.graphics_item.rect(), scene)
+        self.create_brush_graphics_item([self.center_xy], scene)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -134,9 +130,12 @@ class PatchAnnotation(Annotation):
 
             # Update separate graphics items for center/centroid, bounding box, and brush/mask
             self.update_center_graphics_item(self.center_xy)
-            self.update_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
-                                                   QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size))
-            self.update_brush_graphics_item(self.graphics_item.rect())
+            self.update_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size,
+                                                           self.center_xy.y() - half_size),
+                                                   QPointF(self.center_xy.x() + half_size,
+                                                           self.center_xy.y() + half_size))
+
+            self.update_brush_graphics_item([self.center_xy])
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
@@ -146,7 +145,7 @@ class PatchAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        self.center_xy = QPointF(round(new_center_xy.x(), 2), round(new_center_xy.y(), 2))  # Reduce to two significant digits
+        self.center_xy = QPointF(round(new_center_xy.x(), 2), round(new_center_xy.y(), 2))
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
