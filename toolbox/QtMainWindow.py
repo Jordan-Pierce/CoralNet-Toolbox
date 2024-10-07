@@ -116,16 +116,16 @@ class MainWindow(QMainWindow):
         self.import_menu = self.menu_bar.addMenu("Import")
 
         # Raster submenu
-        self.import_raster_menu = self.import_menu.addMenu("Raster")
+        self.import_rasters_menu = self.import_menu.addMenu("Rasters")
 
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.io_dialog.import_images)
-        self.import_raster_menu.addAction(self.import_images_action)
+        self.import_rasters_menu.addAction(self.import_images_action)
 
         self.import_frames_action = QAction("Frames", self)
         self.import_frames_action.triggered.connect(
             lambda: QMessageBox.information(self, "Placeholder", "Frames import is not yet implemented."))
-        self.import_raster_menu.addAction(self.import_frames_action)
+        self.import_rasters_menu.addAction(self.import_frames_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")

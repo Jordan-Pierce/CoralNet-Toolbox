@@ -4,7 +4,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem
 
 from toolbox.Tools.QtTool import Tool
 from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -22,6 +22,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class SAMTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
+        self.top_left = None
         self.sam_dialog = None
 
         self.cursor = Qt.CrossCursor
@@ -48,6 +49,14 @@ class SAMTool(Tool):
 
         self.hover_active = True  # Flag to control hover timer
 
+        # Rectangle drawing attributes
+        self.start_point = None
+        self.end_point = None
+        self.top_left = None
+        self.bottom_right = None
+        self.drawing_rectangle = False
+        self.rectangle_graphics = None
+
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
@@ -72,7 +81,7 @@ class SAMTool(Tool):
         self.display_hover_annotation()
 
     def display_hover_annotation(self):
-        if self.working_area and self.hover_active:
+        if self.working_area and self.hover_active and not self.drawing_rectangle:
             if self.annotation_window.cursorInWindow(self.hover_pos, mapped=True):
                 # Adjust points relative to the working area's top-left corner
                 working_area_top_left = self.working_area.rect().topLeft()
@@ -84,12 +93,28 @@ class SAMTool(Tool):
                 # Toggle the cursor annotation
                 self.annotation_window.toggle_cursor_annotation(adjusted_pos)
 
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if self.annotation_window.cursorInWindow(event.pos()):
-            self.start_hover_timer(event.pos())
-        else:
-            self.cancel_hover_annotation()
-            self.stop_hover_timer()
+    def display_rectangle_annotation(self):
+        if not self.working_area:
+            return
+
+        if self.working_area and self.end_point and self.drawing_rectangle:
+            working_area_top_left = self.working_area.rect().topLeft()
+
+            # Ensure top_left and bottom_right are correctly calculated
+            top_left = QPointF(min(self.start_point.x(), self.end_point.x()),
+                               min(self.start_point.y(), self.end_point.y()))
+
+            bottom_right = QPointF(max(self.start_point.x(), self.end_point.x()),
+                                   max(self.start_point.y(), self.end_point.y()))
+
+            # Adjust the points relative to the working area's top-left corner
+            self.top_left = QPointF(top_left.x() - working_area_top_left.x(),
+                                    top_left.y() - working_area_top_left.y())
+
+            self.bottom_right = QPointF(bottom_right.x() - working_area_top_left.x(),
+                                        bottom_right.y() - working_area_top_left.y())
+
+            self.annotation_window.toggle_cursor_annotation()
 
     def mousePressEvent(self, event: QMouseEvent):
         if not self.annotation_window.selected_label:
@@ -98,16 +123,17 @@ class SAMTool(Tool):
                                 "A label must be selected before adding an annotation.")
             return None
 
+        if not self.working_area:
+            return
+
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+
+        # Get the adjusted position relative to the working area's top-left corner
+        working_area_top_left = self.working_area.rect().topLeft()
+        adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
+                               scene_pos.y() - working_area_top_left.y())
+
         if event.modifiers() == Qt.ControlModifier:
-            scene_pos = self.annotation_window.mapToScene(event.pos())
-
-            if not self.working_area:
-                return
-
-            # Get the adjusted position relative to the working area's top-left corner
-            working_area_top_left = self.working_area.rect().topLeft()
-            adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
-                                   scene_pos.y() - working_area_top_left.y())
 
             if event.button() == Qt.LeftButton:
                 self.positive_points.append(adjusted_pos)
@@ -128,21 +154,75 @@ class SAMTool(Tool):
             # Update the cursor annotation
             self.annotation_window.toggle_cursor_annotation(event.pos())
 
+        elif event.modifiers() != Qt.ControlModifier:
+
+            if event.button() == Qt.LeftButton and not self.drawing_rectangle:
+                # Remove the hover annotation
+                self.cancel_hover_annotation()
+                # Get the start point
+                self.start_point = self.annotation_window.mapToScene(event.pos())
+                # Start drawing the rectangle
+                self.drawing_rectangle = True
+
+            elif event.button() == Qt.LeftButton and self.drawing_rectangle:
+                # Get the end point
+                self.end_point = self.annotation_window.mapToScene(event.pos())
+                # Finish drawing the rectangle
+                self.drawing_rectangle = False
+
+            # Update the cursor annotation
+            self.annotation_window.toggle_cursor_annotation()
+
+        elif event.button() == Qt.RightButton and self.drawing_rectangle:
+            # Panning the image while drawing
+            pass
+        else:
+            self.cancel_annotation()
+
+        self.annotation_window.viewport().update()
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if self.working_area and self.drawing_rectangle:
+            # Update the end point while drawing the rectangle
+            self.end_point = self.annotation_window.mapToScene(event.pos())
+            self.display_rectangle_annotation()
+
+            # Update the annotation graphics
+            active_image = self.annotation_window.active_image
+            image_pixmap = self.annotation_window.image_pixmap
+            cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+            if active_image and image_pixmap and cursor_in_window and self.start_point:
+                self.annotation_window.toggle_cursor_annotation(self.end_point)
+        else:
+            if self.annotation_window.cursorInWindow(event.pos()):
+                self.start_hover_timer(event.pos())
+            else:
+                self.cancel_hover_annotation()
+                self.stop_hover_timer()
+
         self.annotation_window.viewport().update()
 
     def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key_Space and not len(self.positive_points):
-            if not self.working_area:
-                self.set_working_area()
-                self.sam_dialog.set_image(self.image)
-                self.cancel_annotation()
-            else:
-                self.cancel_annotation()
-                self.cancel_working_area()
 
-        if event.key() == Qt.Key_Space and len(self.positive_points):
+        if not event.key() == Qt.Key_Space:
+            return
+
+        # If there is no working area, set it
+        if not self.working_area:
+            self.set_working_area()
+            self.sam_dialog.set_image(self.image)
+        # If there is a bounding box, add the annotation
+        elif self.start_point and self.end_point and not self.drawing_rectangle:
             self.annotation_window.add_annotation()
-            self.cancel_annotation()
+        # If there are positive points, add the annotation
+        elif len(self.positive_points):
+            # If there are positive points, add the annotation
+            self.annotation_window.add_annotation()
+        else:
+            self.cancel_working_area()
+
+        self.cancel_annotation()
+        self.annotation_window.viewport().update()
 
     def set_working_area(self):
         self.annotation_window.setCursor(Qt.WaitCursor)
@@ -189,27 +269,37 @@ class SAMTool(Tool):
         self.image = self.original_image[top:bottom, left:right]
 
         self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.viewport().update()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
 
-        if not self.annotation_window.active_image or not self.annotation_window.image_pixmap:
+        if not self.annotation_window.active_image or not self.annotation_window.image_pixmap or not self.working_area:
             return None
 
+        # Get the current transparency
+        transparency = self.annotation_window.main_window.label_window.active_label.transparency
+
+        # Get the positive and negative points, bbox
         positive = [[point.x(), point.y()] for point in self.positive_points]
         negative = [[point.x(), point.y()] for point in self.negative_points]
-
-        transparency = self.annotation_window.main_window.label_window.active_label.transparency
+        bbox = np.array([])
 
         if self.hover_point:
             positive.append([self.hover_point.x(), self.hover_point.y()])
             transparency //= 4
 
-        # Create the labels and points as numpy arrays
+        if self.start_point and self.end_point:
+            bbox = np.array([self.top_left.x(),
+                             self.top_left.y(),
+                             self.bottom_right.x(),
+                             self.bottom_right.y()])
+
+        # Create the labels, points, and bbox as numpy arrays
         labels = np.array([1] * len(positive) + [0] * len(negative))
         points = np.array(positive + negative)
 
         # Predict the mask
-        results = self.sam_dialog.predict(points, labels)
+        results = self.sam_dialog.predict(bbox, points, labels)
 
         if not results:
             return None
@@ -219,11 +309,11 @@ class SAMTool(Tool):
 
         # Get the points of the top1 mask
         top1_index = np.argmax(results.boxes.conf)
-        points = results[top1_index].masks.xy[0]
+        predictions = results[top1_index].masks.xy[0]
 
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect().topLeft()
-        points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in points]
+        points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in predictions]
         self.points = [QPointF(*point) for point in points]
 
         # Create the annotation
@@ -240,6 +330,10 @@ class SAMTool(Tool):
         annotation.create_graphics_item(self.annotation_window.scene)
         self.annotation_window.scene.addItem(annotation.graphics_item)
 
+        if self.rectangle_graphics:
+            self.annotation_window.scene.removeItem(self.rectangle_graphics)
+            self.rectangle_graphics = None
+
         # Handle hover graphics separately
         if self.hover_point:
             self.cancel_hover_annotation()
@@ -250,6 +344,8 @@ class SAMTool(Tool):
                 self.annotation_window.scene.removeItem(self.annotation_graphics)
             self.annotation_graphics = annotation.graphics_item
 
+        self.annotation_window.viewport().update()
+
         return annotation
 
     def cancel_hover_annotation(self):
@@ -258,6 +354,19 @@ class SAMTool(Tool):
 
         self.hover_point = None
         self.hover_graphics = None
+        self.annotation_window.viewport().update()
+
+    def cancel_rectangle_annotation(self):
+        self.start_point = None
+        self.end_point = None
+        self.drawing_rectangle = False
+        self.annotation_window.toggle_cursor_annotation()
+
+        if self.rectangle_graphics:
+            self.annotation_window.scene.removeItem(self.rectangle_graphics)
+            self.rectangle_graphics = None
+
+        self.annotation_window.viewport().update()
 
     def cancel_annotation(self):
         for point in self.point_graphics:
@@ -269,13 +378,19 @@ class SAMTool(Tool):
         if self.hover_graphics:
             self.annotation_window.scene.removeItem(self.hover_graphics)
 
+        if self.rectangle_graphics:
+            self.annotation_window.scene.removeItem(self.rectangle_graphics)
+
         self.points = []
         self.positive_points = []
         self.negative_points = []
         self.point_graphics = []
+        self.rectangle_graphics = None
 
         self.cancel_hover_annotation()
-    
+        self.cancel_rectangle_annotation()
+        self.annotation_window.viewport().update()
+
     def cancel_working_area(self):
         if self.working_area:
             self.annotation_window.scene.removeItem(self.working_area)

@@ -228,16 +228,15 @@ class SAMDeployModelDialog(QDialog):
         # Reset the cursor
         QApplication.restoreOverrideCursor()
 
-    def predict(self, points, labels):
+    def predict(self, bbox, points, labels):
         if not self.predictor:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
             return None
         try:
-            input_labels = torch.tensor(labels)
-            point_labels = input_labels.to(self.main_window.device).unsqueeze(0)
-            # Provide prompt to SAM model in form of numpy array
-            input_points = torch.as_tensor(points.astype(int), dtype=torch.int64)
-            input_points = input_points.to(self.main_window.device).unsqueeze(0)
+            #
+            point_labels = None
+            point_coords = None
+            bbox_coords = None
 
             # Calculate scaling factors
             original_height, original_width = self.original_image.shape[:2]
@@ -245,16 +244,45 @@ class SAMDeployModelDialog(QDialog):
             scale_x = resized_width / original_width
             scale_y = resized_height / original_height
 
-            # Scale the points based on the original image dimensions
-            scaled_points = input_points.clone().float()  # Cast to float32
-            scaled_points[:, :, 0] *= scale_x
-            scaled_points[:, :, 1] *= scale_y
-            scaled_points = scaled_points.long()  # Cast back to int64
+            has_points = len(points) != 0
+            has_bbox = len(bbox) != 0
 
-            # Apply the scaled points to the predictor
-            point_coords = self.predictor.transform.apply_coords_torch(scaled_points, self.resized_image.shape[:2])
+            if not has_points and not has_bbox:
+                return None
 
-            mask, score, logit = self.predictor.predict_torch(point_coords=point_coords,
+            if has_points:
+                input_labels = torch.tensor(labels)
+                point_labels = input_labels.to(self.main_window.device).unsqueeze(0)
+
+                # Provide prompt to SAM model in form of numpy array
+                input_points = torch.as_tensor(points.astype(int), dtype=torch.int64)
+                input_points = input_points.to(self.main_window.device).unsqueeze(0)
+
+                # Scale the points based on the original image dimensions
+                scaled_points = input_points.clone().float()  # Cast to float32
+                scaled_points[:, :, 0] *= scale_x
+                scaled_points[:, :, 1] *= scale_y
+                scaled_points = scaled_points.long()  # Cast back to int64
+
+                # Apply the scaled points to the predictor
+                point_coords = self.predictor.transform.apply_coords_torch(scaled_points, self.resized_image.shape[:2])
+
+            if has_bbox:
+                input_bbox = torch.as_tensor(bbox, dtype=torch.int64)
+                input_bbox = input_bbox.to(self.main_window.device).unsqueeze(0)
+
+                # Scale the box based on the original image dimensions
+                scaled_bbox = input_bbox.clone().float()  # Cast to float32
+                scaled_bbox[:, 0] *= scale_x
+                scaled_bbox[:, 1] *= scale_y
+                scaled_bbox[:, 2] *= scale_x
+                scaled_bbox[:, 3] *= scale_y
+                scaled_bbox = scaled_bbox.long()  # Cast back to int64
+
+                bbox_coords = self.predictor.transform.apply_boxes_torch(scaled_bbox, self.resized_image.shape[:2])
+
+            mask, score, logit = self.predictor.predict_torch(boxes=bbox_coords,
+                                                              point_coords=point_coords,
                                                               point_labels=point_labels,
                                                               multimask_output=False)
 
