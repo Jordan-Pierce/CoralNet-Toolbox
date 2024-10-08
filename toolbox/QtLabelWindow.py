@@ -300,7 +300,10 @@ class LabelWindow(QWidget):
         if not self.active_label or self.active_label != selected_label:
             self.active_label = selected_label
             self.active_label.select()
+
+            # Selects the label in the window
             self.labelSelected.emit(selected_label)
+            # Updates the transparency slider, and then the annotations
             self.transparencyChanged.emit(self.active_label.transparency)
 
             # Enable or disable the Edit Label and Delete Label buttons based on whether a label is selected

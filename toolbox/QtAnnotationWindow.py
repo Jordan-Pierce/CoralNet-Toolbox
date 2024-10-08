@@ -300,6 +300,7 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_color = self.selected_annotation.label.color
 
             # Emit a signal indicating the selected annotations label to LabelWindow
+            # which then update the label in the label window, followed by transparency.
             self.labelSelected.emit(annotation.label.id)
 
             if not self.selected_annotation.cropped_image:
