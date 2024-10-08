@@ -265,6 +265,11 @@ class AnnotationWindow(QGraphicsView):
         # Create and return a QRectF object from these points
         return QRectF(top_left, bottom_right)
 
+    def get_image_dimensions(self):
+        if self.image_pixmap:
+            return self.image_pixmap.size().width(), self.image_pixmap.size().height()
+        return 0, 0
+
     def center_on_annotation(self, annotation):
         # Get the bounding rect of the annotation in scene coordinates
         annotation_rect = annotation.graphics_item.boundingRect()

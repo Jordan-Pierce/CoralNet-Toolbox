@@ -576,6 +576,14 @@ class MainWindow(QMainWindow):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
 
     def update_view_dimensions(self, width, height):
+        original_width, original_height = self.annotation_window.get_image_dimensions()
+
+        # If the current extent includes areas outside the original image, reduce it to be only the original image
+        if height > original_height:
+            height = original_height
+        if width > original_width:
+            width = original_width
+
         self.view_dimensions_label.setText(f"View: {height} x {width}")
 
     def update_label_transparency(self, value):
