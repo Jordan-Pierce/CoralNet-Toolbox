@@ -87,6 +87,7 @@ class AnnotationWindow(QGraphicsView):
             self.tools["zoom"].wheelEvent(event)
         if self.selected_tool:
             self.tools[self.selected_tool].wheelEvent(event)
+        self.main_window.update_view_dimensions(self.viewport().width(), self.viewport().height())
 
     def mousePressEvent(self, event: QMouseEvent):
         if self.active_image:
@@ -506,3 +507,7 @@ class AnnotationWindow(QGraphicsView):
             self.scene.deleteLater()
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.main_window.update_view_dimensions(self.viewport().width(), self.viewport().height())

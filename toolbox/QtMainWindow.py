@@ -346,10 +346,12 @@ class MainWindow(QMainWindow):
         # Labels for image dimensions and mouse position
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
+        self.view_dimensions_label = QLabel("View: 0 x 0")  # Add QLabel for view dimensions
 
         # Set fixed width for labels to prevent them from resizing
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
+        self.view_dimensions_label.setFixedWidth(150)  # Set fixed width for view dimensions label
 
         # Transparency slider
         self.transparency_slider = QSlider(Qt.Horizontal)
@@ -375,6 +377,7 @@ class MainWindow(QMainWindow):
         # Add widgets to status bar layout
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
+        self.status_bar_layout.addWidget(self.view_dimensions_label)  # Add view dimensions label to status bar layout
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
@@ -571,6 +574,9 @@ class MainWindow(QMainWindow):
 
     def update_mouse_position(self, x, y):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
+
+    def update_view_dimensions(self, width, height):
+        self.view_dimensions_label.setText(f"View: {height} x {width}")
 
     def update_label_transparency(self, value):
         self.label_window.set_label_transparency(value)
