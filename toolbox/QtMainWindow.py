@@ -91,8 +91,6 @@ class MainWindow(QMainWindow):
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
-        # Connect the annotationSelected signal from AnnotationWindow to update the transparency slider
-        self.annotation_window.transparencyChanged.connect(self.update_annotation_transparency)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
@@ -357,7 +355,6 @@ class MainWindow(QMainWindow):
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)  # Default transparency
-        self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # Spin box for Uncertainty threshold control
@@ -574,10 +571,6 @@ class MainWindow(QMainWindow):
 
     def update_mouse_position(self, x, y):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
-
-    def update_annotation_transparency(self, value):
-        self.annotation_window.set_annotation_transparency(value)
-        self.update_transparency_slider(value)  # Update the slider value
 
     def update_label_transparency(self, value):
         self.label_window.set_label_transparency(value)

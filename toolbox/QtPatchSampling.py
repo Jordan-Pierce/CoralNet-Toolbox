@@ -281,8 +281,7 @@ class PatchSamplingDialog(QDialog):
         self.apply_to_all = self.apply_all_checkbox.isChecked()
 
         # Sets the LabelWindow and AnnotationWindow to Review
-        self.label_window.set_selected_label("-1")
-        review_label = self.annotation_window.selected_label
+        review_label = self.label_window.get_label_by_id("-1")
 
         # Current image path showing
         current_image_path = self.annotation_window.current_image_path

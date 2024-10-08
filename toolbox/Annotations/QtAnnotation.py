@@ -109,12 +109,14 @@ class Annotation(QObject):
         self.update_graphics_item()
 
     def update_label(self, new_label: 'Label'):
-        self.label = new_label
-        self.update_graphics_item()
+        if self.label.id != new_label.id:
+            self.label = new_label
+            self.update_graphics_item()
 
     def update_transparency(self, transparency: int):
-        self.transparency = transparency
-        self.update_graphics_item()
+        if self.transparency != transparency:
+            self.transparency = transparency
+            self.update_graphics_item()
 
     def _prepare_data_for_qimage(self, data):
         if data.shape[0] == 3:  # RGB image
@@ -193,7 +195,7 @@ class Annotation(QObject):
 
     def update_center_graphics_item(self, center_xy):
         if self.center_graphics_item:
-            self.center_graphics_item.setRect(center_xy.x() - 10, center_xy.y() - 10, 20, 20)
+            self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
             self.center_graphics_item.setBrush(QColor(self.label.color.red(),
                                                       self.label.color.green(),
                                                       self.label.color.blue(),

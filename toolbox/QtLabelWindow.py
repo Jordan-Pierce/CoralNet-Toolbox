@@ -294,30 +294,33 @@ class LabelWindow(QWidget):
         return label
 
     def set_active_label(self, selected_label):
-        if self.active_label and self.active_label != selected_label:
+        if self.active_label != selected_label:
             self.deselect_active_label()
 
-        self.active_label = selected_label
-        self.active_label.select()
-        self.labelSelected.emit(selected_label)
-        self.transparencyChanged.emit(self.active_label.transparency)
+        if not self.active_label or self.active_label != selected_label:
+            self.active_label = selected_label
+            self.active_label.select()
+            self.labelSelected.emit(selected_label)
+            self.transparencyChanged.emit(self.active_label.transparency)
 
-        # Enable or disable the Edit Label and Delete Label buttons based on whether a label is selected
-        self.edit_label_button.setEnabled(self.active_label is not None)
-        self.delete_label_button.setEnabled(self.active_label is not None)
+            # Enable or disable the Edit Label and Delete Label buttons based on whether a label is selected
+            self.edit_label_button.setEnabled(self.active_label is not None)
+            self.delete_label_button.setEnabled(self.active_label is not None)
 
-        # Update annotations with the new label
-        self.update_annotations_with_label(selected_label)
-        self.adjust_scrollbar_for_active_label()
+            # Update annotations with the new label
+            self.update_annotations_with_label(selected_label)
+            self.adjust_scrollbar_for_active_label()
 
     def set_label_transparency(self, transparency):
-        if self.active_label:
+        if not self.active_label:
+            return
+
+        if self.active_label.transparency != transparency:
             # Update the active label's transparency
             self.active_label.update_transparency(transparency)
-            label = self.active_label
             # Update the transparency of all annotations with the active label
             for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id == label.id:
+                if annotation.label.id == self.active_label.id:
                     annotation.update_transparency(transparency)
 
     def deselect_active_label(self):
