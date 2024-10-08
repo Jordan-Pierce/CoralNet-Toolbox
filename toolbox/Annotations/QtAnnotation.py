@@ -114,33 +114,7 @@ class Annotation(QObject):
 
     def update_transparency(self, transparency: int):
         self.transparency = transparency
-
-        # Update the transparency of the center graphics item
-        if self.center_graphics_item:
-            self.center_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                      self.label.color.green(),
-                                                      self.label.color.blue(),
-                                                      self.transparency))
-
-            self.center_graphics_item.update()  # Force redraw
-
-        # Update the transparency of the bounding box graphics item
-        if self.bounding_box_graphics_item:
-            self.bounding_box_graphics_item.setPen(QColor(self.label.color.red(),
-                                                          self.label.color.green(),
-                                                          self.label.color.blue(),
-                                                          self.transparency))
-
-            self.bounding_box_graphics_item.update()  # Force redraw
-
-        # Update the transparency of the brush graphics item
-        if self.brush_graphics_item:
-            self.brush_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                     self.label.color.green(),
-                                                     self.label.color.blue(),
-                                                     self.transparency))
-
-            self.brush_graphics_item.update()  # Force redraw
+        self.update_graphics_item()
 
     def _prepare_data_for_qimage(self, data):
         if data.shape[0] == 3:  # RGB image

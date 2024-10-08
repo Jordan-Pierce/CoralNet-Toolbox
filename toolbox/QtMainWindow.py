@@ -81,6 +81,9 @@ class MainWindow(QMainWindow):
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
         self.annotation_window.mouseMoved.connect(self.update_mouse_position)
+        # Connect the hover_point signal from AnnotationWindow to the methods in SAMTool
+        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].start_hover_timer)
+        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].stop_hover_timer)
 
         # Connect the toolChanged signal (to the AnnotationWindow)
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
@@ -88,19 +91,16 @@ class MainWindow(QMainWindow):
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
-        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
-        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
-        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
-        self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the annotationSelected signal from AnnotationWindow to update the transparency slider
         self.annotation_window.transparencyChanged.connect(self.update_annotation_transparency)
+        # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
+        self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
         self.label_window.transparencyChanged.connect(self.update_label_transparency)
+        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
+        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
-        # Connect the hover_point signal from AnnotationWindow to the methods in SAMTool
-        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].start_hover_timer)
-        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].stop_hover_timer)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
