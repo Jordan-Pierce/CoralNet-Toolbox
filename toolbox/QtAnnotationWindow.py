@@ -29,6 +29,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
+    viewChanged = pyqtSignal(int, int)  # Signal to emit when view is changed
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
@@ -87,7 +88,8 @@ class AnnotationWindow(QGraphicsView):
             self.tools["zoom"].wheelEvent(event)
         if self.selected_tool:
             self.tools[self.selected_tool].wheelEvent(event)
-        self.main_window.update_view_dimensions(self.viewport().width(), self.viewport().height())
+
+        self.viewChanged.emit(*self.get_image_dimensions())
 
     def mousePressEvent(self, event: QMouseEvent):
         if self.active_image:
@@ -101,7 +103,7 @@ class AnnotationWindow(QGraphicsView):
         if self.active_image:
             self.tools["pan"].mouseMoveEvent(event)
         if self.selected_tool:
-             self.tools[self.selected_tool].mouseMoveEvent(event)
+            self.tools[self.selected_tool].mouseMoveEvent(event)
 
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
@@ -217,12 +219,14 @@ class AnnotationWindow(QGraphicsView):
         self.clear_scene()
 
         # Display NaN values the image dimensions in status bar
-        self.imageLoaded.emit(-0, -0)
+        self.imageLoaded.emit(0, 0)
+        self.viewChanged.emit(0, 0)
 
         # Set the image representations
         self.image_pixmap = QPixmap(image_item)
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
         QApplication.processEvents()
@@ -239,12 +243,13 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = image_path
         self.active_image = True
 
-        # Set the image dimensions in status bar
-        self.imageLoaded.emit(self.image_pixmap.width(), self.image_pixmap.height())
-
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
+
+        # Set the image dimensions, and current view in status bar
+        self.imageLoaded.emit(self.image_pixmap.width(), self.image_pixmap.height())
+        self.viewChanged.emit(self.image_pixmap.width(), self.image_pixmap.height())
 
         # Load all associated annotations in parallel
         self.load_annotations_parallel()
@@ -512,7 +517,3 @@ class AnnotationWindow(QGraphicsView):
             self.scene.deleteLater()
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.main_window.update_view_dimensions(self.viewport().width(), self.viewport().height())

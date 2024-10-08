@@ -81,6 +81,8 @@ class MainWindow(QMainWindow):
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
         self.annotation_window.mouseMoved.connect(self.update_mouse_position)
+        self.annotation_window.viewChanged.connect(self.update_view_dimensions)
+
         # Connect the hover_point signal from AnnotationWindow to the methods in SAMTool
         self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].start_hover_timer)
         self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].stop_hover_timer)
@@ -575,14 +577,31 @@ class MainWindow(QMainWindow):
     def update_mouse_position(self, x, y):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
 
-    def update_view_dimensions(self, width, height):
-        original_width, original_height = self.annotation_window.get_image_dimensions()
+    def update_view_dimensions(self, original_width, original_height):
+        # Current extent (view)
+        extent = self.annotation_window.viewportToScene()
 
-        # If the current extent includes areas outside the original image, reduce it to be only the original image
-        if height > original_height:
-            height = original_height
-        if width > original_width:
-            width = original_width
+        top = round(extent.top())
+        left = round(extent.left())
+        width = round(extent.width())
+        height = round(extent.height())
+
+        bottom = top + height
+        right = left + width
+
+        # If the current extent includes areas outside the
+        # original image, reduce it to be only the original image
+        if top < 0:
+            top = 0
+        if left < 0:
+            left = 0
+        if bottom > original_height:
+            bottom = original_height
+        if right > original_width:
+            right = original_width
+
+        width = right - left
+        height = bottom - top
 
         self.view_dimensions_label.setText(f"View: {height} x {width}")
 
