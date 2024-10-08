@@ -331,6 +331,7 @@ class AnnotationWindow(QGraphicsView):
         annotation.selected.connect(self.select_annotation)
         annotation.annotation_deleted.connect(self.delete_annotation)
         annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+        self.viewport().update()
 
     def load_annotations(self):
         # Crop all the annotations for current image (if not already cropped)
@@ -350,6 +351,8 @@ class AnnotationWindow(QGraphicsView):
 
         progress_bar.stop_progress()
         progress_bar.close()
+
+        self.viewport().update()
 
     def load_annotations_parallel(self):
         # Crop all the annotations for current image (if not already cropped)
@@ -377,6 +380,8 @@ class AnnotationWindow(QGraphicsView):
 
         progress_bar.stop_progress()
         progress_bar.close()
+
+        self.viewport().update()
 
     def get_image_annotations(self, image_path=None):
         if not image_path:

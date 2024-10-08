@@ -4,7 +4,9 @@ import random
 import uuid
 import warnings
 
+import numpy as np
 import pandas as pd
+
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialog, QLineEdit, QDialog, QVBoxLayout,
@@ -759,6 +761,29 @@ class IODialog:
         # Make the cursor active
         QApplication.restoreOverrideCursor()
 
+    def taglabToPoints(self, c):
+        d = (c * 10).astype(int)
+        d = np.diff(d, axis=0, prepend=[[0, 0]])
+        d = np.reshape(d, -1)
+        d = np.char.mod('%d', d)
+        d = " ".join(d)
+        return d
+
+    def taglabToContour(self, p):
+        if type(p) is str:
+            p = map(int, p.split(' '))
+            c = np.fromiter(p, dtype=int)
+        else:
+            c = np.asarray(p)
+
+        if len(c.shape) == 2:
+            return c
+
+        c = np.reshape(c, (-1, 2))
+        c = np.cumsum(c, axis=0)
+        c = c / 10.0
+        return c
+
     def export_taglab_annotations(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self.annotation_window,
@@ -776,7 +801,7 @@ class IODialog:
                 progress_bar.start_progress(total_annotations)
 
                 taglab_data = {
-                    "filename": "exported_annotations.json",
+                    "filename": file_path,
                     "working_area": None,
                     "dictionary_name": "scripps",
                     "dictionary_description": "These color codes are the ones typically used by the "
@@ -787,11 +812,11 @@ class IODialog:
 
                 # Collect all labels
                 for annotation in self.annotation_window.annotations_dict.values():
-                    label_id = annotation.label.id
+                    label_id = annotation.label.short_label_code
                     if label_id not in taglab_data["labels"]:
                         label_info = {
                             "id": label_id,
-                            "name": annotation.label.short_label_code,
+                            "name": label_id,
                             "description": None,
                             "fill": annotation.label.color.getRgb()[:3],
                             "border": [200, 200, 200],
@@ -801,7 +826,7 @@ class IODialog:
 
                 # Collect all images and their annotations
                 image_annotations = {}
-                for annotation in self.annotation_window.annotations_dict.values():
+                for idx, annotation in enumerate(self.annotation_window.annotations_dict.values()):
                     if not isinstance(annotation, PolygonAnnotation):
                         continue
 
@@ -837,7 +862,7 @@ class IODialog:
                     centroid_y = sum(point.y() for point in points) / len(points)
                     area = annotation.calculate_polygon_area()
                     perimeter = annotation.calculate_polygon_perimeter()
-                    contour = " ".join(f"{int(point.x())} {int(point.y())}" for point in points)
+                    contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
 
                     annotation_dict = {
                         "bbox": [min_x, min_y, max_x, max_y],
@@ -848,9 +873,9 @@ class IODialog:
                         "inner contours": [],
                         "class name": annotation.label.short_label_code,
                         "instance name": "coral0",  # Placeholder, update as needed
-                        "blob name": f"c-0-{annotation.label.short_label_code}x-{annotation.label.short_label_code}y",
+                        "blob name": f"c-0-{centroid_x}x-{centroid_y}y",
                         # Placeholder, update as needed
-                        "id": annotation.id,
+                        "id": idx,
                         "note": "",  # Placeholder, update as needed
                         "data": {}  # Placeholder, update as needed
                     }
@@ -883,13 +908,8 @@ class IODialog:
 
         def parse_contour(contour_str):
             """Parse the contour string into a list of QPointF objects."""
-            points = []
-            coords = contour_str.split()
-            for i in range(0, len(coords), 2):
-                x = int(coords[i])
-                y = int(coords[i + 1])
-                points.append(QPointF(x, y))
-            return points
+            points = self.taglabToContour(contour_str)
+            return [QPointF(x, y) for x, y in points]
 
         self.main_window.untoggle_all_tools()
 
@@ -940,7 +960,7 @@ class IODialog:
                                         f"from the TagLab annotations was not found in the project.")
                     continue
 
-                for annotation in image['annotations']:
+                for annotation in list(image['annotations']):
                     label_id = annotation['class name']
                     label_info = taglab_data['labels'][label_id]
                     short_label_code = label_info['name']

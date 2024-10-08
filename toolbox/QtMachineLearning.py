@@ -1473,8 +1473,8 @@ class EvaluateModelWorker(QThread):
                 plots=True
             )
 
-            # Update the class mapping with target model names
-            class_mapping = {name: self.class_mapping[name] for name in self.model.names}
+            # Update the class mapping with target model names (ordered)
+            class_mapping = {name: self.class_mapping[name] for name in self.model.names.values()}
 
             # Output confusion matrix metrics as json
             metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, class_mapping)
