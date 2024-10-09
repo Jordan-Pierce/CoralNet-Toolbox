@@ -19,11 +19,15 @@ The main window consists of several components:
   - **Import Labels (JSON)**: Load label data from a JSON file.
   - **Import Annotations (JSON)**: Load annotation data from a JSON file.
   - **Import Annotations (CoralNet)**: Load annotation data from a CoralNet CSV file.
+  - **Import Annotations (Viscore)**: Load annotation data from a Viscore CSV file.
+  - **Import Annotations (TagLab)**: Load annotation data from a TagLab JSON file.
 
 - **Export**:
   - **Export Labels (JSON)**: Save label data to a JSON file.
   - **Export Annotations (JSON)**: Save annotation data to a JSON file.
   - **Export Annotations (CoralNet)**: Save annotation data to a CoralNet CSV file.
+  - **Export Annotations (Viscore)**: Save annotation data to a Viscore CSV file.
+  - **Export Annotations (TagLab)**: Save annotation data to a TagLab JSON file.
 
 - **Sample**:
   - **Sample Annotations**: Automatically generate annotations.
@@ -51,6 +55,7 @@ The main window consists of several components:
 - **Select Tool**: Select and move annotations.
 - **Patch Tool**: Add new PatchAnnotations.
 - **Polygon Tool**: Add new PolygonAnnotations.
+- **Rectangle Tool**: Add new RectangleAnnotations.
 - **SAM Tool**: Use SAM model for automatic segmentation.
 
 ## Annotation Window

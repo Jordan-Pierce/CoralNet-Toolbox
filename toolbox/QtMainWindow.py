@@ -19,7 +19,6 @@ from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import TrainModelDialog
-from toolbox.QtSAM import SAMBatchInferenceDialog
 from toolbox.QtSAM import SAMDeployModelDialog
 
 from toolbox.QtIO import IODialog
@@ -72,15 +71,17 @@ class MainWindow(QMainWindow):
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
-
         self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
-        self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
-
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
         self.annotation_window.mouseMoved.connect(self.update_mouse_position)
+        self.annotation_window.viewChanged.connect(self.update_view_dimensions)
+
+        # Connect the hover_point signal from AnnotationWindow to the methods in SAMTool
+        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].start_hover_timer)
+        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].stop_hover_timer)
 
         # Connect the toolChanged signal (to the AnnotationWindow)
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
@@ -88,19 +89,14 @@ class MainWindow(QMainWindow):
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
-        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
-        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
-        # Connect the annotationSelected signal from AnnotationWindow to update the transparency slider
-        self.annotation_window.transparencyChanged.connect(self.update_annotation_transparency)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
         self.label_window.transparencyChanged.connect(self.update_label_transparency)
+        # Connect the imageSelected signal to update_current_image_path in AnnotationWindow
+        self.image_window.imageSelected.connect(self.annotation_window.update_current_image_path)
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
-        # Connect the hover_point signal from AnnotationWindow to the methods in SAMTool
-        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].start_hover_timer)
-        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].stop_hover_timer)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -115,47 +111,88 @@ class MainWindow(QMainWindow):
         # Import menu
         self.import_menu = self.menu_bar.addMenu("Import")
 
-        self.import_images_action = QAction("Import Images", self)
+        # Raster submenu
+        self.import_rasters_menu = self.import_menu.addMenu("Rasters")
+
+        self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.io_dialog.import_images)
-        self.import_menu.addAction(self.import_images_action)
-        self.import_menu.addSeparator()
+        self.import_rasters_menu.addAction(self.import_images_action)
 
-        self.import_labels_action = QAction("Import Labels (JSON)", self)
+        self.import_frames_action = QAction("Frames", self)
+        self.import_frames_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "Frames import is not yet implemented."))
+        self.import_rasters_menu.addAction(self.import_frames_action)
+
+        # Labels submenu
+        self.import_labels_menu = self.import_menu.addMenu("Labels")
+
+        self.import_labels_action = QAction("Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.io_dialog.import_labels)
-        self.import_menu.addAction(self.import_labels_action)
-        self.import_menu.addSeparator()
+        self.import_labels_menu.addAction(self.import_labels_action)
 
-        self.import_annotations_action = QAction("Import Annotations (JSON)", self)
+        # Annotations submenu
+        self.import_annotations_menu = self.import_menu.addMenu("Annotations")
+
+        self.import_annotations_action = QAction("Annotations (JSON)", self)
         self.import_annotations_action.triggered.connect(self.io_dialog.import_annotations)
-        self.import_menu.addAction(self.import_annotations_action)
+        self.import_annotations_menu.addAction(self.import_annotations_action)
 
-        self.import_coralnet_annotations_action = QAction("Import CoralNet Annotations (CSV)", self)
+        self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_annotations_action.triggered.connect(self.io_dialog.import_coralnet_annotations)
-        self.import_menu.addAction(self.import_coralnet_annotations_action)
+        self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
 
-        self.import_viscore_annotations_action = QAction("Import Viscore Annotations (CSV)", self)
+        self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.import_viscore_annotations_action.triggered.connect(self.io_dialog.import_viscore_annotations)
-        self.import_menu.addAction(self.import_viscore_annotations_action)
+        self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
+
+        self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
+        self.import_taglab_annotations_action.triggered.connect(self.io_dialog.import_taglab_annotations)
+        self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
+
+        # Dataset submenu
+        self.import_dataset_menu = self.import_menu.addMenu("Dataset")
+
+        self.import_yolo_action = QAction("YOLO (TXT)", self)
+        self.import_yolo_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "YOLO dataset import is not yet implemented."))
+        self.import_dataset_menu.addAction(self.import_yolo_action)
 
         # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")
 
-        self.export_labels_action = QAction("Export Labels (JSON)", self)
+        # Labels submenu
+        self.export_labels_menu = self.export_menu.addMenu("Labels")
+
+        self.export_labels_action = QAction("Labels (JSON)", self)
         self.export_labels_action.triggered.connect(self.io_dialog.export_labels)
-        self.export_menu.addAction(self.export_labels_action)
-        self.export_menu.addSeparator()
+        self.export_labels_menu.addAction(self.export_labels_action)
 
-        self.export_annotations_action = QAction("Export Annotations (JSON)", self)
+        # Annotations submenu
+        self.export_annotations_menu = self.export_menu.addMenu("Annotations")
+
+        self.export_annotations_action = QAction("Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.io_dialog.export_annotations)
-        self.export_menu.addAction(self.export_annotations_action)
+        self.export_annotations_menu.addAction(self.export_annotations_action)
 
-        self.export_coralnet_annotations_action = QAction("Export CoralNet Annotations (CSV)", self)
+        self.export_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.export_coralnet_annotations_action.triggered.connect(self.io_dialog.export_coralnet_annotations)
-        self.export_menu.addAction(self.export_coralnet_annotations_action)
+        self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
-        self.export_viscore_annotations_action = QAction("Export Viscore Annotations (JSON)", self)
+        self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.export_viscore_annotations_action.triggered.connect(self.io_dialog.export_viscore_annotations)
-        self.export_menu.addAction(self.export_viscore_annotations_action)
+        self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
+
+        self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
+        self.export_taglab_annotations_action.triggered.connect(self.io_dialog.export_taglab_annotations)
+        self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
+
+        # Dataset submenu
+        self.export_dataset_menu = self.export_menu.addMenu("Dataset")
+
+        self.export_yolo_action = QAction("YOLO (TXT)", self)
+        self.export_yolo_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "YOLO dataset export is not yet implemented."))
+        self.export_dataset_menu.addAction(self.export_yolo_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
@@ -214,10 +251,6 @@ class MainWindow(QMainWindow):
         self.sam_deploy_model_action = QAction("Deploy Model", self)
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
         self.sam_menu.addAction(self.sam_deploy_model_action)
-
-        self.sam_batch_inference_action = QAction("Batch Inference", self)
-        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
-        self.sam_menu.addAction(self.sam_batch_inference_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -307,16 +340,17 @@ class MainWindow(QMainWindow):
         # Labels for image dimensions and mouse position
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
+        self.view_dimensions_label = QLabel("View: 0 x 0")  # Add QLabel for view dimensions
 
         # Set fixed width for labels to prevent them from resizing
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
+        self.view_dimensions_label.setFixedWidth(150)  # Set fixed width for view dimensions label
 
         # Transparency slider
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)  # Default transparency
-        self.transparency_slider.valueChanged.connect(self.update_annotation_transparency)
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # Spin box for Uncertainty threshold control
@@ -337,6 +371,7 @@ class MainWindow(QMainWindow):
         # Add widgets to status bar layout
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
+        self.status_bar_layout.addWidget(self.view_dimensions_label)  # Add view dimensions label to status bar layout
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
@@ -534,9 +569,33 @@ class MainWindow(QMainWindow):
     def update_mouse_position(self, x, y):
         self.mouse_position_label.setText(f"Mouse: X: {x}, Y: {y}")
 
-    def update_annotation_transparency(self, value):
-        self.annotation_window.set_annotation_transparency(value)
-        self.update_transparency_slider(value)  # Update the slider value
+    def update_view_dimensions(self, original_width, original_height):
+        # Current extent (view)
+        extent = self.annotation_window.viewportToScene()
+
+        top = round(extent.top())
+        left = round(extent.left())
+        width = round(extent.width())
+        height = round(extent.height())
+
+        bottom = top + height
+        right = left + width
+
+        # If the current extent includes areas outside the
+        # original image, reduce it to be only the original image
+        if top < 0:
+            top = 0
+        if left < 0:
+            left = 0
+        if bottom > original_height:
+            bottom = original_height
+        if right > original_width:
+            right = original_width
+
+        width = right - left
+        height = bottom - top
+
+        self.view_dimensions_label.setText(f"View: {height} x {width}")
 
     def update_label_transparency(self, value):
         self.label_window.set_label_transparency(value)
@@ -669,19 +728,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_deploy_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_sam_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
-            QMessageBox.warning(self,
-                                "SAM Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

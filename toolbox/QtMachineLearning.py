@@ -1473,8 +1473,8 @@ class EvaluateModelWorker(QThread):
                 plots=True
             )
 
-            # Update the class mapping with target model names
-            class_mapping = {name: self.class_mapping[name] for name in self.model.names}
+            # Update the class mapping with target model names (ordered)
+            class_mapping = {name: self.class_mapping[name] for name in self.model.names.values()}
 
             # Output confusion matrix metrics as json
             metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, class_mapping)
@@ -1923,6 +1923,12 @@ class DeployModelDialog(QDialog):
                 self.classification_text_area.setText("Model file selected")
             else:
                 self.segmentation_file_path.setText("Model file selected")
+
+            # Try to load the class mapping file if it exists in the directory above
+            parent_dir = os.path.dirname(os.path.dirname(file_path))
+            class_mapping_path = os.path.join(parent_dir, "class_mapping.json")
+            if os.path.exists(class_mapping_path):
+                self.load_class_mapping(class_mapping_path)
 
     def browse_class_mapping_file(self):
         options = QFileDialog.Options()

@@ -311,13 +311,15 @@ class LabelWindow(QWidget):
         self.adjust_scrollbar_for_active_label()
 
     def set_label_transparency(self, transparency):
-        if self.active_label:
+        if not self.active_label:
+            return
+
+        if self.active_label.transparency != transparency:
             # Update the active label's transparency
             self.active_label.update_transparency(transparency)
-            label = self.active_label
             # Update the transparency of all annotations with the active label
             for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id == label.id:
+                if annotation.label.id == self.active_label.id:
                     annotation.update_transparency(transparency)
 
     def deselect_active_label(self):

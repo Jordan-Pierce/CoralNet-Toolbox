@@ -17,6 +17,8 @@ from toolbox.Tools.QtSAMTool import SAMTool
 from toolbox.Tools.QtSelectTool import SelectTool
 from toolbox.Tools.QtZoomTool import ZoomTool
 
+from toolbox.QtProgressBar import ProgressBar
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
@@ -27,12 +29,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class AnnotationWindow(QGraphicsView):
     imageLoaded = pyqtSignal(int, int)  # Signal to emit when image is loaded
+    viewChanged = pyqtSignal(int, int)  # Signal to emit when view is changed
     mouseMoved = pyqtSignal(int, int)  # Signal to emit when mouse is moved
     toolChanged = pyqtSignal(str)  # Signal to emit when the tool changes
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
-    transparencyChanged = pyqtSignal(int)  # Signal to emit when transparency changes
     hover_point = pyqtSignal(QPointF)  # Pf3f2
 
     def __init__(self, main_window, parent=None):
@@ -87,6 +89,8 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_tool:
             self.tools[self.selected_tool].wheelEvent(event)
 
+        self.viewChanged.emit(*self.get_image_dimensions())
+
     def mousePressEvent(self, event: QMouseEvent):
         if self.active_image:
             self.tools["pan"].mousePressEvent(event)
@@ -99,7 +103,7 @@ class AnnotationWindow(QGraphicsView):
         if self.active_image:
             self.tools["pan"].mouseMoveEvent(event)
         if self.selected_tool:
-             self.tools[self.selected_tool].mouseMoveEvent(event)
+            self.tools[self.selected_tool].mouseMoveEvent(event)
 
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
@@ -107,7 +111,11 @@ class AnnotationWindow(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        self.tools["pan"].mouseReleaseEvent(event)
+        if self.active_image:
+            self.tools["pan"].mouseReleaseEvent(event)
+        if self.selected_tool:
+            self.tools[self.selected_tool].mouseReleaseEvent(event)
+
         self.toggle_cursor_annotation()
         self.drag_start_pos = None
         super().mouseReleaseEvent(event)
@@ -190,15 +198,6 @@ class AnnotationWindow(QGraphicsView):
         # Emit that the annotation size has changed
         self.annotationSizeChanged.emit(self.annotation_size)
 
-    def set_annotation_transparency(self, transparency):
-        if self.selected_annotation:
-            # Update the label's transparency in the LabelWindow
-            self.main_window.label_window.set_label_transparency(transparency)
-            label = self.selected_annotation.label
-            for annotation in self.annotations_dict.values():
-                if annotation.label.id == label.id:
-                    annotation.update_transparency(transparency)
-
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
 
         if self.cursor_annotation:
@@ -220,12 +219,14 @@ class AnnotationWindow(QGraphicsView):
         self.clear_scene()
 
         # Display NaN values the image dimensions in status bar
-        self.imageLoaded.emit(-0, -0)
+        self.imageLoaded.emit(0, 0)
+        self.viewChanged.emit(0, 0)
 
         # Set the image representations
         self.image_pixmap = QPixmap(image_item)
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
         QApplication.processEvents()
@@ -242,14 +243,15 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = image_path
         self.active_image = True
 
-        # Set the image dimensions in status bar
-        self.imageLoaded.emit(self.image_pixmap.width(), self.image_pixmap.height())
-
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.toggle_cursor_annotation()
 
-        # Load all associated annotations in parallel
+        # Set the image dimensions, and current view in status bar
+        self.imageLoaded.emit(self.image_pixmap.width(), self.image_pixmap.height())
+        self.viewChanged.emit(self.image_pixmap.width(), self.image_pixmap.height())
+
+        # Load all associated annotations
         self.load_annotations_parallel()
         # Update the image window's image dict
         self.main_window.image_window.update_image_annotations(image_path)
@@ -267,6 +269,11 @@ class AnnotationWindow(QGraphicsView):
         bottom_right = self.mapToScene(self.viewport().rect().bottomRight())
         # Create and return a QRectF object from these points
         return QRectF(top_left, bottom_right)
+
+    def get_image_dimensions(self):
+        if self.image_pixmap:
+            return self.image_pixmap.size().width(), self.image_pixmap.size().height()
+        return 0, 0
 
     def center_on_annotation(self, annotation):
         # Get the bounding rect of the annotation in scene coordinates
@@ -294,19 +301,23 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_annotation != annotation:
             if self.selected_annotation:
                 self.unselect_annotation()
+
             # Select the annotation
             self.selected_annotation = annotation
             self.selected_annotation.select()
+
             # Set the label and color for selected annotation
             self.selected_label = self.selected_annotation.label
             self.annotation_color = self.selected_annotation.label.color
+
             # Emit a signal indicating the selected annotations label to LabelWindow
+            # which then update the label in the label window, followed by transparency.
             self.labelSelected.emit(annotation.label.id)
-            # Emit a signal indicating the selected annotation's transparency to MainWindow
-            self.transparencyChanged.emit(annotation.transparency)
-            # Crop the image from annotation using current image item
+
             if not self.selected_annotation.cropped_image:
+                # Crop the image from annotation using current image item
                 self.selected_annotation.create_cropped_image(self.rasterio_image)
+
             # Display the selected annotation in confidence window
             self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
 
@@ -325,23 +336,57 @@ class AnnotationWindow(QGraphicsView):
         annotation.selected.connect(self.select_annotation)
         annotation.annotation_deleted.connect(self.delete_annotation)
         annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+        self.viewport().update()
 
     def load_annotations(self):
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_image_annotations(return_annotations=True)
 
+        # Initialize the progress bar
+        progress_bar = ProgressBar(self, title="Loading Annotations")
+        progress_bar.start_progress(len(annotations))
+        progress_bar.show()
+
         # Connect update signals for all the annotations
         for annotation in annotations:
+            if progress_bar.wasCanceled():
+                break
             self.load_annotation(annotation)
+            progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        self.viewport().update()
 
     def load_annotations_parallel(self):
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_image_annotations(return_annotations=True)
 
+        # Initialize the progress bar
+        progress_bar = ProgressBar(self, title="Loading Annotations (Parallel)")
+        progress_bar.start_progress(len(annotations))
+        progress_bar.show()
+
         # Use ThreadPoolExecutor to process annotations in parallel
         with ThreadPoolExecutor() as executor:
+            futures = []
             for annotation in annotations:
-                executor.submit(self.load_annotation, annotation)
+                if progress_bar.wasCanceled():
+                    break
+                future = executor.submit(self.load_annotation, annotation)
+                futures.append(future)
+
+            for future in futures:
+                future.result()
+                progress_bar.update_progress()
+                if progress_bar.wasCanceled():
+                    break
+
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        self.viewport().update()
 
     def get_image_annotations(self, image_path=None):
         if not image_path:

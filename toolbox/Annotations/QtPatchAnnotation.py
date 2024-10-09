@@ -29,7 +29,7 @@ class PatchAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.center_xy = center_xy
+        self.center_xy = QPointF(round(center_xy.x(), 2), round(center_xy.y(), 2))
         self.annotation_size = annotation_size
 
     def contains_point(self, point: QPointF):
@@ -73,6 +73,19 @@ class PatchAnnotation(Annotation):
 
         self.annotation_updated.emit(self)  # Notify update
 
+    def get_cropped_image(self, downscaling_factor=1.0):
+        if self.cropped_image is None:
+            return None
+
+        # Downscale the cropped image if downscaling_factor is not 1.0
+        if downscaling_factor != 1.0:
+            new_size = (int(self.cropped_image.width() * downscaling_factor),
+                        int(self.cropped_image.height() * downscaling_factor))
+
+            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+
+        return self.cropped_image
+
     def create_graphics_item(self, scene: QGraphicsScene):
         half_size = self.annotation_size / 2
         self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
@@ -82,6 +95,13 @@ class PatchAnnotation(Annotation):
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
+
+        # Create separate graphics items for center/centroid, bounding box, and brush/mask
+        self.create_center_graphics_item(self.center_xy, scene)
+        self.create_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
+                                               QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),
+                                               scene)
+        self.create_brush_graphics_item([self.center_xy], scene)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -108,6 +128,15 @@ class PatchAnnotation(Annotation):
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
 
+            # Update separate graphics items for center/centroid, bounding box, and brush/mask
+            self.update_center_graphics_item(self.center_xy)
+            self.update_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size,
+                                                           self.center_xy.y() - half_size),
+                                                   QPointF(self.center_xy.x() + half_size,
+                                                           self.center_xy.y() + half_size))
+
+            self.update_brush_graphics_item([self.center_xy])
+
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
@@ -116,7 +145,7 @@ class PatchAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        self.center_xy = new_center_xy
+        self.center_xy = QPointF(round(new_center_xy.x(), 2), round(new_center_xy.y(), 2))
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
@@ -172,7 +201,7 @@ class PatchAnnotation(Annotation):
         return base_dict
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, label_window):
         annotation = cls(QPointF(*data['center_xy']),
                          data['annotation_size'],
                          data['label_short_code'],
@@ -181,7 +210,15 @@ class PatchAnnotation(Annotation):
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
-        annotation.machine_confidence = data.get('machine_confidence', {})
+
+        # Convert machine_confidence keys back to Label objects
+        machine_confidence = {}
+        for short_label_code, confidence in data.get('machine_confidence', {}).items():
+            label = label_window.get_label_by_short_code(short_label_code)
+            if label:
+                machine_confidence[label] = confidence
+        annotation.machine_confidence = machine_confidence
+
         return annotation
 
     def __repr__(self):

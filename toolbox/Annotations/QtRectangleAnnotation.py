@@ -1,7 +1,7 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush
+from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
 from rasterio.windows import Window
 
@@ -27,9 +27,16 @@ class RectangleAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.top_left = QPointF(min(top_left.x(), bottom_right.x()), min(top_left.y(), bottom_right.y()))
-        self.bottom_right = QPointF(max(top_left.x(), bottom_right.x()), max(top_left.y(), bottom_right.y()))
-        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2, (self.top_left.y() + self.bottom_right.y()) / 2)
+
+        self.top_left = QPointF(round(min(top_left.x(), bottom_right.x()), 2),
+                                round(min(top_left.y(), bottom_right.y()), 2))
+
+        self.bottom_right = QPointF(round(max(top_left.x(), bottom_right.x()), 2),
+                                    round(max(top_left.y(), bottom_right.y()), 2))
+
+        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
+                                 (self.top_left.y() + self.bottom_right.y()) / 2)
+
         self.cropped_bbox = (self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y())
 
     def contains_point(self, point: QPointF) -> bool:
@@ -75,6 +82,18 @@ class RectangleAnnotation(Annotation):
 
         self.annotation_updated.emit(self)  # Notify update
 
+    def get_cropped_image(self, downscaling_factor=1.0):
+        if self.cropped_image is None:
+            return None
+
+        # Downscale the cropped image if downscaling_factor is not 1.0
+        if downscaling_factor != 1.0:
+            new_size = (int(self.cropped_image.width() * downscaling_factor),
+                        int(self.cropped_image.height() * downscaling_factor))
+            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+
+        return self.cropped_image
+
     def create_graphics_item(self, scene: QGraphicsScene):
         rect = QGraphicsRectItem(self.top_left.x(), self.top_left.y(),
                                  self.bottom_right.x() - self.top_left.x(),
@@ -83,6 +102,14 @@ class RectangleAnnotation(Annotation):
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
         scene.addItem(self.graphics_item)
+
+        # Create separate graphics items for center/centroid, bounding box, and brush/mask
+        self.create_center_graphics_item(self.center_xy, scene)
+        self.create_bounding_box_graphics_item(self.top_left, self.bottom_right, scene)
+        self.create_brush_graphics_item(QPolygonF([self.top_left, 
+                                                   QPointF(self.bottom_right.x(), self.top_left.y()), 
+                                                   self.bottom_right, 
+                                                   QPointF(self.top_left.x(), self.bottom_right.y())]), scene)
 
     def update_graphics_item(self):
         if self.graphics_item:
@@ -117,6 +144,14 @@ class RectangleAnnotation(Annotation):
             if self.rasterio_src:
                 self.create_cropped_image(self.rasterio_src)
 
+            # Update separate graphics items for center/centroid, bounding box, and brush/mask
+            self.update_center_graphics_item(self.center_xy)
+            self.update_bounding_box_graphics_item(self.top_left, self.bottom_right)
+            self.update_brush_graphics_item(QPolygonF([self.top_left, 
+                                                       QPointF(self.bottom_right.x(), self.top_left.y()), 
+                                                       self.bottom_right, 
+                                                       QPointF(self.top_left.x(), self.bottom_right.y())]))
+
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
@@ -125,7 +160,7 @@ class RectangleAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        delta = new_center_xy - self.center_xy
+        delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2), round(new_center_xy.y() - self.center_xy.y(), 2))
         self.top_left += delta
         self.bottom_right += delta
         self.center_xy = new_center_xy
@@ -147,12 +182,6 @@ class RectangleAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
-    def transform_points_to_cropped_image(self):
-        min_x, min_y, max_x, max_y = self.cropped_bbox
-        transformed_top_left = QPointF(self.top_left.x() - min_x, self.top_left.y() - min_y)
-        transformed_bottom_right = QPointF(self.bottom_right.x() - min_x, self.bottom_right.y() - min_y)
-        return [transformed_top_left, transformed_bottom_right]
-
     def to_dict(self):
         base_dict = super().to_dict()
         base_dict.update({
@@ -162,7 +191,7 @@ class RectangleAnnotation(Annotation):
         return base_dict
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data, label_window):
         top_left = QPointF(data['top_left'][0], data['top_left'][1])
         bottom_right = QPointF(data['bottom_right'][0], data['bottom_right'][1])
         annotation = cls(top_left, bottom_right,
@@ -172,7 +201,15 @@ class RectangleAnnotation(Annotation):
                          data['image_path'],
                          data['label_id'])
         annotation.data = data.get('data', {})
-        annotation.machine_confidence = data.get('machine_confidence', {})
+
+        # Convert machine_confidence keys back to Label objects
+        machine_confidence = {}
+        for short_label_code, confidence in data.get('machine_confidence', {}).items():
+            label = label_window.get_label_by_short_code(short_label_code)
+            if label:
+                machine_confidence[label] = confidence
+        annotation.machine_confidence = machine_confidence
+
         return annotation
 
     def __repr__(self):
