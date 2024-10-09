@@ -1,31 +1,28 @@
-import os
 import gc
+import os
 import warnings
 
-import torch
 import numpy as np
-
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox, QDoubleSpinBox)
+import sam2
+import torch
 from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
+                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
+
+from mobile_sam import SamPredictor as MobileSamPredictor
+from mobile_sam import sam_model_registry as mobile_sam_model_registry
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor as Sam2Predictor
+from segment_anything import SamPredictor
+from segment_anything import sam_model_registry
+from ultralytics.engine.results import Results
+from ultralytics.models.sam.amg import batched_mask_to_box
+from ultralytics.utils import ops
+from ultralytics.utils.downloads import attempt_download_asset
 
 from toolbox.QtProgressBar import ProgressBar
 
-from mobile_sam import sam_model_registry as mobile_sam_model_registry
-from mobile_sam import SamPredictor as MobileSamPredictor
-from segment_anything import sam_model_registry
-from segment_anything import SamPredictor
-import sam2
-from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor as Sam2Predictor
-
-from ultralytics.utils import ops
-from ultralytics.engine.results import Results
-from ultralytics.models.sam.amg import batched_mask_to_box
-from ultralytics.utils.downloads import attempt_download_asset
-
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

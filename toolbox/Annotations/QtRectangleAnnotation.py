@@ -106,12 +106,12 @@ class RectangleAnnotation(Annotation):
         # Create separate graphics items for center/centroid, bounding box, and brush/mask
         self.create_center_graphics_item(self.center_xy, scene)
         self.create_bounding_box_graphics_item(self.top_left, self.bottom_right, scene)
-        self.create_brush_graphics_item(QPolygonF([self.top_left, 
-                                                   QPointF(self.bottom_right.x(), self.top_left.y()), 
-                                                   self.bottom_right, 
-                                                   QPointF(self.top_left.x(), self.bottom_right.y())]), scene)
+        self.create_polygon_graphics_item(QPolygonF([self.top_left,
+                                                     QPointF(self.bottom_right.x(), self.top_left.y()),
+                                                     self.bottom_right,
+                                                     QPointF(self.top_left.x(), self.bottom_right.y())]), scene)
 
-    def update_graphics_item(self):
+    def update_graphics_item(self, crop_image=True):
         if self.graphics_item:
             scene = self.graphics_item.scene()
             if scene:
@@ -141,16 +141,16 @@ class RectangleAnnotation(Annotation):
             self.graphics_item.setData(0, self.id)
             self.graphics_item.update()
 
-            if self.rasterio_src:
-                self.create_cropped_image(self.rasterio_src)
-
             # Update separate graphics items for center/centroid, bounding box, and brush/mask
             self.update_center_graphics_item(self.center_xy)
             self.update_bounding_box_graphics_item(self.top_left, self.bottom_right)
-            self.update_brush_graphics_item(QPolygonF([self.top_left, 
-                                                       QPointF(self.bottom_right.x(), self.top_left.y()), 
-                                                       self.bottom_right, 
-                                                       QPointF(self.top_left.x(), self.bottom_right.y())]))
+            self.update_polygon_graphics_item(QPolygonF([self.top_left,
+                                                         QPointF(self.bottom_right.x(), self.top_left.y()),
+                                                         self.bottom_right,
+                                                         QPointF(self.top_left.x(), self.bottom_right.y())]))
+
+            if self.rasterio_src and crop_image:
+                self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
@@ -160,7 +160,8 @@ class RectangleAnnotation(Annotation):
         # Clear the machine confidence
         self.update_user_confidence(self.label)
         # Update the location, graphic
-        delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2), round(new_center_xy.y() - self.center_xy.y(), 2))
+        delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2),
+                        round(new_center_xy.y() - self.center_xy.y(), 2))
         self.top_left += delta
         self.bottom_right += delta
         self.center_xy = new_center_xy

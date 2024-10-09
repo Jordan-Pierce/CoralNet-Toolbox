@@ -67,7 +67,7 @@ It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 # cmd
 
 # Create and activate an environment
-conda create --name coralnet-toolbox python=3.8 -y
+conda create --name coralnet-toolbox python=3.10 -y
 conda activate coralnet-toolbox
 ```
 ### CUDA

@@ -91,6 +91,11 @@ class ConfidenceWindow(QWidget):
         self.cropped_image = None
         self.chart_dict = None
 
+        # Add QLabel for dimensions
+        self.dimensions_label = QLabel(self)
+        self.dimensions_label.setAlignment(Qt.AlignCenter)
+        self.layout.addWidget(self.dimensions_label)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.update_blank_pixmap()
@@ -136,6 +141,11 @@ class ConfidenceWindow(QWidget):
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 self.create_bar_chart()
+
+                # Update dimensions label
+                height = annotation.cropped_image.height()
+                width = annotation.cropped_image.width()
+                self.dimensions_label.setText(f"Crop: {height} x {width}")
 
         except:
             # Cropped image is None or some other error occurred

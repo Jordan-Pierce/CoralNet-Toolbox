@@ -48,7 +48,7 @@ class Annotation(QObject):
         # Attributes to store the graphics items for center/centroid, bounding box, and brush/mask
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
-        self.brush_graphics_item = None
+        self.polygon_graphics_item = None
 
     def show_warning_message(self):
         msg_box = QMessageBox()
@@ -84,9 +84,9 @@ class Annotation(QObject):
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
             self.bounding_box_graphics_item = None
 
-        if self.brush_graphics_item and self.brush_graphics_item.scene():
-            self.brush_graphics_item.scene().removeItem(self.brush_graphics_item)
-            self.brush_graphics_item = None
+        if self.polygon_graphics_item and self.polygon_graphics_item.scene():
+            self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
+            self.polygon_graphics_item = None
 
     def update_machine_confidence(self, prediction: dict):
         # Set user confidence to None
@@ -111,11 +111,6 @@ class Annotation(QObject):
     def update_label(self, new_label: 'Label'):
         if self.label.id != new_label.id:
             self.label = new_label
-            self.update_graphics_item()
-
-    def update_transparency(self, transparency: int):
-        if self.transparency != transparency:
-            self.transparency = transparency
             self.update_graphics_item()
 
     def _prepare_data_for_qimage(self, data):
@@ -181,17 +176,17 @@ class Annotation(QObject):
                                                       self.transparency))
         scene.addItem(self.bounding_box_graphics_item)
 
-    def create_brush_graphics_item(self, points, scene):
-        if self.brush_graphics_item:
-            scene.removeItem(self.brush_graphics_item)
+    def create_polygon_graphics_item(self, points, scene):
+        if self.polygon_graphics_item:
+            scene.removeItem(self.polygon_graphics_item)
 
         polygon = QPolygonF(points)
-        self.brush_graphics_item = QGraphicsPolygonItem(polygon)
-        self.brush_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                 self.label.color.green(),
-                                                 self.label.color.blue(),
-                                                 self.transparency))
-        scene.addItem(self.brush_graphics_item)
+        self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
+        self.polygon_graphics_item.setBrush(QColor(self.label.color.red(),
+                                                   self.label.color.green(),
+                                                   self.label.color.blue(),
+                                                   self.transparency))
+        scene.addItem(self.polygon_graphics_item)
 
     def update_center_graphics_item(self, center_xy):
         if self.center_graphics_item:
@@ -212,16 +207,21 @@ class Annotation(QObject):
                                                           self.label.color.blue(),
                                                           self.transparency))
 
-    def update_brush_graphics_item(self, points):
-        if self.brush_graphics_item:
+    def update_polygon_graphics_item(self, points):
+        if self.polygon_graphics_item:
             polygon = QPolygonF(points)
-            self.brush_graphics_item.setPolygon(polygon)
-            self.brush_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                     self.label.color.green(),
-                                                     self.label.color.blue(),
-                                                     self.transparency))
+            self.polygon_graphics_item.setPolygon(polygon)
+            self.polygon_graphics_item.setBrush(QColor(self.label.color.red(),
+                                                       self.label.color.green(),
+                                                       self.label.color.blue(),
+                                                       self.transparency))
 
-    def update_graphics_item(self):
+    def update_transparency(self, transparency: int):
+        if self.transparency != transparency:
+            self.transparency = transparency
+            self.update_graphics_item(crop_image=False)
+
+    def update_graphics_item(self, crop_image=True):
         pass
 
     def to_dict(self):
