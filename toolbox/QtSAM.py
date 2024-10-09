@@ -15,6 +15,7 @@ from mobile_sam import sam_model_registry as mobile_sam_model_registry
 from mobile_sam import SamPredictor as MobileSamPredictor
 from segment_anything import sam_model_registry
 from segment_anything import SamPredictor
+import sam2
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor as Sam2Predictor
 
@@ -118,10 +119,12 @@ class SAMDeployModelDialog(QDialog):
         # Create tabs
         self.mobile_sam_tab = self.create_model_tab("MobileSAM")
         self.sam_tab = self.create_model_tab("SAM")
+        self.sam2_tab = self.create_model_tab("SAM2")
 
         # Add tabs to the tab widget
         self.tabs.addTab(self.mobile_sam_tab, "MobileSAM")
         self.tabs.addTab(self.sam_tab, "SAM")
+        self.tabs.addTab(self.sam2_tab, "SAM2")
 
         self.main_layout.addWidget(self.tabs)
 
@@ -135,7 +138,7 @@ class SAMDeployModelDialog(QDialog):
         model_items = {
             "MobileSAM": ["mobile_sam.pt"],
             "SAM": ["sam_b.pt", "sam_l.pt"],
-            "SAM2": ["sam2_t.pt", "sam2_s.pt", "sam2_b.pt", "sam2_l.pt"]
+            "SAM2": ["sam2_t.pt", "sam2_s.pt", "sam2_b.pt", "sam2_l.pt"],
         }
 
         # Add items to the combo box based on the model name
@@ -155,7 +158,7 @@ class SAMDeployModelDialog(QDialog):
         try:
             self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
 
-            # Download the weights if they are not present
+            # Download the weights from ultralytics if they are not present
             attempt_download_asset(self.model_path)
 
             if not os.path.exists(self.model_path):
@@ -167,23 +170,26 @@ class SAMDeployModelDialog(QDialog):
                 self.loaded_model = mobile_sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = MobileSamPredictor(self.loaded_model)
             elif "sam_" in self.model_path.lower():
-                if "sam_b" in self.model_path.lower():
+                if "_b" in self.model_path.lower():
                     model = "vit_b"
-                elif "sam_l" in self.model_path.lower():
+                elif "_l" in self.model_path.lower():
                     model = "vit_l"
                 else:
                     raise ValueError(f"Model not recognized: {self.model_path}")
                 self.loaded_model = sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = SamPredictor(self.loaded_model)
-            elif "sam2_" in self.model_path.lower():
-                if "sam2_t" in self.model_path.lower():
-                    config = "sam2_hiera_t.yaml"
-                elif "sam2_s" in self.model_path.lower():
-                    config = "sam2_hiera_s.yaml"
-                elif "sam2_b" in self.model_path.lower():
-                    config = "sam2_hiera_b+.yaml"
-                elif "sam2_l" in self.model_path.lower():
-                    config = "sam2_hiera_l.yaml"
+            elif "sam2" in self.model_path.lower():
+                model_ver = self.model_path.split("_")[0]
+                config_dir = os.path.join(os.path.dirname(sam2.__file__), "configs")
+                config = f"{config_dir}\\{model_ver}\\"
+                if "_t" in self.model_path.lower():
+                    config += f"{model_ver}_hiera_t.yaml"
+                elif "_s" in self.model_path.lower():
+                    config += f"{model_ver}_hiera_s.yaml"
+                elif "_b" in self.model_path.lower():
+                    config += f"{model_ver}_hiera_b+.yaml"
+                elif "_l" in self.model_path.lower():
+                    config += f"{model_ver}_hiera_l.yaml"
                 else:
                     raise ValueError(f"Model not recognized: {self.model_path}")
 
@@ -235,8 +241,6 @@ class SAMDeployModelDialog(QDialog):
         progress_bar.show()
 
         if self.predictor is not None:
-            # Reset the image in the predictor
-            self.predictor.reset_image()
             self.original_image = image
             # Resize the image if the checkbox is checked
             if self.resize_image_checkbox.isChecked():
@@ -287,10 +291,12 @@ class SAMDeployModelDialog(QDialog):
                 scaled_points = input_points.clone().float()  # Cast to float32
                 scaled_points[:, :, 0] *= scale_x
                 scaled_points[:, :, 1] *= scale_y
-                scaled_points = scaled_points.long()  # Cast back to int64
+                point_coords = scaled_points.long()  # Cast back to int64
 
-                # Apply the scaled points to the predictor
-                point_coords = self.predictor.transform.apply_coords_torch(scaled_points, self.resized_image.shape[:2])
+                if self.model_path.startswith("sam_"):
+                    # Apply the scaled points to the predictor
+                    point_coords = self.predictor.transform.apply_coords_torch(point_coords,
+                                                                               self.resized_image.shape[:2])
 
             if has_bbox:
                 input_bbox = torch.as_tensor(bbox, dtype=torch.int64)
@@ -302,16 +308,22 @@ class SAMDeployModelDialog(QDialog):
                 scaled_bbox[:, 1] *= scale_y
                 scaled_bbox[:, 2] *= scale_x
                 scaled_bbox[:, 3] *= scale_y
-                scaled_bbox = scaled_bbox.long()  # Cast back to int64
+                bbox_coords = scaled_bbox.long()  # Cast back to int64
 
-                bbox_coords = self.predictor.transform.apply_boxes_torch(scaled_bbox, self.resized_image.shape[:2])
+                if self.model_path.startswith("sam_"):
+                    # Apply the scaled boxes to the predictor
+                    bbox_coords = self.predictor.transform.apply_boxes_torch(bbox_coords,
+                                                                             self.resized_image.shape[:2])
 
             if self.model_path.startswith("sam2"):
-
-                mask, score, logit = self.predictor.predict(boxes=bbox_coords,
+                mask, score, logit = self.predictor.predict(box=bbox_coords,
                                                             point_coords=point_coords,
                                                             point_labels=point_labels,
                                                             multimask_output=False)
+
+                mask = torch.tensor(mask).unsqueeze(0)
+                score = torch.tensor(score).unsqueeze(0)
+                logit = torch.tensor(logit).unsqueeze(0)
 
             else:
                 mask, score, logit = self.predictor.predict_torch(boxes=bbox_coords,

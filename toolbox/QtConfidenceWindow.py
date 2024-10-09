@@ -77,7 +77,7 @@ class ConfidenceWindow(QWidget):
 
         self.graphics_view = None
         self.scene = None
-        self.downscale_factor = 0.75  # Example downscale factor
+        self.downscale_factor = 1.0
 
         self.bar_chart_widget = None
         self.bar_chart_layout = None
