@@ -101,9 +101,9 @@ class PatchAnnotation(Annotation):
         self.create_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
                                                QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),
                                                scene)
-        self.create_brush_graphics_item([self.center_xy], scene)
+        self.create_polygon_graphics_item([self.center_xy], scene)
 
-    def update_graphics_item(self):
+    def update_graphics_item(self, crop_image=True):
         if self.graphics_item:
             # Update the graphic item
             half_size = self.annotation_size / 2
@@ -124,9 +124,6 @@ class PatchAnnotation(Annotation):
             brush = QBrush(color)
             self.graphics_item.setBrush(brush)
             self.graphics_item.update()
-            # Update the cropped image
-            if self.rasterio_src:
-                self.create_cropped_image(self.rasterio_src)
 
             # Update separate graphics items for center/centroid, bounding box, and brush/mask
             self.update_center_graphics_item(self.center_xy)
@@ -135,7 +132,11 @@ class PatchAnnotation(Annotation):
                                                    QPointF(self.center_xy.x() + half_size,
                                                            self.center_xy.y() + half_size))
 
-            self.update_brush_graphics_item([self.center_xy])
+            self.update_polygon_graphics_item([self.center_xy])
+
+            # Update the cropped image
+            if self.rasterio_src and crop_image:
+                self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:

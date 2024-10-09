@@ -126,9 +126,9 @@ class PolygonAnnotation(Annotation):
         self.create_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
                                                QPointF(self.cropped_bbox[2], self.cropped_bbox[3]),
                                                scene)
-        self.create_brush_graphics_item(self.points, scene)
+        self.create_polygon_graphics_item(self.points, scene)
 
-    def update_graphics_item(self):
+    def update_graphics_item(self, crop_image=True):
         if self.graphics_item:
             scene = self.graphics_item.scene()
             if scene:
@@ -156,14 +156,14 @@ class PolygonAnnotation(Annotation):
             self.graphics_item.setData(0, self.id)
             self.graphics_item.update()
 
-            if self.rasterio_src:
-                self.create_cropped_image(self.rasterio_src)
-
             # Update separate graphics items for center/centroid, bounding box, and brush/mask
             self.update_center_graphics_item(self.center_xy)
             self.update_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
                                                    QPointF(self.cropped_bbox[2], self.cropped_bbox[3]))
-            self.update_brush_graphics_item(self.points)
+            self.update_polygon_graphics_item(self.points)
+
+            if self.rasterio_src and crop_image:
+                self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
