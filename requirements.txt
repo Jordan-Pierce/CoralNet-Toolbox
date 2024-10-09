@@ -1,8 +1,10 @@
 wheel
 setuptools
 PyQt5
-ultralytics==8.2.103
+ultralytics==8.3.0
+timm
 git+https://github.com/ChaoningZhang/MobileSAM.git
 git+https://github.com/facebookresearch/segment-anything.git
+git+https://github.com/facebookresearch/sam2.git
 rasterio
 dill

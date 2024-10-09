@@ -251,7 +251,7 @@ class AnnotationWindow(QGraphicsView):
         self.imageLoaded.emit(self.image_pixmap.width(), self.image_pixmap.height())
         self.viewChanged.emit(self.image_pixmap.width(), self.image_pixmap.height())
 
-        # Load all associated annotations in parallel
+        # Load all associated annotations
         self.load_annotations_parallel()
         # Update the image window's image dict
         self.main_window.image_window.update_image_annotations(image_path)

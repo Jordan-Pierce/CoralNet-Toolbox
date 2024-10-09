@@ -4,7 +4,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem
 
 from toolbox.Tools.QtTool import Tool
 from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation

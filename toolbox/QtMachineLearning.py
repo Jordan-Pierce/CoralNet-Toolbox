@@ -1924,6 +1924,12 @@ class DeployModelDialog(QDialog):
             else:
                 self.segmentation_file_path.setText("Model file selected")
 
+            # Try to load the class mapping file if it exists in the directory above
+            parent_dir = os.path.dirname(os.path.dirname(file_path))
+            class_mapping_path = os.path.join(parent_dir, "class_mapping.json")
+            if os.path.exists(class_mapping_path):
+                self.load_class_mapping(class_mapping_path)
+
     def browse_class_mapping_file(self):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self,

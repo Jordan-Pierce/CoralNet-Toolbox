@@ -6,7 +6,7 @@ import torch
 import numpy as np
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
+                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox, QDoubleSpinBox)
 from PyQt5.QtCore import Qt
 
 from toolbox.QtProgressBar import ProgressBar
@@ -15,6 +15,8 @@ from mobile_sam import sam_model_registry as mobile_sam_model_registry
 from mobile_sam import SamPredictor as MobileSamPredictor
 from segment_anything import sam_model_registry
 from segment_anything import SamPredictor
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor as Sam2Predictor
 
 from ultralytics.utils import ops
 from ultralytics.engine.results import Results
@@ -22,6 +24,7 @@ from ultralytics.models.sam.amg import batched_mask_to_box
 from ultralytics.utils.downloads import attempt_download_asset
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -131,7 +134,8 @@ class SAMDeployModelDialog(QDialog):
         # Define items for each model
         model_items = {
             "MobileSAM": ["mobile_sam.pt"],
-            "SAM": ["sam_b.pt", "sam_l.pt"]
+            "SAM": ["sam_b.pt", "sam_l.pt"],
+            "SAM2": ["sam2_t.pt", "sam2_s.pt", "sam2_b.pt", "sam2_l.pt"]
         }
 
         # Add items to the combo box based on the model name
@@ -158,18 +162,39 @@ class SAMDeployModelDialog(QDialog):
                 raise FileNotFoundError(f"Model file not downloaded: {self.model_path}")
 
             # Load the model
-            if "mobile" in self.model_path.lower():
+            if "mobile_" in self.model_path.lower():
                 model = "vit_t"
                 self.loaded_model = mobile_sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = MobileSamPredictor(self.loaded_model)
-            else:
+            elif "sam_" in self.model_path.lower():
                 if "sam_b" in self.model_path.lower():
                     model = "vit_b"
                 elif "sam_l" in self.model_path.lower():
                     model = "vit_l"
-                else: raise ValueError(f"Model not recognized: {self.model_path}")
+                else:
+                    raise ValueError(f"Model not recognized: {self.model_path}")
                 self.loaded_model = sam_model_registry[model](checkpoint=self.model_path)
                 self.predictor = SamPredictor(self.loaded_model)
+            elif "sam2_" in self.model_path.lower():
+                if "sam2_t" in self.model_path.lower():
+                    config = "sam2_hiera_t.yaml"
+                elif "sam2_s" in self.model_path.lower():
+                    config = "sam2_hiera_s.yaml"
+                elif "sam2_b" in self.model_path.lower():
+                    config = "sam2_hiera_b+.yaml"
+                elif "sam2_l" in self.model_path.lower():
+                    config = "sam2_hiera_l.yaml"
+                else:
+                    raise ValueError(f"Model not recognized: {self.model_path}")
+
+                self.loaded_model = build_sam2(config_file=config,
+                                               ckpt_path=self.model_path,
+                                               device=self.main_window.device,
+                                               apply_postprocess=False)
+
+                self.predictor = Sam2Predictor(self.loaded_model)
+            else:
+                raise ValueError(f"Model not recognized: {self.model_path}")
 
             self.predictor.model.to(device=self.main_window.device)
             self.predictor.model.eval()
@@ -281,64 +306,27 @@ class SAMDeployModelDialog(QDialog):
 
                 bbox_coords = self.predictor.transform.apply_boxes_torch(scaled_bbox, self.resized_image.shape[:2])
 
-            mask, score, logit = self.predictor.predict_torch(boxes=bbox_coords,
-                                                              point_coords=point_coords,
-                                                              point_labels=point_labels,
-                                                              multimask_output=False)
+            if self.model_path.startswith("sam2"):
+
+                mask, score, logit = self.predictor.predict(boxes=bbox_coords,
+                                                            point_coords=point_coords,
+                                                            point_labels=point_labels,
+                                                            multimask_output=False)
+
+            else:
+                mask, score, logit = self.predictor.predict_torch(boxes=bbox_coords,
+                                                                  point_coords=point_coords,
+                                                                  point_labels=point_labels,
+                                                                  multimask_output=False)
 
             # Post-process the results
-            results = self.custom_postprocess(mask, score, logit, self.resized_image, self.original_image)[0]
+            results = custom_postprocess(mask, score, logit, self.resized_image, self.original_image)[0]
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
             return None
 
         return results
-
-    @staticmethod
-    def custom_postprocess(mask, score, logit, resized_image, original_image):
-        """
-        Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
-
-        Args:
-            mask (torch.Tensor): Predicted masks with shape (1, 1, H, W).
-            score (torch.Tensor): Confidence scores for each mask with shape (1, 1).
-            logit (torch.Tensor): Logits for each mask with shape (1, 1, H, W).
-            resized_image (np.ndarray): The resized image used for inference.
-            original_image (np.ndarray): The original, unprocessed image.
-
-        Returns:
-            (Results): Results object containing detection masks, bounding boxes, and other metadata.
-        """
-        # Ensure the original image is in the correct format
-        if not isinstance(original_image, np.ndarray):
-            original_image = original_image.cpu().numpy()
-
-        # Ensure mask has the correct shape (1, 1, H, W)
-        if mask.ndim != 4 or mask.shape[0] != 1 or mask.shape[1] != 1:
-            raise ValueError(f"Expected mask to have shape (1, 1, H, W), but got {mask.shape}")
-
-        # Scale masks to the original image size
-        scaled_masks = ops.scale_masks(mask.float(), original_image.shape[:2], padding=False)[0]
-        scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
-
-        # Generate bounding boxes from masks using batched_mask_to_box
-        pred_bboxes = batched_mask_to_box(scaled_masks).cpu()
-
-        # Ensure score and cls have the correct shape
-        score_ = score.squeeze(1).cpu()  # Remove the extra dimension
-        cls_ = torch.arange(len(mask), dtype=torch.int32).cpu()
-
-        # Combine bounding boxes, scores, and class labels
-        pred_bboxes = torch.cat([pred_bboxes, score_[:, None], cls_[:, None]], dim=-1).cpu()
-
-        # Create names dictionary (placeholder for consistency)
-        names = dict(enumerate(str(i) for i in range(len(mask))))
-
-        # Create Results object
-        result = Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
-
-        return result
 
     def deactivate_model(self):
         self.loaded_model = None
@@ -353,8 +341,51 @@ class SAMDeployModelDialog(QDialog):
         QMessageBox.information(self, "Model Deactivated", "Model deactivated")
 
 
-class SAMBatchInferenceDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("SAM Batch Inference")
-        # Add additional initialization code here
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def custom_postprocess(mask, score, logit, resized_image, original_image):
+    """
+    Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
+
+    Args:
+        mask (torch.Tensor): Predicted masks with shape (1, 1, H, W).
+        score (torch.Tensor): Confidence scores for each mask with shape (1, 1).
+        logit (torch.Tensor): Logits for each mask with shape (1, 1, H, W).
+        resized_image (np.ndarray): The resized image used for inference.
+        original_image (np.ndarray): The original, unprocessed image.
+
+    Returns:
+        (Results): Results object containing detection masks, bounding boxes, and other metadata.
+    """
+    # Ensure the original image is in the correct format
+    if not isinstance(original_image, np.ndarray):
+        original_image = original_image.cpu().numpy()
+
+    # Ensure mask has the correct shape (1, 1, H, W)
+    if mask.ndim != 4 or mask.shape[0] != 1 or mask.shape[1] != 1:
+        raise ValueError(f"Expected mask to have shape (1, 1, H, W), but got {mask.shape}")
+
+    # Scale masks to the original image size
+    scaled_masks = ops.scale_masks(mask.float(), original_image.shape[:2], padding=False)[0]
+    scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
+
+    # Generate bounding boxes from masks using batched_mask_to_box
+    pred_bboxes = batched_mask_to_box(scaled_masks).cpu()
+
+    # Ensure score and cls have the correct shape
+    score_ = score.squeeze(1).cpu()  # Remove the extra dimension
+    cls_ = torch.arange(len(mask), dtype=torch.int32).cpu()
+
+    # Combine bounding boxes, scores, and class labels
+    pred_bboxes = torch.cat([pred_bboxes, score_[:, None], cls_[:, None]], dim=-1).cpu()
+
+    # Create names dictionary (placeholder for consistency)
+    names = dict(enumerate(str(i) for i in range(len(mask))))
+
+    # Create Results object
+    result = Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
+
+    return result

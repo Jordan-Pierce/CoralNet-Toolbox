@@ -19,7 +19,6 @@ from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
 from toolbox.QtMachineLearning import OptimizeModelDialog
 from toolbox.QtMachineLearning import TrainModelDialog
-from toolbox.QtSAM import SAMBatchInferenceDialog
 from toolbox.QtSAM import SAMDeployModelDialog
 
 from toolbox.QtIO import IODialog
@@ -72,10 +71,7 @@ class MainWindow(QMainWindow):
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
-
         self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
-        self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
-
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
         # Connect signals to update status bar
@@ -736,19 +732,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_deploy_model_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_sam_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
-            QMessageBox.warning(self,
-                                "SAM Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
