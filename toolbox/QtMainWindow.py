@@ -252,10 +252,6 @@ class MainWindow(QMainWindow):
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
         self.sam_menu.addAction(self.sam_deploy_model_action)
 
-        self.sam_batch_inference_action = QAction("Batch Inference", self)
-        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
-        self.sam_menu.addAction(self.sam_batch_inference_action)
-
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
         self.toolbar.setOrientation(Qt.Vertical)

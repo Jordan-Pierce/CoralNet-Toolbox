@@ -26,7 +26,7 @@ setup(
         "segment-anything @ git+https://git@github.com/facebookresearch/segment-anything.git",
         "sam-2 @ git+https://git@github.com/facebookresearch/sam2.git"
     ],
-    python_requires='>=3.8, <3.11',
+    python_requires='>=3.10, <3.11',
     entry_points={
         "console_scripts": [
             "coralnet-toolbox = toolbox:run"  # Ensure 'toolbox:run' is correct
