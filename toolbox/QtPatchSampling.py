@@ -37,6 +37,7 @@ class PatchSamplingDialog(QDialog):
         self.method_label = QLabel("Sampling Method:")
         self.method_combo = QComboBox()
         self.method_combo.addItems(["Random", "Stratified Random", "Uniform"])
+        self.method_combo.currentIndexChanged.connect(self.preview_annotations)  # Connect to preview
         self.layout.addWidget(self.method_label)
         self.layout.addWidget(self.method_combo)
 
@@ -45,6 +46,7 @@ class PatchSamplingDialog(QDialog):
         self.num_annotations_spinbox = QSpinBox()
         self.num_annotations_spinbox.setMinimum(0)
         self.num_annotations_spinbox.setMaximum(10000)
+        self.num_annotations_spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
         self.layout.addWidget(self.num_annotations_label)
         self.layout.addWidget(self.num_annotations_spinbox)
 
@@ -54,6 +56,7 @@ class PatchSamplingDialog(QDialog):
         self.annotation_size_spinbox.setMinimum(0)
         self.annotation_size_spinbox.setMaximum(10000)  # Arbitrary large number for "infinite"
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.annotation_size_spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
         self.layout.addWidget(self.annotation_size_label)
         self.layout.addWidget(self.annotation_size_spinbox)
 
@@ -109,28 +112,13 @@ class PatchSamplingDialog(QDialog):
 
         self.sampled_annotations = []
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.reset_defaults()
-
-    def reset_defaults(self):
-        self.preview_scene.clear()
-        self.method_combo.setCurrentIndex(0)
-        self.num_annotations_spinbox.setValue(1)
-        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
-        self.margin_x_min_spinbox.setValue(0)
-        self.margin_y_min_spinbox.setValue(0)
-        self.margin_x_max_spinbox.setValue(0)
-        self.margin_y_max_spinbox.setValue(0)
-        self.apply_prev_checkbox.setChecked(False)
-        self.apply_next_checkbox.setChecked(False)
-        self.apply_all_checkbox.setChecked(False)
 
     def create_margin_spinbox(self, label_text, layout):
         label = QLabel(label_text + ":")
         spinbox = QSpinBox()
         spinbox.setMinimum(0)
         spinbox.setMaximum(1000)
+        spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
         layout.addRow(label, spinbox)
         return spinbox
 
@@ -268,7 +256,6 @@ class PatchSamplingDialog(QDialog):
                                      self.num_annotations_spinbox.value(),
                                      self.annotation_size_spinbox.value(),
                                      margins)
-        self.accept()
 
     def add_sampled_annotations(self, method, num_annotations, annotation_size, margins):
 
@@ -340,8 +327,6 @@ class PatchSamplingDialog(QDialog):
 
         # Set / load the image / annotations of the last image
         self.annotation_window.set_image(current_image_path)
-        # Reset dialog for next time
-        self.reset_defaults()
 
         # Stop the progress bar
         progress_bar.stop_progress()
@@ -349,3 +334,5 @@ class PatchSamplingDialog(QDialog):
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
+
+        self.accept()

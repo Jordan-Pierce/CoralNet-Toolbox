@@ -118,9 +118,14 @@ class MainWindow(QMainWindow):
         self.import_images_action.triggered.connect(self.io_dialog.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
 
-        self.import_frames_action = QAction("Frames", self)
+        self.import_ortho_action = QAction("Orthomosaic", self)
+        self.import_ortho_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
+        self.import_rasters_menu.addAction(self.import_ortho_action)
+
+        self.import_frames_action = QAction("Video Frames", self)
         self.import_frames_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "Frames import is not yet implemented."))
+            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         self.import_rasters_menu.addAction(self.import_frames_action)
 
         # Labels submenu
