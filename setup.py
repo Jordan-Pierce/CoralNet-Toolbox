@@ -20,7 +20,7 @@ setup(
     url='https://github.com/Jordan-Pierce/CoralNet-Toolbox',
     author='Jordan Pierce',
     author_email='jordan.pierce@noaa.gov',
-    packages=find_packages(),
+    packages=find_packages(include=['toolbox', 'toolbox.*']),
     install_requires=required_packages + [
         "mobile-sam @ git+https://git@github.com/ChaoningZhang/MobileSAM.git",
         "segment-anything @ git+https://git@github.com/facebookresearch/segment-anything.git",
@@ -29,10 +29,10 @@ setup(
     python_requires='>=3.10, <3.11',
     entry_points={
         "console_scripts": [
-            "coralnet-toolbox = toolbox:run"  # Ensure 'toolbox:run' is correct
+            "coralnet-toolbox = toolbox:run"
         ]
     },
     package_data={
-        'toolbox': ['icons/*']  # Ensure 'icons/*' is correct
+        'toolbox': ['icons/*']
     },
 )

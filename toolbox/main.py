@@ -1,12 +1,11 @@
 # TODO Later:
-#   - update pre-warm inference based on input size of model
 #   - CoralNet tools
-#   - file explorer for annotations to edit, delete in batches; spotlight?
 #   - exporting image names for creating dataset
-#   - filter images when creating dataset
-#   - return early while loading old high resolution image
-#   - pass class_mapping to confusion matrix function
-#   - something with export annotations
+#   - Sample may cause crash
+#   - Clicking outside of SAM working area causes a crash, fix that
+#   - Import and export of instance segmentation masks / object detection YOLO format
+#   - Train models
+#   - Deploy
 
 import traceback
 

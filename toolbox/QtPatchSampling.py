@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF
 from PyQt5.QtGui import QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QCheckBox, QVBoxLayout, QLabel, QDialog,
                              QHBoxLayout, QPushButton, QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem,
-                             QFormLayout, QButtonGroup)
+                             QFormLayout, QButtonGroup, QMessageBox)
 
 from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from toolbox.QtProgressBar import ProgressBar
@@ -44,8 +44,9 @@ class PatchSamplingDialog(QDialog):
         # Number of Annotations
         self.num_annotations_label = QLabel("Number of Annotations:")
         self.num_annotations_spinbox = QSpinBox()
-        self.num_annotations_spinbox.setMinimum(0)
+        self.num_annotations_spinbox.setMinimum(1)
         self.num_annotations_spinbox.setMaximum(10000)
+        self.num_annotations_spinbox.setValue(10)
         self.num_annotations_spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
         self.layout.addWidget(self.num_annotations_label)
         self.layout.addWidget(self.num_annotations_spinbox)
@@ -53,7 +54,7 @@ class PatchSamplingDialog(QDialog):
         # Annotation Size
         self.annotation_size_label = QLabel("Annotation Size:")
         self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(0)
+        self.annotation_size_spinbox.setMinimum(32)
         self.annotation_size_spinbox.setMaximum(10000)  # Arbitrary large number for "infinite"
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
@@ -107,20 +108,34 @@ class PatchSamplingDialog(QDialog):
         self.accept_button = QPushButton("Accept")
         self.accept_button.clicked.connect(self.accept_annotations)
         self.button_box.addWidget(self.accept_button)
-
         self.layout.addLayout(self.button_box)
 
         self.sampled_annotations = []
 
+        # Call update_margin_spinbox in the constructor
+        self.update_margin_spinbox()
+        # Connect to the signal that indicates a new image has been loaded
+        self.annotation_window.imageLoaded.connect(self.update_margin_spinbox)
 
     def create_margin_spinbox(self, label_text, layout):
         label = QLabel(label_text + ":")
         spinbox = QSpinBox()
         spinbox.setMinimum(0)
-        spinbox.setMaximum(1000)
+        spinbox.setMaximum(1)
         spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
         layout.addRow(label, spinbox)
         return spinbox
+
+    def update_margin_spinbox(self):
+        if self.annotation_window.image_pixmap:
+            width = self.annotation_window.image_pixmap.width()
+            height = self.annotation_window.image_pixmap.height()
+            # Set the margin spinboxes to the image dimensions
+            annotation_size = self.annotation_size_spinbox.value()
+            self.margin_x_min_spinbox.setMaximum(width//2 - annotation_size)
+            self.margin_y_min_spinbox.setMaximum(height//2 - annotation_size)
+            self.margin_x_max_spinbox.setMaximum(width//2 - annotation_size)
+            self.margin_y_max_spinbox.setMaximum(height//2 - annotation_size)
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins
