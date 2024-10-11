@@ -159,7 +159,7 @@ class MainWindow(QMainWindow):
 
         self.import_yolo_action = QAction("YOLO (TXT)", self)
         self.import_yolo_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "YOLO dataset import is not yet implemented."))
+            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         self.import_dataset_menu.addAction(self.import_yolo_action)
 
         # Export menu
@@ -195,8 +195,7 @@ class MainWindow(QMainWindow):
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
 
         self.export_yolo_action = QAction("YOLO (TXT)", self)
-        self.export_yolo_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "YOLO dataset export is not yet implemented."))
+        self.export_yolo_action.triggered.connect(self.open_create_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_yolo_action)
 
         # Sampling Annotations menu
@@ -208,23 +207,27 @@ class MainWindow(QMainWindow):
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
 
         self.coralnet_authenticate_action = QAction("Authenticate", self)
+        self.coralnet_authenticate_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         self.coralnet_menu.addAction(self.coralnet_authenticate_action)
 
         self.coralnet_upload_action = QAction("Upload", self)
+        self.coralnet_upload_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         self.coralnet_menu.addAction(self.coralnet_upload_action)
 
         self.coralnet_download_action = QAction("Download", self)
+        self.coralnet_download_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         self.coralnet_menu.addAction(self.coralnet_download_action)
 
         self.coralnet_model_api_action = QAction("Model API", self)
+        self.coralnet_model_api_action.triggered.connect(
+            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         self.coralnet_menu.addAction(self.coralnet_model_api_action)
 
         # Machine Learning menu
         self.ml_menu = self.menu_bar.addMenu("Machine Learning")
-
-        self.ml_create_dataset_action = QAction("Create Dataset", self)
-        self.ml_create_dataset_action.triggered.connect(self.open_create_dataset_dialog)
-        self.ml_menu.addAction(self.ml_create_dataset_action)
 
         self.ml_merge_datasets_action = QAction("Merge Datasets", self)
         self.ml_merge_datasets_action.triggered.connect(self.open_merge_datasets_dialog)

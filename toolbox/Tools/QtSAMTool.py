@@ -126,7 +126,12 @@ class SAMTool(Tool):
         if not self.working_area:
             return
 
+        # Position in the scene
         scene_pos = self.annotation_window.mapToScene(event.pos())
+
+        # Check if the position is within the working area
+        if not self.working_area.rect().contains(scene_pos):
+            return
 
         # Get the adjusted position relative to the working area's top-left corner
         working_area_top_left = self.working_area.rect().topLeft()
