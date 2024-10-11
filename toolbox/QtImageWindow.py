@@ -66,7 +66,7 @@ class ImageWindow(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
 
         # Create a horizontal layout for the checkboxes
-        self.checkbox_layout = QHBoxLayout(self)
+        self.checkbox_layout = QHBoxLayout()
         self.layout.addLayout(self.checkbox_layout)
 
         # Add a QButtonGroup for the checkboxes
@@ -90,7 +90,7 @@ class ImageWindow(QWidget):
         self.checkbox_group.addButton(self.no_annotations_checkbox)
 
         # Create a horizontal layout for the search bar
-        self.search_layout = QHBoxLayout(self)
+        self.search_layout = QHBoxLayout()
         self.layout.addLayout(self.search_layout)
 
         # Add a search bar
@@ -100,7 +100,7 @@ class ImageWindow(QWidget):
         self.search_layout.addWidget(self.search_bar)
 
         # Create a horizontal layout for the labels
-        self.info_layout = QHBoxLayout(self)
+        self.info_layout = QHBoxLayout()
         self.layout.addLayout(self.info_layout)
 
         # Add a label to display the index of the currently selected image
