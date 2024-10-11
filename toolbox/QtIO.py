@@ -960,7 +960,7 @@ class IODialog:
                                         f"from the TagLab annotations was not found in the project.")
                     continue
 
-                for annotation in list(image['annotations']):
+                for annotation in list(image['annotations']['regions']):
                     label_id = annotation['class name']
                     label_info = taglab_data['labels'][label_id]
                     short_label_code = label_info['name']
