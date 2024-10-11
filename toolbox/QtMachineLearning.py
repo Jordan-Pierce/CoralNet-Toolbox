@@ -57,15 +57,17 @@ class CreateDatasetDialog(QDialog):
         # Create tabs
         self.tabs = QTabWidget()
         self.tab_classification = QWidget()
-        self.tab_segmentation = QWidget()  # Future work
+        self.tab_detection = QWidget()
+        self.tab_segmentation = QWidget()
 
         self.tabs.addTab(self.tab_classification, "Image Classification")
+        self.tabs.addTab(self.tab_detection, "Object Detection")
         self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
 
-        # Setup classification tab
         self.setup_classification_tab()
-        # Setup segmentation tab
         self.setup_segmentation_tab()
+        self.setup_detection_tab()
+
         # Add the tabs to the layout
         self.layout.addWidget(self.tabs)
 
@@ -150,6 +152,11 @@ class CreateDatasetDialog(QDialog):
         self.populate_class_filter_list()
         # Initial update of summary statistics
         self.update_summary_statistics()
+
+    def setup_detection_tab(self):
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Object Detection"))
+        self.tab_detection.setLayout(layout)
 
     def setup_segmentation_tab(self):
         layout = QVBoxLayout()
@@ -576,9 +583,11 @@ class MergeDatasetsDialog(QDialog):
         # Create tabs
         self.tabs = QTabWidget()
         self.tab_classification = QWidget()
+        self.tab_detection = QWidget()
         self.tab_segmentation = QWidget()
 
         self.tabs.addTab(self.tab_classification, "Image Classification")
+        self.tabs.addTab(self.tab_detection, "Object Detection")
         self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
 
         self.layout.addWidget(self.tabs)
@@ -906,14 +915,18 @@ class TrainModelDialog(QDialog):
         # Create tabs
         self.tabs = QTabWidget()
         self.tab_classification = QWidget()
+        self.tab_detection = QWidget()
         self.tab_segmentation = QWidget()
 
         self.tabs.addTab(self.tab_classification, "Image Classification")
+        self.tabs.addTab(self.tab_detection, "Object Detection")
         self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
 
         # Setup tabs
         self.setup_classification_tab()
+        self.setup_detection_tab()
         self.setup_segmentation_tab()
+
         self.main_layout.addWidget(self.tabs)
 
         # Parameters Form
@@ -1167,6 +1180,32 @@ class TrainModelDialog(QDialog):
         layout.addWidget(self.segmentation_model_combo)
 
         self.tab_segmentation.setLayout(layout)
+
+    def setup_detection_tab(self):
+        layout = QVBoxLayout()
+
+        self.dataset_yaml_edit = QLineEdit()
+        self.dataset_yaml_button = QPushButton("Browse...")
+        self.dataset_yaml_button.clicked.connect(self.browse_dataset_yaml)
+        dataset_yaml_layout = QHBoxLayout()
+        dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
+        dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
+        dataset_yaml_layout.addWidget(self.dataset_yaml_button)
+        layout.addLayout(dataset_yaml_layout)
+
+        # Segmentation Model Dropdown
+        self.segmentation_model_combo = QComboBox()
+        self.segmentation_model_combo.addItems(["yolov8n.pt",
+                                                "yolov8s.pt",
+                                                "yolov8m.pt",
+                                                "yolov8l.pt",
+                                                "yolov8x.pt"])
+
+        self.segmentation_model_combo.setEditable(True)
+        layout.addWidget(QLabel("Select or Enter Segmentation Model:"))
+        layout.addWidget(self.segmentation_model_combo)
+
+        self.tab_detection.setLayout(layout)
 
     def accept(self):
         self.train_classification_model()
@@ -1843,13 +1882,16 @@ class DeployModelDialog(QDialog):
         self.layout.addWidget(self.tab_widget)
 
         self.classification_tab = QWidget()
+        self.detection_tab = QWidget()
         self.segmentation_tab = QWidget()
 
         self.tab_widget.addTab(self.classification_tab, "Image Classification")
+        self.tab_widget.addTab(self.detection_tab, "Object Detection")
         self.tab_widget.addTab(self.segmentation_tab, "Instance Segmentation")
 
-        self.init_classification_tab()
-        self.init_segmentation_tab()
+        self.setup_classification_tab()
+        self.setup_detection_tab()
+        self.setup_segmentation_tab()
 
         # Status bar label
         self.status_bar = QLabel("No model loaded")
@@ -1861,7 +1903,7 @@ class DeployModelDialog(QDialog):
         super().showEvent(event)
         self.check_and_display_class_names()
 
-    def init_classification_tab(self):
+    def setup_classification_tab(self):
         layout = QVBoxLayout()
 
         self.classification_text_area = QTextEdit()
@@ -1886,7 +1928,7 @@ class DeployModelDialog(QDialog):
 
         self.classification_tab.setLayout(layout)
 
-    def init_segmentation_tab(self):
+    def setup_segmentation_tab(self):
         layout = QVBoxLayout()
 
         self.segmentation_text_area = QTextEdit()
@@ -1906,6 +1948,27 @@ class DeployModelDialog(QDialog):
         layout.addWidget(deactivate_button)
 
         self.segmentation_tab.setLayout(layout)
+
+    def setup_detection_tab(self):
+        layout = QVBoxLayout()
+
+        self.detection_text_area = QTextEdit()
+        self.detection_text_area.setReadOnly(True)
+        layout.addWidget(self.detection_text_area)
+
+        browse_button = QPushButton("Browse")
+        browse_button.clicked.connect(self.browse_file)
+        layout.addWidget(browse_button)
+
+        load_button = QPushButton("Load Model")
+        load_button.clicked.connect(self.load_model)
+        layout.addWidget(load_button)
+
+        deactivate_button = QPushButton("Deactivate Model")
+        deactivate_button.clicked.connect(self.deactivate_model)
+        layout.addWidget(deactivate_button)
+
+        self.detection_tab.setLayout(layout)
 
     def browse_file(self):
         options = QFileDialog.Options()
@@ -2141,17 +2204,17 @@ class BatchInferenceDialog(QDialog):
         self.layout.addWidget(self.tab_widget)
 
         self.classification_tab = QWidget()
+        self.detection_tab = QWidget()
         self.segmentation_tab = QWidget()
 
         self.tab_widget.addTab(self.classification_tab, "Image Classification")
+        self.tab_widget.addTab(self.detection_tab, "Object Detection")
         self.tab_widget.addTab(self.segmentation_tab, "Instance Segmentation")
 
-        # Make the segmentation tab unclickable
-        self.segmentation_tab.setEnabled(False)
-
         # Initialize the tabs
-        self.init_classification_tab()
-        self.init_segmentation_tab()
+        self.setup_classification_tab()
+        self.setup_detection_tab()
+        self.setup_segmentation_tab()
 
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -2187,10 +2250,13 @@ class BatchInferenceDialog(QDialog):
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
 
-    def init_segmentation_tab(self):
+    def setup_segmentation_tab(self):
         pass
 
-    def init_classification_tab(self):
+    def setup_detection_tab(self):
+        pass
+
+    def setup_classification_tab(self):
         layout = QVBoxLayout()
 
         # Create a group box for annotation options
