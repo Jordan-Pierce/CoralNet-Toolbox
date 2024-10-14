@@ -26,24 +26,29 @@ class PolygonAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.points = self._reduce_precision(points)
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
+        self.annotation_size = 0
 
+        self._reduce_precision(points)
         self.calculate_centroid()
         self.set_cropped_bbox()
 
-    def _reduce_precision(self, points: list) -> list:
-        return [QPointF(round(point.x(), 2), round(point.y(), 2)) for point in points]
-
-    def contains_point(self, point: QPointF) -> bool:
-        polygon = QPolygonF(self.points)
-        return polygon.containsPoint(point, Qt.OddEvenFill)
+    def _reduce_precision(self, points: list):
+        self.points = [QPointF(round(point.x(), 2), round(point.y(), 2)) for point in points]
 
     def calculate_centroid(self):
         centroid_x = sum(point.x() for point in self.points) / len(self.points)
         centroid_y = sum(point.y() for point in self.points) / len(self.points)
         self.center_xy = QPointF(centroid_x, centroid_y)
+
+    def set_cropped_bbox(self):
+        min_x = min(point.x() for point in self.points)
+        min_y = min(point.y() for point in self.points)
+        max_x = max(point.x() for point in self.points)
+        max_y = max(point.y() for point in self.points)
+        self.cropped_bbox = (min_x, min_y, max_x, max_y)
+        self.annotation_size = int(max(max_x - min_x, max_y - min_y))
 
     def calculate_polygon_area(self):
         n = len(self.points)
@@ -64,13 +69,9 @@ class PolygonAnnotation(Annotation):
                           (self.points[j].y() - self.points[i].y()) ** 2) ** 0.5
         return perimeter
 
-    def set_cropped_bbox(self):
-        min_x = min(point.x() for point in self.points)
-        min_y = min(point.y() for point in self.points)
-        max_x = max(point.x() for point in self.points)
-        max_y = max(point.y() for point in self.points)
-        self.cropped_bbox = (min_x, min_y, max_x, max_y)
-        self.center_xy = QPointF((min_x + max_x) / 2, (min_y + max_y) / 2)
+    def contains_point(self, point: QPointF) -> bool:
+        polygon = QPolygonF(self.points)
+        return polygon.containsPoint(point, Qt.OddEvenFill)
 
     def create_cropped_image(self, rasterio_src):
         # Set the rasterio source for the annotation
@@ -196,6 +197,19 @@ class PolygonAnnotation(Annotation):
         self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
+
+    def to_yolo_detection(self, image_width, image_height):
+        x_min, y_min, x_max, y_max = self.cropped_bbox
+        x_center = (x_min + x_max) / 2 / image_width
+        y_center = (y_min + y_max) / 2 / image_height
+        width = (x_max - x_min) / image_width
+        height = (y_max - y_min) / image_height
+
+        return self.label.short_label_code, f"{x_center} {y_center} {width} {height}"
+
+    def to_yolo_segmentation(self, image_width, image_height):
+        normalized_points = [(point.x() / image_width, point.y() / image_height) for point in self.points]
+        return self.label.short_label_code, " ".join([f"{x} {y}" for x, y in normalized_points])
 
     def to_dict(self):
         base_dict = super().to_dict()

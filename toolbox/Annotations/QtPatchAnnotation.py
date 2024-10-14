@@ -162,37 +162,6 @@ class PatchAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
-    def to_coralnet_format(self):
-        # Extract machine confidence values and suggestions
-        confidences = [f"{confidence:.3f}" for confidence in self.machine_confidence.values()]
-        suggestions = [suggestion.short_label_code for suggestion in self.machine_confidence.keys()]
-
-        # Pad with NaN if there are fewer than 5 values
-        while len(confidences) < 5:
-            confidences.append(np.nan)
-        while len(suggestions) < 5:
-            suggestions.append(np.nan)
-
-        return {
-            'Name': os.path.basename(self.image_path),
-            'Row': int(self.center_xy.y()),
-            'Column': int(self.center_xy.x()),
-            'Label': self.label.short_label_code,
-            'Long Label': self.label.long_label_code,
-            'Patch Size': self.annotation_size,
-            'Machine confidence 1': confidences[0],
-            'Machine suggestion 1': suggestions[0],
-            'Machine confidence 2': confidences[1],
-            'Machine suggestion 2': suggestions[1],
-            'Machine confidence 3': confidences[2],
-            'Machine suggestion 3': suggestions[2],
-            'Machine confidence 4': confidences[3],
-            'Machine suggestion 4': suggestions[3],
-            'Machine confidence 5': confidences[4],
-            'Machine suggestion 5': suggestions[4],
-            **self.data
-        }
-
     def to_dict(self):
         base_dict = super().to_dict()
         base_dict.update({

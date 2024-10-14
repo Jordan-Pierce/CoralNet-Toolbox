@@ -11,11 +11,14 @@ from operator import attrgetter
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+
 import ultralytics.engine.validator as validator
+import ultralytics.data.build as build
 import ultralytics.models.yolo.classify.train as train_build
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor, QShowEvent
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPoint
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
@@ -23,6 +26,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
+from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.dataset import ClassificationDataset
 
 from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
@@ -31,6 +35,7 @@ from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.utilities import pixmap_to_numpy
+from toolbox.utilities import qimage_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -525,11 +530,11 @@ class CreateDatasetDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         if self.radio_classification.isChecked():  # Image Classification
-            self.create_classification_dataset(output_dir_path, train_ratio, val_ratio, test_ratio)
+            self.create_classification_dataset(output_dir_path)
         elif self.radio_detection.isChecked():  # Object Detection
-            self.create_detection_dataset(output_dir_path, train_ratio, val_ratio, test_ratio)
+            self.create_detection_dataset(output_dir_path)
         elif self.radio_segmentation.isChecked():  # Instance Segmentation
-            self.create_segmentation_dataset(output_dir_path, train_ratio, val_ratio, test_ratio)
+            self.create_segmentation_dataset(output_dir_path)
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
@@ -539,7 +544,7 @@ class CreateDatasetDialog(QDialog):
                                 "Dataset has been successfully created.")
         super().accept()
 
-    def create_classification_dataset(self, output_dir_path, train_ratio, val_ratio, test_ratio):
+    def create_classification_dataset(self, output_dir_path):
 
         # Create the train, val, and test directories
         train_dir = os.path.join(output_dir_path, 'train')
@@ -548,16 +553,23 @@ class CreateDatasetDialog(QDialog):
 
         # Create a blank sample in train folder it's a test-only dataset
         # Ultralytics bug... it doesn't like empty directories (hacky)
-        if not sum([train_ratio, val_ratio]):
-            for label in self.selected_labels:
-                label_folder = os.path.join(train_dir, label)
-                os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
-                with open(os.path.join(label_folder, 'NULL.jpg'), 'w') as f:
-                    f.write("")
+        for label in self.selected_labels:
+            label_folder = os.path.join(train_dir, label)
+            os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
+            with open(os.path.join(label_folder, 'NULL.jpg'), 'w') as f:
+                f.write("")
 
         self.process_classification_annotations(self.train_annotations, train_dir, "Training")
         self.process_classification_annotations(self.val_annotations, val_dir, "Validation")
         self.process_classification_annotations(self.test_annotations, test_dir, "Testing")
+
+        # Output the annotations as CoralNet CSV file
+        df = []
+
+        for annotation in self.selected_annotations:
+            df.append(annotation.to_coralnet())
+
+        pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
 
     def process_classification_annotations(self, annotations, split_dir, split):
         # Get unique image paths
@@ -584,7 +596,7 @@ class CreateDatasetDialog(QDialog):
                 cropped_images.append((annotation.cropped_image, full_output_path))
             return cropped_images
 
-        def save_images(cropped_images):
+        def save_annotations(cropped_images):
             for pixmap, path in cropped_images:
                 try:
                     pixmap.save(path, "JPG", quality=100)
@@ -607,7 +619,7 @@ class CreateDatasetDialog(QDialog):
                 image_path = future_to_image[future]
                 try:
                     cropped_images = future.result()
-                    save_images(cropped_images)
+                    save_annotations(cropped_images)
                 except Exception as exc:
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
@@ -616,11 +628,144 @@ class CreateDatasetDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
-    def create_detection_dataset(self, output_path_dir, train_ratio, val_ratio, test_ratio):
-        pass
+    def create_detection_dataset(self, output_dir_path):
 
-    def create_segmentation_dataset(self, output_path_dir, train_ratio, val_ratio, test_ratio):
-        pass
+        # Create the yaml file
+        yaml_path = os.path.join(output_dir_path, 'data.yaml')
+
+        # Create the train, val, and test directories
+        train_dir = os.path.join(output_dir_path, 'train')
+        val_dir = os.path.join(output_dir_path, 'valid')
+        test_dir = os.path.join(output_dir_path, 'test')
+        names = self.selected_labels
+        num_classes = len(self.selected_labels)
+
+        # Create the data.yaml file
+        with open(yaml_path, 'w') as f:
+            f.write(f"train: ../train/images\n")
+            f.write(f"val: ../valid/images\n")
+            f.write(f"test: ../test/images\n\n")
+            f.write(f"nc: {num_classes}\n")
+            f.write(f"names: {names}\n")
+
+        # Create the train, val, and test directories
+        os.makedirs(f"{train_dir}/images", exist_ok=True)
+        os.makedirs(f"{train_dir}/labels", exist_ok=True)
+        os.makedirs(f"{val_dir}/images", exist_ok=True)
+        os.makedirs(f"{val_dir}/labels", exist_ok=True)
+        os.makedirs(f"{test_dir}/images", exist_ok=True)
+        os.makedirs(f"{test_dir}/labels", exist_ok=True)
+
+        self.process_detection_annotations(self.train_annotations, train_dir, "Training")
+        self.process_detection_annotations(self.val_annotations, val_dir, "Validation")
+        self.process_detection_annotations(self.test_annotations, test_dir, "Testing")
+
+    def process_detection_annotations(self, annotations, split_dir, split):
+        # Get unique image paths
+        image_paths = list(set(a.image_path for a in annotations))
+        if not image_paths:
+            return
+
+        progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+
+        for image_path in image_paths:
+            yolo_annotations = []
+            image_height, image_width = self.image_window.rasterio_open(image_path).shape
+            image_annotations = [a for a in annotations if a.image_path == image_path]
+
+            for image_annotation in image_annotations:
+                class_label, annotation = image_annotation.to_yolo_detection(image_width, image_height)
+                class_number = self.selected_labels.index(class_label)
+                yolo_annotations.append(f"{class_number} {annotation}")
+
+            # Save the annotations to a text file
+            file_ext = image_path.split(".")[-1]
+            text_file = os.path.basename(image_path).replace(f".{file_ext}", ".txt")
+            text_path = os.path.join(f"{split_dir}/labels", text_file)
+
+            # Write the annotations to the text file
+            with open(text_path, 'w') as f:
+                for annotation in yolo_annotations:
+                    f.write(annotation + '\n')
+
+            # Copy the image to the split directory
+            shutil.copy(image_path, f"{split_dir}/images/{os.path.basename(image_path)}")
+
+            progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+    def create_segmentation_dataset(self, output_dir_path):
+        # Create the yaml file
+        yaml_path = os.path.join(output_dir_path, 'data.yaml')
+
+        # Create the train, val, and test directories
+        train_dir = os.path.join(output_dir_path, 'train')
+        val_dir = os.path.join(output_dir_path, 'valid')
+        test_dir = os.path.join(output_dir_path, 'test')
+        names = self.selected_labels
+        num_classes = len(self.selected_labels)
+
+        # Create the data.yaml file
+        with open(yaml_path, 'w') as f:
+            f.write(f"train: ../train/images\n")
+            f.write(f"val: ../valid/images\n")
+            f.write(f"test: ../test/images\n\n")
+            f.write(f"nc: {num_classes}\n")
+            f.write(f"names: {names}\n")
+
+        # Create the train, val, and test directories
+        os.makedirs(f"{train_dir}/images", exist_ok=True)
+        os.makedirs(f"{train_dir}/labels", exist_ok=True)
+        os.makedirs(f"{val_dir}/images", exist_ok=True)
+        os.makedirs(f"{val_dir}/labels", exist_ok=True)
+        os.makedirs(f"{test_dir}/images", exist_ok=True)
+        os.makedirs(f"{test_dir}/labels", exist_ok=True)
+
+        self.process_segmentation_annotations(self.train_annotations, train_dir, "Training")
+        self.process_segmentation_annotations(self.val_annotations, val_dir, "Validation")
+        self.process_segmentation_annotations(self.test_annotations, test_dir, "Testing")
+
+    def process_segmentation_annotations(self, annotations, split_dir, split):
+        # Get unique image paths
+        image_paths = list(set(a.image_path for a in annotations))
+        if not image_paths:
+            return
+
+        progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+
+        for image_path in image_paths:
+            yolo_annotations = []
+            image_height, image_width = self.image_window.rasterio_open(image_path).shape
+            image_annotations = [a for a in annotations if a.image_path == image_path]
+
+            for image_annotation in image_annotations:
+                class_label, annotation = image_annotation.to_yolo_segmentation(image_width, image_height)
+                class_number = self.selected_labels.index(class_label)
+                yolo_annotations.append(f"{class_number} {annotation}")
+
+            # Save the annotations to a text file
+            file_ext = image_path.split(".")[-1]
+            text_file = os.path.basename(image_path).replace(f".{file_ext}", ".txt")
+            text_path = os.path.join(f"{split_dir}/labels", text_file)
+
+            # Write the annotations to the text file
+            with open(text_path, 'w') as f:
+                for annotation in yolo_annotations:
+                    f.write(annotation + '\n')
+
+            # Copy the image to the split directory
+            shutil.copy(image_path, f"{split_dir}/images/{os.path.basename(image_path)}")
+
+            progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
 
 class MergeDatasetsDialog(QDialog):
@@ -852,6 +997,91 @@ class WeightedClassificationDataset(ClassificationDataset):
         return super(WeightedClassificationDataset, self).__getitem__(index)
 
 
+class WeightedInstanceDataset(YOLODataset):
+    def __init__(self, *args, mode="train", **kwargs):
+        """
+        Initialize the WeightedDataset.
+
+        Args:
+            class_weights (list or numpy array): A list or array of weights corresponding to each class.
+        """
+
+        super(WeightedInstanceDataset, self).__init__(*args, **kwargs)
+
+        self.train_mode = "train" in self.prefix
+
+        # You can also specify weights manually instead
+        self.count_instances()
+        class_weights = np.sum(self.counts) / self.counts
+
+        # Aggregation function
+        self.agg_func = np.mean
+
+        self.class_weights = np.array(class_weights)
+        self.weights = self.calculate_weights()
+        self.probabilities = self.calculate_probabilities()
+
+    def count_instances(self):
+        """
+        Count the number of instances per class
+
+        Returns:
+            dict: A dict containing the counts for each class.
+        """
+        self.counts = [0 for i in range(len(self.data["names"]))]
+        for label in self.labels:
+            cls = label['cls'].reshape(-1).astype(int)
+            for id in cls:
+                self.counts[id] += 1
+
+        self.counts = np.array(self.counts)
+        self.counts = np.where(self.counts == 0, 1, self.counts)
+
+    def calculate_weights(self):
+        """
+        Calculate the aggregated weight for each label based on class weights.
+
+        Returns:
+            list: A list of aggregated weights corresponding to each label.
+        """
+        weights = []
+        for label in self.labels:
+            cls = label['cls'].reshape(-1).astype(int)
+
+            # Give a default weight to background class
+            if cls.size == 0:
+                weights.append(1)
+                continue
+
+            # Take mean of weights
+            # You can change this weight aggregation function to aggregate weights differently
+            weight = self.agg_func(self.class_weights[cls])
+            weights.append(weight)
+        return weights
+
+    def calculate_probabilities(self):
+        """
+        Calculate and store the sampling probabilities based on the weights.
+
+        Returns:
+            list: A list of sampling probabilities corresponding to each label.
+        """
+        total_weight = sum(self.weights)
+        probabilities = [w / total_weight for w in self.weights]
+        return probabilities
+
+    def __getitem__(self, index):
+        """
+        Return transformed label information based on the sampled index.
+        """
+        # Don't use for validation
+        if not self.train_mode:
+            return self.transforms(self.get_image_and_label(index))
+        else:
+            index = np.random.choice(len(self.labels), p=self.probabilities)
+            return self.transforms(self.get_image_and_label(index))
+
+
 class TrainModelWorker(QThread):
     training_started = pyqtSignal()
     training_completed = pyqtSignal()
@@ -873,9 +1103,11 @@ class TrainModelWorker(QThread):
             model_path = self.params.pop('model', None)
             weighted = self.params.pop('weighted', False)
 
-            if weighted:
-                # Use the custom dataset class for weighted sampling
+            # Use the custom dataset class for weighted sampling
+            if weighted and self.params['task'] == 'classify':
                 train_build.ClassificationDataset = WeightedClassificationDataset
+            elif weighted and self.params['task'] in ['detect', 'segment']:
+                build.YOLODataset = WeightedInstanceDataset
 
             # Load the model, train, and save the best weights
             self.model = YOLO(model_path)
@@ -893,6 +1125,9 @@ class TrainModelWorker(QThread):
 
     def _evaluate_model(self):
         try:
+            if self.class_mapping is None:
+                raise ValueError("Class mapping is missing.")
+
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
                 'data': self.params['data'],
@@ -901,6 +1136,7 @@ class TrainModelWorker(QThread):
                 'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
             }
             # Update the class mapping with target model names
+            # {0: 'class1', 1: 'class2', ...}
             class_mapping = {name: self.class_mapping[name] for name in self.model.names}
 
             # Create and start the worker thread
@@ -1151,11 +1387,13 @@ class TrainModelDialog(QDialog):
     def browse_dataset_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
-            self.dataset_dir_edit.setText(dir_path)
+            # Load the class mapping if it exists
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
-                self.class_mapping_edit.setText(class_mapping_path)
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                self.classify_mapping_edit.setText(class_mapping_path)
+            # Set the dataset path for current tab
+            self.classify_dataset_edit.setText(dir_path)
 
     def browse_dataset_yaml(self):
         file_path, _ = QFileDialog.getOpenFileName(self,
@@ -1163,12 +1401,18 @@ class TrainModelDialog(QDialog):
                                                    "",
                                                    "YAML Files (*.yaml *.yml)")
         if file_path:
-            self.dataset_yaml_edit.setText(file_path)
+            # Load the class mapping if it exists
             dir_path = os.path.dirname(file_path)
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
-                self.class_mapping_edit.setText(class_mapping_path)
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
+            # Set the dataset and class mapping paths for current tab
+            if self.tabs.currentWidget() == self.tab_detection:
+                self.detection_dataset_edit.setText(file_path)
+                self.detection_mapping_edit.setText(class_mapping_path)
+            elif self.tabs.currentWidget() == self.tab_segmentation:
+                self.segmentation_dataset_edit.setText(file_path)
+                self.segmentation_mapping_edit.setText(class_mapping_path)
 
     def browse_class_mapping_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self,
@@ -1176,8 +1420,14 @@ class TrainModelDialog(QDialog):
                                                    "",
                                                    "JSON Files (*.json)")
         if file_path:
-            self.class_mapping_edit.setText(file_path)
+            # Load the class mapping
             self.class_mapping = json.load(open(file_path, 'r'))
+            if self.tabs.currentWidget() == self.tab_classification:
+                self.classify_mapping_edit.setText(file_path)
+            elif self.tabs.currentWidget() == self.tab_detection:
+                self.detection_mapping_edit.setText(file_path)
+            elif self.tabs.currentWidget() == self.tab_segmentation:
+                self.segmentation_mapping_edit.setText(file_path)
 
     def browse_project_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Project Directory")
@@ -1193,23 +1443,23 @@ class TrainModelDialog(QDialog):
         layout = QVBoxLayout()
 
         # Dataset Directory
-        self.dataset_dir_edit = QLineEdit()
-        self.dataset_dir_button = QPushButton("Browse...")
-        self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
+        self.classify_dataset_edit = QLineEdit()
+        self.classify_dataset_button = QPushButton("Browse...")
+        self.classify_dataset_button.clicked.connect(self.browse_dataset_dir)
         dataset_dir_layout = QHBoxLayout()
         dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
-        dataset_dir_layout.addWidget(self.dataset_dir_edit)
-        dataset_dir_layout.addWidget(self.dataset_dir_button)
+        dataset_dir_layout.addWidget(self.classify_dataset_edit)
+        dataset_dir_layout.addWidget(self.classify_dataset_button)
         layout.addLayout(dataset_dir_layout)
 
         # Class Mapping
-        self.class_mapping_edit = QLineEdit()
-        self.class_mapping_button = QPushButton("Browse...")
-        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        self.classify_mapping_edit = QLineEdit()
+        self.classify_mapping_button = QPushButton("Browse...")
+        self.classify_mapping_button.clicked.connect(self.browse_class_mapping_file)
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(QLabel("Class Mapping:"))
-        class_mapping_layout.addWidget(self.class_mapping_edit)
-        class_mapping_layout.addWidget(self.class_mapping_button)
+        class_mapping_layout.addWidget(self.classify_mapping_edit)
+        class_mapping_layout.addWidget(self.classify_mapping_button)
         layout.addLayout(class_mapping_layout)
 
         # Classification Model Dropdown
@@ -1229,59 +1479,59 @@ class TrainModelDialog(QDialog):
     def setup_detection_tab(self):
         layout = QVBoxLayout()
 
-        self.dataset_yaml_edit = QLineEdit()
-        self.dataset_yaml_button = QPushButton("Browse...")
-        self.dataset_yaml_button.clicked.connect(self.browse_dataset_yaml)
+        self.detection_dataset_edit = QLineEdit()
+        self.detection_dataset_button = QPushButton("Browse...")
+        self.detection_dataset_button.clicked.connect(self.browse_dataset_yaml)
         dataset_yaml_layout = QHBoxLayout()
         dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
-        dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
-        dataset_yaml_layout.addWidget(self.dataset_yaml_button)
+        dataset_yaml_layout.addWidget(self.detection_dataset_edit)
+        dataset_yaml_layout.addWidget(self.detection_dataset_button)
         layout.addLayout(dataset_yaml_layout)
 
         # Class Mapping
-        self.class_mapping_edit = QLineEdit()
-        self.class_mapping_button = QPushButton("Browse...")
-        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        self.detection_mapping_edit = QLineEdit()
+        self.detection_mapping_button = QPushButton("Browse...")
+        self.detection_mapping_button.clicked.connect(self.browse_class_mapping_file)
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(QLabel("Class Mapping:"))
-        class_mapping_layout.addWidget(self.class_mapping_edit)
-        class_mapping_layout.addWidget(self.class_mapping_button)
+        class_mapping_layout.addWidget(self.detection_mapping_edit)
+        class_mapping_layout.addWidget(self.detection_mapping_button)
         layout.addLayout(class_mapping_layout)
 
         # Segmentation Model Dropdown
-        self.segmentation_model_combo = QComboBox()
-        self.segmentation_model_combo.addItems(["yolov8n.pt",
-                                                "yolov8s.pt",
-                                                "yolov8m.pt",
-                                                "yolov8l.pt",
-                                                "yolov8x.pt"])
+        self.detection_model_combo = QComboBox()
+        self.detection_model_combo.addItems(["yolov8n.pt",
+                                             "yolov8s.pt",
+                                             "yolov8m.pt",
+                                             "yolov8l.pt",
+                                             "yolov8x.pt"])
 
-        self.segmentation_model_combo.setEditable(True)
+        self.detection_model_combo.setEditable(True)
         layout.addWidget(QLabel("Select or Enter Detection Model:"))
-        layout.addWidget(self.segmentation_model_combo)
+        layout.addWidget(self.detection_model_combo)
 
         self.tab_detection.setLayout(layout)
 
     def setup_segmentation_tab(self):
         layout = QVBoxLayout()
 
-        self.dataset_yaml_edit = QLineEdit()
-        self.dataset_yaml_button = QPushButton("Browse...")
-        self.dataset_yaml_button.clicked.connect(self.browse_dataset_yaml)
+        self.segmentation_dataset_edit = QLineEdit()
+        self.segmentation_dataset_button = QPushButton("Browse...")
+        self.segmentation_dataset_button.clicked.connect(self.browse_dataset_yaml)
         dataset_yaml_layout = QHBoxLayout()
         dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
-        dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
-        dataset_yaml_layout.addWidget(self.dataset_yaml_button)
+        dataset_yaml_layout.addWidget(self.segmentation_dataset_button)
+        dataset_yaml_layout.addWidget(self.segmentation_dataset_button)
         layout.addLayout(dataset_yaml_layout)
 
         # Class Mapping
-        self.class_mapping_edit = QLineEdit()
-        self.class_mapping_button = QPushButton("Browse...")
-        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        self.segmentation_mapping_edit = QLineEdit()
+        self.segmentation_mapping_button = QPushButton("Browse...")
+        self.segmentation_mapping_button.clicked.connect(self.browse_class_mapping_file)
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(QLabel("Class Mapping:"))
-        class_mapping_layout.addWidget(self.class_mapping_edit)
-        class_mapping_layout.addWidget(self.class_mapping_button)
+        class_mapping_layout.addWidget(self.segmentation_mapping_edit)
+        class_mapping_layout.addWidget(self.segmentation_mapping_button)
         layout.addLayout(class_mapping_layout)
 
         # Segmentation Model Dropdown
@@ -1299,7 +1549,7 @@ class TrainModelDialog(QDialog):
         self.tab_segmentation.setLayout(layout)
 
     def accept(self):
-        self.train_classification_model()
+        self.train_model()
         super().accept()
 
     def get_parameters(self):
@@ -1308,20 +1558,26 @@ class TrainModelDialog(QDialog):
         selected_tab = self.tabs.currentWidget()
         if selected_tab == self.tab_classification:
             task = 'classify'
+            data = self.classify_dataset_edit.text()
+            model = self.classification_model_combo.currentText()
         elif selected_tab == self.tab_detection:
             task = 'detect'
+            data = self.detection_dataset_edit.text()
+            model = self.detection_model_combo.currentText()
         elif selected_tab == self.tab_segmentation:
             task = 'segment'
+            data = self.segmentation_dataset_edit.text()
+            model = self.segmentation_model_combo.currentText()
         else:
-            task = None  # Should never happen
+            raise ValueError("Invalid tab selected.")
 
         # Extract values from dialog widgets
         params = {
             'task': task,
             'project': self.project_edit.text(),
             'name': self.name_edit.text(),
-            'model': self.model_edit.text(),
-            'data': self.dataset_dir_edit.text(),
+            'model': model,
+            'data': data,
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
@@ -1348,8 +1604,6 @@ class TrainModelDialog(QDialog):
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
-        # Provided model path, else use default model
-        params['model'] = params['model'] if params['model'] else self.classification_model_combo.currentText()
 
         # Add custom parameters (allows overriding the above parameters)
         for param_name, param_value in self.custom_params:
@@ -1372,7 +1626,7 @@ class TrainModelDialog(QDialog):
         # Return the dictionary of parameters
         return params
 
-    def train_classification_model(self):
+    def train_model(self):
 
         # Get training parameters
         self.params = self.get_parameters()
@@ -1387,8 +1641,10 @@ class TrainModelDialog(QDialog):
         # Save the class mapping JSON file
         output_dir_path = os.path.join(self.params['project'], self.params['name'])
         os.makedirs(output_dir_path, exist_ok=True)
-        if os.path.exists(self.class_mapping_edit.text()):
-            shutil.copyfile(self.class_mapping_edit.text(), f"{output_dir_path}\\class_mapping.json")
+        if self.class_mapping:
+            # Write the json file to the output directory
+            with open(f"{output_dir_path}/class_mapping.json", 'w') as json_file:
+                json.dump(self.class_mapping, json_file, indent=4)
 
         message = "Model training has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Training Status", message)
@@ -1973,13 +2229,13 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("Deploy Model")
-        self.resize(300, 200)
+        self.resize(400, 300)
 
         self.layout = QVBoxLayout(self)
 
-        self.model_path = None
-        self.loaded_model = None
-        self.class_mapping = {}
+        self.model_paths = {'classify': None, 'detect': None, 'segment': None}
+        self.loaded_models = {'classify': None, 'detect': None, 'segment': None}
+        self.class_mappings = {'classify': None, 'detect': None, 'segment': None}
 
         self.tab_widget = QTabWidget()
         self.layout.addWidget(self.tab_widget)
@@ -1996,84 +2252,78 @@ class DeployModelDialog(QDialog):
         self.setup_detection_tab()
         self.setup_segmentation_tab()
 
-        # Status bar label
-        self.status_bar = QLabel("No model loaded")
-        self.layout.addWidget(self.status_bar)
+        # Task-specific status bars
+        self.status_bars = {
+            'classify': QLabel("No classification model loaded"),
+            'detect': QLabel("No detection model loaded"),
+            'segment': QLabel("No segmentation model loaded")
+        }
+        self.layout.addWidget(self.status_bars['classify'])
+        self.layout.addWidget(self.status_bars['detect'])
+        self.layout.addWidget(self.status_bars['segment'])
+
+        self.tab_widget.currentChanged.connect(self.update_status_bar_visibility)
 
         self.setLayout(self.layout)
 
     def showEvent(self, event: QShowEvent):
         super().showEvent(event)
         self.check_and_display_class_names()
+        self.update_status_bar_visibility(self.tab_widget.currentIndex())
 
-    def setup_classification_tab(self):
+    def setup_tab(self, tab, task):
         layout = QVBoxLayout()
 
-        self.classification_text_area = QTextEdit()
-        self.classification_text_area.setReadOnly(True)
-        layout.addWidget(self.classification_text_area)
+        text_area = QTextEdit()
+        text_area.setReadOnly(True)
+        layout.addWidget(text_area)
 
         browse_model_button = QPushButton("Browse Model")
-        browse_model_button.clicked.connect(self.browse_file)
+        browse_model_button.clicked.connect(lambda: self.browse_file(task))
         layout.addWidget(browse_model_button)
 
         browse_class_mapping_button = QPushButton("Browse Class Mapping")
-        browse_class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        browse_class_mapping_button.clicked.connect(lambda: self.browse_class_mapping_file(task))
         layout.addWidget(browse_class_mapping_button)
 
         load_button = QPushButton("Load Model")
-        load_button.clicked.connect(self.load_model)
+        load_button.clicked.connect(lambda: self.load_model(task))
         layout.addWidget(load_button)
 
         deactivate_button = QPushButton("Deactivate Model")
-        deactivate_button.clicked.connect(self.deactivate_model)
+        deactivate_button.clicked.connect(lambda: self.deactivate_model(task))
         layout.addWidget(deactivate_button)
 
-        self.classification_tab.setLayout(layout)
+        tab.setLayout(layout)
+        return text_area
 
-    def setup_segmentation_tab(self):
-        layout = QVBoxLayout()
-
-        self.segmentation_text_area = QTextEdit()
-        self.segmentation_text_area.setReadOnly(True)
-        layout.addWidget(self.segmentation_text_area)
-
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self.browse_file)
-        layout.addWidget(browse_button)
-
-        load_button = QPushButton("Load Model")
-        load_button.clicked.connect(self.load_model)
-        layout.addWidget(load_button)
-
-        deactivate_button = QPushButton("Deactivate Model")
-        deactivate_button.clicked.connect(self.deactivate_model)
-        layout.addWidget(deactivate_button)
-
-        self.segmentation_tab.setLayout(layout)
+    def setup_classification_tab(self):
+        self.classification_text_area = self.setup_tab(self.classification_tab, 'classify')
 
     def setup_detection_tab(self):
-        layout = QVBoxLayout()
+        self.detection_text_area = self.setup_tab(self.detection_tab, 'detect')
 
-        self.detection_text_area = QTextEdit()
-        self.detection_text_area.setReadOnly(True)
-        layout.addWidget(self.detection_text_area)
+    def setup_segmentation_tab(self):
+        self.segmentation_text_area = self.setup_tab(self.segmentation_tab, 'segment')
 
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self.browse_file)
-        layout.addWidget(browse_button)
+    def get_current_task(self):
+        index = self.tab_widget.currentIndex()
+        return ['classify', 'detect', 'segment'][index]
 
-        load_button = QPushButton("Load Model")
-        load_button.clicked.connect(self.load_model)
-        layout.addWidget(load_button)
+    def get_text_area(self, task):
+        if task == 'classify':
+            return self.classification_text_area
+        elif task == 'detect':
+            return self.detection_text_area
+        elif task == 'segment':
+            return self.segmentation_text_area
 
-        deactivate_button = QPushButton("Deactivate Model")
-        deactivate_button.clicked.connect(self.deactivate_model)
-        layout.addWidget(deactivate_button)
+    def update_status_bar_visibility(self, index):
+        current_task = self.get_current_task()
+        for task, status_bar in self.status_bars.items():
+            status_bar.setVisible(task == current_task)
 
-        self.detection_tab.setLayout(layout)
-
-    def browse_file(self):
+    def browse_file(self, task):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Open Model File", "",
@@ -2084,73 +2334,67 @@ class DeployModelDialog(QDialog):
                 # OpenVINO is a directory
                 file_path = os.path.dirname(file_path)
 
-            self.model_path = file_path
-            if self.tab_widget.currentIndex() == 0:
-                self.classification_text_area.setText("Model file selected")
-            else:
-                self.segmentation_file_path.setText("Model file selected")
+            self.model_paths[task] = file_path
+            self.get_text_area(task).setText("Model file selected")
 
             # Try to load the class mapping file if it exists in the directory above
             parent_dir = os.path.dirname(os.path.dirname(file_path))
             class_mapping_path = os.path.join(parent_dir, "class_mapping.json")
             if os.path.exists(class_mapping_path):
-                self.load_class_mapping(class_mapping_path)
+                self.load_class_mapping(task, class_mapping_path)
 
-    def browse_class_mapping_file(self):
+    def browse_class_mapping_file(self, task):
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Open Class Mapping File", "",
                                                    "JSON Files (*.json)",
                                                    options=options)
         if file_path:
-            self.load_class_mapping(file_path)
+            self.load_class_mapping(task, file_path)
 
-    def load_class_mapping(self, file_path):
+    def load_class_mapping(self, task, file_path):
         try:
             with open(file_path, 'r') as f:
-                self.class_mapping = json.load(f)
-            self.classification_text_area.append("Class mapping file selected")
+                self.class_mappings[task] = json.load(f)
+            self.get_text_area(task).append("Class mapping file selected")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load class mapping file: {str(e)}")
 
-    def load_model(self):
-        if self.model_path:
+    def load_model(self, task):
+        if self.model_paths[task]:
             try:
-                # Set the cursor to waiting (busy) cursor
                 QApplication.setOverrideCursor(Qt.WaitCursor)
-                # Load the model, and run a dummy prediction to build the graph
-                self.loaded_model = YOLO(self.model_path, task='classify')
-                self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
+                self.loaded_models[task] = YOLO(self.model_paths[task], task=task)
+                self.loaded_models[task](np.zeros((224, 224, 3), dtype=np.uint8))
 
                 try:
-                    # Add the labels to the LabelWindow if they don't already exist
-                    self.add_labels_to_label_window()
+                    self.add_labels_to_label_window(task)
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add labels: {str(e)}")
 
-                QMessageBox.information(self, "Model Loaded", "Model weights loaded successfully.")
-
-                # Check and display class names
-                self.check_and_display_class_names()
+                QMessageBox.information(self, "Model Loaded", f"{task.capitalize()} model loaded successfully.")
+                self.check_and_display_class_names(task)
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to load {task} model: {str(e)}")
             finally:
-                # Restore the cursor to the default cursor
                 QApplication.restoreOverrideCursor()
         else:
-            QMessageBox.warning(self, "Warning", "No model file selected")
+            QMessageBox.warning(self, "Warning", f"No {task} model file selected")
 
-    def add_labels_to_label_window(self):
-        for label in self.class_mapping.values():
-            self.label_window.add_label_if_not_exists(label['short_label_code'],
-                                                      label['long_label_code'],
-                                                      QColor(*label['color']))
+    def add_labels_to_label_window(self, task):
+        if self.class_mappings[task]:
+            for label in self.class_mappings[task].values():
+                self.label_window.add_label_if_not_exists(label['short_label_code'],
+                                                          label['long_label_code'],
+                                                          QColor(*label['color']))
 
-    def check_and_display_class_names(self):
-        if self.loaded_model:
-            # Get the class names the model can predict
-            class_names = list(self.loaded_model.names.values())
-            class_names_str = "Class Names: \n"
+    def check_and_display_class_names(self, task=None):
+        if task is None:
+            task = self.get_current_task()
+
+        if self.loaded_models[task]:
+            class_names = list(self.loaded_models[task].names.values())
+            class_names_str = f"{task.capitalize()} Class Names: \n"
             missing_labels = []
 
             for class_name in class_names:
@@ -2161,127 +2405,184 @@ class DeployModelDialog(QDialog):
                     class_names_str += f"❌ {class_name} \n"
                     missing_labels.append(class_name)
 
-            self.classification_text_area.setText(class_names_str)
-            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
+            self.get_text_area(task).setText(class_names_str)
+            status_bar_text = f"{task.capitalize()} model loaded: {os.path.basename(self.model_paths[task])}"
+            self.status_bars[task].setText(status_bar_text)
 
             if missing_labels:
                 missing_labels_str = "\n".join(missing_labels)
                 QMessageBox.warning(self,
                                     "Warning",
-                                    f"The following short labels are missing and "
+                                    f"The following short labels are missing for {task} and "
                                     f"cannot be predicted until added manually:"
                                     f"\n{missing_labels_str}")
 
-    def deactivate_model(self):
-        self.loaded_model = None
-        self.model_path = None
-        self.class_mapping = {}
+    def deactivate_model(self, task):
+        self.loaded_models[task] = None
+        self.model_paths[task] = None
+        self.class_mappings[task] = None
         gc.collect()
         empty_cache()
-        self.status_bar.setText("No model loaded")
-        if self.tab_widget.currentIndex() == 0:
-            self.classification_text_area.setText("No model file selected")
-        else:
-            self.segmentation_file_path.setText("No model file selected")
+        self.status_bars[task].setText(f"No {task} model loaded")
+        self.get_text_area(task).setText(f"No {task} model file selected")
 
-    def predict(self, annotations=None):
-        if self.loaded_model is None:
+    def predict_classification(self, annotations=None):
+        if self.loaded_models['classify'] is None:
             return
 
-        # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Get the selected annotation
         selected_annotation = self.annotation_window.selected_annotation
         if selected_annotation and not annotations:
-            # Make predictions on a single, specific annotation
-            self.predict_annotation(selected_annotation)
+            # Predict only the selected annotation
+            self.predict_classification_annotation(selected_annotation)
             self.main_window.annotation_window.unselect_annotation()
             self.main_window.annotation_window.select_annotation(selected_annotation)
         else:
+            # Predict all annotations in the image
             if not annotations:
-                # Get the annotations for the image with Review label
                 annotations = self.annotation_window.get_image_review_annotations()
+            self.preprocess_classification_annotations(annotations)
 
-            # Make predictions on the annotations
-            self.preprocess_annotations(annotations)
-
-        # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-
-        # Clear cache
         gc.collect()
         empty_cache()
 
-    def preprocess_annotations(self, annotations):
+    def predict_classification_annotation(self, annotation):
+        image_np = pixmap_to_numpy(annotation.cropped_image)
+        result = self.loaded_models['classify'](image_np, device=self.main_window.device)[0]
+        self.process_classification_result(annotation, result)
 
-        # Convert QImages to numpy arrays
+    def preprocess_classification_annotations(self, annotations):
         images_np = []
         for annotation in annotations:
             images_np.append(pixmap_to_numpy(annotation.cropped_image))
 
-        # Make predictions on annotations
-        progress_bar = ProgressBar(self, title=f"Making Predictions")
+        progress_bar = ProgressBar(self, title=f"Making Classification Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(annotations))
 
-        # Perform batch prediction
-        results = self.loaded_model(images_np, stream=True, device=self.main_window.device)
+        results = self.loaded_models['classify'](images_np, stream=True, device=self.main_window.device)
 
         for annotation, result in zip(annotations, results):
-            # Process the results
-            self.process_prediction_result(annotation, result)
+            self.process_classification_result(annotation, result)
             progress_bar.update_progress()
 
-        # Show the last annotation in the confidence window (aesthetic)
         self.main_window.confidence_window.display_cropped_image(annotation)
 
-        # Group annotations by image path
         image_paths = list(set([annotation.image_path for annotation in annotations]))
         for image_path in image_paths:
-            # Update the image window's image dict (fast search filtering)
             self.main_window.image_window.update_image_annotations(image_path)
 
         progress_bar.stop_progress()
         progress_bar.close()
 
-    def predict_annotation(self, annotation):
-        # Get the cropped image
-        image = annotation.cropped_image
-        # Convert QImage to np
-        image_np = pixmap_to_numpy(image)
-        # Perform prediction
-        result = self.loaded_model(image_np, device=self.main_window.device)[0]
-        # Process the results
-        self.process_prediction_result(annotation, result)
-
-    def process_prediction_result(self, annotation, result):
-        # Extract the results
+    def process_classification_result(self, annotation, result):
         class_names = result.names
         top5 = result.probs.top5
         top5conf = result.probs.top5conf
         top1conf = top5conf[0].item()
 
-        # Initialize an empty dictionary to store the results
         predictions = {}
-
-        # Iterate over the top 5 predictions
         for idx, conf in zip(top5, top5conf):
             class_name = class_names[idx]
             label = self.label_window.get_label_by_short_code(class_name)
-
             if label:
                 predictions[label] = float(conf)
-            else:
-                # User does not have label loaded; skip.
-                pass
 
         if predictions:
-            # Update the machine confidence
             annotation.update_machine_confidence(predictions)
-            # If the top prediction is below the threshold, label as Review
             if top1conf < self.main_window.get_uncertainty_thresh():
                 label = self.label_window.get_label_by_id('-1')
                 annotation.update_label(label)
+
+    def predict_detection(self, image_path=None):
+        if self.loaded_models['detect'] is None:
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        if not image_path:
+            image_path = self.annotation_window.current_image_path
+
+        # Prepare the image for detection
+        pixmap_image = self.main_window.image_window.images[image_path]
+        numpy_image = qimage_to_numpy(pixmap_image)
+
+        # Perform detection
+        results = self.loaded_models['detect'](numpy_image,
+                                               conf=self.main_window.get_uncertainty_thresh(),
+                                               iou=self.main_window.get_iou_threshold(),  # Placeholder TODO
+                                               device=self.main_window.device)[0]
+
+        # Process the detection results
+        self.process_detection_result(image_path, results)
+
+        QApplication.restoreOverrideCursor()
+        gc.collect()
+        empty_cache()
+
+    def process_detection_result(self, image_path, result):
+        for box in result.boxes:
+            # Extract the results
+            cls = box.cls.cpu().numpy()[0].astype(int)
+            conf = box.conf.cpu().numpy()[0].astype(float)
+            x_min, y_min, x_max, y_max = box.xyxy.cpu().numpy()[0].astype(int)
+
+            # Add annotations
+            short_label = self.class_mappings['detect'][self.loaded_models['detect'].names[cls]]['short_label_code']
+            label = self.label_window.get_label_by_short_code(short_label)
+            top_left = QPoint(x_min, y_min)
+            bottom_right = QPoint(x_max, y_max)
+
+            # Create the rectangle annotation
+            annotation = RectangleAnnotation(top_left,
+                                             bottom_right,
+                                             label.short_label_code,
+                                             label.long_label_code,
+                                             label.color,
+                                             image_path,
+                                             label.id,
+                                             128,
+                                             show_msg=False)
+
+            annotation.create_graphics_item(self.annotation_window.scene)
+            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+
+            # Connect update signals
+            annotation.selected.connect(self.annotation_window.select_annotation)
+            annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
+            annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+
+            self.annotation_window.annotations_dict[annotation.id] = annotation
+            self.main_window.confidence_window.display_cropped_image(annotation)
+
+            print("Done")
+
+    def predict_segmentation(self, image_path=None):
+        if self.loaded_models['segment'] is None:
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        if not image_path:
+            image_path = self.annotation_window.current_image_path
+
+        pixmap_image = self.image_window.images[image_path]
+        numpy_image = pixmap_to_numpy(pixmap_image)
+
+        # Perform detection
+        results = self.loaded_models['segment'](numpy_image, device=self.main_window.device)[0]
+
+        # Process the detection results
+        self.process_segmentation_result(image_path, results)
+
+        QApplication.restoreOverrideCursor()
+        gc.collect()
+        empty_cache()
+
+    def process_segmentation_result(self, image_path, results):
+        # Implement segmentation processing logic here
+        pass
+
 
 
 class BatchInferenceDialog(QDialog):
@@ -2292,7 +2593,7 @@ class BatchInferenceDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
 
-        self.loaded_model = self.deploy_model_dialog.loaded_model
+        self.loaded_model = self.deploy_model_dialog.loaded_models
 
         self.annotations = []
         self.processed_annotations = []
@@ -2519,7 +2820,7 @@ class BatchInferenceDialog(QDialog):
         groups = groupby(sorted(self.processed_annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
         # Make predictions on each image's annotations
         for path, group in groups:
-            self.deploy_model_dialog.predict(annotations=list(group))
+            self.deploy_model_dialog.predict_classification(annotations=list(group))
             progress_bar.update_progress()
 
         progress_bar.stop_progress()

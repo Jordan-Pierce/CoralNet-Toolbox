@@ -27,21 +27,20 @@ class RectangleAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+        self.center_xy = QPointF(0, 0)
+        self.cropped_bbox = (0, 0, 0, 0)
+        self.annotation_size = 0
 
+        self._reduce_precision(top_left, bottom_right)
+        self.calculate_centroid()
+        self.set_cropped_bbox()
+
+    def _reduce_precision(self, top_left: QPointF, bottom_right: QPointF):
         self.top_left = QPointF(round(min(top_left.x(), bottom_right.x()), 2),
                                 round(min(top_left.y(), bottom_right.y()), 2))
 
         self.bottom_right = QPointF(round(max(top_left.x(), bottom_right.x()), 2),
                                     round(max(top_left.y(), bottom_right.y()), 2))
-
-        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
-                                 (self.top_left.y() + self.bottom_right.y()) / 2)
-
-        self.cropped_bbox = (self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y())
-
-    def contains_point(self, point: QPointF) -> bool:
-        return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
-                self.top_left.y() <= point.y() <= self.bottom_right.y())
 
     def calculate_centroid(self):
         self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
@@ -49,8 +48,12 @@ class RectangleAnnotation(Annotation):
 
     def set_cropped_bbox(self):
         self.cropped_bbox = (self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y())
-        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
-                                 (self.top_left.y() + self.bottom_right.y()) / 2)
+        self.annotation_size = int(max(self.bottom_right.x() - self.top_left.x(),
+                                       self.bottom_right.y() - self.top_left.y()))
+
+    def contains_point(self, point: QPointF) -> bool:
+        return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
+                self.top_left.y() <= point.y() <= self.bottom_right.y())
 
     def create_cropped_image(self, rasterio_src):
         # Set the rasterio source for the annotation
@@ -182,6 +185,15 @@ class RectangleAnnotation(Annotation):
         self.bottom_right = QPointF(self.center_xy.x() + width / 2, self.center_xy.y() + height / 2)
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
+
+    def to_yolo_detection(self, image_width, image_height):
+        min_x, min_y, max_x, max_y = self.cropped_bbox
+        x_center = (min_x + max_x) / 2 / image_width
+        y_center = (min_y + max_y) / 2 / image_height
+        width = (max_x - min_x) / image_width
+        height = (max_y - min_y) / image_height
+
+        return self.label.short_label_code, f"{x_center} {y_center} {width} {height}"
 
     def to_dict(self):
         base_dict = super().to_dict()

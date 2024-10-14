@@ -1,11 +1,8 @@
 # TODO Later:
 #   - CoralNet tools
-#   - exporting image names for creating dataset
-#   - Sample may cause crash
-#   - Clicking outside of SAM working area causes a crash, fix that
-#   - Import and export of instance segmentation masks / object detection YOLO format
-#   - Train models
-#   - Deploy
+#   - Sample may cause crash (still)
+#   - export of instance segmentation masks / object detection YOLO format
+#   - IoU and conf
 
 import traceback
 

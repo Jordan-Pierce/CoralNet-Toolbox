@@ -294,9 +294,8 @@ class IODialog:
                 df = []
 
                 for annotation in self.annotation_window.annotations_dict.values():
-                    if isinstance(annotation, PatchAnnotation):
-                        df.append(annotation.to_coralnet_format())
-                        progress_bar.update_progress()
+                    df.append(annotation.to_coralnet())
+                    progress_bar.update_progress()
 
                 df = pd.DataFrame(df)
                 df.to_csv(file_path, index=False)
@@ -348,7 +347,7 @@ class IODialog:
 
             annotation_size, ok = QInputDialog.getInt(self.annotation_window,
                                                       "Annotation Size",
-                                                      "Enter the annotation size for all imported annotations:",
+                                                      "Enter the default annotation size for imported annotations:",
                                                       224, 1, 10000, 1)
             if not ok:
                 return
@@ -379,7 +378,9 @@ class IODialog:
                     col_coord = row['Column']
                     label_code = row['Label']
 
-                    short_label_code = long_label_code = label_code
+                    short_label_code = label_code
+                    long_label_code = row['Long Label'] if 'Long Label' in row else label_code
+
                     existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
 
                     if existing_label:
@@ -397,7 +398,7 @@ class IODialog:
                                                                   label_id)
 
                     annotation = PatchAnnotation(QPointF(col_coord, row_coord),
-                                                 annotation_size,
+                                                 row['Patch Size'] if "Patch Size" in row else annotation_size,
                                                  short_label_code,
                                                  long_label_code,
                                                  color,
@@ -472,7 +473,7 @@ class IODialog:
                 for annotation in self.annotation_window.annotations_dict.values():
                     if isinstance(annotation, PatchAnnotation):
                         if 'Dot' in annotation.data:
-                            df.append(annotation.to_coralnet_format())
+                            df.append(annotation.to_coralnet())
                             progress_bar.update_progress()
 
                 df = pd.DataFrame(df)

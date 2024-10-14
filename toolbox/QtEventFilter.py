@@ -40,9 +40,19 @@ class GlobalEventFilter(QObject):
                     self.label_window.handle_wasd_key(event.key())
                     return True
 
-                # Handle hotkey for prediction
-                if event.key() == Qt.Key_Z:
-                    self.deploy_model_dialog.predict()
+                # Handle hotkey for image classification prediction
+                if event.key() == Qt.Key_1:
+                    self.deploy_model_dialog.predict_classification()
+                    return True
+
+                # Handle hotkey for object detection prediction
+                if event.key() == Qt.Key_2:
+                    self.deploy_model_dialog.predict_detection()
+                    return True
+
+                # Handle hotkey for instance segmentation prediction
+                if event.key() == Qt.Key_3:
+                    self.deploy_model_dialog.predict_segmentation()
                     return True
 
                 # Handle annotation cycling hotkeys

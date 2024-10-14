@@ -186,7 +186,9 @@ class ImageWindow(QWidget):
         for path in self.filtered_image_paths:
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
-            self.tableWidget.setItem(row_position, 0, QTableWidgetItem(self.image_dict[path]['filename']))
+            item = QTableWidgetItem(self.image_dict[path]['filename'])
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            self.tableWidget.setItem(row_position, 0, item)
         self.update_table_selection()
 
     def update_table_selection(self):

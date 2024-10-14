@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self.io_dialog = IODialog(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
+        self.iou_thresh = 0.50
         self.uncertainty_thresh = 0.25
 
         self.create_dataset_dialog = CreateDatasetDialog(self)
@@ -361,6 +362,13 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
+        # Spin box for IoU threshold control
+        self.iou_thresh_spinbox = QDoubleSpinBox()
+        self.iou_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
+        self.iou_thresh_spinbox.setSingleStep(0.01)  # Step size for the spinbox
+        self.iou_thresh_spinbox.setValue(self.iou_thresh)
+        self.iou_thresh_spinbox.valueChanged.connect(self.update_iou_thresh)
+
         # Spin box for Uncertainty threshold control
         self.uncertainty_thresh_spinbox = QDoubleSpinBox()
         self.uncertainty_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
@@ -384,6 +392,8 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
         self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("IoU Threshold:"))
+        self.status_bar_layout.addWidget(self.iou_thresh_spinbox)
         self.status_bar_layout.addWidget(QLabel("Uncertainty Threshold:"))
         self.status_bar_layout.addWidget(self.uncertainty_thresh_spinbox)
         self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
@@ -621,6 +631,15 @@ class MainWindow(QMainWindow):
             self.uncertainty_thresh_spinbox.setValue(value)
             self.uncertaintyChanged.emit(value)
 
+    def get_iou_thresh(self):
+        return self.iou_thresh
+
+    def update_iou_thresh(self, value):
+        if self.iou_thresh != value:
+            self.iou_thresh = value
+            self.iou_thresh.setValue(value)
+            self.iou_thresh.emit(value)
+
     def open_import_images_dialog(self):
         self.untoggle_all_tools()
         self.io_dialog.import_images()
@@ -694,6 +713,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_deploy_model_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Deploy Model",
+                                "No images are present in the project.")
+            return
+
         try:
             self.untoggle_all_tools()
             self.deploy_model_dialog.exec_()
@@ -714,7 +739,7 @@ class MainWindow(QMainWindow):
                                 "No annotations are present in the project.")
             return
 
-        if not self.deploy_model_dialog.loaded_model:
+        if not any(list(self.deploy_model_dialog.loaded_models.values())):
             QMessageBox.warning(self,
                                 "Batch Inference",
                                 "Please deploy a model before running batch inference.")
