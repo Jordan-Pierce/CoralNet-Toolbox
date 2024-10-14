@@ -15,15 +15,19 @@ import ultralytics.engine.validator as validator
 import ultralytics.models.yolo.classify.train as train_build
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QImage, QBrush, QColor, QShowEvent
+from PyQt5.QtGui import QBrush, QColor, QShowEvent
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
-                             QTableWidgetItem, QSlider, QButtonGroup)
+                             QTableWidgetItem, QSlider, QButtonGroup, QRadioButton)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
 from ultralytics.data.dataset import ClassificationDataset
+
+from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.utilities import pixmap_to_numpy
@@ -54,22 +58,24 @@ class CreateDatasetDialog(QDialog):
         self.setWindowTitle("Create Dataset")
         self.layout = QVBoxLayout(self)
 
-        # Create tabs
-        self.tabs = QTabWidget()
-        self.tab_classification = QWidget()
-        self.tab_detection = QWidget()
-        self.tab_segmentation = QWidget()
+        # Create horizontal radio box
+        self.dataset_type_group = QGroupBox("Dataset Type")
+        self.dataset_type_layout = QHBoxLayout()
 
-        self.tabs.addTab(self.tab_classification, "Image Classification")
-        self.tabs.addTab(self.tab_detection, "Object Detection")
-        self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
+        self.radio_classification = QRadioButton("Image Classification")
+        self.radio_detection = QRadioButton("Object Detection")
+        self.radio_segmentation = QRadioButton("Instance Segmentation")
 
-        self.setup_classification_tab()
-        self.setup_segmentation_tab()
-        self.setup_detection_tab()
+        self.radio_classification.setChecked(True)
 
-        # Add the tabs to the layout
-        self.layout.addWidget(self.tabs)
+        self.dataset_type_layout.addWidget(self.radio_classification)
+        self.dataset_type_layout.addWidget(self.radio_detection)
+        self.dataset_type_layout.addWidget(self.radio_segmentation)
+
+        self.dataset_type_group.setLayout(self.dataset_type_layout)
+        self.layout.addWidget(self.dataset_type_group)
+
+        self.setup_layout()
 
         # Add OK and Cancel buttons
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
@@ -82,10 +88,49 @@ class CreateDatasetDialog(QDialog):
         self.val_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
         self.test_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
         self.label_counts_table.cellChanged.connect(self.update_summary_statistics)
+        self.radio_classification.toggled.connect(self.update_annotation_type_checkboxes)
+        self.radio_detection.toggled.connect(self.update_annotation_type_checkboxes)
+        self.radio_segmentation.toggled.connect(self.update_annotation_type_checkboxes)
 
-    def setup_classification_tab(self):
-        layout = QVBoxLayout()
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.populate_class_filter_list()
+        self.update_summary_statistics()
 
+    def browse_output_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_path:
+            self.output_dir_edit.setText(dir_path)
+
+    def get_class_mapping(self):
+        # Get the label objects for the selected labels
+        labels = [l for l in self.main_window.label_window.labels if l.short_label_code in self.selected_labels]
+
+        class_mapping = {}
+        for label in labels:
+            # Assuming each label has attributes short_label_code, long_label_code, and label_id
+            class_mapping[label.short_label_code] = label.to_dict()
+
+        return class_mapping
+
+    @staticmethod
+    def save_class_mapping_json(class_mapping, output_dir_path):
+        # Save the class_mapping dictionary as a JSON file
+        class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
+        with open(class_mapping_path, 'w') as json_file:
+            json.dump(class_mapping, json_file, indent=4)
+
+    @staticmethod
+    def merge_class_mappings(existing_mapping, new_mapping):
+        # Merge the new class mappings with the existing ones without duplicates
+        merged_mapping = existing_mapping.copy()
+        for key, value in new_mapping.items():
+            if key not in merged_mapping:
+                merged_mapping[key] = value
+
+        return merged_mapping
+
+    def setup_layout(self):
         # Dataset Name and Output Directory
         self.dataset_name_edit = QLineEdit()
         self.output_dir_edit = QLineEdit()
@@ -97,7 +142,7 @@ class CreateDatasetDialog(QDialog):
         form_layout.addRow("Output Directory:", self.output_dir_edit)
         form_layout.addRow(self.output_dir_button)
 
-        layout.addLayout(form_layout)
+        self.layout.addLayout(form_layout)
 
         # Split Ratios
         split_layout = QHBoxLayout()
@@ -123,50 +168,92 @@ class CreateDatasetDialog(QDialog):
         split_layout.addWidget(QLabel("Test Ratio:"))
         split_layout.addWidget(self.test_ratio_spinbox)
 
-        layout.addLayout(split_layout)
+        self.layout.addLayout(split_layout)
+
+        # Annotation Type Selection
+        self.annotation_type_group = QGroupBox("Annotation Types")
+        self.annotation_type_layout = QVBoxLayout()
+
+        self.include_patches_checkbox = QCheckBox("Include Patch Annotations")
+        self.include_rectangles_checkbox = QCheckBox("Include Rectangle Annotations")
+        self.include_polygons_checkbox = QCheckBox("Include Polygon Annotations")
+
+        # Connect checkbox signals
+        self.include_patches_checkbox.stateChanged.connect(self.update_summary_statistics)
+        self.include_rectangles_checkbox.stateChanged.connect(self.update_summary_statistics)
+        self.include_polygons_checkbox.stateChanged.connect(self.update_summary_statistics)
+
+        self.annotation_type_layout.addWidget(self.include_patches_checkbox)
+        self.annotation_type_layout.addWidget(self.include_rectangles_checkbox)
+        self.annotation_type_layout.addWidget(self.include_polygons_checkbox)
+        self.annotation_type_group.setLayout(self.annotation_type_layout)
+
+        self.layout.addWidget(self.annotation_type_group)
 
         # Class Filtering
         self.class_filter_group = QGroupBox("Class Filtering")
         self.class_filter_layout = QVBoxLayout()
 
         # Label Counts Table
-        self.label_counts_table = QTableWidget(0, 6)
-        self.label_counts_table.setHorizontalHeaderLabels(["Include", "Label", "Annotations", "Train", "Val", "Test"])
+        self.label_counts_table = QTableWidget(0, 7)
+        self.label_counts_table.setHorizontalHeaderLabels([
+            "Include", "Label", "Annotations", "Train", "Val", "Test", "Images"
+        ])
+
         self.class_filter_layout.addWidget(self.label_counts_table)
         self.class_filter_group.setLayout(self.class_filter_layout)
-        layout.addWidget(self.class_filter_group)
+        self.layout.addWidget(self.class_filter_group)
 
         # Ready Status
         self.ready_label = QLabel()
-        layout.addWidget(self.ready_label)
+        self.layout.addWidget(self.ready_label)
 
         # Shuffle Button
         self.shuffle_button = QPushButton("Shuffle")
         self.shuffle_button.clicked.connect(self.update_summary_statistics)
-        layout.addWidget(self.shuffle_button)
+        self.layout.addWidget(self.shuffle_button)
 
-        # Add the layout
-        self.tab_classification.setLayout(layout)
+    def update_annotation_type_checkboxes(self):
+        if self.radio_classification.isChecked():  # Classification
+            self.include_patches_checkbox.setChecked(True)
+            self.include_patches_checkbox.setEnabled(False)
+            self.include_rectangles_checkbox.setChecked(True)
+            self.include_rectangles_checkbox.setEnabled(True)
+            self.include_polygons_checkbox.setChecked(True)
+            self.include_polygons_checkbox.setEnabled(True)
+        elif self.radio_detection.isChecked():  # Detection
+            self.include_patches_checkbox.setChecked(False)
+            self.include_patches_checkbox.setEnabled(False)
+            self.include_rectangles_checkbox.setChecked(True)
+            self.include_rectangles_checkbox.setEnabled(False)
+            self.include_polygons_checkbox.setChecked(True)
+            self.include_polygons_checkbox.setEnabled(True)
+        elif self.radio_segmentation.isChecked():  # Segmentation
+            self.include_patches_checkbox.setChecked(False)
+            self.include_patches_checkbox.setEnabled(False)
+            self.include_rectangles_checkbox.setChecked(False)
+            self.include_rectangles_checkbox.setEnabled(False)
+            self.include_polygons_checkbox.setChecked(True)
+            self.include_polygons_checkbox.setEnabled(False)
 
-        # Populate class filter list
-        self.populate_class_filter_list()
-        # Initial update of summary statistics
-        self.update_summary_statistics()
+    def filter_annotations(self):
+        annotations = list(self.annotation_window.annotations_dict.values())
+        filtered_annotations = []
 
-    def setup_detection_tab(self):
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Object Detection"))
-        self.tab_detection.setLayout(layout)
+        if self.include_patches_checkbox.isChecked():
+            filtered_annotations += [a for a in annotations if isinstance(a, PatchAnnotation)]
+        if self.include_rectangles_checkbox.isChecked():
+            filtered_annotations += [a for a in annotations if isinstance(a, RectangleAnnotation)]
+        if self.include_polygons_checkbox.isChecked():
+            filtered_annotations += [a for a in annotations if isinstance(a, PolygonAnnotation)]
 
-    def setup_segmentation_tab(self):
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Instance Segmentation"))
-        self.tab_segmentation.setLayout(layout)
+        return [a for a in filtered_annotations if a.label.short_label_code in self.selected_labels]
 
-    def browse_output_dir(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
-        if dir_path:
-            self.output_dir_edit.setText(dir_path)
+    def on_include_checkbox_state_changed(self, state):
+        if state == Qt.Checked:
+            self.update_summary_statistics()
+        elif state == Qt.Unchecked:
+            self.update_summary_statistics()
 
     def set_cell_color(self, row, column, color):
         item = self.label_counts_table.item(row, column)
@@ -238,12 +325,6 @@ class CreateDatasetDialog(QDialog):
 
         # Reconnect the cellChanged signal
         self.label_counts_table.cellChanged.connect(self.update_summary_statistics)
-
-    def on_include_checkbox_state_changed(self, state):
-        if state == Qt.Checked:
-            self.update_summary_statistics()
-        elif state == Qt.Unchecked:
-            self.update_summary_statistics()
 
     def split_data(self):
         self.train_ratio = self.train_ratio_spinbox.value()
@@ -318,10 +399,8 @@ class CreateDatasetDialog(QDialog):
         # Allow creation of dataset if
         if train_ratio >= 0 and val_ratio >= 0 and test_ratio >= 0:
             return True
-
         if train_ratio >= 0 and val_ratio >= 0 and test_ratio == 0:
             return True
-
         if train_ratio == 0 and val_ratio == 0 and test_ratio == 1:
             return True
 
@@ -344,9 +423,8 @@ class CreateDatasetDialog(QDialog):
                 label = self.label_counts_table.item(row, 1).text()
                 self.selected_labels.append(label)
 
-        # All annotations in project
-        annotations = list(self.annotation_window.annotations_dict.values())
-        self.selected_annotations = [a for a in annotations if a.label.short_label_code in self.selected_labels]
+        # Filter annotations based on the selected annotation types and current tab
+        self.selected_annotations = self.filter_annotations()
 
         # Split the data by annotations
         self.determine_splits()
@@ -355,7 +433,7 @@ class CreateDatasetDialog(QDialog):
         for row in range(self.label_counts_table.rowCount()):
             include_checkbox = self.label_counts_table.cellWidget(row, 0)
             label = self.label_counts_table.item(row, 1).text()
-            anno_count = sum(1 for a in annotations if a.label.short_label_code == label)
+            anno_count = sum(1 for a in self.selected_annotations if a.label.short_label_code == label)
             if include_checkbox.isChecked():
                 train_count = sum(1 for a in self.train_annotations if a.label.short_label_code == label)
                 val_count = sum(1 for a in self.val_annotations if a.label.short_label_code == label)
@@ -389,32 +467,6 @@ class CreateDatasetDialog(QDialog):
 
         self.updating_summary_statistics = False
 
-    def get_class_mapping(self):
-        # Get the label objects for the selected labels
-        labels = [l for l in self.main_window.label_window.labels if l.short_label_code in self.selected_labels]
-
-        class_mapping = {}
-        for label in labels:
-            # Assuming each label has attributes short_label_code, long_label_code, and label_id
-            class_mapping[label.short_label_code] = label.to_dict()
-
-        return class_mapping
-
-    def save_class_mapping_json(self, class_mapping, output_dir_path):
-        # Save the class_mapping dictionary as a JSON file
-        class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
-        with open(class_mapping_path, 'w') as json_file:
-            json.dump(class_mapping, json_file, indent=4)
-
-    def merge_class_mappings(self, existing_mapping, new_mapping):
-        # Merge the new class mappings with the existing ones without duplicates
-        merged_mapping = existing_mapping.copy()
-        for key, value in new_mapping.items():
-            if key not in merged_mapping:
-                merged_mapping[key] = value
-
-        return merged_mapping
-
     def accept(self):
         dataset_name = self.dataset_name_edit.text()
         output_dir = self.output_dir_edit.text()
@@ -430,11 +482,15 @@ class CreateDatasetDialog(QDialog):
             return
 
         if not dataset_name or not output_dir:
-            QMessageBox.warning(self, "Input Error", "All fields must be filled.")
+            QMessageBox.warning(self,
+                                "Input Error",
+                                "All fields must be filled.")
             return
 
         if abs(train_ratio + val_ratio + test_ratio - 1.0) > 1e-9:
-            QMessageBox.warning(self, "Input Error", "Train, Validation, and Test ratios must sum to 1.0")
+            QMessageBox.warning(self,
+                                "Input Error",
+                                "Train, Validation, and Test ratios must sum to 1.0")
             return
 
         output_dir_path = os.path.join(output_dir, dataset_name)
@@ -465,13 +521,30 @@ class CreateDatasetDialog(QDialog):
             class_mapping = self.get_class_mapping()
             self.save_class_mapping_json(class_mapping, output_dir_path)
 
+        # Set the cursor to waiting (busy) cursor
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        if self.radio_classification.isChecked():  # Image Classification
+            self.create_classification_dataset(output_dir_path, train_ratio, val_ratio, test_ratio)
+        elif self.radio_detection.isChecked():  # Object Detection
+            self.create_detection_dataset(output_dir_path, train_ratio, val_ratio, test_ratio)
+        elif self.radio_segmentation.isChecked():  # Instance Segmentation
+            self.create_segmentation_dataset(output_dir_path, train_ratio, val_ratio, test_ratio)
+
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+
+        QMessageBox.information(self,
+                                "Dataset Created",
+                                "Dataset has been successfully created.")
+        super().accept()
+
+    def create_classification_dataset(self, output_dir_path, train_ratio, val_ratio, test_ratio):
+
         # Create the train, val, and test directories
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'val')
         test_dir = os.path.join(output_dir_path, 'test')
-
-        # Set the cursor to waiting (busy) cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Create a blank sample in train folder it's a test-only dataset
         # Ultralytics bug... it doesn't like empty directories (hacky)
@@ -482,19 +555,11 @@ class CreateDatasetDialog(QDialog):
                 with open(os.path.join(label_folder, 'NULL.jpg'), 'w') as f:
                     f.write("")
 
-        self.process_annotations(self.train_annotations, train_dir, "Training")
-        self.process_annotations(self.val_annotations, val_dir, "Validation")
-        self.process_annotations(self.test_annotations, test_dir, "Testing")
+        self.process_classification_annotations(self.train_annotations, train_dir, "Training")
+        self.process_classification_annotations(self.val_annotations, val_dir, "Validation")
+        self.process_classification_annotations(self.test_annotations, test_dir, "Testing")
 
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
-
-        QMessageBox.information(self,
-                                "Dataset Created",
-                                "Dataset has been successfully created.")
-        super().accept()
-
-    def process_annotations(self, annotations, split_dir, split):
+    def process_classification_annotations(self, annotations, split_dir, split):
         # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
@@ -551,10 +616,11 @@ class CreateDatasetDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.populate_class_filter_list()
-        self.update_summary_statistics()
+    def create_detection_dataset(self, output_path_dir, train_ratio, val_ratio, test_ratio):
+        pass
+
+    def create_segmentation_dataset(self, output_path_dir, train_ratio, val_ratio, test_ratio):
+        pass
 
 
 class MergeDatasetsDialog(QDialog):
@@ -1091,6 +1157,19 @@ class TrainModelDialog(QDialog):
                 self.class_mapping_edit.setText(class_mapping_path)
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
 
+    def browse_dataset_yaml(self):
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Dataset YAML File",
+                                                   "",
+                                                   "YAML Files (*.yaml *.yml)")
+        if file_path:
+            self.dataset_yaml_edit.setText(file_path)
+            dir_path = os.path.dirname(file_path)
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping_edit.setText(class_mapping_path)
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+
     def browse_class_mapping_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Select Class Mapping File",
@@ -1099,14 +1178,6 @@ class TrainModelDialog(QDialog):
         if file_path:
             self.class_mapping_edit.setText(file_path)
             self.class_mapping = json.load(open(file_path, 'r'))
-
-    def browse_dataset_yaml(self):
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Dataset YAML File",
-                                                   "",
-                                                   "YAML Files (*.yaml *.yml)")
-        if file_path:
-            self.dataset_yaml_edit.setText(file_path)
 
     def browse_project_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Project Directory")
@@ -1155,6 +1226,42 @@ class TrainModelDialog(QDialog):
 
         self.tab_classification.setLayout(layout)
 
+    def setup_detection_tab(self):
+        layout = QVBoxLayout()
+
+        self.dataset_yaml_edit = QLineEdit()
+        self.dataset_yaml_button = QPushButton("Browse...")
+        self.dataset_yaml_button.clicked.connect(self.browse_dataset_yaml)
+        dataset_yaml_layout = QHBoxLayout()
+        dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
+        dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
+        dataset_yaml_layout.addWidget(self.dataset_yaml_button)
+        layout.addLayout(dataset_yaml_layout)
+
+        # Class Mapping
+        self.class_mapping_edit = QLineEdit()
+        self.class_mapping_button = QPushButton("Browse...")
+        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
+        class_mapping_layout.addWidget(self.class_mapping_edit)
+        class_mapping_layout.addWidget(self.class_mapping_button)
+        layout.addLayout(class_mapping_layout)
+
+        # Segmentation Model Dropdown
+        self.segmentation_model_combo = QComboBox()
+        self.segmentation_model_combo.addItems(["yolov8n.pt",
+                                                "yolov8s.pt",
+                                                "yolov8m.pt",
+                                                "yolov8l.pt",
+                                                "yolov8x.pt"])
+
+        self.segmentation_model_combo.setEditable(True)
+        layout.addWidget(QLabel("Select or Enter Detection Model:"))
+        layout.addWidget(self.segmentation_model_combo)
+
+        self.tab_detection.setLayout(layout)
+
     def setup_segmentation_tab(self):
         layout = QVBoxLayout()
 
@@ -1166,6 +1273,16 @@ class TrainModelDialog(QDialog):
         dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
         dataset_yaml_layout.addWidget(self.dataset_yaml_button)
         layout.addLayout(dataset_yaml_layout)
+
+        # Class Mapping
+        self.class_mapping_edit = QLineEdit()
+        self.class_mapping_button = QPushButton("Browse...")
+        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
+        class_mapping_layout.addWidget(self.class_mapping_edit)
+        class_mapping_layout.addWidget(self.class_mapping_button)
+        layout.addLayout(class_mapping_layout)
 
         # Segmentation Model Dropdown
         self.segmentation_model_combo = QComboBox()
@@ -1181,40 +1298,26 @@ class TrainModelDialog(QDialog):
 
         self.tab_segmentation.setLayout(layout)
 
-    def setup_detection_tab(self):
-        layout = QVBoxLayout()
-
-        self.dataset_yaml_edit = QLineEdit()
-        self.dataset_yaml_button = QPushButton("Browse...")
-        self.dataset_yaml_button.clicked.connect(self.browse_dataset_yaml)
-        dataset_yaml_layout = QHBoxLayout()
-        dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
-        dataset_yaml_layout.addWidget(self.dataset_yaml_edit)
-        dataset_yaml_layout.addWidget(self.dataset_yaml_button)
-        layout.addLayout(dataset_yaml_layout)
-
-        # Segmentation Model Dropdown
-        self.segmentation_model_combo = QComboBox()
-        self.segmentation_model_combo.addItems(["yolov8n.pt",
-                                                "yolov8s.pt",
-                                                "yolov8m.pt",
-                                                "yolov8l.pt",
-                                                "yolov8x.pt"])
-
-        self.segmentation_model_combo.setEditable(True)
-        layout.addWidget(QLabel("Select or Enter Segmentation Model:"))
-        layout.addWidget(self.segmentation_model_combo)
-
-        self.tab_detection.setLayout(layout)
-
     def accept(self):
         self.train_classification_model()
         super().accept()
 
     def get_parameters(self):
 
+        # Determine the selected tab
+        selected_tab = self.tabs.currentWidget()
+        if selected_tab == self.tab_classification:
+            task = 'classify'
+        elif selected_tab == self.tab_detection:
+            task = 'detect'
+        elif selected_tab == self.tab_segmentation:
+            task = 'segment'
+        else:
+            task = None  # Should never happen
+
         # Extract values from dialog widgets
         params = {
+            'task': task,
             'project': self.project_edit.text(),
             'name': self.name_edit.text(),
             'model': self.model_edit.text(),
@@ -1248,7 +1351,7 @@ class TrainModelDialog(QDialog):
         # Provided model path, else use default model
         params['model'] = params['model'] if params['model'] else self.classification_model_combo.currentText()
 
-        # Add custom parameters
+        # Add custom parameters (allows overriding the above parameters)
         for param_name, param_value in self.custom_params:
             name = param_name.text().strip()
             value = param_value.text().strip().lower()
