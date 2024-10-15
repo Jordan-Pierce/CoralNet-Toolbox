@@ -208,10 +208,16 @@ class PolygonAnnotation(Annotation):
 
             # Normalize the normal vector
             length = math.sqrt(normal_vector.x() ** 2 + normal_vector.y() ** 2)
-            normal_vector = QPointF(normal_vector.x() / length, normal_vector.y() / length)
+            if length != 0:
+                normal_vector = QPointF(normal_vector.x() / length, normal_vector.y() / length)
+            else:
+                normal_vector = QPointF(0, 0)
 
             # Move the point along the normal vector by the delta amount
-            new_point = QPointF(p1.x() + normal_vector.x() * delta, p1.y() + normal_vector.y() * delta)
+            if delta < 1:
+                new_point = QPointF(p1.x() - normal_vector.x() * (1 - delta), p1.y() - normal_vector.y() * (1 - delta))
+            else:
+                new_point = QPointF(p1.x() + normal_vector.x() * (delta - 1), p1.y() + normal_vector.y() * (delta - 1))
             new_points.append(new_point)
 
         # Update the points

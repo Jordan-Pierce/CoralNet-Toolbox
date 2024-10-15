@@ -10,7 +10,9 @@ import rasterio
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer, QDateTime
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout,
-                             QTableWidget, QTableWidgetItem, QFileDialog, QApplication, QMenu, QButtonGroup)
+                             QTableWidget, QTableWidgetItem, QHeaderView, QApplication, QMenu, QButtonGroup,
+                             QAbstractItemView)
+
 from rasterio.windows import Window
 
 from toolbox.QtProgressBar import ProgressBar
@@ -71,7 +73,7 @@ class ImageWindow(QWidget):
 
         # Add a QButtonGroup for the checkboxes
         self.checkbox_group = QButtonGroup(self)
-        self.checkbox_group.setExclusive(False)
+        self.checkbox_group.setExclusive(True)
 
         # Add checkboxes for filtering images based on annotations
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
@@ -132,6 +134,10 @@ class ImageWindow(QWidget):
         self.tableWidget.keyPressEvent = self.tableWidget_keyPressEvent
         self.layout.addWidget(self.tableWidget)
 
+        # Set the maximum width for the column to truncate text
+        self.tableWidget.setColumnWidth(0, 200)
+        self.tableWidget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+
         self.image_paths = []  # Store all image paths
         self.image_dict = {}  # Dictionary to store all image information
         self.filtered_image_paths = []  # List to store filtered image paths
@@ -186,15 +192,20 @@ class ImageWindow(QWidget):
         for path in self.filtered_image_paths:
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
-            item = QTableWidgetItem(self.image_dict[path]['filename'])
+            item_text = f"{self.image_dict[path]['filename']}"
+            item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
+            item = QTableWidgetItem(item_text)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            item.setToolTip(os.path.basename(path))  # Set the full path as a tooltip
             self.tableWidget.setItem(row_position, 0, item)
+
         self.update_table_selection()
 
     def update_table_selection(self):
         if self.selected_image_path in self.filtered_image_paths:
             row = self.filtered_image_paths.index(self.selected_image_path)
             self.tableWidget.selectRow(row)
+            self.tableWidget.scrollToItem(self.tableWidget.item(row, 0), QAbstractItemView.PositionAtCenter)
         else:
             self.tableWidget.clearSelection()
 
@@ -469,7 +480,7 @@ class ImageWindow(QWidget):
         no_annotations = self.no_annotations_checkbox.isChecked()
 
         # Return early if none of the search bar or checkboxes are being used
-        if not search_text and not has_annotations and not needs_review and not no_annotations:
+        if not search_text and not (has_annotations or needs_review or no_annotations):
             self.filtered_image_paths = self.image_paths.copy()
             self.update_table_widget()
             self.update_current_image_index_label()

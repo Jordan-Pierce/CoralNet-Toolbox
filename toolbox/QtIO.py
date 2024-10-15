@@ -260,10 +260,10 @@ class IODialog:
 
                     self.image_window.update_image_annotations(image_path)
 
+                # Load the annotations for current image
+                self.annotation_window.load_annotations_parallel()
                 progress_bar.stop_progress()
                 progress_bar.close()
-
-                self.annotation_window.load_annotations_parallel()
 
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Imported",
@@ -353,6 +353,7 @@ class IODialog:
                 return
 
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
+            df['Name'] = df['Name'].apply(lambda x: os.path.basename(x))
             df = df[df['Name'].isin(image_path_map.keys())]
             df = df.dropna(how='any', subset=['Row', 'Column', 'Label'])
             df = df.assign(Row=df['Row'].astype(int))

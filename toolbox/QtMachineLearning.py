@@ -171,6 +171,9 @@ class ImportDatasetDialog(QDialog):
             output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
             os.makedirs(f"{output_folder}/images", exist_ok=True)
 
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
             with open(self.yaml_path_label.text(), 'r') as file:
                 data = yaml.safe_load(file)
 
@@ -183,7 +186,10 @@ class ImportDatasetDialog(QDialog):
 
             # Collect all images from the train, valid, and test folders
             image_paths = glob.glob(f"{dir_path}/**/images/*.*", recursive=True)
+            image_paths = [path.replace("\\", "/") for path in image_paths]
+
             label_paths = glob.glob(f"{dir_path}/**/labels/*.txt", recursive=True)
+            label_paths = [path.replace("\\", "/") for path in label_paths]
 
             # Check that each label file has a corresponding image file
             image_label_paths = {}
@@ -294,24 +300,24 @@ class ImportDatasetDialog(QDialog):
 
                     # Store the annotation and display the cropped image
                     self.annotation_window.annotations_dict[annotation.id] = annotation
-                    annotations.append(annotation)
-
                     # Update the progress bar
                     progress_bar.update_progress()
+                    # Add the annotation to the list for export
+                    annotations.append(annotation)
 
-                # Update the annotations
-                self.main_window.image_window.update_image_annotations(image_path)
+                # Update the image window with the annotations
+                self.image_window.update_image_annotations(image_path)
 
-            # Load the last image's annotations
-            self.main_window.image_window.load_image_by_path(self.main_window.image_window.image_paths[-1])
+            # Load the annotations for current image
             self.annotation_window.load_annotations_parallel()
-
-            progress_bar.update_progress()
             progress_bar.stop_progress()
             progress_bar.close()
 
             # Export annotations as JSON in output
             self.export_annotations(annotations, output_folder)
+
+            # Make cursor normal
+            QApplication.restoreOverrideCursor()
 
             QMessageBox.information(self,
                                     "Dataset Imported",
@@ -422,6 +428,7 @@ class ExportDatasetDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.update_annotation_type_checkboxes()
         self.populate_class_filter_list()
         self.update_summary_statistics()
 
@@ -2782,6 +2789,9 @@ class DeployModelDialog(QDialog):
         self.process_classification_result(annotation, results)
 
     def preprocess_classification_annotations(self, annotations):
+        if not annotations:
+            return
+
         images_np = []
         for annotation in annotations:
             images_np.append(pixmap_to_numpy(annotation.cropped_image))
@@ -2844,6 +2854,7 @@ class DeployModelDialog(QDialog):
             conf = 0.10  # Arbitrary value to prevent too many detections
 
         results = self.loaded_models['detect'](numpy_image,
+                                               agnostic_nms=True,
                                                conf=conf,
                                                iou=self.main_window.get_iou_thresh(),
                                                device=self.main_window.device)[0]
@@ -2938,6 +2949,7 @@ class DeployModelDialog(QDialog):
             conf = 0.10  # Arbitrary value to prevent too many detections
 
         results = self.loaded_models['segment'](numpy_image,
+                                                agnostic_nms=True,
                                                 conf=conf,
                                                 iou=self.main_window.get_iou_thresh(),
                                                 device=self.main_window.device)[0]

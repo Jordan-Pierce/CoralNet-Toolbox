@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
         self.iou_thresh = 0.25
-        self.uncertainty_thresh = 0.25
+        self.uncertainty_thresh = 0.50
 
         self.import_dataset_dialog = ImportDatasetDialog(self)
         self.export_dataset_dialog = ExportDatasetDialog(self)

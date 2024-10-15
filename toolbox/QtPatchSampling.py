@@ -26,7 +26,6 @@ class PatchSamplingDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
-        self.deploy_model_dialog = main_window.deploy_model_dialog
 
         self.setWindowTitle("Sample Annotations")
         self.setWindowState(Qt.WindowMaximized)  # Ensure the dialog is maximized
@@ -112,10 +111,16 @@ class PatchSamplingDialog(QDialog):
 
         self.sampled_annotations = []
 
-        # Call update_margin_spinbox in the constructor
-        self.update_margin_spinbox()
-        # Connect to the signal that indicates a new image has been loaded
+    def showEvent(self, event):
+        # Call update_margin_spinbox when the dialog is shown
         self.annotation_window.imageLoaded.connect(self.update_margin_spinbox)
+        self.update_margin_spinbox()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        # Disconnect the signal when the dialog is hidden
+        self.annotation_window.imageLoaded.disconnect(self.update_margin_spinbox)
+        super().hideEvent(event)
 
     def create_margin_spinbox(self, label_text, layout):
         label = QLabel(label_text + ":")
