@@ -357,7 +357,7 @@ class ImportDatasetDialog(QDialog):
             export_dict[image_path].append(annotation_dict)
             progress_bar.update_progress()
 
-        with open(f"{output_dir}/annotations", 'w') as file:
+        with open(f"{output_dir}/annotations.json", 'w') as file:
             json.dump(export_dict, file, indent=4)
             file.flush()
 
