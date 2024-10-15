@@ -1,8 +1,7 @@
 # TODO Later:
 #   - CoralNet tools
 #   - Sample may cause crash (still)
-#   - export of instance segmentation masks / object detection YOLO format
-#   - IoU and conf
+#   - import of instance segmentation masks / object detection YOLO format
 
 import traceback
 

@@ -1,5 +1,8 @@
 import datetime
 import gc
+import uuid
+import yaml
+import glob
 import json
 import os
 import random
@@ -18,11 +21,11 @@ import ultralytics.data.build as build
 import ultralytics.models.yolo.classify.train as train_build
 
 from PyQt5.QtGui import QBrush, QColor, QShowEvent
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPoint
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPoint, QPointF
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
-                             QTableWidgetItem, QSlider, QButtonGroup, QRadioButton)
+                             QTableWidgetItem, QSlider, QButtonGroup, QRadioButton, QGridLayout)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -45,7 +48,274 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class CreateDatasetDialog(QDialog):
+class ImportDatasetDialog(QDialog):
+    def __init__(self, main_window, parent=None):
+        super(ImportDatasetDialog, self).__init__(parent)
+        self.main_window = main_window
+        self.annotation_window = main_window.annotation_window
+
+        self.setWindowTitle("Import Dataset")
+        self.setGeometry(100, 100, 500, 300)
+
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+
+        # Radio buttons for Object Detection and Instance Segmentation
+        detection_type_group = QGroupBox("Detection Type")
+        detection_type_layout = QHBoxLayout()
+        self.object_detection_radio = QRadioButton("Object Detection")
+        self.instance_segmentation_radio = QRadioButton("Instance Segmentation")
+        self.detection_type_group = QButtonGroup()
+        self.detection_type_group.addButton(self.object_detection_radio)
+        self.detection_type_group.addButton(self.instance_segmentation_radio)
+        self.object_detection_radio.setChecked(True)  # Set default selection
+
+        detection_type_layout.addWidget(self.object_detection_radio)
+        detection_type_layout.addWidget(self.instance_segmentation_radio)
+        detection_type_group.setLayout(detection_type_layout)
+        main_layout.addWidget(detection_type_group)
+
+        # Group for data.yaml file selection
+        yaml_group = QGroupBox("Data YAML File")
+        yaml_layout = QGridLayout()
+        yaml_group.setLayout(yaml_layout)
+
+        self.yaml_path_label = QLineEdit()
+        self.yaml_path_label.setReadOnly(True)
+        self.yaml_path_label.setPlaceholderText("Select data.yaml file...")
+        self.browse_yaml_button = QPushButton("Browse")
+        self.browse_yaml_button.clicked.connect(self.browse_data_yaml)
+
+        yaml_layout.addWidget(QLabel("Path:"), 0, 0)
+        yaml_layout.addWidget(self.yaml_path_label, 0, 1)
+        yaml_layout.addWidget(self.browse_yaml_button, 0, 2)
+
+        main_layout.addWidget(yaml_group)
+
+        # Group for output directory selection
+        output_group = QGroupBox("Output Settings")
+        output_layout = QGridLayout()
+        output_group.setLayout(output_layout)
+
+        self.output_dir_label = QLineEdit()
+        self.output_dir_label.setPlaceholderText("Select output directory...")
+        self.browse_output_button = QPushButton("Browse")
+        self.browse_output_button.clicked.connect(self.browse_output_dir)
+
+        self.output_folder_name = QLineEdit("")
+
+        output_layout.addWidget(QLabel("Directory:"), 0, 0)
+        output_layout.addWidget(self.output_dir_label, 0, 1)
+        output_layout.addWidget(self.browse_output_button, 0, 2)
+        output_layout.addWidget(QLabel("Folder Name:"), 1, 0)
+        output_layout.addWidget(self.output_folder_name, 1, 1, 1, 2)
+
+        main_layout.addWidget(output_group)
+
+        # Accept and Cancel buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        main_layout.addWidget(self.button_box)
+
+        self.setLayout(main_layout)
+
+    def browse_data_yaml(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select data.yaml", "", "YAML Files (*.yaml);;All Files (*)", options=options
+        )
+        if file_path:
+            self.yaml_path_label.setText(file_path)
+
+    def browse_output_dir(self):
+        options = QFileDialog.Options()
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_path:
+            self.output_dir_label.setText(dir_path)
+
+    def accept(self):
+        # Perform validation and processing here
+        if not self.yaml_path_label.text():
+            QMessageBox.warning(self, "Error", "Please select a data.yaml file.")
+            return
+        if not self.output_dir_label.text():
+            QMessageBox.warning(self, "Error", "Please select an output directory.")
+            return
+        if not self.output_folder_name.text():
+            QMessageBox.warning(self, "Error", "Please enter an output folder name.")
+            return
+
+        # Call the process_dataset method
+        self.process_dataset()
+
+        # If validation passes, call the base class accept method
+        super().accept()
+
+    def reject(self):
+        # Handle cancel action if needed
+        super().reject()
+
+    def process_dataset(self):
+        if not self.yaml_path_label.text():
+            QMessageBox.warning(self,
+                                "No File Selected",
+                                "Please select a data.yaml file.")
+            return
+
+        try:
+            output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
+            os.makedirs(f"{output_folder}/images", exist_ok=True)
+
+            with open(self.yaml_path_label.text(), 'r') as file:
+                data = yaml.safe_load(file)
+
+            # Get the paths for train, valid, and test images
+            dir_path = os.path.dirname(self.yaml_path_label.text())
+            train_path = data.get('train', '')
+            valid_path = data.get('val', '')
+            test_path = data.get('test', '')
+            class_names = data.get('names', [])
+
+            # Collect all images from the train, valid, and test folders
+            image_paths = glob.glob(f"{dir_path}/**/images/*.*", recursive=True)
+            label_paths = glob.glob(f"{dir_path}/**/labels/*.txt", recursive=True)
+
+            # Check that each label file has a corresponding image file
+            image_label_paths = {}
+
+            for label_path in label_paths:
+                image_path = label_path.replace('labels', 'images').replace('.txt', '.jpg')
+                if image_path in image_paths:
+                    dst_image_path = os.path.join(f"{output_folder}/images", os.path.basename(image_path))
+                    shutil.copy(image_path, dst_image_path)
+                    image_label_paths[dst_image_path] = label_path
+                    self.main_window.image_window.add_image(dst_image_path)
+
+            # Update filtered images
+            self.main_window.image_window.filter_images()
+            # Show the last image
+            self.main_window.image_window.load_image_by_path(self.main_window.image_window.image_paths[-1])
+
+            # Determine the annotation type based on selected radio button
+            if self.object_detection_radio.isChecked():
+                annotation_type = 'RectangleAnnotation'
+            elif self.instance_segmentation_radio.isChecked():
+                annotation_type = 'PolygonAnnotation'
+            else:
+                raise ValueError("No annotation type selected")
+
+            # Process the annotations based on the selected type
+            progress_bar = ProgressBar(self, title=f"Importing YOLO Dataset")
+            progress_bar.show()
+            progress_bar.start_progress(len(image_label_paths))
+
+            for image_path in image_paths:
+                # Read the label file
+                label_path = image_label_paths[image_path]
+                image_height, image_width = self.main_window.image_window.rasterio_open(image_path).shape
+
+                with open(label_path, 'r') as file:
+                    lines = file.readlines()
+
+                for line in lines:
+                    if annotation_type == 'RectangleAnnotation':
+                        class_id, x_center, y_center, width, height = map(float, line.split())
+                        x_center, y_center, width, height = (x_center * image_width,
+                                                             y_center * image_height,
+                                                             width * image_width,
+                                                             height * image_height)
+
+                        top_left = QPointF(x_center - width / 2, y_center - height / 2)
+                        bottom_right = QPointF(x_center + width / 2, y_center + height / 2)
+
+                        class_name = class_names[int(class_id)]
+                        short_label_code = long_label_code = class_name
+                        existing_label = self.main_window.label_window.get_label_by_short_code(short_label_code)
+
+                        if existing_label:
+                            color = existing_label.color
+                            label_id = existing_label.id
+                        else:
+                            label_id = str(uuid.uuid4())
+                            color = QColor(random.randint(0, 255),
+                                           random.randint(0, 255),
+                                           random.randint(0, 255))
+
+                            self.main_window.label_window.add_label_if_not_exists(short_label_code,
+                                                                                  long_label_code,
+                                                                                  color,
+                                                                                  label_id)
+
+                        annotation = RectangleAnnotation(top_left,
+                                                         bottom_right,
+                                                         short_label_code,
+                                                         long_label_code,
+                                                         color,
+                                                         image_path,
+                                                         label_id,
+                                                         128,
+                                                         show_msg=False)
+
+                    else:
+                        class_id, *points = map(float, line.split())
+                        points = [QPointF(x * image_width, y * image_height) for x, y in zip(points[::2], points[1::2])]
+
+                        class_name = class_names[int(class_id)]
+                        short_label_code = long_label_code = class_name
+                        existing_label = self.main_window.label_window.get_label_by_short_code(short_label_code)
+
+                        if existing_label:
+                            color = existing_label.color
+                            label_id = existing_label.id
+                        else:
+                            label_id = str(uuid.uuid4())
+                            color = QColor(random.randint(0, 255),
+                                           random.randint(0, 255),
+                                           random.randint(0, 255))
+
+                            self.main_window.label_window.add_label_if_not_exists(short_label_code,
+                                                                                  long_label_code,
+                                                                                  color,
+                                                                                  label_id)
+
+                        annotation = PolygonAnnotation(points,
+                                                       short_label_code,
+                                                       long_label_code,
+                                                       color,
+                                                       image_path,
+                                                       label_id,
+                                                       128,
+                                                       show_msg=False)
+
+                    # Store the annotation and display the cropped image
+                    self.annotation_window.annotations_dict[annotation.id] = annotation
+
+                    # Update the progress bar
+                    progress_bar.update_progress()
+
+            progress_bar.stop_progress()
+            progress_bar.close()
+
+            # Load the last image
+            self.main_window.image_window.load_image_by_path(self.main_window.image_window.image_paths[-1])
+
+            # Here you can further process or store the annotations as needed
+            QMessageBox.information(self,
+                                    "Dataset Imported",
+                                    "Dataset has been successfully imported.")
+
+        except Exception as e:
+            QMessageBox.warning(self,
+                                "Error Importing Dataset",
+                                f"An error occurred while importing the dataset: {str(e)}")
+
+
+class ExportDatasetDialog(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -640,13 +910,18 @@ class CreateDatasetDialog(QDialog):
         names = self.selected_labels
         num_classes = len(self.selected_labels)
 
-        # Create the data.yaml file
+        # Define the data as a dictionary
+        data = {
+            'train': '../train/images',
+            'val': '../valid/images',
+            'test': '../test/images',
+            'nc': num_classes,  # Replace `num_classes` with the actual number of classes
+            'names': names  # Replace `names` with the actual list of class names
+        }
+
+        # Write the data to the YAML file
         with open(yaml_path, 'w') as f:
-            f.write(f"train: ../train/images\n")
-            f.write(f"val: ../valid/images\n")
-            f.write(f"test: ../test/images\n\n")
-            f.write(f"nc: {num_classes}\n")
-            f.write(f"names: {names}\n")
+            yaml.dump(data, f, default_flow_style=False)
 
         # Create the train, val, and test directories
         os.makedirs(f"{train_dir}/images", exist_ok=True)
@@ -1333,8 +1608,9 @@ class TrainModelDialog(QDialog):
         # Lr0
         self.lr0_spinbox = QDoubleSpinBox()
         self.lr0_spinbox.setMinimum(0.0001)
-        self.lr0_spinbox.setMaximum(1.0)
-        self.lr0_spinbox.setValue(0.01)
+        self.lr0_spinbox.setMaximum(1.0000)
+        self.lr0_spinbox.setSingleStep(0.0001)
+        self.lr0_spinbox.setValue(0.0100)
         self.form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
 
         # Val
@@ -1520,7 +1796,7 @@ class TrainModelDialog(QDialog):
         self.segmentation_dataset_button.clicked.connect(self.browse_dataset_yaml)
         dataset_yaml_layout = QHBoxLayout()
         dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
-        dataset_yaml_layout.addWidget(self.segmentation_dataset_button)
+        dataset_yaml_layout.addWidget(self.segmentation_dataset_edit)
         dataset_yaml_layout.addWidget(self.segmentation_dataset_button)
         layout.addLayout(dataset_yaml_layout)
 
@@ -2449,8 +2725,8 @@ class DeployModelDialog(QDialog):
 
     def predict_classification_annotation(self, annotation):
         image_np = pixmap_to_numpy(annotation.cropped_image)
-        result = self.loaded_models['classify'](image_np, device=self.main_window.device)[0]
-        self.process_classification_result(annotation, result)
+        results = self.loaded_models['classify'](image_np, device=self.main_window.device)[0]
+        self.process_classification_result(annotation, results)
 
     def preprocess_classification_annotations(self, annotations):
         images_np = []
@@ -2476,10 +2752,10 @@ class DeployModelDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
-    def process_classification_result(self, annotation, result):
-        class_names = result.names
-        top5 = result.probs.top5
-        top5conf = result.probs.top5conf
+    def process_classification_result(self, annotation, results):
+        class_names = results.names
+        top5 = results.probs.top5
+        top5conf = results.probs.top5conf
         top1conf = top5conf[0].item()
 
         predictions = {}
@@ -2509,30 +2785,46 @@ class DeployModelDialog(QDialog):
         numpy_image = qimage_to_numpy(pixmap_image)
 
         # Perform detection
+        if self.main_window.get_uncertainty_thresh() < 0.10:
+            conf = self.main_window.get_uncertainty_thresh()
+        else:
+            conf = 0.10  # Arbitrary value to prevent too many detections
+
         results = self.loaded_models['detect'](numpy_image,
-                                               conf=self.main_window.get_uncertainty_thresh(),
-                                               iou=self.main_window.get_iou_threshold(),  # Placeholder TODO
+                                               conf=conf,
+                                               iou=self.main_window.get_iou_thresh(),
                                                device=self.main_window.device)[0]
 
-        # Process the detection results
-        self.process_detection_result(image_path, results)
+        if results:
+            # Process the detection results
+            self.process_detection_result(image_path, results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
-    def process_detection_result(self, image_path, result):
-        for box in result.boxes:
-            # Extract the results
-            cls = box.cls.cpu().numpy()[0].astype(int)
-            conf = box.conf.cpu().numpy()[0].astype(float)
-            x_min, y_min, x_max, y_max = box.xyxy.cpu().numpy()[0].astype(int)
+    def process_detection_result(self, image_path, results):
+        progress_bar = ProgressBar(self, title=f"Making Detection Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(results))
 
-            # Add annotations
-            short_label = self.class_mappings['detect'][self.loaded_models['detect'].names[cls]]['short_label_code']
+        for result in results:
+            # Extract the results
+            cls = int(result.boxes.cls.cpu().numpy()[0])
+            cls_name = results.names[cls]
+            conf = float(result.boxes.conf.cpu().numpy()[0])
+            x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
+
+            # Determine the short label
+            short_label = 'Review'
+            if conf > self.main_window.get_uncertainty_thresh():
+                if cls_name in self.class_mappings['detect']:
+                    short_label = self.class_mappings['detect'][cls_name]['short_label_code']
+
+            # Prepare the annotation data
             label = self.label_window.get_label_by_short_code(short_label)
-            top_left = QPoint(x_min, y_min)
-            bottom_right = QPoint(x_max, y_max)
+            top_left = QPointF(x_min, y_min)
+            bottom_right = QPointF(x_max, y_max)
 
             # Create the rectangle annotation
             annotation = RectangleAnnotation(top_left,
@@ -2543,8 +2835,9 @@ class DeployModelDialog(QDialog):
                                              image_path,
                                              label.id,
                                              128,
-                                             show_msg=False)
+                                             show_msg=True)
 
+            # Create the graphics and cropped image
             annotation.create_graphics_item(self.annotation_window.scene)
             annotation.create_cropped_image(self.annotation_window.rasterio_image)
 
@@ -2553,36 +2846,116 @@ class DeployModelDialog(QDialog):
             annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
             annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
 
+            # Add the prediction for the confidence window
+            predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
+            annotation.update_machine_confidence(predictions)
+
+            # Update label if confidence is below threshold
+            if conf < self.main_window.get_uncertainty_thresh():
+                review_label = self.label_window.get_label_by_id('-1')
+                annotation.update_label(review_label)
+
+            # Store the annotation and display the cropped image
             self.annotation_window.annotations_dict[annotation.id] = annotation
             self.main_window.confidence_window.display_cropped_image(annotation)
 
-            print("Done")
+            # Update the progress bar
+            progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def predict_segmentation(self, image_path=None):
         if self.loaded_models['segment'] is None:
             return
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
+
         if not image_path:
             image_path = self.annotation_window.current_image_path
 
-        pixmap_image = self.image_window.images[image_path]
-        numpy_image = pixmap_to_numpy(pixmap_image)
+        # Prepare the image for detection
+        pixmap_image = self.main_window.image_window.images[image_path]
+        numpy_image = qimage_to_numpy(pixmap_image)
 
         # Perform detection
-        results = self.loaded_models['segment'](numpy_image, device=self.main_window.device)[0]
+        if self.main_window.get_uncertainty_thresh() < 0.10:
+            conf = self.main_window.get_uncertainty_thresh()
+        else:
+            conf = 0.10  # Arbitrary value to prevent too many detections
 
-        # Process the detection results
-        self.process_segmentation_result(image_path, results)
+        results = self.loaded_models['segment'](numpy_image,
+                                                conf=conf,
+                                                iou=self.main_window.get_iou_thresh(),
+                                                device=self.main_window.device)[0]
+
+        if results:
+            # Process the detection results
+            self.process_segmentation_result(image_path, results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
     def process_segmentation_result(self, image_path, results):
-        # Implement segmentation processing logic here
-        pass
+        progress_bar = ProgressBar(self, title=f"Making Segmentation Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(results.boxes))
 
+        for result in results:
+            # Extract the results
+            cls = int(result.boxes.cls.cpu().numpy()[0])
+            cls_name = result.names[cls]
+            conf = float(result.boxes.conf.cpu().numpy()[0])
+            points = result.masks.cpu().xy[0].astype(float)
+
+            # Determine the short label
+            short_label = 'Review'
+            if conf > self.main_window.get_uncertainty_thresh():
+                if cls_name in self.class_mappings['segment']:
+                    short_label = self.class_mappings['segment'][cls_name]['short_label_code']
+
+            # Prepare the annotation data
+            label = self.label_window.get_label_by_short_code(short_label)
+            points = [QPointF(x, y) for x, y in points]
+
+            # Create the rectangle annotation
+            annotation = PolygonAnnotation(points,
+                                           label.short_label_code,
+                                           label.long_label_code,
+                                           label.color,
+                                           image_path,
+                                           label.id,
+                                           128,
+                                           show_msg=True)
+
+            # Create the graphics and cropped image
+            annotation.create_graphics_item(self.annotation_window.scene)
+            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+
+            # Connect update signals
+            annotation.selected.connect(self.annotation_window.select_annotation)
+            annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
+            annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+
+            # Add the prediction for the confidence window
+            predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
+            annotation.update_machine_confidence(predictions)
+
+            # Update label if confidence is below threshold
+            if conf < self.main_window.get_uncertainty_thresh():
+                review_label = self.label_window.get_label_by_id('-1')
+                annotation.update_label(review_label)
+
+            # Store the annotation and display the cropped image
+            self.annotation_window.annotations_dict[annotation.id] = annotation
+            self.main_window.confidence_window.display_cropped_image(annotation)
+
+            # Update the progress bar
+            progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
 
 class BatchInferenceDialog(QDialog):

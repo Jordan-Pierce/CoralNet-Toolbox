@@ -1,5 +1,7 @@
 import warnings
 
+import math
+
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
@@ -182,21 +184,48 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
-    def update_annotation_size(self, scale_factor: float):
+    def update_annotation_size(self, delta: float):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
             return
 
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-        # Update the location, graphic
-        centroid_x, centroid_y = self.center_xy.x(), self.center_xy.y()
-        translated_points = [QPointF(point.x() - centroid_x, point.y() - centroid_y) for point in self.points]
-        scaled_points = [QPointF(point.x() * scale_factor, point.y() * scale_factor) for point in translated_points]
-        self.points = [QPointF(point.x() + centroid_x, point.y() + centroid_y) for point in scaled_points]
+
+        # Calculate the new points for erosion or dilation
+        new_points = []
+        num_points = len(self.points)
+
+        for i in range(num_points):
+            p1 = self.points[i]
+            p2 = self.points[(i + 1) % num_points]
+
+            # Calculate the vector from p1 to p2
+            edge_vector = QPointF(p2.x() - p1.x(), p2.y() - p1.y())
+
+            # Calculate the normal vector (perpendicular to the edge)
+            normal_vector = QPointF(-edge_vector.y(), edge_vector.x())
+
+            # Normalize the normal vector
+            length = math.sqrt(normal_vector.x() ** 2 + normal_vector.y() ** 2)
+            normal_vector = QPointF(normal_vector.x() / length, normal_vector.y() / length)
+
+            # Move the point along the normal vector by the delta amount
+            new_point = QPointF(p1.x() + normal_vector.x() * delta, p1.y() + normal_vector.y() * delta)
+            new_points.append(new_point)
+
+        # Update the points
+        self.points = new_points
         self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
+
+    def to_dict(self):
+        base_dict = super().to_dict()
+        base_dict.update({
+            'points': [(point.x(), point.y()) for point in self.points],
+        })
+        return base_dict
 
     def to_yolo_detection(self, image_width, image_height):
         x_min, y_min, x_max, y_max = self.cropped_bbox
@@ -210,13 +239,6 @@ class PolygonAnnotation(Annotation):
     def to_yolo_segmentation(self, image_width, image_height):
         normalized_points = [(point.x() / image_width, point.y() / image_height) for point in self.points]
         return self.label.short_label_code, " ".join([f"{x} {y}" for x, y in normalized_points])
-
-    def to_dict(self):
-        base_dict = super().to_dict()
-        base_dict.update({
-            'points': [(point.x(), point.y()) for point in self.points],
-        })
-        return base_dict
 
     @classmethod
     def from_dict(cls, data, label_window):

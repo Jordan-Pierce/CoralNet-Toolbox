@@ -13,7 +13,8 @@ from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSampling import PatchSamplingDialog
 from toolbox.QtMachineLearning import BatchInferenceDialog
-from toolbox.QtMachineLearning import CreateDatasetDialog
+from toolbox.QtMachineLearning import ImportDatasetDialog
+from toolbox.QtMachineLearning import ExportDatasetDialog
 from toolbox.QtMachineLearning import DeployModelDialog
 from toolbox.QtMachineLearning import EvaluateModelDialog
 from toolbox.QtMachineLearning import MergeDatasetsDialog
@@ -37,6 +38,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
+    iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
 
     def __init__(self):
         super().__init__()
@@ -62,10 +64,11 @@ class MainWindow(QMainWindow):
         self.io_dialog = IODialog(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
-        self.iou_thresh = 0.50
+        self.iou_thresh = 0.25
         self.uncertainty_thresh = 0.25
 
-        self.create_dataset_dialog = CreateDatasetDialog(self)
+        self.import_dataset_dialog = ImportDatasetDialog(self)
+        self.export_dataset_dialog = ExportDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
         self.train_model_dialog = TrainModelDialog(self)
         self.evaluate_model_dialog = EvaluateModelDialog(self)
@@ -158,10 +161,10 @@ class MainWindow(QMainWindow):
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
 
-        self.import_yolo_action = QAction("YOLO (TXT)", self)
-        self.import_yolo_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.import_dataset_menu.addAction(self.import_yolo_action)
+        # Import YOLO Dataset menu
+        self.import_dataset_action = QAction("YOLO (TXT)", self)
+        self.import_dataset_action.triggered.connect(self.open_import_dataset_dialog)
+        self.import_dataset_menu.addAction(self.import_dataset_action)
 
         # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")
@@ -195,9 +198,10 @@ class MainWindow(QMainWindow):
         # Dataset submenu
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
 
-        self.export_yolo_action = QAction("YOLO (TXT)", self)
-        self.export_yolo_action.triggered.connect(self.open_create_dataset_dialog)
-        self.export_dataset_menu.addAction(self.export_yolo_action)
+        # Export YOLO Dataset menu
+        self.export_dataset_action = QAction("YOLO (TXT)", self)
+        self.export_dataset_action.triggered.connect(self.open_export_dataset_dialog)
+        self.export_dataset_menu.addAction(self.export_dataset_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
@@ -365,14 +369,14 @@ class MainWindow(QMainWindow):
         # Spin box for IoU threshold control
         self.iou_thresh_spinbox = QDoubleSpinBox()
         self.iou_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
-        self.iou_thresh_spinbox.setSingleStep(0.01)  # Step size for the spinbox
+        self.iou_thresh_spinbox.setSingleStep(0.05)  # Step size for the spinbox
         self.iou_thresh_spinbox.setValue(self.iou_thresh)
         self.iou_thresh_spinbox.valueChanged.connect(self.update_iou_thresh)
 
         # Spin box for Uncertainty threshold control
         self.uncertainty_thresh_spinbox = QDoubleSpinBox()
         self.uncertainty_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
-        self.uncertainty_thresh_spinbox.setSingleStep(0.01)  # Step size for the spinbox
+        self.uncertainty_thresh_spinbox.setSingleStep(0.05)  # Step size for the spinbox
         self.uncertainty_thresh_spinbox.setValue(self.uncertainty_thresh)
         self.uncertainty_thresh_spinbox.valueChanged.connect(self.update_uncertainty_thresh)
 
@@ -637,8 +641,8 @@ class MainWindow(QMainWindow):
     def update_iou_thresh(self, value):
         if self.iou_thresh != value:
             self.iou_thresh = value
-            self.iou_thresh.setValue(value)
-            self.iou_thresh.emit(value)
+            self.iou_thresh_spinbox.setValue(value)
+            self.iouChanged.emit(value)
 
     def open_import_images_dialog(self):
         self.untoggle_all_tools()
@@ -663,24 +667,32 @@ class MainWindow(QMainWindow):
         self.patch_annotation_sampling_dialog = None
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
-    def open_create_dataset_dialog(self):
+
+    def open_import_dataset_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.import_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_export_dataset_dialog(self):
         # Check if there are loaded images
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
-                                "Create Dataset",
+                                "Export Dataset",
                                 "No images are present in the project.")
             return
 
         # Check if there are annotations
         if not len(self.annotation_window.annotations_dict):
             QMessageBox.warning(self,
-                                "Create Dataset",
+                                "Export Dataset",
                                 "No annotations are present in the project.")
             return
 
         try:
             self.untoggle_all_tools()
-            self.create_dataset_dialog.exec_()
+            self.export_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

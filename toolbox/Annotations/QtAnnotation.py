@@ -271,12 +271,6 @@ class Annotation(QObject):
             **self.data
         }
 
-    def to_yolo_detection(self, image_width, image_height):
-        pass
-
-    def to_yolo_segmentation(self, image_width, image_height):
-        pass
-
     def to_dict(self):
         # Convert machine_confidence keys to short_label_code
         machine_confidence = {label.short_label_code: confidence for label, confidence in
@@ -292,6 +286,12 @@ class Annotation(QObject):
             'data': self.data,
             'machine_confidence': machine_confidence
         }
+
+    def to_yolo_detection(self, image_width, image_height):
+        pass
+
+    def to_yolo_segmentation(self, image_width, image_height):
+        pass
 
     @classmethod
     def from_dict(cls, data, label_window):
