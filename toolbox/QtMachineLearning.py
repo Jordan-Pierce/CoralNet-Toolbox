@@ -198,8 +198,6 @@ class ImportDatasetDialog(QDialog):
 
             # Update filtered images
             self.main_window.image_window.filter_images()
-            # Show the last image
-            self.main_window.image_window.load_image_by_path(self.main_window.image_window.image_paths[-1])
 
             # Determine the annotation type based on selected radio button
             if self.object_detection_radio.isChecked():
@@ -214,9 +212,11 @@ class ImportDatasetDialog(QDialog):
             progress_bar.show()
             progress_bar.start_progress(len(image_label_paths))
 
-            for image_path in image_paths:
+            annotations = []
+
+            for image_path, label_path in image_label_paths.items():
+
                 # Read the label file
-                label_path = image_label_paths[image_path]
                 image_height, image_width = self.main_window.image_window.rasterio_open(image_path).shape
 
                 with open(label_path, 'r') as file:
@@ -294,17 +294,25 @@ class ImportDatasetDialog(QDialog):
 
                     # Store the annotation and display the cropped image
                     self.annotation_window.annotations_dict[annotation.id] = annotation
+                    annotations.append(annotation)
 
                     # Update the progress bar
                     progress_bar.update_progress()
 
+                # Update the annotations
+                self.main_window.image_window.update_image_annotations(image_path)
+
+            # Load the last image's annotations
+            self.main_window.image_window.load_image_by_path(self.main_window.image_window.image_paths[-1])
+            self.annotation_window.load_annotations_parallel()
+
+            progress_bar.update_progress()
             progress_bar.stop_progress()
             progress_bar.close()
 
-            # Load the last image
-            self.main_window.image_window.load_image_by_path(self.main_window.image_window.image_paths[-1])
+            # Export annotations as JSON in output
+            self.export_annotations(annotations, output_folder)
 
-            # Here you can further process or store the annotations as needed
             QMessageBox.information(self,
                                     "Dataset Imported",
                                     "Dataset has been successfully imported.")
@@ -313,6 +321,51 @@ class ImportDatasetDialog(QDialog):
             QMessageBox.warning(self,
                                 "Error Importing Dataset",
                                 f"An error occurred while importing the dataset: {str(e)}")
+
+    def export_annotations(self, annotations, output_dir):
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(annotations))
+
+        export_dict = {}
+        for annotation in annotations:
+            image_path = annotation.image_path
+            if image_path not in export_dict:
+                export_dict[image_path] = []
+
+            # Convert annotation to dictionary based on its type
+            if isinstance(annotation, PatchAnnotation):
+                annotation_dict = {
+                    'type': 'PatchAnnotation',
+                    **annotation.to_dict()
+                }
+            elif isinstance(annotation, PolygonAnnotation):
+                annotation_dict = {
+                    'type': 'PolygonAnnotation',
+                    **annotation.to_dict()
+                }
+            elif isinstance(annotation, RectangleAnnotation):
+                annotation_dict = {
+                    'type': 'RectangleAnnotation',
+                    **annotation.to_dict()
+                }
+            else:
+                raise ValueError(f"Unknown annotation type: {type(annotation)}")
+
+            export_dict[image_path].append(annotation_dict)
+            progress_bar.update_progress()
+
+        with open(f"{output_dir}/annotations", 'w') as file:
+            json.dump(export_dict, file, indent=4)
+            file.flush()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        # Make the cursor normal again
+        QApplication.restoreOverrideCursor()
 
 
 class ExportDatasetDialog(QDialog):
