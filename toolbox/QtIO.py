@@ -255,13 +255,17 @@ class IODialog:
                         else:
                             raise ValueError(f"Unknown annotation type: {annotation_type}")
 
+                        # Add annotation to the dict
                         self.annotation_window.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()
 
+                    # Update the image window's image dict
                     self.image_window.update_image_annotations(image_path)
 
                 # Load the annotations for current image
-                self.annotation_window.load_annotations_parallel()
+                self.annotation_window.load_annotations()
+
+                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 
@@ -433,13 +437,17 @@ class IODialog:
                     if machine_confidence:
                         annotation.update_machine_confidence(machine_confidence)
 
+                    # Add annotation to the dict
                     self.annotation_window.annotations_dict[annotation.id] = annotation
                     progress_bar.update_progress()
 
+                # Update the image window's image dict
                 self.image_window.update_image_annotations(image_path)
 
             # Load the annotations for current image
-            self.annotation_window.load_annotations_parallel()
+            self.annotation_window.load_annotations()
+
+            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
 
@@ -743,13 +751,17 @@ class IODialog:
                         if machine_confidence:
                             annotation.update_machine_confidence(machine_confidence)
 
+                        # Add annotation to the dict
                         self.annotation_window.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()
 
+                    # Update the image window's image dict
                     self.image_window.update_image_annotations(image_path)
 
                 # Load the annotations for current image
-                self.annotation_window.load_annotations_parallel()
+                self.annotation_window.load_annotations()
+
+                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 
@@ -989,12 +1001,17 @@ class IODialog:
                         label_id=label_id
                     )
 
+                    # Add annotation to the dict
                     self.annotation_window.annotations_dict[polygon_annotation.id] = polygon_annotation
                     progress_bar.update_progress()
 
+                # Update the image window's image dict
                 self.image_window.update_image_annotations(image_full_path)
 
-            self.annotation_window.load_annotations_parallel()
+            # Load the annotations for current image
+            self.annotation_window.load_annotations()
+
+            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
 

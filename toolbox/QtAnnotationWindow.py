@@ -1,7 +1,7 @@
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QMetaObject
 from PyQt5.QtGui import QMouseEvent, QPixmap
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
@@ -235,6 +235,8 @@ class AnnotationWindow(QGraphicsView):
 
         # Clean up
         self.clear_scene()
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
 
         # Set the image representations
         self.image_pixmap = QPixmap(self.main_window.image_window.images[image_path])
@@ -252,12 +254,10 @@ class AnnotationWindow(QGraphicsView):
         self.viewChanged.emit(self.image_pixmap.width(), self.image_pixmap.height())
 
         # Load all associated annotations
-        self.load_annotations_parallel()
+        self.load_annotations()
         # Update the image window's image dict
         self.main_window.image_window.update_image_annotations(image_path)
 
-        # Clear the confidence window
-        self.main_window.confidence_window.clear_display()
         QApplication.processEvents()
 
     def update_current_image_path(self, image_path):
@@ -352,40 +352,11 @@ class AnnotationWindow(QGraphicsView):
             if progress_bar.wasCanceled():
                 break
             self.load_annotation(annotation)
-            progress_bar.update_progress()
 
         progress_bar.stop_progress()
         progress_bar.close()
 
-        self.viewport().update()
-
-    def load_annotations_parallel(self):
-        # Crop all the annotations for current image (if not already cropped)
-        annotations = self.crop_image_annotations(return_annotations=True)
-
-        # Initialize the progress bar
-        progress_bar = ProgressBar(self, title="Loading Annotations (Parallel)")
-        progress_bar.start_progress(len(annotations))
-        progress_bar.show()
-
-        # Use ThreadPoolExecutor to process annotations in parallel
-        with ThreadPoolExecutor() as executor:
-            futures = []
-            for annotation in annotations:
-                if progress_bar.wasCanceled():
-                    break
-                future = executor.submit(self.load_annotation, annotation)
-                futures.append(future)
-
-            for future in futures:
-                future.result()
-                progress_bar.update_progress()
-                if progress_bar.wasCanceled():
-                    break
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
+        QApplication.processEvents()
         self.viewport().update()
 
     def get_image_annotations(self, image_path=None):

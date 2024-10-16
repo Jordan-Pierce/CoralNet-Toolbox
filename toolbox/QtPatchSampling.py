@@ -1,5 +1,7 @@
-import random
 import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import random
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF
 from PyQt5.QtGui import QColor, QPen, QBrush
@@ -9,8 +11,6 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QCheck
 
 from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -115,12 +115,10 @@ class PatchSamplingDialog(QDialog):
         # Call update_margin_spinbox when the dialog is shown
         self.annotation_window.imageLoaded.connect(self.update_margin_spinbox)
         self.update_margin_spinbox()
-        super().showEvent(event)
 
     def hideEvent(self, event):
         # Disconnect the signal when the dialog is hidden
         self.annotation_window.imageLoaded.disconnect(self.update_margin_spinbox)
-        super().hideEvent(event)
 
     def create_margin_spinbox(self, label_text, layout):
         label = QLabel(label_text + ":")
@@ -338,15 +336,13 @@ class PatchSamplingDialog(QDialog):
 
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
-
-                # Update the progress bar
                 progress_bar.update_progress()
 
             # Update the image window's image dict
             self.image_window.update_image_annotations(image_path)
 
-        # Set / load the image / annotations of the last image
-        self.annotation_window.set_image(current_image_path)
+        # Load the annotations for current image
+        self.annotation_window.load_annotations()
 
         # Stop the progress bar
         progress_bar.stop_progress()

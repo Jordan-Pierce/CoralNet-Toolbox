@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import datetime
 import gc
 import uuid
@@ -7,7 +10,6 @@ import json
 import os
 import random
 import shutil
-import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import groupby
 from operator import attrgetter
@@ -21,7 +23,7 @@ import ultralytics.data.build as build
 import ultralytics.models.yolo.classify.train as train_build
 
 from PyQt5.QtGui import QBrush, QColor, QShowEvent
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPoint, QPointF
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPointF
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QTextEdit, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDialogButtonBox, QDoubleSpinBox, QGroupBox, QTableWidget,
@@ -38,9 +40,6 @@ from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.utilities import pixmap_to_numpy
-from toolbox.utilities import qimage_to_numpy
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -298,18 +297,20 @@ class ImportDatasetDialog(QDialog):
                                                        128,
                                                        show_msg=False)
 
-                    # Store the annotation and display the cropped image
-                    self.annotation_window.annotations_dict[annotation.id] = annotation
-                    # Update the progress bar
-                    progress_bar.update_progress()
                     # Add the annotation to the list for export
                     annotations.append(annotation)
 
-                # Update the image window with the annotations
+                    # Add annotation to the dict
+                    self.annotation_window.annotations_dict[annotation.id] = annotation
+                    progress_bar.update_progress()
+
+                # Update the image window's image dict
                 self.image_window.update_image_annotations(image_path)
 
             # Load the annotations for current image
-            self.annotation_window.load_annotations_parallel()
+            self.annotation_window.load_annotations()
+
+            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
 
@@ -2859,9 +2860,6 @@ class DeployModelDialog(QDialog):
             # Process the detection results
             self.process_detection_result(image_path, results)
 
-        # Update the image annotations
-        self.main_window.image_window.update_image_annotations(image_path)
-
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
@@ -2923,6 +2921,9 @@ class DeployModelDialog(QDialog):
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
                 self.main_window.confidence_window.display_cropped_image(annotation)
 
+            # Update the image annotations
+            self.main_window.image_window.update_image_annotations(image_path)
+
             # Update the progress bar
             progress_bar.update_progress()
 
@@ -2953,9 +2954,6 @@ class DeployModelDialog(QDialog):
         if results:
             # Process the detection results
             self.process_segmentation_result(image_path, results)
-
-        # Update the image annotations
-        self.main_window.image_window.update_image_annotations(image_path)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
@@ -3015,6 +3013,9 @@ class DeployModelDialog(QDialog):
                 annotation.create_graphics_item(self.annotation_window.scene)
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
                 self.main_window.confidence_window.display_cropped_image(annotation)
+
+            # Update the image annotations
+            self.main_window.image_window.update_image_annotations(image_path)
 
             # Update the progress bar
             progress_bar.update_progress()

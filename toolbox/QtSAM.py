@@ -1,10 +1,13 @@
-import gc
-import os
 import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import os
+import gc
 
 import numpy as np
 import sam2
 import torch
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
                              QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
@@ -21,8 +24,6 @@ from ultralytics.utils import ops
 from ultralytics.utils.downloads import attempt_download_asset
 
 from toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -80,8 +80,8 @@ need, and then install the corresponding versions of `torch` and `torchvision`:
 conda install cuda-nvcc -c nvidia/label/cuda-11.8.0 -y
 conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
 
-# Example for torch 2.0.0 and torchvision 0.15.1 w/ CUDA 11.8
-pip install torch==2.0.0+cu118 torchvision==0.15.1+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+# Example for torch w/ CUDA 11.8
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118     
 ```
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the 
 `toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon, 
