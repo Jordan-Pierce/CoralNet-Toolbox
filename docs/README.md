@@ -21,6 +21,8 @@ The main window consists of several components:
   - **Import Annotations (CoralNet)**: Load annotation data from a CoralNet CSV file.
   - **Import Annotations (Viscore)**: Load annotation data from a Viscore CSV file.
   - **Import Annotations (TagLab)**: Load annotation data from a TagLab JSON file.
+  - **Import Dataset**: Import a YOLO dataset for machine learning (Detection, Segmentation).
+
 
 - **Export**:
   - **Export Labels (JSON)**: Save label data to a JSON file.
@@ -28,6 +30,7 @@ The main window consists of several components:
   - **Export Annotations (CoralNet)**: Save annotation data to a CoralNet CSV file.
   - **Export Annotations (Viscore)**: Save annotation data to a Viscore CSV file.
   - **Export Annotations (TagLab)**: Save annotation data to a TagLab JSON file.
+  - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation).
 
 - **Sample**:
   - **Sample Annotations**: Automatically generate Patch annotations.
@@ -39,8 +42,6 @@ The main window consists of several components:
   - **Model API**: Access CoralNet model API.
 
 - **Machine Learning**:
-  - **Import Dataset**: Import a YOLO dataset for machine learning (Detection, Segmentation).
-  - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation).
   - **Merge Datasets**: Merge multiple datasets.
   - **Train Model**: Train a machine learning model.
   - **Evaluate Model**: Evaluate a trained model.
