@@ -1,7 +1,7 @@
 # TODO Later:
 #   - CoralNet tools
-#   - Sample may cause crash (still)
-#   - import of instance segmentation masks / object detection YOLO format
+#   - Merge Datasets
+#   - Fix Eval for instance and object
 
 import traceback
 

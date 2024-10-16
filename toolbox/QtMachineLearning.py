@@ -1140,7 +1140,9 @@ class MergeDatasetsDialog(QDialog):
         self.layout.addWidget(self.tabs)
 
         # Setup tabs
-        self.setup_tab(self.tab_classification)
+        self.setup_tab(self.tab_classification, "classification")
+        self.setup_tab(self.tab_detection, "detection")
+        self.setup_tab(self.tab_segmentation, "segmentation")
 
         # OK and Cancel Buttons
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
@@ -1151,7 +1153,7 @@ class MergeDatasetsDialog(QDialog):
         # Track valid directories and their class mappings
         self.valid_directories = []
 
-    def setup_tab(self, tab):
+    def setup_tab(self, tab, tab_type):
         layout = QVBoxLayout()
 
         # Existing Dataset Directories
@@ -1159,52 +1161,130 @@ class MergeDatasetsDialog(QDialog):
         layout.addWidget(QLabel("Existing Dataset Directories:"))
         layout.addLayout(self.existing_dirs_layout)
 
-        # Add two default directory choosers
-        self.add_directory_chooser()
-        self.add_directory_chooser()
+        # Add two default choosers
+        self.add_chooser(tab, tab_type)
+        self.add_chooser(tab, tab_type)
 
         # Add Directory Button
         self.add_dir_button = QPushButton("Add Dataset")
-        self.add_dir_button.clicked.connect(self.add_directory_chooser)
+        self.add_dir_button.clicked.connect(lambda: self.add_chooser(tab, tab_type))
         layout.addWidget(self.add_dir_button)
 
         tab.setLayout(layout)
+
+    def add_chooser(self, tab, tab_type):
+        chooser = QWidget()
+        chooser_layout = QHBoxLayout(chooser)
+
+        status_label = QLabel()
+        chooser_layout.addWidget(status_label)
+
+        if tab_type == "classification":
+            dir_edit = QLineEdit()
+            dir_button = QPushButton("Browse Directory...")
+            dir_button.clicked.connect(lambda: self.browse_existing_directory(dir_edit, status_label, tab))
+            chooser_layout.addWidget(dir_edit)
+            chooser_layout.addWidget(dir_button)
+
+            class_mapping_edit = QLineEdit()
+            class_mapping_edit.setObjectName("class_mapping_edit")  # Set object name
+            class_mapping_button = QPushButton("Select Class Mapping")
+            class_mapping_button.clicked.connect(
+                lambda: self.browse_class_mapping(class_mapping_edit, status_label, tab))
+            chooser_layout.addWidget(class_mapping_edit)
+            chooser_layout.addWidget(class_mapping_button)
+        else:
+            yaml_edit = QLineEdit()
+            yaml_button = QPushButton("Select YAML")
+            yaml_button.clicked.connect(lambda: self.browse_data_yaml(yaml_edit, status_label, tab))
+            chooser_layout.addWidget(yaml_edit)
+            chooser_layout.addWidget(yaml_button)
+
+            class_mapping_edit = QLineEdit()
+            class_mapping_edit.setObjectName("class_mapping_edit")  # Set object name
+            class_mapping_button = QPushButton("Select Class Mapping")
+            class_mapping_button.clicked.connect(
+                lambda: self.browse_class_mapping(class_mapping_edit, status_label, tab))
+            chooser_layout.addWidget(class_mapping_edit)
+            chooser_layout.addWidget(class_mapping_button)
+
+        self.existing_dirs_layout.addWidget(chooser)
 
     def browse_output_directory(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_path:
             self.output_dir_edit.setText(dir_path)
 
-    def add_directory_chooser(self):
-        dir_chooser = QWidget()
-        dir_layout = QHBoxLayout(dir_chooser)
-
-        status_label = QLabel()
-        dir_layout.addWidget(status_label)
-
-        dir_edit = QLineEdit()
-        dir_layout.addWidget(dir_edit)
-
-        dir_button = QPushButton("Browse...")
-        dir_button.clicked.connect(lambda: self.browse_existing_directory(dir_edit, status_label))
-        dir_layout.addWidget(dir_button)
-
-        self.existing_dirs_layout.addWidget(dir_chooser)
-
-    def browse_existing_directory(self, dir_edit, status_label):
+    def browse_existing_directory(self, dir_edit, status_label, tab):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Existing Dataset Directory")
         if dir_path:
             dir_edit.setText(dir_path)
-            self.validate_directory(dir_path, dir_edit, status_label)
+            self.validate_directory(dir_path, dir_edit, status_label, tab)
 
-    def validate_directory(self, dir_path, dir_edit, status_label):
-        class_mapping_path = os.path.join(dir_path, "class_mapping.json")
-        if os.path.exists(class_mapping_path):
+    def browse_data_yaml(self, yaml_edit, status_label, tab):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select data.yaml", "", "YAML Files (*.yaml);;All Files (*)", options=options
+        )
+        if file_path:
+            yaml_edit.setText(file_path)
+            self.validate_yaml(file_path, yaml_edit, status_label, tab)
+
+            # Auto-fill class_mapping.json if it exists in the same directory
+            yaml_dir = os.path.dirname(file_path)
+            class_mapping_path = os.path.join(yaml_dir, "class_mapping.json")
+            if os.path.exists(class_mapping_path):
+                class_mapping_edit = yaml_edit.parent().findChild(QLineEdit, "class_mapping_edit")
+                if class_mapping_edit:
+                    class_mapping_edit.setText(class_mapping_path)
+                    self.validate_class_mapping(class_mapping_path, class_mapping_edit, status_label, tab)
+
+    def browse_class_mapping(self, class_mapping_edit, status_label, tab):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select class_mapping.json", "", "JSON Files (*.json);;All Files (*)", options=options
+        )
+        if file_path:
+            class_mapping_edit.setText(file_path)
+            self.validate_class_mapping(file_path, class_mapping_edit, status_label, tab)
+
+    def validate_directory(self, dir_path, dir_edit, status_label, tab):
+        if os.path.exists(dir_path):
             status_label.setText("✅")
-            self.valid_directories.append((dir_path, class_mapping_path))
+            self.valid_directories.append((dir_path, None, tab))
         else:
             status_label.setText("❌")
-            self.valid_directories = [(d, c) for d, c in self.valid_directories if d != dir_path]
+            self.valid_directories = [(d, c, t) for d, c, t in self.valid_directories if d != dir_path]
+
+    def validate_yaml(self, yaml_path, yaml_edit, status_label, tab):
+        try:
+            with open(yaml_path, 'r') as file:
+                data = yaml.safe_load(file)
+                if 'names' in data and 'nc' in data:
+                    status_label.setText("✅")
+                    self.valid_directories.append((yaml_path, None, tab))
+                else:
+                    status_label.setText("❌")
+                    self.valid_directories = [(d, c, t) for d, c, t in self.valid_directories if d != yaml_path]
+        except Exception as e:
+            status_label.setText("❌")
+            self.valid_directories = [(d, c, t) for d, c, t in self.valid_directories if d != yaml_path]
+
+    def validate_class_mapping(self, class_mapping_path, class_mapping_edit, status_label, tab):
+        try:
+            with open(class_mapping_path, 'r') as file:
+                data = json.load(file)
+                if isinstance(data, dict):
+                    status_label.setText("✅")
+                    for d, c, t in self.valid_directories:
+                        if t == tab and c is None:
+                            self.valid_directories.remove((d, c, t))
+                            self.valid_directories.append((d, class_mapping_path, t))
+                            break
+                else:
+                    status_label.setText("❌")
+        except Exception as e:
+            status_label.setText("❌")
 
     def merge_datasets(self):
         output_dir = self.output_dir_edit.text()
@@ -1221,6 +1301,13 @@ class MergeDatasetsDialog(QDialog):
         os.makedirs(output_dir_path, exist_ok=True)
 
         merged_class_mapping = {}
+        merged_yaml_data = {
+            'train': [],
+            'val': [],
+            'test': [],
+            'names': [],
+            'nc': 0
+        }
 
         # Create a progress dialog
         progress_bar = ProgressBar(self, title=f"Merging Datasets")
@@ -1232,17 +1319,30 @@ class MergeDatasetsDialog(QDialog):
 
         with ThreadPoolExecutor() as executor:
             futures = []
-            for dir_path, class_mapping_path in self.valid_directories:
-                with open(class_mapping_path, 'r') as json_file:
-                    class_mapping = json.load(json_file)
-                    merged_class_mapping.update(class_mapping)
+            for dir_path, class_mapping_path, tab in self.valid_directories:
+                if tab == self.tab_detection or tab == self.tab_segmentation:
+                    with open(class_mapping_path, 'r') as json_file:
+                        class_mapping = json.load(json_file)
+                        merged_class_mapping.update(class_mapping)
 
-                for split in ['train', 'val', 'test']:
-                    src_split_dir = os.path.join(dir_path, split)
-                    dest_split_dir = os.path.join(output_dir_path, split)
-                    if os.path.exists(src_split_dir):
-                        future = executor.submit(copy_directory, src_split_dir, dest_split_dir)
-                        futures.append(future)
+                    for split in ['train', 'val', 'test']:
+                        src_split_dir = os.path.join(dir_path, split)
+                        dest_split_dir = os.path.join(output_dir_path, split)
+                        if os.path.exists(src_split_dir):
+                            future = executor.submit(copy_directory, src_split_dir, dest_split_dir)
+                            futures.append(future)
+
+                elif tab == self.tab_classification:
+                    with open(class_mapping_path, 'r') as json_file:
+                        class_mapping = json.load(json_file)
+                        merged_class_mapping.update(class_mapping)
+
+                    for split in ['train', 'val', 'test']:
+                        src_split_dir = os.path.join(dir_path, split)
+                        dest_split_dir = os.path.join(output_dir_path, split)
+                        if os.path.exists(src_split_dir):
+                            future = executor.submit(copy_directory, src_split_dir, dest_split_dir)
+                            futures.append(future)
 
             # Wait for all copying tasks to complete
             for i, future in enumerate(as_completed(futures)):
@@ -1255,6 +1355,10 @@ class MergeDatasetsDialog(QDialog):
         merged_class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
         with open(merged_class_mapping_path, 'w') as json_file:
             json.dump(merged_class_mapping, json_file, indent=4)
+
+        merged_yaml_path = os.path.join(output_dir_path, "data.yaml")
+        with open(merged_yaml_path, 'w') as yaml_file:
+            yaml.dump(merged_yaml_data, yaml_file, default_flow_style=False)
 
         QMessageBox.information(self, "Success", "Datasets merged successfully!")
 
@@ -1423,11 +1527,10 @@ class TrainModelWorker(QThread):
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
 
-    def __init__(self, params, device, class_mapping):
+    def __init__(self, params, device):
         super().__init__()
         self.params = params
         self.device = device
-        self.class_mapping = class_mapping
         self.model = None
 
     def run(self):
@@ -1448,9 +1551,8 @@ class TrainModelWorker(QThread):
             # Load the model, train, and save the best weights
             self.model = YOLO(model_path)
             self.model.train(**self.params, device=self.device)
-
             # Evaluate the model after training
-            self._evaluate_model()
+            self.evaluate_model()
             # Emit signal to indicate training has completed
             self.training_completed.emit()
 
@@ -1459,11 +1561,8 @@ class TrainModelWorker(QThread):
         finally:
             self._cleanup()
 
-    def _evaluate_model(self):
+    def evaluate_model(self):
         try:
-            if self.class_mapping is None:
-                raise ValueError("Class mapping is missing.")
-
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
                 'data': self.params['data'],
@@ -1471,14 +1570,10 @@ class TrainModelWorker(QThread):
                 'split': 'test',  # Evaluate on the test set only
                 'save_dir': Path(self.params['project']) / self.params['name'] / 'test'
             }
-            # Update the class mapping with target model names
-            # {0: 'class1', 1: 'class2', ...}
-            class_mapping = {name: self.class_mapping[name] for name in self.model.names}
 
             # Create and start the worker thread
             eval_worker = EvaluateModelWorker(model=self.model,
-                                              params=eval_params,
-                                              class_mapping=class_mapping)
+                                              params=eval_params)
 
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
             eval_worker.run()  # Run the evaluation synchronously (same thread)
@@ -1968,7 +2063,7 @@ class TrainModelDialog(QDialog):
         # Get training parameters
         self.params = self.get_parameters()
         # Create and start the worker thread
-        self.worker = TrainModelWorker(self.params, self.main_window.device, self.class_mapping)
+        self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
         self.worker.training_error.connect(self.on_training_error)
@@ -2143,8 +2238,8 @@ class ConfusionMatrixMetrics:
 
         metrics_per_class = {}
         for i in range(self.num_classes):
-            class_name = list(self.class_mapping.keys())[i]
-            metrics_per_class[f'{class_name}'] = {
+            class_name = self.class_mapping[i]
+            metrics_per_class[class_name] = {
                 'TP': tp[i],
                 'FP': fp[i],
                 'TN': tn[i],
@@ -2184,11 +2279,10 @@ class EvaluateModelWorker(QThread):
     evaluation_completed = pyqtSignal()
     evaluation_error = pyqtSignal(str)
 
-    def __init__(self, model, params, class_mapping):
+    def __init__(self, model, params):
         super().__init__()
         self.model = model
         self.params = params
-        self.class_mapping = class_mapping
 
     def run(self):
         try:
@@ -2208,11 +2302,8 @@ class EvaluateModelWorker(QThread):
                 plots=True
             )
 
-            # Update the class mapping with target model names (ordered)
-            class_mapping = {name: self.class_mapping[name] for name in self.model.names.values()}
-
             # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, class_mapping)
+            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, self.model.names)
             metrics.save_metrics_to_json(save_dir)
 
             # Emit signal to indicate evaluation has completed
@@ -2399,7 +2490,7 @@ class EvaluateModelDialog(QDialog):
             self.model = YOLO(self.params['model'])
 
             # Create and start the worker thread
-            self.worker = EvaluateModelWorker(self.model, self.params, self.class_mapping)
+            self.worker = EvaluateModelWorker(self.model, self.params)
             self.worker.evaluation_started.connect(self.on_evaluation_started)
             self.worker.evaluation_completed.connect(self.on_evaluation_completed)
             self.worker.evaluation_error.connect(self.on_evaluation_error)
