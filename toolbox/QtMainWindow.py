@@ -744,13 +744,6 @@ class MainWindow(QMainWindow):
                                 "No images are present in the project.")
             return
 
-        # Check if there are annotations
-        if not len(self.annotation_window.annotations_dict):
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No annotations are present in the project.")
-            return
-
         if not any(list(self.deploy_model_dialog.loaded_models.values())):
             QMessageBox.warning(self,
                                 "Batch Inference",

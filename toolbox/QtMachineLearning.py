@@ -2843,17 +2843,13 @@ class DeployModelDialog(QDialog):
         if not image_path:
             image_path = self.annotation_window.current_image_path
 
-        # Prepare the image for detection
-        pixmap_image = self.main_window.image_window.images[image_path]
-        numpy_image = qimage_to_numpy(pixmap_image)
-
         # Perform detection
         if self.main_window.get_uncertainty_thresh() < 0.10:
             conf = self.main_window.get_uncertainty_thresh()
         else:
             conf = 0.10  # Arbitrary value to prevent too many detections
 
-        results = self.loaded_models['detect'](numpy_image,
+        results = self.loaded_models['detect'](image_path,
                                                agnostic_nms=True,
                                                conf=conf,
                                                iou=self.main_window.get_iou_thresh(),
@@ -2862,6 +2858,9 @@ class DeployModelDialog(QDialog):
         if results:
             # Process the detection results
             self.process_detection_result(image_path, results)
+
+        # Update the image annotations
+        self.main_window.image_window.update_image_annotations(image_path)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
@@ -2901,9 +2900,8 @@ class DeployModelDialog(QDialog):
                                              128,
                                              show_msg=True)
 
-            # Create the graphics and cropped image
-            annotation.create_graphics_item(self.annotation_window.scene)
-            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+            # Store the annotation and display the cropped image
+            self.annotation_window.annotations_dict[annotation.id] = annotation
 
             # Connect update signals
             annotation.selected.connect(self.annotation_window.select_annotation)
@@ -2919,9 +2917,11 @@ class DeployModelDialog(QDialog):
                 review_label = self.label_window.get_label_by_id('-1')
                 annotation.update_label(review_label)
 
-            # Store the annotation and display the cropped image
-            self.annotation_window.annotations_dict[annotation.id] = annotation
-            self.main_window.confidence_window.display_cropped_image(annotation)
+            # Create the graphics and cropped image
+            if image_path == self.annotation_window.current_image_path:
+                annotation.create_graphics_item(self.annotation_window.scene)
+                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                self.main_window.confidence_window.display_cropped_image(annotation)
 
             # Update the progress bar
             progress_bar.update_progress()
@@ -2938,17 +2938,13 @@ class DeployModelDialog(QDialog):
         if not image_path:
             image_path = self.annotation_window.current_image_path
 
-        # Prepare the image for detection
-        pixmap_image = self.main_window.image_window.images[image_path]
-        numpy_image = qimage_to_numpy(pixmap_image)
-
         # Perform detection
         if self.main_window.get_uncertainty_thresh() < 0.10:
             conf = self.main_window.get_uncertainty_thresh()
         else:
             conf = 0.10  # Arbitrary value to prevent too many detections
 
-        results = self.loaded_models['segment'](numpy_image,
+        results = self.loaded_models['segment'](image_path,
                                                 agnostic_nms=True,
                                                 conf=conf,
                                                 iou=self.main_window.get_iou_thresh(),
@@ -2957,6 +2953,9 @@ class DeployModelDialog(QDialog):
         if results:
             # Process the detection results
             self.process_segmentation_result(image_path, results)
+
+        # Update the image annotations
+        self.main_window.image_window.update_image_annotations(image_path)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
@@ -2994,9 +2993,8 @@ class DeployModelDialog(QDialog):
                                            128,
                                            show_msg=True)
 
-            # Create the graphics and cropped image
-            annotation.create_graphics_item(self.annotation_window.scene)
-            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+            # Store the annotation and display the cropped image
+            self.annotation_window.annotations_dict[annotation.id] = annotation
 
             # Connect update signals
             annotation.selected.connect(self.annotation_window.select_annotation)
@@ -3012,9 +3010,11 @@ class DeployModelDialog(QDialog):
                 review_label = self.label_window.get_label_by_id('-1')
                 annotation.update_label(review_label)
 
-            # Store the annotation and display the cropped image
-            self.annotation_window.annotations_dict[annotation.id] = annotation
-            self.main_window.confidence_window.display_cropped_image(annotation)
+            # Create the graphics and cropped image
+            if image_path == self.annotation_window.current_image_path:
+                annotation.create_graphics_item(self.annotation_window.scene)
+                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                self.main_window.confidence_window.display_cropped_image(annotation)
 
             # Update the progress bar
             progress_bar.update_progress()
@@ -3031,10 +3031,10 @@ class BatchInferenceDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.deploy_model_dialog = main_window.deploy_model_dialog
 
-        self.loaded_model = self.deploy_model_dialog.loaded_models
+        self.loaded_models = self.deploy_model_dialog.loaded_models
 
         self.annotations = []
-        self.processed_annotations = []
+        self.prepared_patches = []
         self.image_paths = []
 
         self.setWindowTitle("Batch Inference")
@@ -3091,12 +3091,6 @@ class BatchInferenceDialog(QDialog):
         # Update the slider and label when the shared data changes
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
-
-    def setup_segmentation_tab(self):
-        pass
-
-    def setup_detection_tab(self):
-        pass
 
     def setup_classification_tab(self):
         layout = QVBoxLayout()
@@ -3161,6 +3155,80 @@ class BatchInferenceDialog(QDialog):
 
         self.classification_tab.setLayout(layout)
 
+    def setup_detection_tab(self):
+        layout = QVBoxLayout()
+
+        # Create a group box for image options
+        image_group_box = QGroupBox("Image Options")
+        image_layout = QVBoxLayout()
+
+        # Create a button group for the image checkboxes
+        self.detection_image_options_group = QButtonGroup(self)
+
+        self.detection_apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.detection_apply_prev_checkbox = QCheckBox("Apply to previous images")
+        self.detection_apply_next_checkbox = QCheckBox("Apply to next images")
+        self.detection_apply_all_checkbox = QCheckBox("Apply to all images")
+
+        # Add the checkboxes to the button group
+        self.detection_image_options_group.addButton(self.detection_apply_filtered_checkbox)
+        self.detection_image_options_group.addButton(self.detection_apply_prev_checkbox)
+        self.detection_image_options_group.addButton(self.detection_apply_next_checkbox)
+        self.detection_image_options_group.addButton(self.detection_apply_all_checkbox)
+
+        # Ensure only one checkbox can be checked at a time
+        self.detection_image_options_group.setExclusive(True)
+
+        # Set the default checkbox
+        self.detection_apply_all_checkbox.setChecked(True)
+
+        image_layout.addWidget(self.detection_apply_filtered_checkbox)
+        image_layout.addWidget(self.detection_apply_prev_checkbox)
+        image_layout.addWidget(self.detection_apply_next_checkbox)
+        image_layout.addWidget(self.detection_apply_all_checkbox)
+        image_group_box.setLayout(image_layout)
+
+        layout.addWidget(image_group_box)
+
+        self.detection_tab.setLayout(layout)
+
+    def setup_segmentation_tab(self):
+        layout = QVBoxLayout()
+
+        # Create a group box for image options
+        image_group_box = QGroupBox("Image Options")
+        image_layout = QVBoxLayout()
+
+        # Create a button group for the image checkboxes
+        self.segmentation_image_options_group = QButtonGroup(self)
+
+        self.segmentation_apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.segmentation_apply_prev_checkbox = QCheckBox("Apply to previous images")
+        self.segmentation_apply_next_checkbox = QCheckBox("Apply to next images")
+        self.segmentation_apply_all_checkbox = QCheckBox("Apply to all images")
+
+        # Add the checkboxes to the button group
+        self.segmentation_image_options_group.addButton(self.segmentation_apply_filtered_checkbox)
+        self.segmentation_image_options_group.addButton(self.segmentation_apply_prev_checkbox)
+        self.segmentation_image_options_group.addButton(self.segmentation_apply_next_checkbox)
+        self.segmentation_image_options_group.addButton(self.segmentation_apply_all_checkbox)
+
+        # Ensure only one checkbox can be checked at a time
+        self.segmentation_image_options_group.setExclusive(True)
+
+        # Set the default checkbox
+        self.segmentation_apply_all_checkbox.setChecked(True)
+
+        image_layout.addWidget(self.segmentation_apply_filtered_checkbox)
+        image_layout.addWidget(self.segmentation_apply_prev_checkbox)
+        image_layout.addWidget(self.segmentation_apply_next_checkbox)
+        image_layout.addWidget(self.segmentation_apply_all_checkbox)
+        image_group_box.setLayout(image_layout)
+
+        layout.addWidget(image_group_box)
+
+        self.segmentation_tab.setLayout(layout)
+
     def on_ok_clicked(self):
         if self.classification_all_checkbox.isChecked():
             reply = QMessageBox.warning(self,
@@ -3178,42 +3246,82 @@ class BatchInferenceDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         try:
-            # Get the Review Annotations
-            if self.classification_review_checkbox.isChecked():
-                for image_path in self.get_selected_image_paths():
-                    self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
-            else:
-                # Get all the annotations
-                for image_path in self.get_selected_image_paths():
-                    self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
-
-            # Crop them, if not already cropped
-            self.preprocess_annotations()
-            self.batch_inference()
+            # Get the selected image paths based on the current tab
+            if self.tab_widget.currentIndex() == 0:  # Classification
+                self.apply_classification()
+            elif self.tab_widget.currentIndex() == 1:  # Detection
+                self.apply_detection()
+            elif self.tab_widget.currentIndex() == 2:  # Segmentation
+                self.apply_segmentation()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to make predictions: {str(e)}")
         finally:
             self.annotations = []
-            self.processed_annotations = []
+            self.prepared_patches = []
             self.image_paths = []
 
         # Resume the cursor
         QApplication.restoreOverrideCursor()
 
-    def get_selected_image_paths(self):
-        if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.filtered_image_paths
-        elif self.apply_prev_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[:current_image_index + 1]
-        elif self.apply_next_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[current_image_index:]
+    def apply_classification(self):
+        # Get the Review Annotations
+        if self.classification_review_checkbox.isChecked():
+            for image_path in self.get_selected_image_paths():
+                self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
         else:
-            return self.image_window.image_paths
+            # Get all the annotations
+            for image_path in self.get_selected_image_paths():
+                self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
 
-    def preprocess_annotations(self):
+        # Crop them, if not already cropped
+        self.preprocess_patch_annotations()
+        self.batch_inference('classify')
+
+    def apply_detection(self):
+        self.image_paths = self.get_selected_image_paths()
+        self.batch_inference('detect')
+
+    def apply_segmentation(self):
+        self.image_paths = self.get_selected_image_paths()
+        self.batch_inference('segment')
+
+    def get_selected_image_paths(self):
+        if self.tab_widget.currentIndex() == 0:  # Classification
+            if self.apply_filtered_checkbox.isChecked():
+                return self.image_window.filtered_image_paths
+            elif self.apply_prev_checkbox.isChecked():
+                current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+                return self.image_window.image_paths[:current_image_index + 1]
+            elif self.apply_next_checkbox.isChecked():
+                current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+                return self.image_window.image_paths[current_image_index:]
+            else:
+                return self.image_window.image_paths
+        elif self.tab_widget.currentIndex() == 1:  # Detection
+            if self.detection_apply_filtered_checkbox.isChecked():
+                return self.image_window.filtered_image_paths
+            elif self.detection_apply_prev_checkbox.isChecked():
+                current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+                return self.image_window.image_paths[:current_image_index + 1]
+            elif self.detection_apply_next_checkbox.isChecked():
+                current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+                return self.image_window.image_paths[current_image_index:]
+            else:
+                return self.image_window.image_paths
+        elif self.tab_widget.currentIndex() == 2:  # Segmentation
+            if self.segmentation_apply_filtered_checkbox.isChecked():
+                return self.image_window.filtered_image_paths
+            elif self.segmentation_apply_prev_checkbox.isChecked():
+                current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+                return self.image_window.image_paths[:current_image_index + 1]
+            elif self.segmentation_apply_next_checkbox.isChecked():
+                current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
+                return self.image_window.image_paths[current_image_index:]
+            else:
+                return self.image_window.image_paths
+
+    def preprocess_patch_annotations(self):
         # Get unique image paths
         self.image_paths = list(set(a.image_path for a in self.annotations))
         if not self.image_paths:
@@ -3239,7 +3347,7 @@ class BatchInferenceDialog(QDialog):
             for future in as_completed(future_to_image):
                 image_path = future_to_image[future]
                 try:
-                    self.processed_annotations.extend(future.result())
+                    self.prepared_patches.extend(future.result())
                 except Exception as exc:
                     print(f'{image_path} generated an exception: {exc}')
                 finally:
@@ -3248,18 +3356,42 @@ class BatchInferenceDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
 
-    def batch_inference(self):
+    def batch_inference(self, task):
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self, title=f"Batch Inference")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
 
-        # Group annotations by image path
-        groups = groupby(sorted(self.processed_annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
-        # Make predictions on each image's annotations
-        for path, group in groups:
-            self.deploy_model_dialog.predict_classification(annotations=list(group))
-            progress_bar.update_progress()
+        if task == 'classify':
+            if self.loaded_models['classify'] is None:
+                QMessageBox.warning(self, "Warning", "No classification model loaded")
+                return
+
+            # Group annotations by image path
+            groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')), key=attrgetter('image_path'))
+
+            # Make predictions on each image's annotations
+            for path, group in groups:
+                self.deploy_model_dialog.predict_classification(annotations=list(group))
+                progress_bar.update_progress()
+
+        elif task == 'detect':
+            if self.loaded_models['detect'] is None:
+                QMessageBox.warning(self, "Warning", "No detection model loaded")
+                return
+
+            for image_path in self.image_paths:
+                self.deploy_model_dialog.predict_detection(image_path=image_path)
+                progress_bar.update_progress()
+
+        elif task == 'segment':
+            if self.loaded_models['segment'] is None:
+                QMessageBox.warning(self, "Warning", "No segmentation model loaded")
+                return
+
+            for image_path in self.image_paths:
+                self.deploy_model_dialog.predict_segmentation(image_path=image_path)
+                progress_bar.update_progress()
 
         progress_bar.stop_progress()
         progress_bar.close()

@@ -73,7 +73,7 @@ class ImageWindow(QWidget):
 
         # Add a QButtonGroup for the checkboxes
         self.checkbox_group = QButtonGroup(self)
-        self.checkbox_group.setExclusive(True)
+        self.checkbox_group.setExclusive(False)
 
         # Add checkboxes for filtering images based on annotations
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
