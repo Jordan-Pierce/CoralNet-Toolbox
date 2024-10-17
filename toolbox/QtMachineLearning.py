@@ -3159,7 +3159,7 @@ class DeployModelDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         if not image_paths:
-            image_path = [self.annotation_window.current_image_path]
+            image_paths = [self.annotation_window.current_image_path]
 
         # Perform detection
         if self.main_window.get_uncertainty_thresh() < 0.10:
@@ -3247,7 +3247,7 @@ class DeployModelDialog(QDialog):
                 self.main_window.image_window.update_image_annotations(image_path)
 
             except Exception as e:
-                pass
+                print(f"Warning: Failed to process detection result\n{e}")
 
             # Update the progress bar
             progress_bar.update_progress()
@@ -3348,7 +3348,7 @@ class DeployModelDialog(QDialog):
                 self.main_window.image_window.update_image_annotations(image_path)
 
             except Exception as e:
-                pass
+                print(f"Warning: Failed to process detection result\n{e}")
 
             # Update the progress bar
             progress_bar.update_progress()
