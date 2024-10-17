@@ -1,5 +1,6 @@
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 import datetime
 import gc
@@ -2238,16 +2239,19 @@ class ConfusionMatrixMetrics:
 
         metrics_per_class = {}
         for i in range(self.num_classes):
-            class_name = self.class_mapping[i]
-            metrics_per_class[class_name] = {
-                'TP': tp[i],
-                'FP': fp[i],
-                'TN': tn[i],
-                'FN': fn[i],
-                'Precision': precision[i],
-                'Recall': recall[i],
-                'Accuracy': accuracy[i]
-            }
+            try:
+                class_name = self.class_mapping[i]
+                metrics_per_class[class_name] = {
+                    'TP': tp[i],
+                    'FP': fp[i],
+                    'TN': tn[i],
+                    'FN': fn[i],
+                    'Precision': precision[i],
+                    'Recall': recall[i],
+                    'Accuracy': accuracy[i]
+                }
+            except KeyError:
+                print("Warning: Class mapping not found for class index", i)
 
         return metrics_per_class
 
@@ -2331,7 +2335,7 @@ class EvaluateModelDialog(QDialog):
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
 
-        self.resize(400, 200)
+        self.resize(400, 100)
 
         # Main layout
         self.main_layout = QVBoxLayout()
@@ -2343,72 +2347,15 @@ class EvaluateModelDialog(QDialog):
         self.setLayout(self.main_layout)
 
     def setup_ui(self):
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Details on different evaluation settings can be found "
-                            "<a href='https://docs.ultralytics.com/modes/val/#arguments-for-yolo-model-validation"
-                            "'>here</a>.")
+        # Create a QTabWidget for different model types
+        self.tab_widget = QTabWidget()
 
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        self.main_layout.addWidget(info_label)
+        # Add tabs for different model types
+        self.tab_widget.addTab(self.setup_image_classification_tab(), "Image Classification")
+        self.tab_widget.addTab(self.setup_object_detection_tab(), "Object Detection")
+        self.tab_widget.addTab(self.setup_instance_segmentation_tab(), "Instance Segmentation")
 
-        # Parameters Form
-        self.form_layout = QFormLayout()
-
-        # Existing Model
-        self.model_edit = QLineEdit()
-        self.model_button = QPushButton("Browse...")
-        self.model_button.clicked.connect(self.browse_model_file)
-        model_layout = QHBoxLayout()
-        model_layout.addWidget(self.model_edit)
-        model_layout.addWidget(self.model_button)
-        self.form_layout.addRow("Existing Model:", model_layout)
-
-        # Class Mapping
-        self.class_mapping_edit = QLineEdit()
-        self.class_mapping_button = QPushButton("Browse...")
-        self.class_mapping_button.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.class_mapping_edit)
-        class_mapping_layout.addWidget(self.class_mapping_button)
-        self.form_layout.addRow("Class Mapping:", class_mapping_layout)
-
-        # Dataset Directory
-        self.dataset_dir_edit = QLineEdit()
-        self.dataset_dir_button = QPushButton("Browse...")
-        self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
-        dataset_dir_layout = QHBoxLayout()
-        dataset_dir_layout.addWidget(self.dataset_dir_edit)
-        dataset_dir_layout.addWidget(self.dataset_dir_button)
-        self.form_layout.addRow("Dataset Directory:", dataset_dir_layout)
-
-        # Split
-        self.split_combo = QComboBox()
-        self.split_combo.addItems(["train", "val", "test"])
-        self.split_combo.setCurrentText("test")
-        self.form_layout.addRow("Split:", self.split_combo)
-
-        # Save Directory
-        self.save_dir_edit = QLineEdit()
-        self.save_dir_button = QPushButton("Browse...")
-        self.save_dir_button.clicked.connect(self.browse_save_dir)
-        save_dir_layout = QHBoxLayout()
-        save_dir_layout.addWidget(self.save_dir_edit)
-        save_dir_layout.addWidget(self.save_dir_button)
-        self.form_layout.addRow("Save Directory:", save_dir_layout)
-
-        # Name
-        self.name_edit = QLineEdit()
-        self.form_layout.addRow("Name:", self.name_edit)
-
-        # Imgsz
-        self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setMinimum(16)
-        self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(256)
-        self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
-
-        self.main_layout.addLayout(self.form_layout)
+        self.main_layout.addWidget(self.tab_widget)
 
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
@@ -2419,24 +2366,228 @@ class EvaluateModelDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
         self.main_layout.addWidget(self.cancel_button)
 
+    def setup_image_classification_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout()
+
+        # Parameters Form
+        form_layout = QFormLayout()
+
+        # Existing Model
+        self.model_edit_image_classification = QLineEdit()
+        self.model_button_image_classification = QPushButton("Browse...")
+        self.model_button_image_classification.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit_image_classification)
+        model_layout.addWidget(self.model_button_image_classification)
+        form_layout.addRow("Existing Model:", model_layout)
+
+        # Class Mapping
+        self.class_mapping_edit_image_classification = QLineEdit()
+        self.class_mapping_button_image_classification = QPushButton("Browse...")
+        self.class_mapping_button_image_classification.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.class_mapping_edit_image_classification)
+        class_mapping_layout.addWidget(self.class_mapping_button_image_classification)
+        form_layout.addRow("Class Mapping:", class_mapping_layout)
+
+        # Dataset Directory
+        self.dataset_dir_edit = QLineEdit()
+        self.dataset_dir_button = QPushButton("Browse...")
+        self.dataset_dir_button.clicked.connect(self.browse_dataset_dir)
+        dataset_dir_layout = QHBoxLayout()
+        dataset_dir_layout.addWidget(self.dataset_dir_edit)
+        dataset_dir_layout.addWidget(self.dataset_dir_button)
+        form_layout.addRow("Dataset Directory:", dataset_dir_layout)
+
+        # Split
+        self.split_combo_image_classification = QComboBox()
+        self.split_combo_image_classification.addItems(["train", "val", "test"])
+        self.split_combo_image_classification.setCurrentText("test")
+        form_layout.addRow("Split:", self.split_combo_image_classification)
+
+        # Save Directory
+        self.save_dir_edit_image_classification = QLineEdit()
+        self.save_dir_button_image_classification = QPushButton("Browse...")
+        self.save_dir_button_image_classification.clicked.connect(self.browse_save_dir)
+        save_dir_layout = QHBoxLayout()
+        save_dir_layout.addWidget(self.save_dir_edit_image_classification)
+        save_dir_layout.addWidget(self.save_dir_button_image_classification)
+        form_layout.addRow("Save Directory:", save_dir_layout)
+
+        # Name
+        self.name_edit_image_classification = QLineEdit()
+        form_layout.addRow("Name:", self.name_edit_image_classification)
+
+        # Imgsz
+        self.imgsz_spinbox_image_classification = QSpinBox()
+        self.imgsz_spinbox_image_classification.setMinimum(16)
+        self.imgsz_spinbox_image_classification.setMaximum(4096)
+        self.imgsz_spinbox_image_classification.setValue(256)
+        form_layout.addRow("Image Size:", self.imgsz_spinbox_image_classification)
+
+        layout.addLayout(form_layout)
+        tab.setLayout(layout)
+        return tab
+
+    def setup_object_detection_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout()
+
+        # Parameters Form
+        form_layout = QFormLayout()
+
+        # Existing Model
+        self.model_edit_object_detection = QLineEdit()
+        self.model_button_object_detection = QPushButton("Browse...")
+        self.model_button_object_detection.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit_object_detection)
+        model_layout.addWidget(self.model_button_object_detection)
+        form_layout.addRow("Existing Model:", model_layout)
+
+        # Class Mapping
+        self.class_mapping_edit_object_detection = QLineEdit()
+        self.class_mapping_button_object_detection = QPushButton("Browse...")
+        self.class_mapping_button_object_detection.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.class_mapping_edit_object_detection)
+        class_mapping_layout.addWidget(self.class_mapping_button_object_detection)
+        form_layout.addRow("Class Mapping:", class_mapping_layout)
+
+        # YAML File for Object Detection
+        self.object_detection_yaml_edit = QLineEdit()
+        self.object_detection_yaml_button = QPushButton("Browse...")
+        self.object_detection_yaml_button.clicked.connect(self.browse_object_detection_yaml)
+        object_detection_yaml_layout = QHBoxLayout()
+        object_detection_yaml_layout.addWidget(self.object_detection_yaml_edit)
+        object_detection_yaml_layout.addWidget(self.object_detection_yaml_button)
+        form_layout.addRow("YAML File:", object_detection_yaml_layout)
+
+        # Split
+        self.split_combo_object_detection = QComboBox()
+        self.split_combo_object_detection.addItems(["train", "val", "test"])
+        self.split_combo_object_detection.setCurrentText("test")
+        form_layout.addRow("Split:", self.split_combo_object_detection)
+
+        # Save Directory
+        self.save_dir_edit_object_detection = QLineEdit()
+        self.save_dir_button_object_detection = QPushButton("Browse...")
+        self.save_dir_button_object_detection.clicked.connect(self.browse_save_dir)
+        save_dir_layout = QHBoxLayout()
+        save_dir_layout.addWidget(self.save_dir_edit_object_detection)
+        save_dir_layout.addWidget(self.save_dir_button_object_detection)
+        form_layout.addRow("Save Directory:", save_dir_layout)
+
+        # Name
+        self.name_edit_object_detection = QLineEdit()
+        form_layout.addRow("Name:", self.name_edit_object_detection)
+
+        # Imgsz
+        self.imgsz_spinbox_object_detection = QSpinBox()
+        self.imgsz_spinbox_object_detection.setMinimum(16)
+        self.imgsz_spinbox_object_detection.setMaximum(4096)
+        self.imgsz_spinbox_object_detection.setValue(256)
+        form_layout.addRow("Image Size:", self.imgsz_spinbox_object_detection)
+
+        layout.addLayout(form_layout)
+        tab.setLayout(layout)
+        return tab
+
+    def setup_instance_segmentation_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout()
+
+        # Parameters Form
+        form_layout = QFormLayout()
+
+        # Existing Model
+        self.model_edit_instance_segmentation = QLineEdit()
+        self.model_button_instance_segmentation = QPushButton("Browse...")
+        self.model_button_instance_segmentation.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit_instance_segmentation)
+        model_layout.addWidget(self.model_button_instance_segmentation)
+        form_layout.addRow("Existing Model:", model_layout)
+
+        # Class Mapping
+        self.class_mapping_edit_instance_segmentation = QLineEdit()
+        self.class_mapping_button_instance_segmentation = QPushButton("Browse...")
+        self.class_mapping_button_instance_segmentation.clicked.connect(self.browse_class_mapping_file)
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.class_mapping_edit_instance_segmentation)
+        class_mapping_layout.addWidget(self.class_mapping_button_instance_segmentation)
+        form_layout.addRow("Class Mapping:", class_mapping_layout)
+
+        # YAML File for Instance Segmentation
+        self.instance_segmentation_yaml_edit = QLineEdit()
+        self.instance_segmentation_yaml_button = QPushButton("Browse...")
+        self.instance_segmentation_yaml_button.clicked.connect(self.browse_instance_segmentation_yaml)
+        instance_segmentation_yaml_layout = QHBoxLayout()
+        instance_segmentation_yaml_layout.addWidget(self.instance_segmentation_yaml_edit)
+        instance_segmentation_yaml_layout.addWidget(self.instance_segmentation_yaml_button)
+        form_layout.addRow("YAML File:", instance_segmentation_yaml_layout)
+
+        # Split
+        self.split_combo_instance_segmentation = QComboBox()
+        self.split_combo_instance_segmentation.addItems(["train", "val", "test"])
+        self.split_combo_instance_segmentation.setCurrentText("test")
+        form_layout.addRow("Split:", self.split_combo_instance_segmentation)
+
+        # Save Directory
+        self.save_dir_edit_instance_segmentation = QLineEdit()
+        self.save_dir_button_instance_segmentation = QPushButton("Browse...")
+        self.save_dir_button_instance_segmentation.clicked.connect(self.browse_save_dir)
+        save_dir_layout = QHBoxLayout()
+        save_dir_layout.addWidget(self.save_dir_edit_instance_segmentation)
+        save_dir_layout.addWidget(self.save_dir_button_instance_segmentation)
+        form_layout.addRow("Save Directory:", save_dir_layout)
+
+        # Name
+        self.name_edit_instance_segmentation = QLineEdit()
+        form_layout.addRow("Name:", self.name_edit_instance_segmentation)
+
+        # Imgsz
+        self.imgsz_spinbox_instance_segmentation = QSpinBox()
+        self.imgsz_spinbox_instance_segmentation.setMinimum(16)
+        self.imgsz_spinbox_instance_segmentation.setMaximum(4096)
+        self.imgsz_spinbox_instance_segmentation.setValue(256)
+        form_layout.addRow("Image Size:", self.imgsz_spinbox_instance_segmentation)
+
+        layout.addLayout(form_layout)
+        tab.setLayout(layout)
+        return tab
+
     def browse_model_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
-            self.model_edit.setText(file_path)
+            if self.tab_widget.currentIndex() == 0:
+                self.model_edit_image_classification.setText(file_path)
+            elif self.tab_widget.currentIndex() == 1:
+                self.model_edit_object_detection.setText(file_path)
+            elif self.tab_widget.currentIndex() == 2:
+                self.model_edit_instance_segmentation.setText(file_path)
+
             # Get the directory two above file path
             dir_path = os.path.dirname(os.path.dirname(file_path))
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
-                self.class_mapping_edit.setText(class_mapping_path)
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                self.browse_class_mapping_file(class_mapping_path)
 
-    def browse_class_mapping_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Class Mapping File",
-                                                   "",
-                                                   "JSON Files (*.json)")
+    def browse_class_mapping_file(self, file_path=None):
+        if not file_path:
+            file_path, _ = QFileDialog.getOpenFileName(self,
+                                                       "Select Class Mapping File",
+                                                       "",
+                                                       "JSON Files (*.json)")
         if file_path:
-            self.class_mapping_edit.setText(file_path)
+            if self.tab_widget.currentIndex() == 0:
+                self.class_mapping_edit_image_classification.setText(file_path)
+            elif self.tab_widget.currentIndex() == 1:
+                self.class_mapping_edit_object_detection.setText(file_path)
+            elif self.tab_widget.currentIndex() == 2:
+                self.class_mapping_edit_instance_segmentation.setText(file_path)
+
             self.class_mapping = json.load(open(file_path, 'r'))
 
     def browse_dataset_dir(self):
@@ -2444,37 +2595,105 @@ class EvaluateModelDialog(QDialog):
         if dir_path:
             self.dataset_dir_edit.setText(dir_path)
 
+    def browse_object_detection_yaml(self):
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Object Detection YAML File",
+                                                   "",
+                                                   "YAML Files (*.yaml)")
+        if file_path:
+            self.object_detection_yaml_edit.setText(file_path)
+
+    def browse_instance_segmentation_yaml(self):
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Instance Segmentation YAML File",
+                                                   "",
+                                                   "YAML Files (*.yaml)")
+        if file_path:
+            self.instance_segmentation_yaml_edit.setText(file_path)
+
     def browse_save_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if dir_path:
-            self.save_dir_edit.setText(dir_path)
+            if self.tab_widget.currentIndex() == 0:
+                self.save_dir_edit_image_classification.setText(dir_path)
+            elif self.tab_widget.currentIndex() == 1:
+                self.save_dir_edit_object_detection.setText(dir_path)
+            elif self.tab_widget.currentIndex() == 2:
+                self.save_dir_edit_instance_segmentation.setText(dir_path)
 
     def accept(self):
-        if not self.model_edit.text():
-            QMessageBox.critical(self, "Error", "Existing Model field cannot be empty.")
-            return
+        if self.tab_widget.currentIndex() == 0:
+            # Image Classification
+            if not self.dataset_dir_edit.text():
+                QMessageBox.critical(self,
+                                     "Error",
+                                     "Dataset Directory field cannot be empty.")
+                return
+        elif self.tab_widget.currentIndex() == 1:
+            # Object Detection
+            if not self.object_detection_yaml_edit.text():
+                QMessageBox.critical(self,
+                                     "Error",
+                                     "Object Detection YAML File field cannot be empty.")
+                return
+        elif self.tab_widget.currentIndex() == 2:
+            # Instance Segmentation
+            if not self.instance_segmentation_yaml_edit.text():
+                QMessageBox.critical(self,
+                                     "Error",
+                                     "Instance Segmentation YAML File field cannot be empty.")
+                return
+
         self.evaluate_model()
         super().accept()
 
     def get_evaluation_parameters(self):
-        # Extract values from dialog widgets
+        # Extract values from dialog widgets based on the current tab
         params = {
-            'name': self.name_edit.text(),
-            'model': self.model_edit.text(),
-            'data': self.dataset_dir_edit.text(),
-            'split': self.split_combo.currentText(),
-            'imgsz': int(self.imgsz_spinbox.value()),
             'verbose': True,
             'exist_ok': True,
             'plots': True,
         }
+
+        if self.tab_widget.currentIndex() == 0:
+            # Image Classification
+            params['model'] = self.model_edit_image_classification.text()
+            params['class_mapping'] = self.class_mapping_edit_image_classification.text()
+            params['data'] = self.dataset_dir_edit.text()
+            params['task'] = 'classify'
+            params['save_dir'] = self.save_dir_edit_image_classification.text()
+            params['name'] = self.name_edit_image_classification.text()
+            params['split'] = self.split_combo_image_classification.currentText()
+            params['imgsz'] = int(self.imgsz_spinbox_image_classification.value())
+
+        elif self.tab_widget.currentIndex() == 1:
+            # Object Detection
+            params['model'] = self.model_edit_object_detection.text()
+            params['class_mapping'] = self.class_mapping_edit_object_detection.text()
+            params['data'] = self.object_detection_yaml_edit.text()
+            params['task'] = 'detect'
+            params['save_dir'] = self.save_dir_edit_object_detection.text()
+            params['name'] = self.name_edit_object_detection.text()
+            params['split'] = self.split_combo_object_detection.currentText()
+            params['imgsz'] = int(self.imgsz_spinbox_object_detection.value())
+
+        elif self.tab_widget.currentIndex() == 2:
+            # Instance Segmentation
+            params['model'] = self.model_edit_instance_segmentation.text()
+            params['class_mapping'] = self.class_mapping_edit_instance_segmentation.text()
+            params['data'] = self.instance_segmentation_yaml_edit.text()
+            params['task'] = 'segment'
+            params['save_dir'] = self.save_dir_edit_instance_segmentation.text()
+            params['name'] = self.name_edit_instance_segmentation.text()
+            params['split'] = self.split_combo_instance_segmentation.currentText()
+            params['imgsz'] = int(self.imgsz_spinbox_instance_segmentation.value())
 
         # Default project name
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
 
-        save_dir = self.save_dir_edit.text()
+        save_dir = params['save_dir']
         save_dir = Path(save_dir) / params['name']
         params['save_dir'] = save_dir
 
@@ -2486,8 +2705,8 @@ class EvaluateModelDialog(QDialog):
         self.params = self.get_evaluation_parameters()
 
         try:
-            # Initialize the model, evaluate, and save the results
-            self.model = YOLO(self.params['model'])
+            # Load the model and start the worker thread
+            self.model = YOLO(self.params['model'], task=self.params['task'])
 
             # Create and start the worker thread
             self.worker = EvaluateModelWorker(self.model, self.params)
