@@ -1113,21 +1113,6 @@ class MergeDatasetsDialog(QDialog):
 
         self.layout = QVBoxLayout(self)
 
-        # Dataset Name
-        self.dataset_name_edit = QLineEdit()
-        self.layout.addWidget(QLabel("Dataset Name:"))
-        self.layout.addWidget(self.dataset_name_edit)
-
-        # Output Directory Chooser
-        self.output_dir_edit = QLineEdit()
-        self.output_dir_button = QPushButton("Browse...")
-        self.output_dir_button.clicked.connect(self.browse_output_directory)
-        output_dir_layout = QHBoxLayout()
-        output_dir_layout.addWidget(self.output_dir_edit)
-        output_dir_layout.addWidget(self.output_dir_button)
-        self.layout.addWidget(QLabel("Output Directory:"))
-        self.layout.addLayout(output_dir_layout)
-
         # Create tabs
         self.tabs = QTabWidget()
         self.tab_classification = QWidget()
@@ -1157,23 +1142,40 @@ class MergeDatasetsDialog(QDialog):
     def setup_tab(self, tab, tab_type):
         layout = QVBoxLayout()
 
+        # Dataset Name
+        dataset_name_edit = QLineEdit()
+        dataset_name_edit.setObjectName("dataset_name_edit")  # Set object name
+        layout.addWidget(QLabel("Dataset Name:"))
+        layout.addWidget(dataset_name_edit)
+
+        # Output Directory Chooser
+        output_dir_edit = QLineEdit()
+        output_dir_edit.setObjectName("output_dir_edit")  # Set object name
+        output_dir_button = QPushButton("Browse...")
+        output_dir_button.clicked.connect(lambda: self.browse_output_directory(output_dir_edit))
+        output_dir_layout = QHBoxLayout()
+        output_dir_layout.addWidget(output_dir_edit)
+        output_dir_layout.addWidget(output_dir_button)
+        layout.addWidget(QLabel("Output Directory:"))
+        layout.addLayout(output_dir_layout)
+
         # Existing Dataset Directories
-        self.existing_dirs_layout = QVBoxLayout()
+        existing_dirs_layout = QVBoxLayout()
         layout.addWidget(QLabel("Existing Dataset Directories:"))
-        layout.addLayout(self.existing_dirs_layout)
+        layout.addLayout(existing_dirs_layout)
 
         # Add two default choosers
-        self.add_chooser(tab, tab_type)
-        self.add_chooser(tab, tab_type)
+        self.add_chooser(existing_dirs_layout, tab, tab_type)
+        self.add_chooser(existing_dirs_layout, tab, tab_type)
 
         # Add Directory Button
-        self.add_dir_button = QPushButton("Add Dataset")
-        self.add_dir_button.clicked.connect(lambda: self.add_chooser(tab, tab_type))
-        layout.addWidget(self.add_dir_button)
+        add_dir_button = QPushButton("Add Dataset")
+        add_dir_button.clicked.connect(lambda: self.add_chooser(existing_dirs_layout, tab, tab_type))
+        layout.addWidget(add_dir_button)
 
         tab.setLayout(layout)
 
-    def add_chooser(self, tab, tab_type):
+    def add_chooser(self, existing_dirs_layout, tab, tab_type):
         chooser = QWidget()
         chooser_layout = QHBoxLayout(chooser)
 
@@ -1209,12 +1211,12 @@ class MergeDatasetsDialog(QDialog):
             chooser_layout.addWidget(class_mapping_edit)
             chooser_layout.addWidget(class_mapping_button)
 
-        self.existing_dirs_layout.addWidget(chooser)
+        existing_dirs_layout.addWidget(chooser)
 
-    def browse_output_directory(self):
+    def browse_output_directory(self, output_dir_edit):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_path:
-            self.output_dir_edit.setText(dir_path)
+            output_dir_edit.setText(dir_path)
 
     def browse_existing_directory(self, dir_edit, status_label, tab):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Existing Dataset Directory")
@@ -1288,12 +1290,17 @@ class MergeDatasetsDialog(QDialog):
             status_label.setText("❌")
 
     def merge_datasets(self):
-        output_dir = self.output_dir_edit.text()
+        current_tab = self.tabs.currentWidget()
+        if current_tab not in [self.tab_classification]:
+            QMessageBox.warning(self, "Warning", "Only Image Classification merging has been implemented.")
+            return
+
+        output_dir = current_tab.findChild(QLineEdit, "output_dir_edit").text()
         if not output_dir:
             QMessageBox.warning(self, "Input Error", "Output directory must be specified.")
             return
 
-        dataset_name = self.dataset_name_edit.text()
+        dataset_name = current_tab.findChild(QLineEdit, "dataset_name_edit").text()
         if not dataset_name:
             QMessageBox.warning(self, "Input Error", "Dataset name must be specified.")
             return
@@ -1302,13 +1309,6 @@ class MergeDatasetsDialog(QDialog):
         os.makedirs(output_dir_path, exist_ok=True)
 
         merged_class_mapping = {}
-        merged_yaml_data = {
-            'train': [],
-            'val': [],
-            'test': [],
-            'names': [],
-            'nc': 0
-        }
 
         # Create a progress dialog
         progress_bar = ProgressBar(self, title=f"Merging Datasets")
@@ -1321,19 +1321,7 @@ class MergeDatasetsDialog(QDialog):
         with ThreadPoolExecutor() as executor:
             futures = []
             for dir_path, class_mapping_path, tab in self.valid_directories:
-                if tab == self.tab_detection or tab == self.tab_segmentation:
-                    with open(class_mapping_path, 'r') as json_file:
-                        class_mapping = json.load(json_file)
-                        merged_class_mapping.update(class_mapping)
-
-                    for split in ['train', 'val', 'test']:
-                        src_split_dir = os.path.join(dir_path, split)
-                        dest_split_dir = os.path.join(output_dir_path, split)
-                        if os.path.exists(src_split_dir):
-                            future = executor.submit(copy_directory, src_split_dir, dest_split_dir)
-                            futures.append(future)
-
-                elif tab == self.tab_classification:
+                if tab == self.tab_classification:
                     with open(class_mapping_path, 'r') as json_file:
                         class_mapping = json.load(json_file)
                         merged_class_mapping.update(class_mapping)
@@ -1356,10 +1344,6 @@ class MergeDatasetsDialog(QDialog):
         merged_class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
         with open(merged_class_mapping_path, 'w') as json_file:
             json.dump(merged_class_mapping, json_file, indent=4)
-
-        merged_yaml_path = os.path.join(output_dir_path, "data.yaml")
-        with open(merged_yaml_path, 'w') as yaml_file:
-            yaml.dump(merged_yaml_data, yaml_file, default_flow_style=False)
 
         QMessageBox.information(self, "Success", "Datasets merged successfully!")
 
@@ -3014,6 +2998,18 @@ class DeployModelDialog(QDialog):
                 self.loaded_models[task] = YOLO(self.model_paths[task], task=task)
                 self.loaded_models[task](np.zeros((224, 224, 3), dtype=np.uint8))
 
+                # Check if class_mapping.json exists
+                if not self.class_mappings[task]:
+                    reply = QMessageBox.question(self, 'No Class Mapping Found',
+                                                 'Do you want to create generic labels automatically?',
+                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if reply == QMessageBox.Yes:
+                        self.create_generic_labels(task)
+                    else:
+                        self.check_and_display_class_names(task)
+                        QMessageBox.information(self, "Model Loaded", f"{task.capitalize()} model loaded successfully.")
+                        return
+
                 try:
                     self.add_labels_to_label_window(task)
                 except Exception as e:
@@ -3034,6 +3030,17 @@ class DeployModelDialog(QDialog):
                 self.label_window.add_label_if_not_exists(label['short_label_code'],
                                                           label['long_label_code'],
                                                           QColor(*label['color']))
+
+    def create_generic_labels(self, task):
+        class_names = list(self.loaded_models[task].names.values())
+        for class_name in class_names:
+            r = random.randint(0, 255)
+            g = random.randint(0, 255)
+            b = random.randint(0, 255)
+            self.label_window.add_label_if_not_exists(class_name,
+                                                      class_name,
+                                                      QColor(r, g, b))
+        self.check_and_display_class_names(task)
 
     def check_and_display_class_names(self, task=None):
         if task is None:
