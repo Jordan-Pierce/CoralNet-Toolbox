@@ -3194,7 +3194,7 @@ class DeployModelDialog(QDialog):
 
                 # Extract the results
                 cls = int(result.boxes.cls.cpu().numpy()[0])
-                cls_name = results.names[cls]
+                cls_name = result.names[cls]
                 conf = float(result.boxes.conf.cpu().numpy()[0])
                 x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
 
