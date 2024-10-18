@@ -24,7 +24,7 @@ class RectangleAnnotation(Annotation):
                  color: QColor,
                  image_path: str,
                  label_id: str,
-                 transparency: int = 128,
+                 transparency: int = 64,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
         self.center_xy = QPointF(0, 0)
@@ -126,7 +126,7 @@ class RectangleAnnotation(Annotation):
                                      self.bottom_right.y() - self.top_left.y())
             self.graphics_item = rect
             color = QColor(self.label.color)
-            color.setAlpha(self.transparency // 2)  # Halve the transparency
+            color.setAlpha(self.transparency)
 
             pen = QPen(self.label.color, 4, Qt.SolidLine)  # Set border color to label.color and increase thickness
 

@@ -29,7 +29,7 @@ class Annotation(QObject):
                  color: QColor,
                  image_path: str,
                  label_id: str,
-                 transparency: int = 128,
+                 transparency: int = 64,
                  show_msg=True):
         super().__init__()
         self.id = str(uuid.uuid4())

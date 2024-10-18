@@ -364,8 +364,8 @@ class MainWindow(QMainWindow):
 
         # Transparency slider
         self.transparency_slider = QSlider(Qt.Horizontal)
-        self.transparency_slider.setRange(0, 255)
-        self.transparency_slider.setValue(128)  # Default transparency
+        self.transparency_slider.setRange(0, 128)
+        self.transparency_slider.setValue(64)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # Spin box for IoU threshold control

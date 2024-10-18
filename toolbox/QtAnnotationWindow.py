@@ -46,7 +46,7 @@ class AnnotationWindow(QGraphicsView):
 
         self.annotation_size = 224
         self.annotation_color = None
-        self.transparency = 128
+        self.transparency = 64
 
         self.zoom_factor = 1.0
         self.pan_active = False

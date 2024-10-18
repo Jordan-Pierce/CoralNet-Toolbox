@@ -25,7 +25,7 @@ class PolygonAnnotation(Annotation):
                  color: QColor,
                  image_path: str,
                  label_id: str,
-                 transparency: int = 128,
+                 transparency: int = 64,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
         self.center_xy = QPointF(0, 0)
