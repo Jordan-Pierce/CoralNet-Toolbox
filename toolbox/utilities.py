@@ -30,7 +30,7 @@ def get_available_device():
     :param self:
     :return:
     """
-    devices = ['cpu']
+    devices = ['cpu',]
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             devices.append(f'cuda:{i}')
