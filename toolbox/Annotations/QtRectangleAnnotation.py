@@ -126,6 +126,8 @@ class RectangleAnnotation(Annotation):
                                      self.bottom_right.y() - self.top_left.y())
             self.graphics_item = rect
             color = QColor(self.label.color)
+            if self.is_selected:
+                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
             color.setAlpha(self.transparency)
 
             if self.is_selected:

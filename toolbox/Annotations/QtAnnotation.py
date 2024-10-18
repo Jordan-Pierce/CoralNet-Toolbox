@@ -171,66 +171,78 @@ class Annotation(QObject):
         if self.center_graphics_item:
             scene.removeItem(self.center_graphics_item)
 
+        color = QColor(self.label.color)
+        if self.is_selected:
+            color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+        color.setAlpha(self.transparency)
+
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
-        self.center_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                  self.label.color.green(),
-                                                  self.label.color.blue(),
-                                                  self.transparency))
+        self.center_graphics_item.setBrush(color)
         scene.addItem(self.center_graphics_item)
 
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene):
         if self.bounding_box_graphics_item:
             scene.removeItem(self.bounding_box_graphics_item)
 
+        color = QColor(self.label.color)
+        if self.is_selected:
+            color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+        color.setAlpha(self.transparency)
+
         self.bounding_box_graphics_item = QGraphicsRectItem(top_left.x(), top_left.y(),
                                                             bottom_right.x() - top_left.x(),
                                                             bottom_right.y() - top_left.y())
 
-        self.bounding_box_graphics_item.setPen(QColor(self.label.color.red(),
-                                                      self.label.color.green(),
-                                                      self.label.color.blue(),
-                                                      self.transparency))
+        self.bounding_box_graphics_item.setPen(color)
         scene.addItem(self.bounding_box_graphics_item)
 
     def create_polygon_graphics_item(self, points, scene):
         if self.polygon_graphics_item:
             scene.removeItem(self.polygon_graphics_item)
 
+        color = QColor(self.label.color)
+        if self.is_selected:
+            color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+        color.setAlpha(self.transparency)
+
         polygon = QPolygonF(points)
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
-        self.polygon_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                   self.label.color.green(),
-                                                   self.label.color.blue(),
-                                                   self.transparency))
+        self.polygon_graphics_item.setBrush(color)
         scene.addItem(self.polygon_graphics_item)
 
     def update_center_graphics_item(self, center_xy):
         if self.center_graphics_item:
+            color = QColor(self.label.color)
+            if self.is_selected:
+                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+            color.setAlpha(self.transparency)
+
             self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
-            self.center_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                      self.label.color.green(),
-                                                      self.label.color.blue(),
-                                                      self.transparency))
+            self.center_graphics_item.setBrush(color)
 
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         if self.bounding_box_graphics_item:
+            color = QColor(self.label.color)
+            if self.is_selected:
+                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+            color.setAlpha(self.transparency)
+
             self.bounding_box_graphics_item.setRect(top_left.x(), top_left.y(),
                                                     bottom_right.x() - top_left.x(),
                                                     bottom_right.y() - top_left.y())
 
-            self.bounding_box_graphics_item.setPen(QColor(self.label.color.red(),
-                                                          self.label.color.green(),
-                                                          self.label.color.blue(),
-                                                          self.transparency))
+            self.bounding_box_graphics_item.setPen(color)
 
     def update_polygon_graphics_item(self, points):
         if self.polygon_graphics_item:
+            color = QColor(self.label.color)
+            if self.is_selected:
+                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+            color.setAlpha(self.transparency)
+
             polygon = QPolygonF(points)
             self.polygon_graphics_item.setPolygon(polygon)
-            self.polygon_graphics_item.setBrush(QColor(self.label.color.red(),
-                                                       self.label.color.green(),
-                                                       self.label.color.blue(),
-                                                       self.transparency))
+            self.polygon_graphics_item.setBrush(color)
 
     def update_transparency(self, transparency: int):
         if self.transparency != transparency:

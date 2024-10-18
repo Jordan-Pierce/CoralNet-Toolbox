@@ -141,6 +141,8 @@ class PolygonAnnotation(Annotation):
             polygon = QPolygonF(self.points)
             self.graphics_item = QGraphicsPolygonItem(polygon)
             color = QColor(self.label.color)
+            if self.is_selected:
+                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
             color.setAlpha(self.transparency)
 
             if self.is_selected:
