@@ -1,7 +1,6 @@
 # TODO Later:
 #   - CoralNet tools
 #   - Merge Datasets
-#   - Fix Eval for instance and object
 
 import traceback
 

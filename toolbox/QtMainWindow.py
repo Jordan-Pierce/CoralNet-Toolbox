@@ -322,7 +322,7 @@ class MainWindow(QMainWindow):
 
         # Add the device label widget as an action in the toolbar
         self.devices = get_available_device()
-        self.current_device_index = len(self.devices) - 1  # Start with CPU as the default
+        self.current_device_index = self.devices[-1]
         self.device = self.devices[self.current_device_index]
 
         if self.device.startswith('cuda'):

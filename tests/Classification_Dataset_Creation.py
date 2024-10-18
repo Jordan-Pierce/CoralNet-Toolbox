@@ -6,14 +6,18 @@ from sklearn.model_selection import train_test_split
 
 # Folder containing with and without folders of images
 root = "C:/Users/jordan.pierce/Documents/GitHub/Marine-Debris/Data"
+output_root = "C:/Users/jordan.pierce/Documents/GitHub/Marine-Debris/Data/Training_Data"
 os.makedirs(root, exist_ok=True)
 
 map_folders = [os.path.join(root, folder) for folder in os.listdir(root) if os.path.isdir(os.path.join(root, folder))]
+map_folders = [folder for folder in map_folders if folder != output_root]
 
 if True:
-    for map_folder in map_folders:
-        with_folder = os.path.join(map_folder, "with")
-        without_folder = os.path.join(map_folder, "without")
+    for input_map_folder in map_folders:
+        output_map_folder = os.path.join(output_root, os.path.basename(input_map_folder))
+
+        with_folder = os.path.join(input_map_folder, "with")
+        without_folder = os.path.join(input_map_folder, "without")
         assert os.path.exists(with_folder), f"ERROR: {with_folder} does not exist."
         assert os.path.exists(without_folder), f"ERROR: {without_folder} does not exist."
 
@@ -29,30 +33,30 @@ if True:
 
         # Save the images to the appropriate folders (train, valid, and test)
         for image in with_train:
-            os.makedirs(os.path.join(root, "train", "with"), exist_ok=True)
-            shutil.copy(image, os.path.join(root, "train", "with"))
+            os.makedirs(os.path.join(output_map_folder, "train", "with"), exist_ok=True)
+            shutil.copy(image, os.path.join(output_map_folder, "train", "with"))
         for image in with_valid:
-            os.makedirs(os.path.join(root, "valid", "with"), exist_ok=True)
-            shutil.copy(image, os.path.join(root, "valid", "with"))
+            os.makedirs(os.path.join(output_map_folder, "valid", "with"), exist_ok=True)
+            shutil.copy(image, os.path.join(output_map_folder, "valid", "with"))
         for image in with_test:
-            os.makedirs(os.path.join(root, "test", "with"), exist_ok=True)
-            shutil.copy(image, os.path.join(root, "test", "with"))
+            os.makedirs(os.path.join(output_map_folder, "test", "with"), exist_ok=True)
+            shutil.copy(image, os.path.join(output_map_folder, "test", "with"))
 
         for image in without_train:
-            os.makedirs(os.path.join(root, "train", "without"), exist_ok=True)
-            shutil.copy(image, os.path.join(root, "train", "without"))
+            os.makedirs(os.path.join(output_map_folder, "train", "without"), exist_ok=True)
+            shutil.copy(image, os.path.join(output_map_folder, "train", "without"))
         for image in without_valid:
-            os.makedirs(os.path.join(root, "valid", "without"), exist_ok=True)
-            shutil.copy(image, os.path.join(root, "valid", "without"))
+            os.makedirs(os.path.join(output_map_folder, "valid", "without"), exist_ok=True)
+            shutil.copy(image, os.path.join(output_map_folder, "valid", "without"))
         for image in without_test:
-            os.makedirs(os.path.join(root, "test", "without"), exist_ok=True)
-            shutil.copy(image, os.path.join(root, "test", "without"))
+            os.makedirs(os.path.join(output_map_folder, "test", "without"), exist_ok=True)
+            shutil.copy(image, os.path.join(output_map_folder, "test", "without"))
 
 # Print the number of images in each folder
-print(f"Train with: {len(glob.glob(os.path.join(root, 'train', 'with', '*.jpeg')))}")
-print(f"Valid with: {len(glob.glob(os.path.join(root, 'valid', 'with', '*.jpeg')))}")
-print(f"Test with: {len(glob.glob(os.path.join(root, 'test', 'with', '*.jpeg')))}")
+print(f"Train with: {len(glob.glob(os.path.join(output_map_folder, 'train', 'with', '*.jpeg')))}")
+print(f"Valid with: {len(glob.glob(os.path.join(output_map_folder, 'valid', 'with', '*.jpeg')))}")
+print(f"Test with: {len(glob.glob(os.path.join(output_map_folder, 'test', 'with', '*.jpeg')))}")
 
-print(f"Train without: {len(glob.glob(os.path.join(root, 'train', 'without', '*.jpeg')))}")
-print(f"Valid without: {len(glob.glob(os.path.join(root, 'valid', 'without', '*.jpeg')))}")
-print(f"Test without: {len(glob.glob(os.path.join(root, 'test', 'without', '*.jpeg')))}")
+print(f"Train without: {len(glob.glob(os.path.join(output_map_folder, 'train', 'without', '*.jpeg')))}")
+print(f"Valid without: {len(glob.glob(os.path.join(output_map_folder, 'valid', 'without', '*.jpeg')))}")
+print(f"Test without: {len(glob.glob(os.path.join(output_map_folder, 'test', 'without', '*.jpeg')))}")

@@ -1222,7 +1222,15 @@ class MergeDatasetsDialog(QDialog):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Existing Dataset Directory")
         if dir_path:
             dir_edit.setText(dir_path)
-            self.validate_directory(dir_path, dir_edit, status_label, tab)
+            self.validate_directory(dir_path, status_label, tab)
+
+            # Auto-fill class_mapping.json if it exists in the same directory
+            class_mapping_path = os.path.join(dir_path, "class_mapping.json")
+            if os.path.exists(class_mapping_path):
+                class_mapping_edit = dir_edit.parent().findChild(QLineEdit, "class_mapping_edit")
+                if class_mapping_edit:
+                    class_mapping_edit.setText(class_mapping_path)
+                    self.validate_class_mapping(class_mapping_path, status_label, tab)
 
     def browse_data_yaml(self, yaml_edit, status_label, tab):
         options = QFileDialog.Options()
@@ -1231,7 +1239,7 @@ class MergeDatasetsDialog(QDialog):
         )
         if file_path:
             yaml_edit.setText(file_path)
-            self.validate_yaml(file_path, yaml_edit, status_label, tab)
+            self.validate_yaml(file_path, status_label, tab)
 
             # Auto-fill class_mapping.json if it exists in the same directory
             yaml_dir = os.path.dirname(file_path)
@@ -1240,7 +1248,7 @@ class MergeDatasetsDialog(QDialog):
                 class_mapping_edit = yaml_edit.parent().findChild(QLineEdit, "class_mapping_edit")
                 if class_mapping_edit:
                     class_mapping_edit.setText(class_mapping_path)
-                    self.validate_class_mapping(class_mapping_path, class_mapping_edit, status_label, tab)
+                    self.validate_class_mapping(class_mapping_path, status_label, tab)
 
     def browse_class_mapping(self, class_mapping_edit, status_label, tab):
         options = QFileDialog.Options()
@@ -1249,9 +1257,9 @@ class MergeDatasetsDialog(QDialog):
         )
         if file_path:
             class_mapping_edit.setText(file_path)
-            self.validate_class_mapping(file_path, class_mapping_edit, status_label, tab)
+            self.validate_class_mapping(file_path, status_label, tab)
 
-    def validate_directory(self, dir_path, dir_edit, status_label, tab):
+    def validate_directory(self, dir_path, status_label, tab):
         if os.path.exists(dir_path):
             status_label.setText("✅")
             self.valid_directories.append((dir_path, None, tab))
@@ -1259,7 +1267,7 @@ class MergeDatasetsDialog(QDialog):
             status_label.setText("❌")
             self.valid_directories = [(d, c, t) for d, c, t in self.valid_directories if d != dir_path]
 
-    def validate_yaml(self, yaml_path, yaml_edit, status_label, tab):
+    def validate_yaml(self, yaml_path, status_label, tab):
         try:
             with open(yaml_path, 'r') as file:
                 data = yaml.safe_load(file)
@@ -1273,7 +1281,7 @@ class MergeDatasetsDialog(QDialog):
             status_label.setText("❌")
             self.valid_directories = [(d, c, t) for d, c, t in self.valid_directories if d != yaml_path]
 
-    def validate_class_mapping(self, class_mapping_path, class_mapping_edit, status_label, tab):
+    def validate_class_mapping(self, class_mapping_path, status_label, tab):
         try:
             with open(class_mapping_path, 'r') as file:
                 data = json.load(file)
@@ -1305,15 +1313,13 @@ class MergeDatasetsDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "Dataset name must be specified.")
             return
 
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         output_dir_path = os.path.join(output_dir, dataset_name)
         os.makedirs(output_dir_path, exist_ok=True)
 
         merged_class_mapping = {}
-
-        # Create a progress dialog
-        progress_bar = ProgressBar(self, title=f"Merging Datasets")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.valid_directories))
 
         def copy_directory(src, dest):
             shutil.copytree(src, dest, dirs_exist_ok=True)
@@ -1321,10 +1327,15 @@ class MergeDatasetsDialog(QDialog):
         with ThreadPoolExecutor() as executor:
             futures = []
             for dir_path, class_mapping_path, tab in self.valid_directories:
+
                 if tab == self.tab_classification:
-                    with open(class_mapping_path, 'r') as json_file:
-                        class_mapping = json.load(json_file)
-                        merged_class_mapping.update(class_mapping)
+                    if class_mapping_path:
+                        try:
+                            with open(class_mapping_path, 'r') as json_file:
+                                class_mapping = json.load(json_file)
+                                merged_class_mapping.update(class_mapping)
+                        except Exception as e:
+                            print(f"Error reading class mapping: {e}")
 
                     for split in ['train', 'val', 'test']:
                         src_split_dir = os.path.join(dir_path, split)
@@ -1333,19 +1344,29 @@ class MergeDatasetsDialog(QDialog):
                             future = executor.submit(copy_directory, src_split_dir, dest_split_dir)
                             futures.append(future)
 
+            # Create a progress dialog
+            progress_bar = ProgressBar(self, title=f"Merging Datasets")
+            progress_bar.show()
+            progress_bar.start_progress(len(futures))
+
             # Wait for all copying tasks to complete
             for i, future in enumerate(as_completed(futures)):
                 future.result()
                 progress_bar.update_progress()
 
-        progress_bar.stop_progress()
-        progress_bar.close()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
-        merged_class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
-        with open(merged_class_mapping_path, 'w') as json_file:
-            json.dump(merged_class_mapping, json_file, indent=4)
+        # Check if the merged class mapping is empty
+        if merged_class_mapping:
+            merged_class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
+            with open(merged_class_mapping_path, 'w') as json_file:
+                json.dump(merged_class_mapping, json_file, indent=4)
 
         QMessageBox.information(self, "Success", "Datasets merged successfully!")
+
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def accept(self):
         self.merge_datasets()
@@ -2366,15 +2387,6 @@ class EvaluateModelDialog(QDialog):
         model_layout.addWidget(self.model_button_image_classification)
         form_layout.addRow("Existing Model:", model_layout)
 
-        # Class Mapping
-        self.class_mapping_edit_image_classification = QLineEdit()
-        self.class_mapping_button_image_classification = QPushButton("Browse...")
-        self.class_mapping_button_image_classification.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.class_mapping_edit_image_classification)
-        class_mapping_layout.addWidget(self.class_mapping_button_image_classification)
-        form_layout.addRow("Class Mapping:", class_mapping_layout)
-
         # Dataset Directory
         self.dataset_dir_edit = QLineEdit()
         self.dataset_dir_button = QPushButton("Browse...")
@@ -2430,15 +2442,6 @@ class EvaluateModelDialog(QDialog):
         model_layout.addWidget(self.model_button_object_detection)
         form_layout.addRow("Existing Model:", model_layout)
 
-        # Class Mapping
-        self.class_mapping_edit_object_detection = QLineEdit()
-        self.class_mapping_button_object_detection = QPushButton("Browse...")
-        self.class_mapping_button_object_detection.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.class_mapping_edit_object_detection)
-        class_mapping_layout.addWidget(self.class_mapping_button_object_detection)
-        form_layout.addRow("Class Mapping:", class_mapping_layout)
-
         # YAML File for Object Detection
         self.object_detection_yaml_edit = QLineEdit()
         self.object_detection_yaml_button = QPushButton("Browse...")
@@ -2446,7 +2449,7 @@ class EvaluateModelDialog(QDialog):
         object_detection_yaml_layout = QHBoxLayout()
         object_detection_yaml_layout.addWidget(self.object_detection_yaml_edit)
         object_detection_yaml_layout.addWidget(self.object_detection_yaml_button)
-        form_layout.addRow("YAML File:", object_detection_yaml_layout)
+        form_layout.addRow("Data YAML File:", object_detection_yaml_layout)
 
         # Split
         self.split_combo_object_detection = QComboBox()
@@ -2494,15 +2497,6 @@ class EvaluateModelDialog(QDialog):
         model_layout.addWidget(self.model_button_instance_segmentation)
         form_layout.addRow("Existing Model:", model_layout)
 
-        # Class Mapping
-        self.class_mapping_edit_instance_segmentation = QLineEdit()
-        self.class_mapping_button_instance_segmentation = QPushButton("Browse...")
-        self.class_mapping_button_instance_segmentation.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.class_mapping_edit_instance_segmentation)
-        class_mapping_layout.addWidget(self.class_mapping_button_instance_segmentation)
-        form_layout.addRow("Class Mapping:", class_mapping_layout)
-
         # YAML File for Instance Segmentation
         self.instance_segmentation_yaml_edit = QLineEdit()
         self.instance_segmentation_yaml_button = QPushButton("Browse...")
@@ -2510,7 +2504,7 @@ class EvaluateModelDialog(QDialog):
         instance_segmentation_yaml_layout = QHBoxLayout()
         instance_segmentation_yaml_layout.addWidget(self.instance_segmentation_yaml_edit)
         instance_segmentation_yaml_layout.addWidget(self.instance_segmentation_yaml_button)
-        form_layout.addRow("YAML File:", instance_segmentation_yaml_layout)
+        form_layout.addRow("Data YAML File:", instance_segmentation_yaml_layout)
 
         # Split
         self.split_combo_instance_segmentation = QComboBox()
@@ -2554,25 +2548,6 @@ class EvaluateModelDialog(QDialog):
 
             # Get the directory two above file path
             dir_path = os.path.dirname(os.path.dirname(file_path))
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.browse_class_mapping_file(class_mapping_path)
-
-    def browse_class_mapping_file(self, file_path=None):
-        if not file_path:
-            file_path, _ = QFileDialog.getOpenFileName(self,
-                                                       "Select Class Mapping File",
-                                                       "",
-                                                       "JSON Files (*.json)")
-        if file_path:
-            if self.tab_widget.currentIndex() == 0:
-                self.class_mapping_edit_image_classification.setText(file_path)
-            elif self.tab_widget.currentIndex() == 1:
-                self.class_mapping_edit_object_detection.setText(file_path)
-            elif self.tab_widget.currentIndex() == 2:
-                self.class_mapping_edit_instance_segmentation.setText(file_path)
-
-            self.class_mapping = json.load(open(file_path, 'r'))
 
     def browse_dataset_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
@@ -2642,7 +2617,6 @@ class EvaluateModelDialog(QDialog):
         if self.tab_widget.currentIndex() == 0:
             # Image Classification
             params['model'] = self.model_edit_image_classification.text()
-            params['class_mapping'] = self.class_mapping_edit_image_classification.text()
             params['data'] = self.dataset_dir_edit.text()
             params['task'] = 'classify'
             params['save_dir'] = self.save_dir_edit_image_classification.text()
@@ -2653,7 +2627,6 @@ class EvaluateModelDialog(QDialog):
         elif self.tab_widget.currentIndex() == 1:
             # Object Detection
             params['model'] = self.model_edit_object_detection.text()
-            params['class_mapping'] = self.class_mapping_edit_object_detection.text()
             params['data'] = self.object_detection_yaml_edit.text()
             params['task'] = 'detect'
             params['save_dir'] = self.save_dir_edit_object_detection.text()
@@ -2664,7 +2637,6 @@ class EvaluateModelDialog(QDialog):
         elif self.tab_widget.currentIndex() == 2:
             # Instance Segmentation
             params['model'] = self.model_edit_instance_segmentation.text()
-            params['class_mapping'] = self.class_mapping_edit_instance_segmentation.text()
             params['data'] = self.instance_segmentation_yaml_edit.text()
             params['task'] = 'segment'
             params['save_dir'] = self.save_dir_edit_instance_segmentation.text()
@@ -3194,7 +3166,7 @@ class DeployModelDialog(QDialog):
 
                 # Extract the results
                 cls = int(result.boxes.cls.cpu().numpy()[0])
-                cls_name = results.names[cls]
+                cls_name = result.names[cls]
                 conf = float(result.boxes.conf.cpu().numpy()[0])
                 x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
 
