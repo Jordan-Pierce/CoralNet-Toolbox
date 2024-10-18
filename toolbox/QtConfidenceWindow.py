@@ -198,6 +198,8 @@ class ConfidenceWindow(QWidget):
         self.clear_layout(self.bar_chart_layout)
         # Reset the style sheet to default
         self.graphics_view.setStyleSheet("")
+        # Clear the dimensions label
+        self.dimensions_label.setText("")
 
     def handle_bar_click(self, label):
         # Update the confidences to whichever bar was selected

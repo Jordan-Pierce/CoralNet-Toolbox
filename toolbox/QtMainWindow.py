@@ -12,13 +12,16 @@ from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSampling import PatchSamplingDialog
-from toolbox.QtMachineLearning import BatchInferenceDialog
-from toolbox.QtMachineLearning import CreateDatasetDialog
-from toolbox.QtMachineLearning import DeployModelDialog
-from toolbox.QtMachineLearning import EvaluateModelDialog
-from toolbox.QtMachineLearning import MergeDatasetsDialog
-from toolbox.QtMachineLearning import OptimizeModelDialog
-from toolbox.QtMachineLearning import TrainModelDialog
+
+from toolbox.MachineLearning.QtBatchInference import BatchInferenceDialog
+from toolbox.MachineLearning.QtImportDataset import ImportDatasetDialog
+from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
+from toolbox.MachineLearning.QtDeployModel import DeployModelDialog
+from toolbox.MachineLearning.QtEvaluateModel import EvaluateModelDialog
+from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
+from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
+from toolbox.MachineLearning.QtTrainModel import TrainModelDialog
+
 from toolbox.QtSAM import SAMDeployModelDialog
 
 from toolbox.QtIO import IODialog
@@ -37,6 +40,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
+    iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
 
     def __init__(self):
         super().__init__()
@@ -62,9 +66,11 @@ class MainWindow(QMainWindow):
         self.io_dialog = IODialog(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
-        self.uncertainty_thresh = 0.25
+        self.iou_thresh = 0.25
+        self.uncertainty_thresh = 0.50
 
-        self.create_dataset_dialog = CreateDatasetDialog(self)
+        self.import_dataset_dialog = ImportDatasetDialog(self)
+        self.export_dataset_dialog = ExportDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
         self.train_model_dialog = TrainModelDialog(self)
         self.evaluate_model_dialog = EvaluateModelDialog(self)
@@ -157,10 +163,10 @@ class MainWindow(QMainWindow):
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
 
-        self.import_yolo_action = QAction("YOLO (TXT)", self)
-        self.import_yolo_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.import_dataset_menu.addAction(self.import_yolo_action)
+        # Import YOLO Dataset menu
+        self.import_dataset_action = QAction("YOLO (TXT)", self)
+        self.import_dataset_action.triggered.connect(self.open_import_dataset_dialog)
+        self.import_dataset_menu.addAction(self.import_dataset_action)
 
         # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")
@@ -194,9 +200,10 @@ class MainWindow(QMainWindow):
         # Dataset submenu
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
 
-        self.export_yolo_action = QAction("YOLO (TXT)", self)
-        self.export_yolo_action.triggered.connect(self.open_create_dataset_dialog)
-        self.export_dataset_menu.addAction(self.export_yolo_action)
+        # Export YOLO Dataset menu
+        self.export_dataset_action = QAction("YOLO (TXT)", self)
+        self.export_dataset_action.triggered.connect(self.open_export_dataset_dialog)
+        self.export_dataset_menu.addAction(self.export_dataset_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
@@ -317,7 +324,7 @@ class MainWindow(QMainWindow):
 
         # Add the device label widget as an action in the toolbar
         self.devices = get_available_device()
-        self.current_device_index = len(self.devices) - 1  # Start with CPU as the default
+        self.current_device_index = 0
         self.device = self.devices[self.current_device_index]
 
         if self.device.startswith('cuda'):
@@ -361,10 +368,17 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
+        # Spin box for IoU threshold control
+        self.iou_thresh_spinbox = QDoubleSpinBox()
+        self.iou_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
+        self.iou_thresh_spinbox.setSingleStep(0.05)  # Step size for the spinbox
+        self.iou_thresh_spinbox.setValue(self.iou_thresh)
+        self.iou_thresh_spinbox.valueChanged.connect(self.update_iou_thresh)
+
         # Spin box for Uncertainty threshold control
         self.uncertainty_thresh_spinbox = QDoubleSpinBox()
         self.uncertainty_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
-        self.uncertainty_thresh_spinbox.setSingleStep(0.01)  # Step size for the spinbox
+        self.uncertainty_thresh_spinbox.setSingleStep(0.05)  # Step size for the spinbox
         self.uncertainty_thresh_spinbox.setValue(self.uncertainty_thresh)
         self.uncertainty_thresh_spinbox.valueChanged.connect(self.update_uncertainty_thresh)
 
@@ -384,6 +398,8 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
         self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(QLabel("IoU Threshold:"))
+        self.status_bar_layout.addWidget(self.iou_thresh_spinbox)
         self.status_bar_layout.addWidget(QLabel("Uncertainty Threshold:"))
         self.status_bar_layout.addWidget(self.uncertainty_thresh_spinbox)
         self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
@@ -605,6 +621,9 @@ class MainWindow(QMainWindow):
 
         self.view_dimensions_label.setText(f"View: {height} x {width}")
 
+    def get_transparency_value(self):
+        return self.transparency_slider.value()
+
     def update_label_transparency(self, value):
         self.label_window.set_label_transparency(value)
         self.update_transparency_slider(value)  # Update the slider value
@@ -620,6 +639,15 @@ class MainWindow(QMainWindow):
             self.uncertainty_thresh = value
             self.uncertainty_thresh_spinbox.setValue(value)
             self.uncertaintyChanged.emit(value)
+
+    def get_iou_thresh(self):
+        return self.iou_thresh
+
+    def update_iou_thresh(self, value):
+        if self.iou_thresh != value:
+            self.iou_thresh = value
+            self.iou_thresh_spinbox.setValue(value)
+            self.iouChanged.emit(value)
 
     def open_import_images_dialog(self):
         self.untoggle_all_tools()
@@ -644,24 +672,32 @@ class MainWindow(QMainWindow):
         self.patch_annotation_sampling_dialog = None
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
-    def open_create_dataset_dialog(self):
+
+    def open_import_dataset_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.import_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_export_dataset_dialog(self):
         # Check if there are loaded images
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
-                                "Create Dataset",
+                                "Export Dataset",
                                 "No images are present in the project.")
             return
 
         # Check if there are annotations
         if not len(self.annotation_window.annotations_dict):
             QMessageBox.warning(self,
-                                "Create Dataset",
+                                "Export Dataset",
                                 "No annotations are present in the project.")
             return
 
         try:
             self.untoggle_all_tools()
-            self.create_dataset_dialog.exec_()
+            self.export_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -694,6 +730,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_deploy_model_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Deploy Model",
+                                "No images are present in the project.")
+            return
+
         try:
             self.untoggle_all_tools()
             self.deploy_model_dialog.exec_()
@@ -707,14 +749,7 @@ class MainWindow(QMainWindow):
                                 "No images are present in the project.")
             return
 
-        # Check if there are annotations
-        if not len(self.annotation_window.annotations_dict):
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No annotations are present in the project.")
-            return
-
-        if not self.deploy_model_dialog.loaded_model:
+        if not any(list(self.deploy_model_dialog.loaded_models.values())):
             QMessageBox.warning(self,
                                 "Batch Inference",
                                 "Please deploy a model before running batch inference.")

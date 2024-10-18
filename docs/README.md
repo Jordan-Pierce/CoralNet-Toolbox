@@ -21,6 +21,8 @@ The main window consists of several components:
   - **Import Annotations (CoralNet)**: Load annotation data from a CoralNet CSV file.
   - **Import Annotations (Viscore)**: Load annotation data from a Viscore CSV file.
   - **Import Annotations (TagLab)**: Load annotation data from a TagLab JSON file.
+  - **Import Dataset**: Import a YOLO dataset for machine learning (Detection, Segmentation).
+
 
 - **Export**:
   - **Export Labels (JSON)**: Save label data to a JSON file.
@@ -28,9 +30,10 @@ The main window consists of several components:
   - **Export Annotations (CoralNet)**: Save annotation data to a CoralNet CSV file.
   - **Export Annotations (Viscore)**: Save annotation data to a Viscore CSV file.
   - **Export Annotations (TagLab)**: Save annotation data to a TagLab JSON file.
+  - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation).
 
 - **Sample**:
-  - **Sample Annotations**: Automatically generate annotations.
+  - **Sample Annotations**: Automatically generate Patch annotations.
 
 - **CoralNet**: (Currently not available)
   - **Authenticate**: Authenticate with CoralNet.
@@ -39,7 +42,6 @@ The main window consists of several components:
   - **Model API**: Access CoralNet model API.
 
 - **Machine Learning**:
-  - **Create Dataset**: Create a dataset for machine learning.
   - **Merge Datasets**: Merge multiple datasets.
   - **Train Model**: Train a machine learning model.
   - **Evaluate Model**: Evaluate a trained model.
@@ -48,15 +50,14 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferences.
 
 - **SAM**:
-  - **Deploy Model**: Deploy SAM or ModbileSAM.
-  - **Batch Inference**: Perform batch inferences.
+  - **Deploy Model**: Deploy MobileSAM, SAM, or SAM2 model to use interactively (points, box)
 
 ## Tool Bar
-- **Select Tool**: Select and move annotations.
+- **Select Tool**: Select, move and change the size of annotations.
 - **Patch Tool**: Add new PatchAnnotations.
 - **Polygon Tool**: Add new PolygonAnnotations.
 - **Rectangle Tool**: Add new RectangleAnnotations.
-- **SAM Tool**: Use SAM model for automatic segmentation.
+- **SAM Tool**: Use SAM model for automatic segmentation (points, box).
 
 ## Annotation Window
 - **Zoom**: Use the mouse wheel to zoom in and out.
@@ -75,10 +76,13 @@ The main window consists of several components:
 - **Escape**: Exit the program.
 
 - **Machine Learning**: After a model is loaded
-  - **Ctrl + Z**: Make prediction on selected annotation, else all in the image.
+  - **Ctrl + 1**: Make prediction on selected Patch annotation, else all in the image with Review label.
+  - **Ctrl + 2**: Make predictions using Object Detection model.
+  - **Ctrl + 3**: Make predictions using Instance Segmentation model.
 
 - **SAM**: After a model is loaded
   - **Space Bar**: Set working area; finalize prediction.
+  - **Left-Click**: Start a box; press again to end a box.
   - **Ctrl + Left-Click**: Add positive point.
   - **Ctrl + Right-Click**: Add negative point.
 
@@ -102,7 +106,9 @@ The main window consists of several components:
 - **Annotation Sampling**: Use the "Sample Annotations" action in the menu bar to automatically generate annotations.
 - **Transparency Control**: Adjust the transparency slider in the status bar to change annotation transparency.
 - **Uncertainty Threshold**: Modify the uncertainty threshold in the status bar to restrict predicts with low confidence.
+- **IoU Threshold**: Adjust the IoU threshold in the status bar to filter predictions based on Intersection over Union.
 
 ## Annotations
 - **PatchAnnotation**: Represents a patch annotation.
+- **RectangleAnnotation**: Represents a rectangular annotation.
 - **PolygonAnnotation**: Represents a polygonal annotation.

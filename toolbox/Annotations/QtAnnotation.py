@@ -1,3 +1,4 @@
+import os
 import uuid
 import warnings
 
@@ -44,6 +45,9 @@ class Annotation(QObject):
         self.cropped_image = None
 
         self.show_message = show_msg
+
+        self.center_xy = None
+        self.annotation_size = None
 
         # Attributes to store the graphics items for center/centroid, bounding box, and brush/mask
         self.center_graphics_item = None
@@ -151,6 +155,18 @@ class Annotation(QObject):
 
         return QImage(data, width, height, bytes_per_line, image_format)
 
+    def get_cropped_image(self, downscaling_factor=1.0):
+        if self.cropped_image is None:
+            return None
+
+        # Downscale the cropped image if downscaling_factor is not 1.0
+        if downscaling_factor != 1.0:
+            new_size = (int(self.cropped_image.width() * downscaling_factor),
+                        int(self.cropped_image.height() * downscaling_factor))
+            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+
+        return self.cropped_image
+
     def create_center_graphics_item(self, center_xy, scene):
         if self.center_graphics_item:
             scene.removeItem(self.center_graphics_item)
@@ -224,6 +240,37 @@ class Annotation(QObject):
     def update_graphics_item(self, crop_image=True):
         pass
 
+    def to_coralnet(self):
+        # Extract machine confidence values and suggestions
+        confidences = [f"{confidence:.3f}" for confidence in self.machine_confidence.values()]
+        suggestions = [suggestion.short_label_code for suggestion in self.machine_confidence.keys()]
+
+        # Pad with NaN if there are fewer than 5 values
+        while len(confidences) < 5:
+            confidences.append(np.nan)
+        while len(suggestions) < 5:
+            suggestions.append(np.nan)
+
+        return {
+            'Name': os.path.basename(self.image_path),
+            'Row': int(self.center_xy.y()),
+            'Column': int(self.center_xy.x()),
+            'Label': self.label.short_label_code,
+            'Long Label': self.label.long_label_code,
+            'Patch Size': self.annotation_size,
+            'Machine confidence 1': confidences[0],
+            'Machine suggestion 1': suggestions[0],
+            'Machine confidence 2': confidences[1],
+            'Machine suggestion 2': suggestions[1],
+            'Machine confidence 3': confidences[2],
+            'Machine suggestion 3': suggestions[2],
+            'Machine confidence 4': confidences[3],
+            'Machine suggestion 4': suggestions[3],
+            'Machine confidence 5': confidences[4],
+            'Machine suggestion 5': suggestions[4],
+            **self.data
+        }
+
     def to_dict(self):
         # Convert machine_confidence keys to short_label_code
         machine_confidence = {label.short_label_code: confidence for label, confidence in
@@ -239,6 +286,12 @@ class Annotation(QObject):
             'data': self.data,
             'machine_confidence': machine_confidence
         }
+
+    def to_yolo_detection(self, image_width, image_height):
+        pass
+
+    def to_yolo_segmentation(self, image_width, image_height):
+        pass
 
     @classmethod
     def from_dict(cls, data, label_window):
@@ -258,18 +311,6 @@ class Annotation(QObject):
         annotation.machine_confidence = machine_confidence
 
         return annotation
-
-    def get_cropped_image(self, downscaling_factor=1.0):
-        if self.cropped_image is None:
-            return None
-
-        # Downscale the cropped image if downscaling_factor is not 1.0
-        if downscaling_factor != 1.0:
-            new_size = (int(self.cropped_image.width() * downscaling_factor),
-                        int(self.cropped_image.height() * downscaling_factor))
-            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
-
-        return self.cropped_image
 
     def __repr__(self):
         return (f"Annotation(id={self.id}, "

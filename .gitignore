@@ -16,4 +16,3 @@ dist
 *egg-info
 Data/
 toolbox/QtClustering.py
-tests/

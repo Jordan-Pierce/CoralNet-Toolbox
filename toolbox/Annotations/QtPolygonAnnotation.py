@@ -1,5 +1,7 @@
 import warnings
 
+import math
+
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
@@ -26,24 +28,29 @@ class PolygonAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.points = self._reduce_precision(points)
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
+        self.annotation_size = 0
 
+        self._reduce_precision(points)
         self.calculate_centroid()
         self.set_cropped_bbox()
 
-    def _reduce_precision(self, points: list) -> list:
-        return [QPointF(round(point.x(), 2), round(point.y(), 2)) for point in points]
-
-    def contains_point(self, point: QPointF) -> bool:
-        polygon = QPolygonF(self.points)
-        return polygon.containsPoint(point, Qt.OddEvenFill)
+    def _reduce_precision(self, points: list):
+        self.points = [QPointF(round(point.x(), 2), round(point.y(), 2)) for point in points]
 
     def calculate_centroid(self):
         centroid_x = sum(point.x() for point in self.points) / len(self.points)
         centroid_y = sum(point.y() for point in self.points) / len(self.points)
         self.center_xy = QPointF(centroid_x, centroid_y)
+
+    def set_cropped_bbox(self):
+        min_x = min(point.x() for point in self.points)
+        min_y = min(point.y() for point in self.points)
+        max_x = max(point.x() for point in self.points)
+        max_y = max(point.y() for point in self.points)
+        self.cropped_bbox = (min_x, min_y, max_x, max_y)
+        self.annotation_size = int(max(max_x - min_x, max_y - min_y))
 
     def calculate_polygon_area(self):
         n = len(self.points)
@@ -64,13 +71,9 @@ class PolygonAnnotation(Annotation):
                           (self.points[j].y() - self.points[i].y()) ** 2) ** 0.5
         return perimeter
 
-    def set_cropped_bbox(self):
-        min_x = min(point.x() for point in self.points)
-        min_y = min(point.y() for point in self.points)
-        max_x = max(point.x() for point in self.points)
-        max_y = max(point.y() for point in self.points)
-        self.cropped_bbox = (min_x, min_y, max_x, max_y)
-        self.center_xy = QPointF((min_x + max_x) / 2, (min_y + max_y) / 2)
+    def contains_point(self, point: QPointF) -> bool:
+        polygon = QPolygonF(self.points)
+        return polygon.containsPoint(point, Qt.OddEvenFill)
 
     def create_cropped_image(self, rasterio_src):
         # Set the rasterio source for the annotation
@@ -181,18 +184,44 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
-    def update_annotation_size(self, scale_factor: float):
+    def update_annotation_size(self, delta: float):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
             return
 
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-        # Update the location, graphic
-        centroid_x, centroid_y = self.center_xy.x(), self.center_xy.y()
-        translated_points = [QPointF(point.x() - centroid_x, point.y() - centroid_y) for point in self.points]
-        scaled_points = [QPointF(point.x() * scale_factor, point.y() * scale_factor) for point in translated_points]
-        self.points = [QPointF(point.x() + centroid_x, point.y() + centroid_y) for point in scaled_points]
+
+        # Calculate the new points for erosion or dilation
+        new_points = []
+        num_points = len(self.points)
+
+        for i in range(num_points):
+            p1 = self.points[i]
+            p2 = self.points[(i + 1) % num_points]
+
+            # Calculate the vector from p1 to p2
+            edge_vector = QPointF(p2.x() - p1.x(), p2.y() - p1.y())
+
+            # Calculate the normal vector (perpendicular to the edge)
+            normal_vector = QPointF(-edge_vector.y(), edge_vector.x())
+
+            # Normalize the normal vector
+            length = math.sqrt(normal_vector.x() ** 2 + normal_vector.y() ** 2)
+            if length != 0:
+                normal_vector = QPointF(normal_vector.x() / length, normal_vector.y() / length)
+            else:
+                normal_vector = QPointF(0, 0)
+
+            # Move the point along the normal vector by the delta amount
+            if delta < 1:
+                new_point = QPointF(p1.x() - normal_vector.x() * (1 - delta), p1.y() - normal_vector.y() * (1 - delta))
+            else:
+                new_point = QPointF(p1.x() + normal_vector.x() * (delta - 1), p1.y() + normal_vector.y() * (delta - 1))
+            new_points.append(new_point)
+
+        # Update the points
+        self.points = new_points
         self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
@@ -203,6 +232,19 @@ class PolygonAnnotation(Annotation):
             'points': [(point.x(), point.y()) for point in self.points],
         })
         return base_dict
+
+    def to_yolo_detection(self, image_width, image_height):
+        x_min, y_min, x_max, y_max = self.cropped_bbox
+        x_center = (x_min + x_max) / 2 / image_width
+        y_center = (y_min + y_max) / 2 / image_height
+        width = (x_max - x_min) / image_width
+        height = (y_max - y_min) / image_height
+
+        return self.label.short_label_code, f"{x_center} {y_center} {width} {height}"
+
+    def to_yolo_segmentation(self, image_width, image_height):
+        normalized_points = [(point.x() / image_width, point.y() / image_height) for point in self.points]
+        return self.label.short_label_code, " ".join([f"{x} {y}" for x, y in normalized_points])
 
     @classmethod
     def from_dict(cls, data, label_window):

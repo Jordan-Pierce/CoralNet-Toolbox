@@ -255,15 +255,19 @@ class IODialog:
                         else:
                             raise ValueError(f"Unknown annotation type: {annotation_type}")
 
+                        # Add annotation to the dict
                         self.annotation_window.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()
 
+                    # Update the image window's image dict
                     self.image_window.update_image_annotations(image_path)
 
+                # Load the annotations for current image
+                self.annotation_window.load_annotations()
+
+                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
-
-                self.annotation_window.load_annotations_parallel()
 
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Imported",
@@ -294,9 +298,8 @@ class IODialog:
                 df = []
 
                 for annotation in self.annotation_window.annotations_dict.values():
-                    if isinstance(annotation, PatchAnnotation):
-                        df.append(annotation.to_coralnet_format())
-                        progress_bar.update_progress()
+                    df.append(annotation.to_coralnet())
+                    progress_bar.update_progress()
 
                 df = pd.DataFrame(df)
                 df.to_csv(file_path, index=False)
@@ -348,12 +351,13 @@ class IODialog:
 
             annotation_size, ok = QInputDialog.getInt(self.annotation_window,
                                                       "Annotation Size",
-                                                      "Enter the annotation size for all imported annotations:",
+                                                      "Enter the default annotation size for imported annotations:",
                                                       224, 1, 10000, 1)
             if not ok:
                 return
 
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
+            df['Name'] = df['Name'].apply(lambda x: os.path.basename(x))
             df = df[df['Name'].isin(image_path_map.keys())]
             df = df.dropna(how='any', subset=['Row', 'Column', 'Label'])
             df = df.assign(Row=df['Row'].astype(int))
@@ -379,7 +383,9 @@ class IODialog:
                     col_coord = row['Column']
                     label_code = row['Label']
 
-                    short_label_code = long_label_code = label_code
+                    short_label_code = label_code
+                    long_label_code = row['Long Label'] if 'Long Label' in row else label_code
+
                     existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
 
                     if existing_label:
@@ -397,7 +403,7 @@ class IODialog:
                                                                   label_id)
 
                     annotation = PatchAnnotation(QPointF(col_coord, row_coord),
-                                                 annotation_size,
+                                                 row['Patch Size'] if "Patch Size" in row else annotation_size,
                                                  short_label_code,
                                                  long_label_code,
                                                  color,
@@ -431,13 +437,17 @@ class IODialog:
                     if machine_confidence:
                         annotation.update_machine_confidence(machine_confidence)
 
+                    # Add annotation to the dict
                     self.annotation_window.annotations_dict[annotation.id] = annotation
                     progress_bar.update_progress()
 
+                # Update the image window's image dict
                 self.image_window.update_image_annotations(image_path)
 
             # Load the annotations for current image
-            self.annotation_window.load_annotations_parallel()
+            self.annotation_window.load_annotations()
+
+            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
 
@@ -472,7 +482,7 @@ class IODialog:
                 for annotation in self.annotation_window.annotations_dict.values():
                     if isinstance(annotation, PatchAnnotation):
                         if 'Dot' in annotation.data:
-                            df.append(annotation.to_coralnet_format())
+                            df.append(annotation.to_coralnet())
                             progress_bar.update_progress()
 
                 df = pd.DataFrame(df)
@@ -741,13 +751,17 @@ class IODialog:
                         if machine_confidence:
                             annotation.update_machine_confidence(machine_confidence)
 
+                        # Add annotation to the dict
                         self.annotation_window.annotations_dict[annotation.id] = annotation
                         progress_bar.update_progress()
 
+                    # Update the image window's image dict
                     self.image_window.update_image_annotations(image_path)
 
                 # Load the annotations for current image
-                self.annotation_window.load_annotations_parallel()
+                self.annotation_window.load_annotations()
+
+                # Stop the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 
@@ -987,12 +1001,17 @@ class IODialog:
                         label_id=label_id
                     )
 
+                    # Add annotation to the dict
                     self.annotation_window.annotations_dict[polygon_annotation.id] = polygon_annotation
                     progress_bar.update_progress()
 
+                # Update the image window's image dict
                 self.image_window.update_image_annotations(image_full_path)
 
-            self.annotation_window.load_annotations_parallel()
+            # Load the annotations for current image
+            self.annotation_window.load_annotations()
+
+            # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
 
