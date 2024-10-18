@@ -25,7 +25,7 @@ class PolygonAnnotation(Annotation):
                  color: QColor,
                  image_path: str,
                  label_id: str,
-                 transparency: int = 128,
+                 transparency: int = 64,
                  show_msg=True):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
         self.center_xy = QPointF(0, 0)
@@ -145,9 +145,9 @@ class PolygonAnnotation(Annotation):
 
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 4, Qt.DotLine)
+                pen = QPen(inverse_color, 6, Qt.DotLine)
             else:
-                pen = QPen(color, 2, Qt.SolidLine)
+                pen = QPen(color, 4, Qt.SolidLine)
 
             self.graphics_item.setPen(pen)
             brush = QBrush(color)

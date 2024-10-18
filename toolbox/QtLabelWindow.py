@@ -30,7 +30,7 @@ class Label(QWidget):
         self.color = color
         self.is_selected = False
         self.fixed_width = fixed_width
-        self.transparency = 128
+        self.transparency = 64
 
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(self.fixed_width)
