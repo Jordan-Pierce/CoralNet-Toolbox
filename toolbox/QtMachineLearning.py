@@ -264,7 +264,7 @@ class ImportDatasetDialog(QDialog):
                                                          color,
                                                          image_path,
                                                          label_id,
-                                                         128,
+                                                         self.main_window.get_transparency_value(),
                                                          show_msg=False)
 
                     else:
@@ -295,7 +295,7 @@ class ImportDatasetDialog(QDialog):
                                                        color,
                                                        image_path,
                                                        label_id,
-                                                       128,
+                                                       self.main_window.get_transparency_value(),
                                                        show_msg=False)
 
                     # Add the annotation to the list for export
@@ -2972,29 +2972,40 @@ class DeployModelDialog(QDialog):
 
                 # Check if class_mapping.json exists
                 if not self.class_mappings[task]:
-                    reply = QMessageBox.question(self, 'No Class Mapping Found',
+                    reply = QMessageBox.question(self,
+                                                 'No Class Mapping Found',
                                                  'Do you want to create generic labels automatically?',
                                                  QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                     if reply == QMessageBox.Yes:
                         self.create_generic_labels(task)
                     else:
                         self.check_and_display_class_names(task)
-                        QMessageBox.information(self, "Model Loaded", f"{task.capitalize()} model loaded successfully.")
+                        QMessageBox.information(self,
+                                                "Model Loaded",
+                                                f"{task.capitalize()} model loaded successfully.")
                         return
 
                 try:
                     self.add_labels_to_label_window(task)
                 except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to add labels: {str(e)}")
+                    QMessageBox.critical(self,
+                                         "Error",
+                                         f"Failed to add labels: {str(e)}")
 
-                QMessageBox.information(self, "Model Loaded", f"{task.capitalize()} model loaded successfully.")
+                QMessageBox.information(self,
+                                        "Model Loaded",
+                                        f"{task.capitalize()} model loaded successfully.")
                 self.check_and_display_class_names(task)
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load {task} model: {str(e)}")
+                QMessageBox.critical(self,
+                                     "Error",
+                                     f"Failed to load {task} model: {str(e)}")
             finally:
                 QApplication.restoreOverrideCursor()
         else:
-            QMessageBox.warning(self, "Warning", f"No {task} model file selected")
+            QMessageBox.warning(self,
+                                "Warning",
+                                f"No {task} model file selected")
 
     def add_labels_to_label_window(self, task):
         if self.class_mappings[task]:
@@ -3013,6 +3024,15 @@ class DeployModelDialog(QDialog):
                                                       class_name,
                                                       QColor(r, g, b))
         self.check_and_display_class_names(task)
+
+        # Get the class mapping for the task
+        labels = [self.label_window.get_label_by_short_code(class_name) for class_name in class_names]
+
+        class_mapping = {}
+        for label in labels:
+            class_mapping[label.short_label_code] = label.to_dict()
+
+        self.class_mappings[task] = class_mapping
 
     def check_and_display_class_names(self, task=None):
         if task is None:
@@ -3145,84 +3165,83 @@ class DeployModelDialog(QDialog):
                                                iou=self.main_window.get_iou_thresh(),
                                                device=self.main_window.device,
                                                stream=True)
-
         # Process the detection results
-        self.process_detection_result(results)
+        self.process_detection_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
-    def process_detection_result(self, results):
+    def process_detection_results(self, results_generator):
         progress_bar = ProgressBar(self, title=f"Making Detection Predictions")
         progress_bar.show()
         progress_bar.start_progress(1)
 
-        for result in results:
+        for results in results_generator:
+            for result in results:
+                try:
+                    # Get the image path
+                    image_path = result.path.replace("\\", "/")
 
-            try:
-                # Get the image path
-                image_path = result.path.replace("\\", "/")
+                    # Extract the results
+                    cls = int(result.boxes.cls.cpu().numpy()[0])
+                    cls_name = result.names[cls]
+                    conf = float(result.boxes.conf.cpu().numpy()[0])
+                    x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
 
-                # Extract the results
-                cls = int(result.boxes.cls.cpu().numpy()[0])
-                cls_name = result.names[cls]
-                conf = float(result.boxes.conf.cpu().numpy()[0])
-                x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
+                    # Determine the short label
+                    short_label = 'Review'
+                    if conf > self.main_window.get_uncertainty_thresh():
+                        if cls_name in self.class_mappings['detect']:
+                            short_label = self.class_mappings['detect'][cls_name]['short_label_code']
 
-                # Determine the short label
-                short_label = 'Review'
-                if conf > self.main_window.get_uncertainty_thresh():
-                    if cls_name in self.class_mappings['detect']:
-                        short_label = self.class_mappings['detect'][cls_name]['short_label_code']
+                    # Prepare the annotation data
+                    label = self.label_window.get_label_by_short_code(short_label)
+                    top_left = QPointF(x_min, y_min)
+                    bottom_right = QPointF(x_max, y_max)
 
-                # Prepare the annotation data
-                label = self.label_window.get_label_by_short_code(short_label)
-                top_left = QPointF(x_min, y_min)
-                bottom_right = QPointF(x_max, y_max)
+                    # Create the rectangle annotation
+                    annotation = RectangleAnnotation(top_left,
+                                                     bottom_right,
+                                                     label.short_label_code,
+                                                     label.long_label_code,
+                                                     label.color,
+                                                     image_path,
+                                                     label.id,
+                                                     self.main_window.get_transparency_value(),
+                                                     show_msg=True)
 
-                # Create the rectangle annotation
-                annotation = RectangleAnnotation(top_left,
-                                                 bottom_right,
-                                                 label.short_label_code,
-                                                 label.long_label_code,
-                                                 label.color,
-                                                 image_path,
-                                                 label.id,
-                                                 128,
-                                                 show_msg=True)
+                    # Store the annotation and display the cropped image
+                    self.annotation_window.annotations_dict[annotation.id] = annotation
 
-                # Store the annotation and display the cropped image
-                self.annotation_window.annotations_dict[annotation.id] = annotation
+                    # Connect update signals
+                    annotation.selected.connect(self.annotation_window.select_annotation)
+                    annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
+                    annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
 
-                # Connect update signals
-                annotation.selected.connect(self.annotation_window.select_annotation)
-                annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
-                annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+                    # Add the prediction for the confidence window
+                    predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
+                    annotation.update_machine_confidence(predictions)
 
-                # Add the prediction for the confidence window
-                predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
-                annotation.update_machine_confidence(predictions)
+                    # Update label if confidence is below threshold
+                    if conf < self.main_window.get_uncertainty_thresh():
+                        review_label = self.label_window.get_label_by_id('-1')
+                        annotation.update_label(review_label)
 
-                # Update label if confidence is below threshold
-                if conf < self.main_window.get_uncertainty_thresh():
-                    review_label = self.label_window.get_label_by_id('-1')
-                    annotation.update_label(review_label)
+                    # Create the graphics and cropped image
+                    if image_path == self.annotation_window.current_image_path:
+                        annotation.create_graphics_item(self.annotation_window.scene)
+                        annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                        self.main_window.confidence_window.display_cropped_image(annotation)
 
-                # Create the graphics and cropped image
-                if image_path == self.annotation_window.current_image_path:
-                    annotation.create_graphics_item(self.annotation_window.scene)
-                    annotation.create_cropped_image(self.annotation_window.rasterio_image)
-                    self.main_window.confidence_window.display_cropped_image(annotation)
+                    # Update the image annotations
+                    self.main_window.image_window.update_image_annotations(image_path)
 
-                # Update the image annotations
-                self.main_window.image_window.update_image_annotations(image_path)
+                    # Update the progress bar
+                    progress_bar.update_progress()
 
-            except Exception as e:
-                print(f"Warning: Failed to process detection result\n{e}")
-
-            # Update the progress bar
-            progress_bar.update_progress()
+                except Exception as e:
+                    print(f"Warning: Failed to process detection result\n{e}")
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -3250,80 +3269,80 @@ class DeployModelDialog(QDialog):
                                                 stream=True)
 
         # Process the detection results
-        self.process_segmentation_result(results)
+        self.process_segmentation_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
-    def process_segmentation_result(self, results):
+    def process_segmentation_results(self, results_generator):
         progress_bar = ProgressBar(self, title=f"Making Segmentation Predictions")
         progress_bar.show()
         progress_bar.start_progress(1)
 
-        for result in results:
+        for results in results_generator:
+            for result in results:
+                try:
+                    # Get the image path
+                    image_path = result.path.replace("\\", "/")
 
-            try:
-                # Get the image path
-                image_path = result.path.replace("\\", "/")
+                    # Extract the results
+                    cls = int(result.boxes.cls.cpu().numpy()[0])
+                    cls_name = result.names[cls]
+                    conf = float(result.boxes.conf.cpu().numpy()[0])
+                    points = result.masks.cpu().xy[0].astype(float)
 
-                # Extract the results
-                cls = int(result.boxes.cls.cpu().numpy()[0])
-                cls_name = result.names[cls]
-                conf = float(result.boxes.conf.cpu().numpy()[0])
-                points = result.masks.cpu().xy[0].astype(float)
+                    # Determine the short label
+                    short_label = 'Review'
+                    if conf > self.main_window.get_uncertainty_thresh():
+                        if cls_name in self.class_mappings['segment']:
+                            short_label = self.class_mappings['segment'][cls_name]['short_label_code']
 
-                # Determine the short label
-                short_label = 'Review'
-                if conf > self.main_window.get_uncertainty_thresh():
-                    if cls_name in self.class_mappings['segment']:
-                        short_label = self.class_mappings['segment'][cls_name]['short_label_code']
+                    # Prepare the annotation data
+                    label = self.label_window.get_label_by_short_code(short_label)
+                    points = [QPointF(x, y) for x, y in points]
 
-                # Prepare the annotation data
-                label = self.label_window.get_label_by_short_code(short_label)
-                points = [QPointF(x, y) for x, y in points]
+                    # Create the rectangle annotation
+                    annotation = PolygonAnnotation(points,
+                                                   label.short_label_code,
+                                                   label.long_label_code,
+                                                   label.color,
+                                                   image_path,
+                                                   label.id,
+                                                   self.main_window.get_transparency_value(),
+                                                   show_msg=True)
 
-                # Create the rectangle annotation
-                annotation = PolygonAnnotation(points,
-                                               label.short_label_code,
-                                               label.long_label_code,
-                                               label.color,
-                                               image_path,
-                                               label.id,
-                                               128,
-                                               show_msg=True)
+                    # Store the annotation and display the cropped image
+                    self.annotation_window.annotations_dict[annotation.id] = annotation
 
-                # Store the annotation and display the cropped image
-                self.annotation_window.annotations_dict[annotation.id] = annotation
+                    # Connect update signals
+                    annotation.selected.connect(self.annotation_window.select_annotation)
+                    annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
+                    annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
 
-                # Connect update signals
-                annotation.selected.connect(self.annotation_window.select_annotation)
-                annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
-                annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+                    # Add the prediction for the confidence window
+                    predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
+                    annotation.update_machine_confidence(predictions)
 
-                # Add the prediction for the confidence window
-                predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
-                annotation.update_machine_confidence(predictions)
+                    # Update label if confidence is below threshold
+                    if conf < self.main_window.get_uncertainty_thresh():
+                        review_label = self.label_window.get_label_by_id('-1')
+                        annotation.update_label(review_label)
 
-                # Update label if confidence is below threshold
-                if conf < self.main_window.get_uncertainty_thresh():
-                    review_label = self.label_window.get_label_by_id('-1')
-                    annotation.update_label(review_label)
+                    # Create the graphics and cropped image
+                    if image_path == self.annotation_window.current_image_path:
+                        annotation.create_graphics_item(self.annotation_window.scene)
+                        annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                        self.main_window.confidence_window.display_cropped_image(annotation)
 
-                # Create the graphics and cropped image
-                if image_path == self.annotation_window.current_image_path:
-                    annotation.create_graphics_item(self.annotation_window.scene)
-                    annotation.create_cropped_image(self.annotation_window.rasterio_image)
-                    self.main_window.confidence_window.display_cropped_image(annotation)
+                    # Update the image annotations
+                    self.main_window.image_window.update_image_annotations(image_path)
 
-                # Update the image annotations
-                self.main_window.image_window.update_image_annotations(image_path)
+                    # Update the progress bar
+                    progress_bar.update_progress()
 
-            except Exception as e:
-                print(f"Warning: Failed to process detection result\n{e}")
-
-            # Update the progress bar
-            progress_bar.update_progress()
+                except Exception as e:
+                    print(f"Warning: Failed to process detection result\n{e}")
 
         progress_bar.stop_progress()
         progress_bar.close()

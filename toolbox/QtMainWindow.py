@@ -619,6 +619,9 @@ class MainWindow(QMainWindow):
 
         self.view_dimensions_label.setText(f"View: {height} x {width}")
 
+    def get_transparency_value(self):
+        return self.transparency_slider.value()
+
     def update_label_transparency(self, value):
         self.label_window.set_label_transparency(value)
         self.update_transparency_slider(value)  # Update the slider value
