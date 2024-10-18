@@ -12,14 +12,16 @@ from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSampling import PatchSamplingDialog
-from toolbox.QtMachineLearning import BatchInferenceDialog
-from toolbox.QtMachineLearning import ImportDatasetDialog
-from toolbox.QtMachineLearning import ExportDatasetDialog
-from toolbox.QtMachineLearning import DeployModelDialog
-from toolbox.QtMachineLearning import EvaluateModelDialog
-from toolbox.QtMachineLearning import MergeDatasetsDialog
-from toolbox.QtMachineLearning import OptimizeModelDialog
-from toolbox.QtMachineLearning import TrainModelDialog
+
+from toolbox.MachineLearning.QtBatchInference import BatchInferenceDialog
+from toolbox.MachineLearning.QtImportDataset import ImportDatasetDialog
+from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
+from toolbox.MachineLearning.QtDeployModel import DeployModelDialog
+from toolbox.MachineLearning.QtEvaluateModel import EvaluateModelDialog
+from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
+from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
+from toolbox.MachineLearning.QtTrainModel import TrainModelDialog
+
 from toolbox.QtSAM import SAMDeployModelDialog
 
 from toolbox.QtIO import IODialog

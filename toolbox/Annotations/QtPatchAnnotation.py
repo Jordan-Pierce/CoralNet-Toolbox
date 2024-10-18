@@ -1,15 +1,12 @@
-import os
 import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import numpy as np
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsRectItem)
 from rasterio.windows import Window
 
 from toolbox.Annotations.QtAnnotation import Annotation
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
