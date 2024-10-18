@@ -111,7 +111,11 @@ class PatchAnnotation(Annotation):
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
 
-            pen = QPen(self.label.color, 4, Qt.SolidLine)  # Set border color to label.color and increase thickness
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                pen = QPen(inverse_color, 6, Qt.DotLine)
+            else:
+                pen = QPen(color, 4, Qt.SolidLine)
 
             self.graphics_item.setPen(pen)
             brush = QBrush(color)
