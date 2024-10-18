@@ -145,9 +145,9 @@ class PolygonAnnotation(Annotation):
 
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 4, Qt.DotLine)
+                pen = QPen(inverse_color, 6, Qt.DotLine)
             else:
-                pen = QPen(color, 2, Qt.SolidLine)
+                pen = QPen(color, 4, Qt.SolidLine)
 
             self.graphics_item.setPen(pen)
             brush = QBrush(color)
