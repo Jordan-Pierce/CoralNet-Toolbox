@@ -22,6 +22,8 @@ class RectangleTool(Tool):
         self.start_point = None
         self.end_point = None
         self.drawing_rectangle = False
+        self.resizing_top_left = False
+        self.resizing_bottom_right = False
 
     def activate(self):
         self.active = True
@@ -34,18 +36,26 @@ class RectangleTool(Tool):
                                 "A label must be selected before adding an annotation.")
             return None
 
-        if event.button() == Qt.LeftButton and not self.drawing_rectangle:
-            # Start drawing the rectangle
-            self.start_point = self.annotation_window.mapToScene(event.pos())
-            self.drawing_rectangle = True
-            self.annotation_window.unselect_annotation()
-            self.annotation_window.toggle_cursor_annotation(self.start_point)
-        elif event.button() == Qt.LeftButton and self.drawing_rectangle:
-            # Finish drawing the rectangle
-            self.end_point = self.annotation_window.mapToScene(event.pos())
-            self.annotation_window.unselect_annotation()
-            self.annotation_window.add_annotation(self.end_point)
-            self.drawing_rectangle = False
+        if event.button() == Qt.LeftButton:
+            position = self.annotation_window.mapToScene(event.pos())
+            if self.annotation_window.selected_annotation and isinstance(self.annotation_window.selected_annotation, RectangleAnnotation):
+                annotation = self.annotation_window.selected_annotation
+                if annotation.top_left.x() - 5 <= position.x() <= annotation.top_left.x() + 5 and \
+                   annotation.top_left.y() - 5 <= position.y() <= annotation.top_left.y() + 5:
+                    self.resizing_top_left = True
+                elif annotation.bottom_right.x() - 5 <= position.x() <= annotation.bottom_right.x() + 5 and \
+                     annotation.bottom_right.y() - 5 <= position.y() <= annotation.bottom_right.y() + 5:
+                    self.resizing_bottom_right = True
+                else:
+                    self.start_point = position
+                    self.drawing_rectangle = True
+                    self.annotation_window.unselect_annotation()
+                    self.annotation_window.toggle_cursor_annotation(self.start_point)
+            else:
+                self.start_point = position
+                self.drawing_rectangle = True
+                self.annotation_window.unselect_annotation()
+                self.annotation_window.toggle_cursor_annotation(self.start_point)
         elif event.button() == Qt.RightButton and self.drawing_rectangle:
             # Panning the image while drawing
             pass
@@ -62,6 +72,23 @@ class RectangleTool(Tool):
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
             if active_image and image_pixmap and cursor_in_window and self.start_point:
                 self.annotation_window.toggle_cursor_annotation(self.end_point)
+        elif self.resizing_top_left:
+            new_top_left = self.annotation_window.mapToScene(event.pos())
+            self.annotation_window.selected_annotation.update_top_left(new_top_left)
+        elif self.resizing_bottom_right:
+            new_bottom_right = self.annotation_window.mapToScene(event.pos())
+            self.annotation_window.selected_annotation.update_bottom_right(new_bottom_right)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            if self.drawing_rectangle:
+                self.end_point = self.annotation_window.mapToScene(event.pos())
+                self.annotation_window.unselect_annotation()
+                self.annotation_window.add_annotation(self.end_point)
+                self.drawing_rectangle = False
+            elif self.resizing_top_left or self.resizing_bottom_right:
+                self.resizing_top_left = False
+                self.resizing_bottom_right = False
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Space:

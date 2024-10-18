@@ -186,6 +186,32 @@ class RectangleAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
+    def update_top_left(self, new_top_left: QPointF):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+        # Update the top-left point, graphic
+        self.top_left = new_top_left
+        self.calculate_centroid()
+        self.update_graphics_item()
+        self.annotation_updated.emit(self)  # Notify update
+
+    def update_bottom_right(self, new_bottom_right: QPointF):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+        # Update the bottom-right point, graphic
+        self.bottom_right = new_bottom_right
+        self.calculate_centroid()
+        self.update_graphics_item()
+        self.annotation_updated.emit(self)  # Notify update
+
     def to_yolo_detection(self, image_width, image_height):
         min_x, min_y, max_x, max_y = self.cropped_bbox
         x_center = (min_x + max_x) / 2 / image_width
