@@ -126,13 +126,9 @@ class RectangleAnnotation(Annotation):
                                      self.bottom_right.y() - self.top_left.y())
             self.graphics_item = rect
             color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
+            color.setAlpha(self.transparency // 2)  # Halve the transparency
 
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 4, Qt.DotLine)
-            else:
-                pen = QPen(color, 2, Qt.SolidLine)
+            pen = QPen(self.label.color, 4, Qt.SolidLine)  # Set border color to label.color and increase thickness
 
             self.graphics_item.setPen(pen)
             brush = QBrush(color)
