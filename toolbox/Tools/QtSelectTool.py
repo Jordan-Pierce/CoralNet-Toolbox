@@ -53,6 +53,7 @@ class SelectTool(Tool):
             delta = current_pos - self.resize_start_pos
             self.resize_annotation(self.annotation_window.selected_annotation, delta)
             self.resize_start_pos = current_pos
+
         elif event.buttons() & Qt.LeftButton and self.annotation_window.selected_annotation:
             current_pos = self.annotation_window.mapToScene(event.pos())
             if not self.annotation_window.drag_start_pos:
@@ -82,14 +83,18 @@ class SelectTool(Tool):
             top_left = annotation.top_left
             bottom_right = annotation.bottom_right
             handles = {
-                "top_left": QRectF(top_left.x() - buffer//2, top_left.y() - buffer//2, buffer, buffer),
-                "bottom_right": QRectF(bottom_right.x() - buffer//2, bottom_right.y() - buffer//2, buffer, buffer),
+                "top_left": QRectF(top_left.x() - buffer//2,
+                                   top_left.y() - buffer//2,
+                                   buffer,
+                                   buffer),
+
+                "bottom_right": QRectF(bottom_right.x() - buffer//2,
+                                       bottom_right.y() - buffer//2,
+                                       buffer,
+                                       buffer),
             }
         elif isinstance(annotation, PolygonAnnotation):
-            handles = {
-                "top_left": QRectF(annotation.points[0].x() - buffer//2, annotation.points[0].y() - buffer//2, buffer, buffer),
-                "bottom_right": QRectF(annotation.points[2].x() - buffer//2, annotation.points[2].y() - buffer//2, buffer, buffer),
-            }
+            pass
         else:
             return None
 
@@ -99,13 +104,4 @@ class SelectTool(Tool):
         return None
 
     def resize_annotation(self, annotation, delta):
-        if isinstance(annotation, RectangleAnnotation):
-            if self.resize_handle == "top_left":
-                annotation.top_left += delta
-            elif self.resize_handle == "bottom_right":
-                annotation.bottom_right += delta
-            annotation.calculate_centroid()
-            annotation.set_cropped_bbox()
-            annotation.update_graphics_item()
-        elif isinstance(annotation, PolygonAnnotation):
-            annotation.resize_polygon(self.resize_handle, delta)
+        annotation.resize_polygon(self.resize_handle, delta)

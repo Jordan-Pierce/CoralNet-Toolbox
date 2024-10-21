@@ -227,7 +227,11 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
-    def resize_polygon(self, handle, delta):  # P3642
+    def resize(self, handle, delta):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
         if handle == "top_left":
             self.points[0] += delta
         elif handle == "bottom_right":

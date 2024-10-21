@@ -4,7 +4,7 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtCore import pyqtSignal, QObject, QPointF
 from PyQt5.QtGui import QColor, QImage, QPolygonF
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem
 
@@ -250,6 +250,9 @@ class Annotation(QObject):
             self.update_graphics_item(crop_image=False)
 
     def update_graphics_item(self, crop_image=True):
+        pass
+
+    def resize(self, handle: str, delta: QPointF):
         pass
 
     def to_coralnet(self):

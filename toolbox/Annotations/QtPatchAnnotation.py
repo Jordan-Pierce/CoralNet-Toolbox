@@ -159,6 +159,9 @@ class PatchAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
+    def resize(self, handle: str, delta: QPointF):
+        pass
+
     def to_dict(self):
         base_dict = super().to_dict()
         base_dict.update({
