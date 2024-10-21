@@ -51,8 +51,13 @@ class SelectTool(Tool):
         if self.resizing and self.resize_handle:
             current_pos = self.annotation_window.mapToScene(event.pos())
             delta = current_pos - self.resize_start_pos
-            self.resize_annotation(self.annotation_window.selected_annotation, delta)
+            if self.annotation_window.selected_annotation is not None:
+                self.resize_annotation(self.annotation_window.selected_annotation, delta)
+            else:
+                print("Warning: No annotation selected for resizing.")
+
             self.resize_start_pos = current_pos
+            self.resize_annotation(self.annotation_window.selected_annotation, delta)
 
         elif event.buttons() & Qt.LeftButton and self.annotation_window.selected_annotation:
             current_pos = self.annotation_window.mapToScene(event.pos())
@@ -78,7 +83,7 @@ class SelectTool(Tool):
         self.annotation_window.drag_start_pos = None
 
     def detect_resize_handle(self, annotation, position):
-        buffer = 50
+        buffer = 10
         if isinstance(annotation, RectangleAnnotation):
             top_left = annotation.top_left
             bottom_right = annotation.bottom_right
@@ -94,7 +99,12 @@ class SelectTool(Tool):
                                        buffer),
             }
         elif isinstance(annotation, PolygonAnnotation):
-            pass
+            handles = {}
+            for i, point in enumerate(annotation.points):
+                handles[f"point_{i}"] = QRectF(point.x() - buffer // 2,
+                                               point.y() - buffer // 2,
+                                               buffer,
+                                               buffer)
         else:
             return None
 
@@ -104,4 +114,12 @@ class SelectTool(Tool):
         return None
 
     def resize_annotation(self, annotation, delta):
-        annotation.resize_polygon(self.resize_handle, delta)
+        if annotation is None:
+            print("Warning: Attempted to resize a None annotation.")
+            return
+
+        if not hasattr(annotation, 'resize'):
+            print(f"Warning: Annotation of type {type(annotation)} does not have a resize method.")
+            return
+
+        annotation.resize(self.resize_handle, delta)

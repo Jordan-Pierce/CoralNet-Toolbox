@@ -232,13 +232,34 @@ class PolygonAnnotation(Annotation):
             self.show_warning_message()
             return
 
-        if handle == "top_left":
-            self.points[0] += delta
-        elif handle == "bottom_right":
-            self.points[2] += delta
-        self.calculate_centroid()
-        self.set_cropped_bbox()
-        self.update_graphics_item()
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+
+        # Extract the point index from the handle string (e.g., "point_0" -> 0)
+        if handle.startswith("point_"):
+            point_index = int(handle.split("_")[1])
+            num_points = len(self.points)
+
+            # Update the selected point
+            self.points[point_index] += delta
+
+            # Calculate the influence factor for neighboring points
+            # The closer a point is to the selected point, the more it's influenced
+            for i in range(num_points):
+                if i != point_index:
+                    distance = min((i - point_index) % num_points, (point_index - i) % num_points)
+                    influence = max(0, 1 - distance / (num_points / 2))
+                    self.points[i] += delta * influence
+
+            # Recalculate centroid and bounding box
+            self.calculate_centroid()
+            self.set_cropped_bbox()
+
+            # Update the graphics item
+            self.update_graphics_item()
+
+            # Notify that the annotation has been updated
+            self.annotation_updated.emit(self)
 
     def to_dict(self):
         base_dict = super().to_dict()
