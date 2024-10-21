@@ -1,5 +1,7 @@
 import warnings
 
+import math
+
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem
@@ -25,6 +27,9 @@ class SelectTool(Tool):
         self.resize_start_pos = None
 
     def mousePressEvent(self, event: QMouseEvent):
+        if not self.annotation_window.cursorInWindow(event.pos()):
+            return
+
         if event.button() == Qt.LeftButton:
             position = self.annotation_window.mapToScene(event.pos())
             items = self.annotation_window.scene.items(position)
@@ -48,6 +53,9 @@ class SelectTool(Tool):
                     break
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        if not self.annotation_window.cursorInWindow(event.pos()):
+            return
+
         if self.resizing and self.resize_handle:
             current_pos = self.annotation_window.mapToScene(event.pos())
             delta = current_pos - self.resize_start_pos
@@ -76,6 +84,9 @@ class SelectTool(Tool):
                 self.annotation_window.drag_start_pos = current_pos
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if not self.annotation_window.cursorInWindow(event.pos()):
+            return
+
         if self.resizing:
             self.resizing = False
             self.resize_handle = None
@@ -83,34 +94,32 @@ class SelectTool(Tool):
         self.annotation_window.drag_start_pos = None
 
     def detect_resize_handle(self, annotation, position):
-        buffer = 10
+
         if isinstance(annotation, RectangleAnnotation):
+            buffer = 20
             top_left = annotation.top_left
             bottom_right = annotation.bottom_right
             handles = {
-                "top_left": QRectF(top_left.x() - buffer//2,
-                                   top_left.y() - buffer//2,
-                                   buffer,
-                                   buffer),
-
-                "bottom_right": QRectF(bottom_right.x() - buffer//2,
-                                       bottom_right.y() - buffer//2,
-                                       buffer,
-                                       buffer),
+                "left": QPointF(top_left.x(), (top_left.y() + bottom_right.y()) / 2),
+                "right": QPointF(bottom_right.x(), (top_left.y() + bottom_right.y()) / 2),
+                "top": QPointF((top_left.x() + bottom_right.x()) / 2, top_left.y()),
+                "bottom": QPointF((top_left.x() + bottom_right.x()) / 2, bottom_right.y()),
+                "top_left": QPointF(top_left.x(), top_left.y()),
+                "top_right": QPointF(bottom_right.x(), top_left.y()),
+                "bottom_left": QPointF(top_left.x(), bottom_right.y()),
+                "bottom_right": QPointF(bottom_right.x(), bottom_right.y())
             }
         elif isinstance(annotation, PolygonAnnotation):
-            handles = {}
-            for i, point in enumerate(annotation.points):
-                handles[f"point_{i}"] = QRectF(point.x() - buffer // 2,
-                                               point.y() - buffer // 2,
-                                               buffer,
-                                               buffer)
+            buffer = 100
+            handles = {f"point_{i}": QPointF(point.x(), point.y()) for i, point in enumerate(annotation.points)}
         else:
             return None
 
-        for handle, rect in handles.items():
-            if rect.contains(position):
+        for handle, point in handles.items():
+            # Calculate the distance between the clicked position and the point
+            if math.hypot(point.x() - position.x(), point.y() - position.y()) <= buffer:
                 return handle
+
         return None
 
     def resize_annotation(self, annotation, delta):

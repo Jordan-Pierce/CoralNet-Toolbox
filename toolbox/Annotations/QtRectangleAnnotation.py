@@ -193,12 +193,28 @@ class RectangleAnnotation(Annotation):
 
         # Clear the machine confidence
         self.update_user_confidence(self.label)
+
         # Resize the annotation
-        if handle == "top_left":
+        if handle == "left":
+            self.top_left += QPointF(delta.x(), 0)
+        elif handle == "right":
+            self.bottom_right += QPointF(delta.x(), 0)
+        elif handle == "top":
+            self.top_left += QPointF(0, delta.y())
+        elif handle == "bottom":
+            self.bottom_right += QPointF(0, delta.y())
+        elif handle == "top_left":
             self.top_left += delta
+        elif handle == "top_right":
+            self.top_left += QPointF(delta.x(), delta.y().y())
+            self.bottom_right += QPointF(delta.x(), 0)
+        elif handle == "bottom_left":
+            self.top_left += QPointF(0, delta.y())
+            self.bottom_right += QPointF(delta.x(), 0)
         elif handle == "bottom_right":
             self.bottom_right += delta
 
+        self._reduce_precision(self.top_left, self.bottom_right)
         self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)
