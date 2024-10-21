@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem
 
 from toolbox.Tools.QtTool import Tool
 from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -36,7 +37,7 @@ class SelectTool(Tool):
                 annotation_id = item.data(0)
                 annotation = self.annotation_window.annotations_dict.get(annotation_id)
                 if annotation and annotation.contains_point(position):
-                    if isinstance(annotation, RectangleAnnotation):
+                    if isinstance(annotation, RectangleAnnotation) or isinstance(annotation, PolygonAnnotation):
                         self.resize_handle = self.detect_resize_handle(annotation, position)
                         if self.resize_handle:
                             self.resizing = True
@@ -76,17 +77,25 @@ class SelectTool(Tool):
         self.annotation_window.drag_start_pos = None
 
     def detect_resize_handle(self, annotation, position):
+        buffer = 50
         if isinstance(annotation, RectangleAnnotation):
-            buffer = 50
             top_left = annotation.top_left
             bottom_right = annotation.bottom_right
             handles = {
                 "top_left": QRectF(top_left.x() - buffer//2, top_left.y() - buffer//2, buffer, buffer),
                 "bottom_right": QRectF(bottom_right.x() - buffer//2, bottom_right.y() - buffer//2, buffer, buffer),
             }
-            for handle, rect in handles.items():
-                if rect.contains(position):
-                    return handle
+        elif isinstance(annotation, PolygonAnnotation):
+            handles = {
+                "top_left": QRectF(annotation.points[0].x() - buffer//2, annotation.points[0].y() - buffer//2, buffer, buffer),
+                "bottom_right": QRectF(annotation.points[2].x() - buffer//2, annotation.points[2].y() - buffer//2, buffer, buffer),
+            }
+        else:
+            return None
+
+        for handle, rect in handles.items():
+            if rect.contains(position):
+                return handle
         return None
 
     def resize_annotation(self, annotation, delta):
@@ -98,3 +107,5 @@ class SelectTool(Tool):
             annotation.calculate_centroid()
             annotation.set_cropped_bbox()
             annotation.update_graphics_item()
+        elif isinstance(annotation, PolygonAnnotation):
+            annotation.resize_polygon(self.resize_handle, delta)

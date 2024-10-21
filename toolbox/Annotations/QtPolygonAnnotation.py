@@ -31,6 +31,7 @@ class PolygonAnnotation(Annotation):
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
+        self.resize_handle = None  # Pb95c
 
         self._reduce_precision(points)
         self.calculate_centroid()
@@ -225,6 +226,15 @@ class PolygonAnnotation(Annotation):
         self.calculate_centroid()
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
+
+    def resize_polygon(self, handle, delta):  # P3642
+        if handle == "top_left":
+            self.points[0] += delta
+        elif handle == "bottom_right":
+            self.points[2] += delta
+        self.calculate_centroid()
+        self.set_cropped_bbox()
+        self.update_graphics_item()
 
     def to_dict(self):
         base_dict = super().to_dict()
