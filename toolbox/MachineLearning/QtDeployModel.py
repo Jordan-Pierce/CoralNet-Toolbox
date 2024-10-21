@@ -421,8 +421,8 @@ class DeployModelDialog(QDialog):
 
                     # Connect update signals
                     annotation.selected.connect(self.annotation_window.select_annotation)
-                    annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
-                    annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+                    annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
+                    annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
                     # Add the prediction for the confidence window
                     predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
@@ -522,8 +522,8 @@ class DeployModelDialog(QDialog):
 
                     # Connect update signals
                     annotation.selected.connect(self.annotation_window.select_annotation)
-                    annotation.annotation_deleted.connect(self.annotation_window.delete_annotation)
-                    annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+                    annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
+                    annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
                     # Add the prediction for the confidence window
                     predictions = {self.label_window.get_label_by_short_code(cls_name): conf}

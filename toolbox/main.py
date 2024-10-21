@@ -1,7 +1,7 @@
 # TODO Later:
 #   - CoralNet tools
 #   - Merge Datasets
-
+#   - Emit deleted annotation signal to SelectTool to remove resize handles
 import traceback
 
 from PyQt5.QtWidgets import QApplication

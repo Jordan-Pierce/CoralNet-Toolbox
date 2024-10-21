@@ -334,8 +334,8 @@ class AnnotationWindow(QGraphicsView):
         annotation.create_graphics_item(self.scene)
         # Connect update signals
         annotation.selected.connect(self.select_annotation)
-        annotation.annotation_deleted.connect(self.delete_annotation)
-        annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
         self.viewport().update()
 
     def load_annotations(self):
@@ -431,8 +431,8 @@ class AnnotationWindow(QGraphicsView):
 
         # Connect update signals
         annotation.selected.connect(self.select_annotation)
-        annotation.annotation_deleted.connect(self.delete_annotation)
-        annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
         self.annotations_dict[annotation.id] = annotation
 

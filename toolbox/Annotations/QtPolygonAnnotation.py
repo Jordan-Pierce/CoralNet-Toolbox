@@ -104,7 +104,7 @@ class PolygonAnnotation(Annotation):
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def get_cropped_image(self, downscaling_factor=1.0):
         if self.cropped_image is None:
@@ -183,7 +183,7 @@ class PolygonAnnotation(Annotation):
         self.points = [point + delta for point in self.points]
         self.calculate_centroid()
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, delta: float):
         if self.machine_confidence and self.show_message:
@@ -225,7 +225,7 @@ class PolygonAnnotation(Annotation):
         self.points = new_points
         self.calculate_centroid()
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def resize(self, handle, new_pos):
         if self.machine_confidence and self.show_message:
@@ -260,7 +260,7 @@ class PolygonAnnotation(Annotation):
             self.update_graphics_item()
 
             # Notify that the annotation has been updated
-            self.annotation_updated.emit(self)
+            self.annotationUpdated.emit(self)
 
     def to_dict(self):
         base_dict = super().to_dict()

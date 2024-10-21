@@ -83,7 +83,7 @@ class RectangleAnnotation(Annotation):
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def get_cropped_image(self, downscaling_factor=1.0):
         if self.cropped_image is None:
@@ -169,7 +169,7 @@ class RectangleAnnotation(Annotation):
         self.bottom_right += delta
         self.center_xy = new_center_xy
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, scale_factor: float):
         if self.machine_confidence and self.show_message:
@@ -184,7 +184,7 @@ class RectangleAnnotation(Annotation):
         self.top_left = QPointF(self.center_xy.x() - width / 2, self.center_xy.y() - height / 2)
         self.bottom_right = QPointF(self.center_xy.x() + width / 2, self.center_xy.y() + height / 2)
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def resize(self, handle: str, new_pos: QPointF):
         if self.machine_confidence and self.show_message:
@@ -217,7 +217,7 @@ class RectangleAnnotation(Annotation):
         self._reduce_precision(self.top_left, self.bottom_right)
         self.calculate_centroid()
         self.update_graphics_item()
-        self.annotation_updated.emit(self)
+        self.annotationUpdated.emit(self)
 
     def to_yolo_detection(self, image_width, image_height):
         min_x, min_y, max_x, max_y = self.cropped_bbox

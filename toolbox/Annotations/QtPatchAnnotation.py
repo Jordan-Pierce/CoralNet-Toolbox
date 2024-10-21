@@ -68,7 +68,7 @@ class PatchAnnotation(Annotation):
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def get_cropped_image(self, downscaling_factor=1.0):
         if self.cropped_image is None:
@@ -145,7 +145,7 @@ class PatchAnnotation(Annotation):
         # Update the location, graphic
         self.center_xy = QPointF(round(new_center_xy.x(), 2), round(new_center_xy.y(), 2))
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, size):
         if self.machine_confidence and self.show_message:
@@ -157,7 +157,7 @@ class PatchAnnotation(Annotation):
         # Update the size, graphic
         self.annotation_size = size
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def resize(self, handle: str, new_pos: QPointF):
         pass
