@@ -77,13 +77,12 @@ class SelectTool(Tool):
 
     def detect_resize_handle(self, annotation, position):
         if isinstance(annotation, RectangleAnnotation):
+            buffer = 50
             top_left = annotation.top_left
             bottom_right = annotation.bottom_right
             handles = {
-                "top_left": QRectF(top_left.x() - 5, top_left.y() - 5, 10, 10),
-                "top_right": QRectF(bottom_right.x() - 5, top_left.y() - 5, 10, 10),
-                "bottom_left": QRectF(top_left.x() - 5, bottom_right.y() - 5, 10, 10),
-                "bottom_right": QRectF(bottom_right.x() - 5, bottom_right.y() - 5, 10, 10),
+                "top_left": QRectF(top_left.x() - buffer//2, top_left.y() - buffer//2, buffer, buffer),
+                "bottom_right": QRectF(bottom_right.x() - buffer//2, bottom_right.y() - buffer//2, buffer, buffer),
             }
             for handle, rect in handles.items():
                 if rect.contains(position):
@@ -94,12 +93,6 @@ class SelectTool(Tool):
         if isinstance(annotation, RectangleAnnotation):
             if self.resize_handle == "top_left":
                 annotation.top_left += delta
-            elif self.resize_handle == "top_right":
-                annotation.top_left.setY(annotation.top_left.y() + delta.y())
-                annotation.bottom_right.setX(annotation.bottom_right.x() + delta.x())
-            elif self.resize_handle == "bottom_left":
-                annotation.top_left.setX(annotation.top_left.x() + delta.x())
-                annotation.bottom_right.setY(annotation.bottom_right.y() + delta.y())
             elif self.resize_handle == "bottom_right":
                 annotation.bottom_right += delta
             annotation.calculate_centroid()
