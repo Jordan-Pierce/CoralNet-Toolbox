@@ -227,7 +227,7 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
-    def resize(self, handle, delta):
+    def resize(self, handle, new_pos):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
             return
@@ -241,7 +241,8 @@ class PolygonAnnotation(Annotation):
             num_points = len(self.points)
 
             # Update the selected point
-            self.points[point_index] += delta
+            delta = new_pos - self.points[point_index]
+            self.points[point_index] = new_pos
 
             # Calculate the influence factor for neighboring points
             # The closer a point is to the selected point, the more it's influenced

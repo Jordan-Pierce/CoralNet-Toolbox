@@ -1,11 +1,8 @@
 import warnings
-
 import math
-
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem
-
 from toolbox.Tools.QtTool import Tool
 from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -23,8 +20,10 @@ class SelectTool(Tool):
         super().__init__(annotation_window)
         self.cursor = Qt.PointingHandCursor
         self.resizing = False
+        self.moving = False
         self.resize_handle = None
         self.resize_start_pos = None
+        self.move_start_pos = None
 
     def mousePressEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
@@ -42,46 +41,47 @@ class SelectTool(Tool):
                 annotation_id = item.data(0)
                 annotation = self.annotation_window.annotations_dict.get(annotation_id)
                 if annotation and annotation.contains_point(position):
-                    if isinstance(annotation, RectangleAnnotation) or isinstance(annotation, PolygonAnnotation):
+                    self.annotation_window.select_annotation(annotation)
+                    self.annotation_window.drag_start_pos = position
+
+                    if event.modifiers() & Qt.ControlModifier:
                         self.resize_handle = self.detect_resize_handle(annotation, position)
                         if self.resize_handle:
                             self.resizing = True
                             self.resize_start_pos = position
                             break
-                    self.annotation_window.select_annotation(annotation)
-                    self.annotation_window.drag_start_pos = position
-                    break
+                    else:
+                        self.moving = True
+                        self.move_start_pos = position
+                        break
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
 
-        if self.resizing and self.resize_handle:
-            current_pos = self.annotation_window.mapToScene(event.pos())
-            delta = current_pos - self.resize_start_pos
+        current_pos = self.annotation_window.mapToScene(event.pos())
+
+        if self.resizing and self.resize_handle and event.modifiers() & Qt.ControlModifier:
             if self.annotation_window.selected_annotation is not None:
-                self.resize_annotation(self.annotation_window.selected_annotation, delta)
+                self.resize_annotation(self.annotation_window.selected_annotation, current_pos)
             else:
                 print("Warning: No annotation selected for resizing.")
 
             self.resize_start_pos = current_pos
-            self.resize_annotation(self.annotation_window.selected_annotation, delta)
+            self.resize_annotation(self.annotation_window.selected_annotation, current_pos)
 
-        elif event.buttons() & Qt.LeftButton and self.annotation_window.selected_annotation:
-            current_pos = self.annotation_window.mapToScene(event.pos())
-            if not self.annotation_window.drag_start_pos:
-                self.annotation_window.drag_start_pos = current_pos
+        elif self.moving and event.buttons() & Qt.LeftButton and not event.modifiers() & Qt.ControlModifier:
+            if self.annotation_window.selected_annotation:
+                delta = current_pos - self.move_start_pos
+                new_center = self.annotation_window.selected_annotation.center_xy + delta
 
-            delta = current_pos - self.annotation_window.drag_start_pos
-            new_center = self.annotation_window.selected_annotation.center_xy + delta
-
-            if self.annotation_window.cursorInWindow(current_pos, mapped=True):
-                selected_annotation = self.annotation_window.selected_annotation
-                rasterio_image = self.annotation_window.rasterio_image
-                self.annotation_window.set_annotation_location(selected_annotation.id, new_center)
-                self.annotation_window.selected_annotation.create_cropped_image(rasterio_image)
-                self.annotation_window.main_window.confidence_window.display_cropped_image(selected_annotation)
-                self.annotation_window.drag_start_pos = current_pos
+                if self.annotation_window.cursorInWindow(current_pos, mapped=True):
+                    selected_annotation = self.annotation_window.selected_annotation
+                    rasterio_image = self.annotation_window.rasterio_image
+                    self.annotation_window.set_annotation_location(selected_annotation.id, new_center)
+                    self.annotation_window.selected_annotation.create_cropped_image(rasterio_image)
+                    self.annotation_window.main_window.confidence_window.display_cropped_image(selected_annotation)
+                    self.move_start_pos = current_pos
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
@@ -91,12 +91,14 @@ class SelectTool(Tool):
             self.resizing = False
             self.resize_handle = None
             self.resize_start_pos = None
+        if self.moving:
+            self.moving = False
+            self.move_start_pos = None
         self.annotation_window.drag_start_pos = None
 
-    def detect_resize_handle(self, annotation, position):
-
+    def detect_resize_handle(self, annotation, current_pos):
         if isinstance(annotation, RectangleAnnotation):
-            buffer = 20
+            buffer = 100
             top_left = annotation.top_left
             bottom_right = annotation.bottom_right
             handles = {
@@ -117,12 +119,12 @@ class SelectTool(Tool):
 
         for handle, point in handles.items():
             # Calculate the distance between the clicked position and the point
-            if math.hypot(point.x() - position.x(), point.y() - position.y()) <= buffer:
+            if math.hypot(point.x() - current_pos.x(), point.y() - current_pos.y()) <= buffer:
                 return handle
 
         return None
 
-    def resize_annotation(self, annotation, delta):
+    def resize_annotation(self, annotation, new_pos):
         if annotation is None:
             print("Warning: Attempted to resize a None annotation.")
             return
@@ -131,4 +133,4 @@ class SelectTool(Tool):
             print(f"Warning: Annotation of type {type(annotation)} does not have a resize method.")
             return
 
-        annotation.resize(self.resize_handle, delta)
+        annotation.resize(self.resize_handle, new_pos)

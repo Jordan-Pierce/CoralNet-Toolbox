@@ -186,7 +186,7 @@ class RectangleAnnotation(Annotation):
         self.update_graphics_item()
         self.annotation_updated.emit(self)  # Notify update
 
-    def resize(self, handle: str, delta: QPointF):
+    def resize(self, handle: str, new_pos: QPointF):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
             return
@@ -196,23 +196,23 @@ class RectangleAnnotation(Annotation):
 
         # Resize the annotation
         if handle == "left":
-            self.top_left += QPointF(delta.x(), 0)
+            self.top_left.setX(new_pos.x())
         elif handle == "right":
-            self.bottom_right += QPointF(delta.x(), 0)
+            self.bottom_right.setX(new_pos.x())
         elif handle == "top":
-            self.top_left += QPointF(0, delta.y())
+            self.top_left.setY(new_pos.y())
         elif handle == "bottom":
-            self.bottom_right += QPointF(0, delta.y())
+            self.bottom_right.setY(new_pos.y())
         elif handle == "top_left":
-            self.top_left += delta
+            self.top_left = new_pos
         elif handle == "top_right":
-            self.top_left += QPointF(delta.x(), delta.y().y())
-            self.bottom_right += QPointF(delta.x(), 0)
+            self.top_left.setY(new_pos.y())
+            self.bottom_right.setX(new_pos.x())
         elif handle == "bottom_left":
-            self.top_left += QPointF(0, delta.y())
-            self.bottom_right += QPointF(delta.x(), 0)
+            self.top_left.setX(new_pos.x())
+            self.bottom_right.setY(new_pos.y())
         elif handle == "bottom_right":
-            self.bottom_right += delta
+            self.bottom_right = new_pos
 
         self._reduce_precision(self.top_left, self.bottom_right)
         self.calculate_centroid()

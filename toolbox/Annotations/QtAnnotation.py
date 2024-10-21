@@ -252,7 +252,7 @@ class Annotation(QObject):
     def update_graphics_item(self, crop_image=True):
         pass
 
-    def resize(self, handle: str, delta: QPointF):
+    def resize(self, handle: str, new_pos: QPointF):
         pass
 
     def to_coralnet(self):
