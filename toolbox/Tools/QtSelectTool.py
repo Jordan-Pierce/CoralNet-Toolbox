@@ -28,6 +28,9 @@ class SelectTool(Tool):
 
         self.buffer = 10
 
+        # Listen for the annotationDeleted signal
+        self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
+
     def mousePressEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
@@ -186,3 +189,6 @@ class SelectTool(Tool):
             return
 
         annotation.resize(self.resize_handle, new_pos)
+
+    def clear_resize_handles(self, annotation_id):
+        self.remove_resize_handles()

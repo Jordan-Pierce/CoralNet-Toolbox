@@ -36,6 +36,7 @@ class AnnotationWindow(QGraphicsView):
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     hover_point = pyqtSignal(QPointF)  # Pf3f2
+    annotationDeleted = pyqtSignal(str)  # P4a46
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -446,6 +447,7 @@ class AnnotationWindow(QGraphicsView):
 
     def delete_selected_annotation(self):
         if self.selected_annotation:
+            self.annotationDeleted.emit(self.selected_annotation.id)  # Pf8ca
             self.delete_annotation(self.selected_annotation.id)
             self.selected_annotation = None
             # Clear the confidence window
