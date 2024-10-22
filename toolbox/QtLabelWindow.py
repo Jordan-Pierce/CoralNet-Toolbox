@@ -17,7 +17,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class Label(QWidget):
-    color_changed = pyqtSignal(QColor)
+    colorChanged = pyqtSignal(QColor)
     selected = pyqtSignal(object)  # Signal to emit the selected label
     label_deleted = pyqtSignal(object)  # Signal to emit when the label is deleted
 
@@ -150,7 +150,7 @@ class Label(QWidget):
         if self.color != new_color:
             self.color = new_color
             self.update_color()
-            self.color_changed.emit(new_color)
+            self.colorChanged.emit(new_color)
 
     def update_transparency(self, transparency):
         self.transparency = transparency

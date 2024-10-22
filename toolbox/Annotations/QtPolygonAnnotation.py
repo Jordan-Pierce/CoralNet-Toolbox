@@ -52,7 +52,7 @@ class PolygonAnnotation(Annotation):
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
         self.annotation_size = int(max(max_x - min_x, max_y - min_y))
 
-    def calculate_polygon_area(self):
+    def calculate_area(self):
         n = len(self.points)
         area = 0.0
         for i in range(n):
@@ -62,7 +62,7 @@ class PolygonAnnotation(Annotation):
         area = abs(area) / 2.0
         return area
 
-    def calculate_polygon_perimeter(self):
+    def calculate_perimeter(self):
         n = len(self.points)
         perimeter = 0.0
         for i in range(n):
@@ -103,7 +103,7 @@ class PolygonAnnotation(Annotation):
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def get_cropped_image(self, downscaling_factor=1.0):
         if self.cropped_image is None:
@@ -182,7 +182,7 @@ class PolygonAnnotation(Annotation):
         self.points = [point + delta for point in self.points]
         self.calculate_centroid()
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, delta: float):
         if self.machine_confidence and self.show_message:
@@ -215,16 +215,63 @@ class PolygonAnnotation(Annotation):
 
             # Move the point along the normal vector by the delta amount
             if delta < 1:
-                new_point = QPointF(p1.x() - normal_vector.x() * (1 - delta), p1.y() - normal_vector.y() * (1 - delta))
+                new_point = QPointF(p1.x() - normal_vector.x() * (1 - delta),
+                                    p1.y() - normal_vector.y() * (1 - delta))
             else:
-                new_point = QPointF(p1.x() + normal_vector.x() * (delta - 1), p1.y() + normal_vector.y() * (delta - 1))
+                new_point = QPointF(p1.x() + normal_vector.x() * (delta - 1),
+                                    p1.y() + normal_vector.y() * (delta - 1))
             new_points.append(new_point)
 
         # Update the points
         self.points = new_points
         self.calculate_centroid()
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
+
+    def resize(self, handle, new_pos):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+
+        # Extract the point index from the handle string (e.g., "point_0" -> 0)
+        if handle.startswith("point_"):
+            point_index = int(handle.split("_")[1])
+            num_points = len(self.points)
+
+            # Update the selected point
+            delta = new_pos - self.points[point_index]
+            self.points[point_index] = new_pos
+
+            # Define decay factor (controls how quickly influence diminishes)
+            # Higher values mean faster decay
+            decay_factor = 0.1
+
+            # Update all other points with exponentially decreasing influence
+            for i in range(num_points):
+                if i != point_index:
+                    # Calculate minimum distance considering the circular nature
+                    dist_clockwise = (i - point_index) % num_points
+                    dist_counterclockwise = (point_index - i) % num_points
+                    distance = min(dist_clockwise, dist_counterclockwise)
+
+                    # Calculate influence using exponential decay
+                    influence = math.exp(-decay_factor * distance)
+
+                    # Update point position
+                    self.points[i] += delta * influence
+
+            # Recalculate centroid and bounding box
+            self.calculate_centroid()
+            self.set_cropped_bbox()
+
+            # Update the graphics item
+            self.update_graphics_item()
+
+            # Notify that the annotation has been updated
+            self.annotationUpdated.emit(self)
 
     def to_dict(self):
         base_dict = super().to_dict()

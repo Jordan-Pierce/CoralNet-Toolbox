@@ -35,7 +35,8 @@ class AnnotationWindow(QGraphicsView):
     labelSelected = pyqtSignal(str)  # Signal to emit when the label changes
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
-    hover_point = pyqtSignal(QPointF)  # Pf3f2
+    annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
+    hover_point = pyqtSignal(QPointF)  # Signal to emit when mouse hovers over a point
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -334,8 +335,8 @@ class AnnotationWindow(QGraphicsView):
         annotation.create_graphics_item(self.scene)
         # Connect update signals
         annotation.selected.connect(self.select_annotation)
-        annotation.annotation_deleted.connect(self.delete_annotation)
-        annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
         self.viewport().update()
 
     def load_annotations(self):
@@ -431,8 +432,8 @@ class AnnotationWindow(QGraphicsView):
 
         # Connect update signals
         annotation.selected.connect(self.select_annotation)
-        annotation.annotation_deleted.connect(self.delete_annotation)
-        annotation.annotation_updated.connect(self.main_window.confidence_window.display_cropped_image)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
         self.annotations_dict[annotation.id] = annotation
 
@@ -446,6 +447,7 @@ class AnnotationWindow(QGraphicsView):
 
     def delete_selected_annotation(self):
         if self.selected_annotation:
+            self.annotationDeleted.emit(self.selected_annotation.id)  # Pf8ca
             self.delete_annotation(self.selected_annotation.id)
             self.selected_annotation = None
             # Clear the confidence window

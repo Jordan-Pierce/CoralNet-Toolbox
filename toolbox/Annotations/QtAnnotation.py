@@ -4,7 +4,7 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import pyqtSignal, QObject
+from PyQt5.QtCore import pyqtSignal, QObject, QPointF
 from PyQt5.QtGui import QColor, QImage, QPolygonF
 from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem
 
@@ -19,10 +19,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class Annotation(QObject):
-    color_changed = pyqtSignal(QColor)
     selected = pyqtSignal(object)
-    annotation_deleted = pyqtSignal(object)
-    annotation_updated = pyqtSignal(object)
+    colorChanged = pyqtSignal(QColor)
+    annotationDeleted = pyqtSignal(object)
+    annotationUpdated = pyqtSignal(object)
 
     def __init__(self, short_label_code: str,
                  long_label_code: str,
@@ -74,7 +74,7 @@ class Annotation(QObject):
         self.update_graphics_item()
 
     def delete(self):
-        self.annotation_deleted.emit(self)
+        self.annotationDeleted.emit(self)
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
@@ -250,6 +250,9 @@ class Annotation(QObject):
             self.update_graphics_item(crop_image=False)
 
     def update_graphics_item(self, crop_image=True):
+        pass
+
+    def resize(self, handle: str, new_pos: QPointF):
         pass
 
     def to_coralnet(self):

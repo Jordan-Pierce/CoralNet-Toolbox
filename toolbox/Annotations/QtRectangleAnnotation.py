@@ -51,6 +51,12 @@ class RectangleAnnotation(Annotation):
         self.annotation_size = int(max(self.bottom_right.x() - self.top_left.x(),
                                        self.bottom_right.y() - self.top_left.y()))
 
+    def calculate_area(self):
+        return (self.bottom_right.x() - self.top_left.x()) * (self.bottom_right.y() - self.top_left.y())
+
+    def calculate_perimeter(self):
+        return 2 * (self.bottom_right.x() - self.top_left.x()) + 2 * (self.bottom_right.y() - self.top_left.y())
+
     def contains_point(self, point: QPointF) -> bool:
         return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
                 self.top_left.y() <= point.y() <= self.bottom_right.y())
@@ -83,7 +89,7 @@ class RectangleAnnotation(Annotation):
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def get_cropped_image(self, downscaling_factor=1.0):
         if self.cropped_image is None:
@@ -169,7 +175,7 @@ class RectangleAnnotation(Annotation):
         self.bottom_right += delta
         self.center_xy = new_center_xy
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, scale_factor: float):
         if self.machine_confidence and self.show_message:
@@ -184,7 +190,40 @@ class RectangleAnnotation(Annotation):
         self.top_left = QPointF(self.center_xy.x() - width / 2, self.center_xy.y() - height / 2)
         self.bottom_right = QPointF(self.center_xy.x() + width / 2, self.center_xy.y() + height / 2)
         self.update_graphics_item()
-        self.annotation_updated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)  # Notify update
+
+    def resize(self, handle: str, new_pos: QPointF):
+        if self.machine_confidence and self.show_message:
+            self.show_warning_message()
+            return
+
+        # Clear the machine confidence
+        self.update_user_confidence(self.label)
+
+        # Resize the annotation
+        if handle == "left":
+            self.top_left.setX(new_pos.x())
+        elif handle == "right":
+            self.bottom_right.setX(new_pos.x())
+        elif handle == "top":
+            self.top_left.setY(new_pos.y())
+        elif handle == "bottom":
+            self.bottom_right.setY(new_pos.y())
+        elif handle == "top_left":
+            self.top_left = new_pos
+        elif handle == "top_right":
+            self.top_left.setY(new_pos.y())
+            self.bottom_right.setX(new_pos.x())
+        elif handle == "bottom_left":
+            self.top_left.setX(new_pos.x())
+            self.bottom_right.setY(new_pos.y())
+        elif handle == "bottom_right":
+            self.bottom_right = new_pos
+
+        self._reduce_precision(self.top_left, self.bottom_right)
+        self.calculate_centroid()
+        self.update_graphics_item()
+        self.annotationUpdated.emit(self)
 
     def to_yolo_detection(self, image_width, image_height):
         min_x, min_y, max_x, max_y = self.cropped_bbox

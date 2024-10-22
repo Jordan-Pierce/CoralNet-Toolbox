@@ -1,7 +1,8 @@
 # TODO Later:
 #   - CoralNet tools
 #   - Merge Datasets
-
+#   - Resample polygon to be smoother, uniformly spaced
+#   - Modify the ellipse graphic to be proportional to the size of the annotation
 import traceback
 
 from PyQt5.QtWidgets import QApplication
