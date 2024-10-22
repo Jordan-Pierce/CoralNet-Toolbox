@@ -31,7 +31,6 @@ class PolygonAnnotation(Annotation):
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
-        self.resize_handle = None  # Pb95c
 
         self._reduce_precision(points)
         self.calculate_centroid()
@@ -216,9 +215,11 @@ class PolygonAnnotation(Annotation):
 
             # Move the point along the normal vector by the delta amount
             if delta < 1:
-                new_point = QPointF(p1.x() - normal_vector.x() * (1 - delta), p1.y() - normal_vector.y() * (1 - delta))
+                new_point = QPointF(p1.x() - normal_vector.x() * (1 - delta),
+                                    p1.y() - normal_vector.y() * (1 - delta))
             else:
-                new_point = QPointF(p1.x() + normal_vector.x() * (delta - 1), p1.y() + normal_vector.y() * (delta - 1))
+                new_point = QPointF(p1.x() + normal_vector.x() * (delta - 1),
+                                    p1.y() + normal_vector.y() * (delta - 1))
             new_points.append(new_point)
 
         # Update the points
@@ -244,13 +245,21 @@ class PolygonAnnotation(Annotation):
             delta = new_pos - self.points[point_index]
             self.points[point_index] = new_pos
 
-            # Calculate the influence factor for neighboring points
-            # The closer a point is to the selected point, the more it's influenced
-            for i in range(num_points):
-                if i != point_index:
-                    distance = min((i - point_index) % num_points, (point_index - i) % num_points)
-                    influence = max(0, 1 - distance / (num_points / 2))
-                    self.points[i] += delta * influence
+            # Define the range of influence (how many points on each side to affect)
+            influence_range = 5
+
+            # Update neighboring points within the influence range
+            for offset in range(1, influence_range + 1):
+                # Calculate influence factor (decreases linearly with distance)
+                influence = 1 - (offset / (influence_range + 1))
+
+                # Update point before
+                before_index = (point_index - offset) % num_points
+                self.points[before_index] += delta * influence
+
+                # Update point after
+                after_index = (point_index + offset) % num_points
+                self.points[after_index] += delta * influence
 
             # Recalculate centroid and bounding box
             self.calculate_centroid()

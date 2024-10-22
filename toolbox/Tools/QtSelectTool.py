@@ -26,7 +26,7 @@ class SelectTool(Tool):
         self.move_start_pos = None
         self.resize_handles = []  # List to store resize handles
 
-        self.buffer = 10
+        self.buffer = 20
 
         # Listen for the annotationDeleted signal
         self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
@@ -147,12 +147,18 @@ class SelectTool(Tool):
         else:
             return None
 
-        for handle, point in handles.items():
-            # Calculate the distance between the clicked position and the point
-            if math.hypot(point.x() - current_pos.x(), point.y() - current_pos.y()) <= self.buffer:
-                return handle
+        closest_handle = None
+        min_distance = float('inf')
 
-        return None
+        for handle, point in handles.items():
+            # Calculate the distance from the current position to the handle
+            distance = math.hypot(point.x() - current_pos.x(), point.y() - current_pos.y())
+            # Check if the distance is within the buffer
+            if distance <= self.buffer * 2 and distance < min_distance:
+                closest_handle = handle
+                min_distance = distance
+
+        return closest_handle
 
     def display_resize_handles(self, annotation):
         self.remove_resize_handles()
@@ -164,10 +170,11 @@ class SelectTool(Tool):
             return
 
         for handle, point in handles.items():
-            ellipse = QGraphicsEllipseItem(point.x() - self.buffer//2,
-                                           point.y() - self.buffer//2,
-                                           self.buffer,
-                                           self.buffer)
+            # Create an ellipse that extends outward from the handle
+            ellipse = QGraphicsEllipseItem(point.x() - self.buffer,
+                                           point.y() - self.buffer,
+                                           self.buffer * 2,
+                                           self.buffer * 2)
 
             ellipse.setPen(QPen(annotation.label.color))
             ellipse.setBrush(QBrush(annotation.label.color))
@@ -190,5 +197,5 @@ class SelectTool(Tool):
 
         annotation.resize(self.resize_handle, new_pos)
 
-    def clear_resize_handles(self, annotation_id):
+    def clear_resize_handles(self):
         self.remove_resize_handles()
