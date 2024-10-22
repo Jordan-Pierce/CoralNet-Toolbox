@@ -52,7 +52,7 @@ class PolygonAnnotation(Annotation):
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
         self.annotation_size = int(max(max_x - min_x, max_y - min_y))
 
-    def calculate_polygon_area(self):
+    def calculate_area(self):
         n = len(self.points)
         area = 0.0
         for i in range(n):
@@ -62,7 +62,7 @@ class PolygonAnnotation(Annotation):
         area = abs(area) / 2.0
         return area
 
-    def calculate_polygon_perimeter(self):
+    def calculate_perimeter(self):
         n = len(self.points)
         perimeter = 0.0
         for i in range(n):
@@ -245,21 +245,23 @@ class PolygonAnnotation(Annotation):
             delta = new_pos - self.points[point_index]
             self.points[point_index] = new_pos
 
-            # Define the range of influence (how many points on each side to affect)
-            influence_range = 5
+            # Define decay factor (controls how quickly influence diminishes)
+            # Higher values mean faster decay
+            decay_factor = 0.1
 
-            # Update neighboring points within the influence range
-            for offset in range(1, influence_range + 1):
-                # Calculate influence factor (decreases linearly with distance)
-                influence = 1 - (offset / (influence_range + 1))
+            # Update all other points with exponentially decreasing influence
+            for i in range(num_points):
+                if i != point_index:
+                    # Calculate minimum distance considering the circular nature
+                    dist_clockwise = (i - point_index) % num_points
+                    dist_counterclockwise = (point_index - i) % num_points
+                    distance = min(dist_clockwise, dist_counterclockwise)
 
-                # Update point before
-                before_index = (point_index - offset) % num_points
-                self.points[before_index] += delta * influence
+                    # Calculate influence using exponential decay
+                    influence = math.exp(-decay_factor * distance)
 
-                # Update point after
-                after_index = (point_index + offset) % num_points
-                self.points[after_index] += delta * influence
+                    # Update point position
+                    self.points[i] += delta * influence
 
             # Recalculate centroid and bounding box
             self.calculate_centroid()

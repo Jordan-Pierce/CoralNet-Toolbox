@@ -26,7 +26,7 @@ class SelectTool(Tool):
         self.move_start_pos = None
         self.resize_handles = []  # List to store resize handles
 
-        self.buffer = 20
+        self.buffer = 50
 
         # Listen for the annotationDeleted signal
         self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
@@ -169,12 +169,12 @@ class SelectTool(Tool):
         else:
             return
 
+        handle_size = 10
         for handle, point in handles.items():
-            # Create an ellipse that extends outward from the handle
-            ellipse = QGraphicsEllipseItem(point.x() - self.buffer,
-                                           point.y() - self.buffer,
-                                           self.buffer * 2,
-                                           self.buffer * 2)
+            ellipse = QGraphicsEllipseItem(point.x() - handle_size//2,
+                                           point.y() - handle_size//2,
+                                           handle_size,
+                                           handle_size)
 
             ellipse.setPen(QPen(annotation.label.color))
             ellipse.setBrush(QBrush(annotation.label.color))

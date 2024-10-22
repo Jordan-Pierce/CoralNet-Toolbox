@@ -51,6 +51,12 @@ class RectangleAnnotation(Annotation):
         self.annotation_size = int(max(self.bottom_right.x() - self.top_left.x(),
                                        self.bottom_right.y() - self.top_left.y()))
 
+    def calculate_area(self):
+        return (self.bottom_right.x() - self.top_left.x()) * (self.bottom_right.y() - self.top_left.y())
+
+    def calculate_perimeter(self):
+        return 2 * (self.bottom_right.x() - self.top_left.x()) + 2 * (self.bottom_right.y() - self.top_left.y())
+
     def contains_point(self, point: QPointF) -> bool:
         return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
                 self.top_left.y() <= point.y() <= self.bottom_right.y())
