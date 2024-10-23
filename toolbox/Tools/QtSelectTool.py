@@ -32,6 +32,7 @@ class SelectTool(Tool):
 
         # Listen for the annotation changed signals
         self.annotation_window.annotationSelected.connect(self.annotation_changed)
+        self.annotation_window.annotationSizeChanged.connect(self.annotation_changed)
         self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
 
     def mousePressEvent(self, event: QMouseEvent):

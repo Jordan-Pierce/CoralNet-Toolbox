@@ -2,6 +2,7 @@
 #   - CoralNet tools
 #   - Merge Datasets
 #   - Resample polygon to be smoother, uniformly spaced
+
 import traceback
 
 from PyQt5.QtWidgets import QApplication

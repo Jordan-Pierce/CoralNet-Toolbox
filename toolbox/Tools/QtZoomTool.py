@@ -30,10 +30,6 @@ class ZoomTool(Tool):
         if self.annotation_window.selected_tool in ["select", "patch", "rectangle", "polygon", "sam"]:
             # Update the cursor for the given tool
             self.annotation_window.setCursor(self.annotation_window.tools[self.annotation_window.selected_tool].cursor)
-
-            if self.annotation_window.selected_tool in ['"patch']:
-                # Update the cursor annotation when increasing the size
-                self.annotation_window.toggle_cursor_annotation()
         else:
             # Use the default cursor
             self.annotation_window.setCursor(Qt.ArrowCursor)

@@ -1,6 +1,7 @@
 import warnings
 
 import math
+import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
@@ -11,6 +12,114 @@ from toolbox.Annotations.QtAnnotation import Annotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+def resample_polygon_points(points: list, target_num_points: int = None, target_spacing: float = None) -> list:
+    """
+    Resample points along a polygon to achieve more uniform spacing.
+
+    Args:
+        points: List of QPointF points defining the polygon
+        target_num_points: Desired number of points after resampling (optional)
+        target_spacing: Desired spacing between points in pixels (optional)
+
+    Returns:
+        List of resampled QPointF points
+    """
+    if len(points) < 3:
+        return points.copy()
+
+    # Convert points to numpy array for easier computation
+    points_array = np.array([(p.x(), p.y()) for p in points], dtype=np.float64)
+
+    # Calculate segments and their lengths
+    segments = np.diff(points_array, axis=0)
+    segment_lengths = np.sqrt(np.sum(segments ** 2, axis=1))
+
+    # Find and remove duplicate/very close points
+    EPSILON = 1e-6
+    valid_segments = segment_lengths > EPSILON
+
+    if not np.any(valid_segments):
+        return points.copy()
+
+    # Filter out zero-length segments
+    filtered_points = [points_array[0]]
+    for i, length in enumerate(segment_lengths):
+        if length > EPSILON:
+            filtered_points.append(points_array[i + 1])
+    points_array = np.array(filtered_points)
+
+    # Recalculate segments after filtering
+    segments = np.diff(points_array, axis=0)
+    segment_lengths = np.sqrt(np.sum(segments ** 2, axis=1))
+
+    # Calculate total length including closing segment
+    total_length = np.sum(segment_lengths)
+    last_segment = points_array[0] - points_array[-1]
+    last_segment_length = np.sqrt(np.sum(last_segment ** 2))
+
+    if last_segment_length > EPSILON:
+        total_length += last_segment_length
+
+    # Determine number of points to sample
+    if target_spacing is not None:
+        target_spacing = max(target_spacing, EPSILON)
+        num_points = max(3, int(np.ceil(total_length / target_spacing)))
+    elif target_num_points is not None:
+        num_points = max(3, int(target_num_points))
+    else:
+        num_points = len(filtered_points)
+
+    # Create cumulative length array
+    cumulative_lengths = np.concatenate(([0], np.cumsum(segment_lengths)))
+
+    # Generate evenly spaced points along the perimeter
+    spaces = np.linspace(0, total_length * (1 - EPSILON), num_points, endpoint=False)
+    resampled_points = []
+
+    for space in spaces:
+        try:
+            # Find which segment this point belongs to
+            if space <= cumulative_lengths[-1]:
+                segment_idx = np.searchsorted(cumulative_lengths, space) - 1
+                segment_idx = max(0, min(segment_idx, len(points_array) - 2))
+                start_point = points_array[segment_idx]
+                end_point = points_array[segment_idx + 1]
+                segment_length = segment_lengths[segment_idx]
+                segment_space = space - cumulative_lengths[segment_idx]
+            else:
+                # Handle the closing segment
+                start_point = points_array[-1]
+                end_point = points_array[0]
+                segment_length = last_segment_length
+                segment_space = space - cumulative_lengths[-1]
+
+            # Skip zero-length segments
+            if segment_length <= EPSILON:
+                continue
+
+            # Calculate interpolation factor with bounds checking
+            factor = np.clip(segment_space / segment_length, 0, 1)
+
+            # Interpolate the point
+            new_point = start_point + factor * (end_point - start_point)
+
+            # Ensure point coordinates are finite
+            if np.all(np.isfinite(new_point)):
+                resampled_points.append(QPointF(float(new_point[0]), float(new_point[1])))
+
+        except Exception as e:
+            continue
+
+    # Ensure we have enough points
+    if len(resampled_points) < 3:
+        return points.copy()
+
+    return resampled_points
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -179,8 +288,11 @@ class PolygonAnnotation(Annotation):
         delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2),
                         round(new_center_xy.y() - self.center_xy.y(), 2))
 
-        self.points = [point + delta for point in self.points]
+        new_points = [point + delta for point in self.points]
+
+        self._reduce_precision(new_points)
         self.calculate_centroid()
+        self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
@@ -223,8 +335,9 @@ class PolygonAnnotation(Annotation):
             new_points.append(new_point)
 
         # Update the points
-        self.points = new_points
+        self._reduce_precision(new_points)
         self.calculate_centroid()
+        self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
@@ -238,12 +351,13 @@ class PolygonAnnotation(Annotation):
 
         # Extract the point index from the handle string (e.g., "point_0" -> 0)
         if handle.startswith("point_"):
+            new_points = self.points.copy()
             point_index = int(handle.split("_")[1])
-            num_points = len(self.points)
+            num_points = len(new_points)
 
             # Update the selected point
-            delta = new_pos - self.points[point_index]
-            self.points[point_index] = new_pos
+            delta = new_pos - new_points[point_index]
+            new_points[point_index] = new_pos
 
             # Define decay factor (controls how quickly influence diminishes)
             # Higher values mean faster decay
@@ -261,13 +375,12 @@ class PolygonAnnotation(Annotation):
                     influence = math.exp(-decay_factor * distance)
 
                     # Update point position
-                    self.points[i] += delta * influence
+                    new_points[i] += delta * influence
 
             # Recalculate centroid and bounding box
+            self._reduce_precision(new_points)
             self.calculate_centroid()
             self.set_cropped_bbox()
-
-            # Update the graphics item
             self.update_graphics_item()
 
             # Notify that the annotation has been updated
