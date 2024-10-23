@@ -31,51 +31,6 @@ from toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-# def custom_postprocess(mask, score, logit, resized_image, original_image):
-#     """
-#     Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
-#
-#     Args:
-#         mask (torch.Tensor): Predicted masks with shape (1, 1, H, W).
-#         score (torch.Tensor): Confidence scores for each mask with shape (1, 1).
-#         logit (torch.Tensor): Logits for each mask with shape (1, 1, H, W).
-#         resized_image (np.ndarray): The resized image used for inference.
-#         original_image (np.ndarray): The original, unprocessed image.
-#
-#     Returns:
-#         (Results): Results object containing detection masks, bounding boxes, and other metadata.
-#     """
-#     # Ensure the original image is in the correct format
-#     if not isinstance(original_image, np.ndarray):
-#         original_image = original_image.cpu().numpy()
-#
-#     # Ensure mask has the correct shape (1, 1, H, W)
-#     if mask.ndim != 4 or mask.shape[0] != 1 or mask.shape[1] != 1:
-#         raise ValueError(f"Expected mask to have shape (1, 1, H, W), but got {mask.shape}")
-#
-#     # Scale masks to the original image size
-#     scaled_masks = ops.scale_masks(mask.float(), original_image.shape[:2], padding=False)[0]
-#     scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
-#
-#     # Generate bounding boxes from masks using batched_mask_to_box
-#     pred_bboxes = batched_mask_to_box(scaled_masks).cpu()
-#
-#     # Ensure score and cls have the correct shape
-#     score_ = score.squeeze(1).cpu()  # Remove the extra dimension
-#     cls_ = torch.arange(len(mask), dtype=torch.int32).cpu()
-#
-#     # Combine bounding boxes, scores, and class labels
-#     pred_bboxes = torch.cat([pred_bboxes, score_[:, None], cls_[:, None]], dim=-1).cpu()
-#
-#     # Create names dictionary (placeholder for consistency)
-#     names = dict(enumerate(str(i) for i in range(len(mask))))
-#
-#     # Create Results object
-#     result = Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
-#
-#     return result
-
-
 def custom_postprocess(masks, scores, logits, resized_image, original_image):
     """
     Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
@@ -135,6 +90,7 @@ def custom_postprocess(masks, scores, logits, resized_image, original_image):
 
     return result
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -169,7 +125,8 @@ class SAMDeployModelDialog(QDialog):
 
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 2048)
+        self.imgsz_spinbox.setRange(512, 4096)
+        self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
