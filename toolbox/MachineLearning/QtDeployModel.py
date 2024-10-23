@@ -12,7 +12,7 @@ import numpy as np
 from PyQt5.QtGui import QColor, QShowEvent
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QVBoxLayout,
-                             QLabel, QDialog, QTextEdit, QPushButton, QTabWidget)
+                             QLabel, QDialog, QTextEdit, QPushButton, QTabWidget, QCheckBox)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -36,6 +36,8 @@ class DeployModelDialog(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
+        self.sam_dialog = None
+
         self.setWindowTitle("Deploy Model")
         self.resize(400, 300)
 
@@ -44,6 +46,7 @@ class DeployModelDialog(QDialog):
         self.model_paths = {'classify': None, 'detect': None, 'segment': None}
         self.loaded_models = {'classify': None, 'detect': None, 'segment': None}
         self.class_mappings = {'classify': None, 'detect': None, 'segment': None}
+        self.use_sam = {'classify': None, 'detect': None, 'segment': None}
 
         self.tab_widget = QTabWidget()
         self.layout.addWidget(self.tab_widget)
@@ -102,7 +105,20 @@ class DeployModelDialog(QDialog):
         deactivate_button.clicked.connect(lambda: self.deactivate_model(task))
         layout.addWidget(deactivate_button)
 
+        use_sam_checkbox = QCheckBox("Use SAM for creating Polygons")
+        use_sam_checkbox.stateChanged.connect(lambda: self.is_sam_model_deployed())
+
+        if task == 'classify':
+            use_sam_checkbox.setChecked(False)
+            use_sam_checkbox.setEnabled(False)
+
+        layout.addWidget(use_sam_checkbox)
+
+        # Store the checkbox in the dictionary
+        self.use_sam[task] = use_sam_checkbox
+
         tab.setLayout(layout)
+
         return text_area
 
     def setup_classification_tab(self):
@@ -167,6 +183,17 @@ class DeployModelDialog(QDialog):
             self.get_text_area(task).append("Class mapping file selected")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load class mapping file: {str(e)}")
+
+    def is_sam_model_deployed(self):
+        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+
+        if not self.sam_dialog.loaded_model:
+            # Ensure that the checkbox is not checked
+            self.sender().setChecked(False)
+            QMessageBox.warning(self, "SAM Model", "SAM model not currently deployed")
+            return False
+
+        return True
 
     def load_model(self, task):
         if self.model_paths[task]:
@@ -370,19 +397,29 @@ class DeployModelDialog(QDialog):
                                                iou=self.main_window.get_iou_thresh(),
                                                device=self.main_window.device,
                                                stream=True)
-        # Process the detection results
-        self.process_detection_results(results)
+
+        # Check if the user selected to use SAM
+        if self.use_sam['detect'].isChecked() and self.sam_dialog.loaded_model:
+            # Convert the boxes to SAM masks, process as segmentations
+            results = self.sam_dialog.boxes_to_masks(results)
+            self.process_segmentation_results(results)
+        else:
+            # Process as detections
+            self.process_detection_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
     def process_detection_results(self, results_generator):
+        # Get the class mapping for detection
+        class_mapping = self.class_mappings['detect']
+
         progress_bar = ProgressBar(self, title=f"Making Detection Predictions")
         progress_bar.show()
-        progress_bar.start_progress(1)
 
         for results in results_generator:
+            progress_bar.start_progress(len(results))
             for result in results:
                 try:
                     # Get the image path
@@ -397,8 +434,7 @@ class DeployModelDialog(QDialog):
                     # Determine the short label
                     short_label = 'Review'
                     if conf > self.main_window.get_uncertainty_thresh():
-                        if cls_name in self.class_mappings['detect']:
-                            short_label = self.class_mappings['detect'][cls_name]['short_label_code']
+                        short_label = class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
 
                     # Prepare the annotation data
                     label = self.label_window.get_label_by_short_code(short_label)
@@ -473,7 +509,12 @@ class DeployModelDialog(QDialog):
                                                 device=self.main_window.device,
                                                 stream=True)
 
-        # Process the detection results
+        # Check if the user selected to use SAM
+        if self.use_sam['segment'].isChecked() and self.sam_dialog.loaded_model:
+            # Convert the boxes to SAM masks
+            results = self.sam_dialog.boxes_to_masks(results)
+
+        # Process the segmentation results
         self.process_segmentation_results(results)
 
         QApplication.restoreOverrideCursor()
@@ -481,11 +522,15 @@ class DeployModelDialog(QDialog):
         empty_cache()
 
     def process_segmentation_results(self, results_generator):
+        # If SAM is being used, and there is no class mapping for segmentation, use the detection class mapping
+        class_mapping = self.class_mappings['segment']
+        class_mapping = class_mapping if class_mapping else self.class_mappings['detect']
+
         progress_bar = ProgressBar(self, title=f"Making Segmentation Predictions")
         progress_bar.show()
-        progress_bar.start_progress(1)
 
         for results in results_generator:
+            progress_bar.start_progress(len(results))
             for result in results:
                 try:
                     # Get the image path
@@ -500,8 +545,7 @@ class DeployModelDialog(QDialog):
                     # Determine the short label
                     short_label = 'Review'
                     if conf > self.main_window.get_uncertainty_thresh():
-                        if cls_name in self.class_mappings['segment']:
-                            short_label = self.class_mappings['segment'][cls_name]['short_label_code']
+                        short_label = class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
 
                     # Prepare the annotation data
                     label = self.label_window.get_label_by_short_code(short_label)

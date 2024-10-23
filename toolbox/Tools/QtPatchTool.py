@@ -46,6 +46,10 @@ class PatchTool(Tool):
     def mouseReleaseEvent(self, event: QMouseEvent):
         self.annotation_window.toggle_cursor_annotation()
 
+    def wheelEvent(self, event: QMouseEvent):
+        if event.modifiers() & Qt.ControlModifier:
+            self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
+
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
 
         annotation = PatchAnnotation(scene_pos,

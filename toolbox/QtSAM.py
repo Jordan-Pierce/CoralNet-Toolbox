@@ -27,6 +27,71 @@ from toolbox.QtProgressBar import ProgressBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def custom_postprocess(masks, scores, logits, resized_image, original_image):
+    """
+    Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
+
+    Args:
+        masks (torch.Tensor): Predicted masks with shape (N, 1, H, W).
+        scores (torch.Tensor): Confidence scores for each mask with shape (N, 1).
+        logits (torch.Tensor): Logits for each mask with shape (N, 1, H, W).
+        resized_image (np.ndarray): The resized image used for inference.
+        original_image (np.ndarray): The original, unprocessed image.
+
+    Returns:
+        (Results): Results object containing detection masks, bounding boxes, and other metadata.
+    """
+    # Ensure the original image is in the correct format
+    if not isinstance(original_image, np.ndarray):
+        original_image = original_image.cpu().numpy()
+
+    # Ensure masks have the correct shape (N, 1, H, W)
+    if masks.ndim != 4 or masks.shape[1] != 1:
+        raise ValueError(f"Expected masks to have shape (N, 1, H, W), but got {masks.shape}")
+
+    # Scale masks to the original image size and remove extra dimensions
+    scaled_masks = ops.scale_masks(masks.float(), original_image.shape[:2], padding=False)
+    scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
+
+    # Ensure scaled_masks is 3D (N, H, W)
+    if scaled_masks.ndim == 4:
+        scaled_masks = scaled_masks.squeeze(1)
+
+    # Generate bounding boxes from masks using batched_mask_to_box
+    pred_bboxes = batched_mask_to_box(scaled_masks)
+
+    # Ensure scores has shape (N,) by removing extra dimensions
+    scores = scores.squeeze().cpu()
+    if scores.ndim == 0:  # If only one score, make it a 1D tensor
+        scores = scores.unsqueeze(0)
+
+    # Generate class labels
+    cls = torch.arange(len(masks), dtype=torch.int32).cpu()
+
+    # Ensure all tensors are 2D before concatenating
+    pred_bboxes = pred_bboxes.cpu()
+    if pred_bboxes.ndim == 1:
+        pred_bboxes = pred_bboxes.unsqueeze(0)
+    scores = scores.view(-1, 1)  # Reshape to (N, 1)
+    cls = cls.view(-1, 1)  # Reshape to (N, 1)
+
+    # Combine bounding boxes, scores, and class labels
+    pred_bboxes = torch.cat([pred_bboxes, scores, cls], dim=1)
+
+    # Create names dictionary (placeholder for consistency)
+    names = dict(enumerate(str(i) for i in range(len(masks))))
+
+    # Create Results object
+    result = Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
+
+    return result
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -60,7 +125,8 @@ class SAMDeployModelDialog(QDialog):
 
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 2048)
+        self.imgsz_spinbox.setRange(512, 4096)
+        self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
@@ -232,35 +298,60 @@ class SAMDeployModelDialog(QDialog):
         return resized_image
 
     def set_image(self, image):
-        # Make the cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Show a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Setting Image")
         progress_bar.show()
 
-        if self.predictor is not None:
-            self.original_image = image
-            # Resize the image if the checkbox is checked
-            if self.resize_image_checkbox.isChecked():
-                image = self.resize_image(image)
-            # Set the image in the predictor
-            self.predictor.set_image(image)
-            self.resized_image = image
-        else:
-            QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
+        try:
+            if self.predictor is not None:
+                # Ensure image has correct dimensions (h, w, 3)
+                if len(image.shape) == 2:  # Grayscale image
+                    image = np.stack((image,) * 3, axis=-1)
+                elif len(image.shape) == 3:
+                    if image.shape[2] == 4:  # RGBA image
+                        image = image[..., :3]  # Drop alpha channel
+                    elif image.shape[2] != 3:  # If channels are not last
+                        # Check if channels are first (c, h, w)
+                        if image.shape[0] == 3:
+                            image = np.transpose(image, (1, 2, 0))
+                        elif image.shape[0] == 4:  # RGBA in channels-first format
+                            image = np.transpose(image, (1, 2, 0))[..., :3]
+                        else:
+                            raise ValueError("Image must have 3 or 4 color channels")
+                else:
+                    raise ValueError("Image must be 2D or 3D array")
 
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-        # Reset the cursor
-        QApplication.restoreOverrideCursor()
+                # Save the original image
+                self.original_image = image
+
+                # Resize the image if the checkbox is checked
+                if self.resize_image_checkbox.isChecked():
+                    image = self.resize_image(image)
+
+                # Verify final dimensions
+                if len(image.shape) != 3 or image.shape[2] != 3:
+                    raise ValueError(f"Invalid image dimensions: {image.shape}. Expected (H, W, 3)")
+
+                # Set the image in the predictor
+                self.predictor.set_image(image)
+                self.resized_image = image
+            else:
+                raise Exception("Model not loaded")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error Setting Image", f"Error setting image: {e}")
+
+        finally:
+            # Ensure cleanup happens even if an error occurs
+            progress_bar.stop_progress()
+            progress_bar.close()
+            QApplication.restoreOverrideCursor()
 
     def predict(self, bbox, points, labels):
         if not self.predictor:
-            QMessageBox.critical(self, "Model Not Loaded", "Model not loaded")
+            QMessageBox.critical(self, "Model Not Loaded", "Model not loaded, cannot make predictions")
             return None
         try:
-            #
             point_labels = None
             point_coords = None
             bbox_coords = None
@@ -338,6 +429,78 @@ class SAMDeployModelDialog(QDialog):
 
         return results
 
+    def boxes_to_masks(self, results_generator):
+
+        results_dict = {}
+        for results in results_generator:
+            path = results.path.replace("\\", "/")
+            results_dict[path] = []
+            for i, result in enumerate(results):
+                # Extract the results
+                cls = int(result.boxes.cls.cpu().numpy()[0])
+                cls_name = result.names[cls]
+                conf = float(result.boxes.conf.cpu().numpy()[0])
+                xmin, ymin, xmax, ymax = map(float, result.boxes.xyxy.cpu().numpy()[0])
+                bbox = np.array([xmin, ymin, xmax, ymax])
+                results_dict[path].append((bbox, conf, cls_name))
+
+        for image_path in results_dict:
+            # Convert rasterio image to numpy array
+            image = self.main_window.image_window.rasterio_open(image_path)
+            image = image.read().transpose(1, 2, 0)
+
+            # Set the image
+            self.set_image(image)
+
+            # Calculate scaling factors
+            original_height, original_width = self.original_image.shape[:2]
+            resized_height, resized_width = self.resized_image.shape[:2]
+            scale_x = resized_width / original_width
+            scale_y = resized_height / original_height
+
+            bboxes, scores, cls_names = zip(*results_dict[image_path])
+
+            # Prepare the input
+            input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
+            input_bbox = input_bbox.to(self.main_window.device)
+
+            # Scale the box based on the original image dimensions
+            scaled_bbox = input_bbox.clone().float()  # Cast to float32
+            scaled_bbox[:, 0] *= scale_x
+            scaled_bbox[:, 1] *= scale_y
+            scaled_bbox[:, 2] *= scale_x
+            scaled_bbox[:, 3] *= scale_y
+            bbox_coords = scaled_bbox.long()  # Cast back to int64
+
+            if self.model_path.startswith("sam_"):
+                # Apply the scaled boxes to the predictor
+                bbox_coords = self.predictor.transform.apply_boxes_torch(bbox_coords,
+                                                                         self.resized_image.shape[:2])
+
+            if self.model_path.startswith("sam2"):
+                mask, score, logit = self.predictor.predict(box=bbox_coords,
+                                                            point_coords=None,
+                                                            point_labels=None,
+                                                            multimask_output=False)
+
+                mask = torch.tensor(mask).unsqueeze(0)
+                score = torch.tensor(score).unsqueeze(0)
+                logit = torch.tensor(logit).unsqueeze(0)
+
+            else:
+                mask, score, logit = self.predictor.predict_torch(boxes=bbox_coords,
+                                                                  point_coords=None,
+                                                                  point_labels=None,
+                                                                  multimask_output=False)
+
+            # Post-process the results
+            sam_results = custom_postprocess(mask, score, logit, self.resized_image, self.original_image)
+            sam_results.boxes = results.boxes
+            sam_results.names = results.names
+            sam_results.path = image_path
+
+            yield sam_results
+
     def deactivate_model(self):
         self.loaded_model = None
         self.predictor = None
@@ -349,53 +512,3 @@ class SAMDeployModelDialog(QDialog):
         self.main_window.untoggle_all_tools()
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self, "Model Deactivated", "Model deactivated")
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Functions
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-def custom_postprocess(mask, score, logit, resized_image, original_image):
-    """
-    Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
-
-    Args:
-        mask (torch.Tensor): Predicted masks with shape (1, 1, H, W).
-        score (torch.Tensor): Confidence scores for each mask with shape (1, 1).
-        logit (torch.Tensor): Logits for each mask with shape (1, 1, H, W).
-        resized_image (np.ndarray): The resized image used for inference.
-        original_image (np.ndarray): The original, unprocessed image.
-
-    Returns:
-        (Results): Results object containing detection masks, bounding boxes, and other metadata.
-    """
-    # Ensure the original image is in the correct format
-    if not isinstance(original_image, np.ndarray):
-        original_image = original_image.cpu().numpy()
-
-    # Ensure mask has the correct shape (1, 1, H, W)
-    if mask.ndim != 4 or mask.shape[0] != 1 or mask.shape[1] != 1:
-        raise ValueError(f"Expected mask to have shape (1, 1, H, W), but got {mask.shape}")
-
-    # Scale masks to the original image size
-    scaled_masks = ops.scale_masks(mask.float(), original_image.shape[:2], padding=False)[0]
-    scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
-
-    # Generate bounding boxes from masks using batched_mask_to_box
-    pred_bboxes = batched_mask_to_box(scaled_masks).cpu()
-
-    # Ensure score and cls have the correct shape
-    score_ = score.squeeze(1).cpu()  # Remove the extra dimension
-    cls_ = torch.arange(len(mask), dtype=torch.int32).cpu()
-
-    # Combine bounding boxes, scores, and class labels
-    pred_bboxes = torch.cat([pred_bboxes, score_[:, None], cls_[:, None]], dim=-1).cpu()
-
-    # Create names dictionary (placeholder for consistency)
-    names = dict(enumerate(str(i) for i in range(len(mask))))
-
-    # Create Results object
-    result = Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
-
-    return result
