@@ -28,7 +28,10 @@ class SelectTool(Tool):
 
         self.buffer = 50
 
-        # Listen for the annotationDeleted signal
+        self.selected_annotation = None
+
+        # Listen for the annotation changed signals
+        self.annotation_window.annotationSelected.connect(self.annotation_changed)
         self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
 
     def mousePressEvent(self, event: QMouseEvent):
@@ -45,13 +48,13 @@ class SelectTool(Tool):
 
             for item in all_items:
                 annotation_id = item.data(0)
-                annotation = self.annotation_window.annotations_dict.get(annotation_id)
-                if annotation and annotation.contains_point(position):
-                    self.annotation_window.select_annotation(annotation)
+                self.selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
+                if self.selected_annotation and self.selected_annotation.contains_point(position):
+                    self.annotation_window.select_annotation(self.selected_annotation)
                     self.annotation_window.drag_start_pos = position
 
                     if event.modifiers() & Qt.ControlModifier:
-                        self.resize_handle = self.detect_resize_handle(annotation, position)
+                        self.resize_handle = self.detect_resize_handle(self.selected_annotation, position)
                         if self.resize_handle:
                             self.resizing = True
                             self.resize_start_pos = position
@@ -69,9 +72,9 @@ class SelectTool(Tool):
 
         if self.resizing and self.resize_handle and event.modifiers() & Qt.ControlModifier:
             if self.annotation_window.selected_annotation is not None:
-                annotation = self.annotation_window.selected_annotation
-                self.resize_annotation(annotation, current_pos)
-                self.display_resize_handles(annotation)
+                self.selected_annotation = self.annotation_window.selected_annotation
+                self.resize_annotation(self.selected_annotation, current_pos)
+                self.display_resize_handles(self.selected_annotation)
 
             self.resize_start_pos = current_pos
             self.resize_annotation(self.annotation_window.selected_annotation, current_pos)
@@ -93,13 +96,13 @@ class SelectTool(Tool):
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
 
-        annotation = self.annotation_window.selected_annotation
+        self.selected_annotation = self.annotation_window.selected_annotation
 
         if self.resizing:
             self.resizing = False
             self.resize_handle = None
             self.resize_start_pos = None
-            self.display_resize_handles(annotation)
+            self.display_resize_handles(self.selected_annotation)
         if self.moving:
             self.moving = False
             self.move_start_pos = None
@@ -109,9 +112,9 @@ class SelectTool(Tool):
         if self.annotation_window.selected_annotation is None:
             return
 
-        annotation = self.annotation_window.selected_annotation
+        self.selected_annotation = self.annotation_window.selected_annotation
         if event.modifiers() & Qt.ControlModifier:
-            self.display_resize_handles(annotation)
+            self.display_resize_handles(self.selected_annotation)
 
     def keyReleaseEvent(self, event):
         if self.annotation_window.selected_annotation is None:
@@ -119,6 +122,11 @@ class SelectTool(Tool):
 
         if not event.modifiers() & Qt.ControlModifier:
             self.remove_resize_handles()
+
+    def annotation_changed(self, annotation_id):
+        # Clear the resize handles if the selected annotation changed
+        # via clicking or cycling through the annotations
+        self.clear_resize_handles()
 
     def get_rectangle_handles(self, annotation):
         top_left = annotation.top_left

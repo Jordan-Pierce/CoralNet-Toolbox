@@ -66,8 +66,8 @@ class MainWindow(QMainWindow):
         self.io_dialog = IODialog(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
-        self.iou_thresh = 0.25
-        self.uncertainty_thresh = 0.50
+        self.iou_thresh = 0.70
+        self.uncertainty_thresh = 0.30
 
         self.import_dataset_dialog = ImportDatasetDialog(self)
         self.export_dataset_dialog = ExportDatasetDialog(self)
@@ -393,7 +393,7 @@ class MainWindow(QMainWindow):
         # Add widgets to status bar layout
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
-        self.status_bar_layout.addWidget(self.view_dimensions_label)  # Add view dimensions label to status bar layout
+        self.status_bar_layout.addWidget(self.view_dimensions_label)
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
