@@ -76,7 +76,7 @@ conda activate coralnet-toolbox
 
 ### Install
 
-Once this has finished, install `toolbox`:
+Once this has finished, install the `toolbox`:
 ```bash
 # cmd
 
@@ -84,7 +84,7 @@ Once this has finished, install `toolbox`:
 pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
 ```
 
-## CUDA
+### CUDA
 
 If you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you 
 need, and then install the corresponding versions of `torch` and `torchvision`:
@@ -101,9 +101,18 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the 
 `toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon, 
-and if you're using a Mac with `Metal`, you should see an `🍎` icon.
+and if you're using a Mac with `Metal`, you should see an `🍎` icon (click on the icon to see the device information).
 
 See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
+
+### Run
+Finally, you can run the `toolbox` from the command line:
+```bash
+# cmd
+
+# Run
+coralnet-toolbox
+```
 
 ## GitHub Repository
 
@@ -119,6 +128,9 @@ cd CoralNet-Toolbox
 
 # Install the latest
 pip install -e .
+
+# Install CUDA requirements
+...
 
 # Run
 coralnet-toolbox
