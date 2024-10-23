@@ -7,7 +7,8 @@
 The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on
 [CoralNet](https://coralnet.ucsd.edu/). It uses ✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a 
 base, which is an open-source library for computer vision and deep learning built in `PyTorch`. For more information on
-their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). It also uses [`SAM`](https://github.com/facebookresearch/segment-anything) and [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM) for polygon creation.
+their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). It also uses [`SAM`](https://github.com/facebookresearch/segment-anything), [`SAM2`](https://github.com/facebookresearch/sam2) 
+and [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM) for polygon creation.
 
 ## Quick Start
 
@@ -36,18 +37,20 @@ Enhance your CoralNet experience with these tools:
 - 📥 Download: Retrieve source data from CoralNet 
 - 📤 Upload: Add images and annotations to CoralNet
 - ✏️ Annotate: Create patches manually or from annotations  
-- 👁️ Visualize: See points / patches on images  
-- 🧩 Patches: Create patches (points)  
+- 👁️ Visualize: See Patches, Rectangles, and Polygons on images  
 - 📍  Sample: Sample patches using various methods (Uniform, Random, Stratified)  
+- 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks) using freehand or automatic methods
-- 🦾 SAM: Use [`SAM`](https://github.com/facebookresearch/segment-anything) or [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM) to create polygons
-- 🧠 Train: Build local patch-based classifiers  
+- 🦾 SAM: Use [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), [`SAM2'](https://github.com/facebookresearch/sam2) to create polygons
+- 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
 - 🚀 Optimize: Productionize models for faster inferencing
-- 📦 Toolshed: Access tools from the old repository
+- ⚙️ Batch Inference: Perform predictions on multiple images, automatically
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
+- 📸 YOLO: Import and Export YOLO datasets for machine learning
+- 📦 Toolshed: Access tools from the old repository
 
 <details open>
   <summary><h2><b>Watch the Video Demos</b></h2></summary>
@@ -70,8 +73,20 @@ It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 conda create --name coralnet-toolbox python=3.10 -y
 conda activate coralnet-toolbox
 ```
-### CUDA
-Once this has finished, if you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you 
+
+### Install
+
+Once this has finished, install `toolbox`:
+```bash
+# cmd
+
+# Install
+pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
+```
+
+## CUDA
+
+If you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you 
 need, and then install the corresponding versions of `torch` and `torchvision`:
 ```bash
 # cmd
@@ -83,24 +98,12 @@ conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
 # Example for torch w/ CUDA 11.8
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118     
 ```
+
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the 
 `toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon, 
 and if you're using a Mac with `Metal`, you should see an `🍎` icon.
 
 See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
-
-### Install
-
-Finally, install and run the `toolbox`:
-```bash
-# cmd
-
-# Install
-pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
-
-# Run
-coralnet-toolbox
-```
 
 ## GitHub Repository
 

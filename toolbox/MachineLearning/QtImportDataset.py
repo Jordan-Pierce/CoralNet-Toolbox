@@ -35,7 +35,7 @@ class ImportDatasetDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("Import Dataset")
-        self.setGeometry(100, 100, 500, 300)
+        self.resize(500, 300)
 
         self.init_ui()
 
@@ -87,6 +87,7 @@ class ImportDatasetDialog(QDialog):
         self.browse_output_button.clicked.connect(self.browse_output_dir)
 
         self.output_folder_name = QLineEdit("")
+        self.output_folder_name.setPlaceholderText("data")
 
         output_layout.addWidget(QLabel("Directory:"), 0, 0)
         output_layout.addWidget(self.output_dir_label, 0, 1)
@@ -147,57 +148,67 @@ class ImportDatasetDialog(QDialog):
                                 "Please select a data.yaml file.")
             return
 
+
+        output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
+        os.makedirs(f"{output_folder}/images", exist_ok=True)
+
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        with open(self.yaml_path_label.text(), 'r') as file:
+            data = yaml.safe_load(file)
+
+        # Get the paths for train, valid, and test images
+        dir_path = os.path.dirname(self.yaml_path_label.text())
+        class_names = data.get('names', [])
+
+        # Collect all images from the train, valid, and test folders
+        image_paths = glob.glob(f"{dir_path}/**/images/*.*", recursive=True)
+        label_paths = glob.glob(f"{dir_path}/**/labels/*.txt", recursive=True)
+
+        if not image_paths or not label_paths:
+            QMessageBox.warning(self,
+                                "No Images or Labels Found",
+                                "No images or labels were found in the specified directories.")
+            return
+
+        # Check that each label file has a corresponding image file
+        image_label_paths = {}
+
+        for label_path in label_paths:
+            # Create the image path from the label path
+            src_image_path = label_path.replace('labels', 'images').replace('.txt', '.jpg')
+            if src_image_path in image_paths:
+                # Copy the image to the output folder
+                image_path = f"{output_folder}/images/{os.path.basename(src_image_path)}"
+                shutil.copy(src_image_path, image_path)
+                # Reformat paths
+                label_path = label_path.replace("\\", "/")
+                image_path = image_path.replace("\\", "/")
+                # Add to the dict, and add the image to the image window
+                image_label_paths[image_path] = label_path
+                self.main_window.image_window.add_image(image_path)
+
+        # Update filtered images
+        self.main_window.image_window.filter_images()
+        # Set the last image as the current image
+        current_image = self.main_window.image_window.image_paths[-1]
+        self.main_window.image_window.load_image_by_path(current_image)
+
+        # Determine the annotation type based on selected radio button
+        if self.object_detection_radio.isChecked():
+            annotation_type = 'RectangleAnnotation'
+        elif self.instance_segmentation_radio.isChecked():
+            annotation_type = 'PolygonAnnotation'
+        else:
+            raise ValueError("No annotation type selected")
+
+        # Process the annotations based on the selected type
+        progress_bar = ProgressBar(self, title=f"Importing YOLO Dataset")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_label_paths))
+
         try:
-            output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
-            os.makedirs(f"{output_folder}/images", exist_ok=True)
-
-            # Make cursor busy
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-
-            with open(self.yaml_path_label.text(), 'r') as file:
-                data = yaml.safe_load(file)
-
-            # Get the paths for train, valid, and test images
-            dir_path = os.path.dirname(self.yaml_path_label.text())
-            train_path = data.get('train', '')
-            valid_path = data.get('val', '')
-            test_path = data.get('test', '')
-            class_names = data.get('names', [])
-
-            # Collect all images from the train, valid, and test folders
-            image_paths = glob.glob(f"{dir_path}/**/images/*.*", recursive=True)
-            image_paths = [path.replace("\\", "/") for path in image_paths]
-
-            label_paths = glob.glob(f"{dir_path}/**/labels/*.txt", recursive=True)
-            label_paths = [path.replace("\\", "/") for path in label_paths]
-
-            # Check that each label file has a corresponding image file
-            image_label_paths = {}
-
-            for label_path in label_paths:
-                image_path = label_path.replace('labels', 'images').replace('.txt', '.jpg')
-                if image_path in image_paths:
-                    dst_image_path = os.path.join(f"{output_folder}/images", os.path.basename(image_path))
-                    shutil.copy(image_path, dst_image_path)
-                    image_label_paths[dst_image_path] = label_path
-                    self.main_window.image_window.add_image(dst_image_path)
-
-            # Update filtered images
-            self.main_window.image_window.filter_images()
-
-            # Determine the annotation type based on selected radio button
-            if self.object_detection_radio.isChecked():
-                annotation_type = 'RectangleAnnotation'
-            elif self.instance_segmentation_radio.isChecked():
-                annotation_type = 'PolygonAnnotation'
-            else:
-                raise ValueError("No annotation type selected")
-
-            # Process the annotations based on the selected type
-            progress_bar = ProgressBar(self, title=f"Importing YOLO Dataset")
-            progress_bar.show()
-            progress_bar.start_progress(len(image_label_paths))
-
             annotations = []
 
             for image_path, label_path in image_label_paths.items():
@@ -286,29 +297,29 @@ class ImportDatasetDialog(QDialog):
                     progress_bar.update_progress()
 
                 # Update the image window's image dict
-                self.image_window.update_image_annotations(image_path)
+                self.main_window.image_window.update_image_annotations(image_path)
 
             # Load the annotations for current image
             self.annotation_window.load_annotations()
 
-            # Stop the progress bar
-            progress_bar.stop_progress()
-            progress_bar.close()
-
             # Export annotations as JSON in output
             self.export_annotations(annotations, output_folder)
-
-            # Make cursor normal
-            QApplication.restoreOverrideCursor()
-
-            QMessageBox.information(self,
-                                    "Dataset Imported",
-                                    "Dataset has been successfully imported.")
 
         except Exception as e:
             QMessageBox.warning(self,
                                 "Error Importing Dataset",
                                 f"An error occurred while importing the dataset: {str(e)}")
+
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+
+        QMessageBox.information(self,
+                                "Dataset Imported",
+                                "Dataset has been successfully imported.")
 
     def export_annotations(self, annotations, output_dir):
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -318,36 +329,43 @@ class ImportDatasetDialog(QDialog):
         progress_bar.start_progress(len(annotations))
 
         export_dict = {}
-        for annotation in annotations:
-            image_path = annotation.image_path
-            if image_path not in export_dict:
-                export_dict[image_path] = []
 
-            # Convert annotation to dictionary based on its type
-            if isinstance(annotation, PatchAnnotation):
-                annotation_dict = {
-                    'type': 'PatchAnnotation',
-                    **annotation.to_dict()
-                }
-            elif isinstance(annotation, PolygonAnnotation):
-                annotation_dict = {
-                    'type': 'PolygonAnnotation',
-                    **annotation.to_dict()
-                }
-            elif isinstance(annotation, RectangleAnnotation):
-                annotation_dict = {
-                    'type': 'RectangleAnnotation',
-                    **annotation.to_dict()
-                }
-            else:
-                raise ValueError(f"Unknown annotation type: {type(annotation)}")
+        try:
+            for annotation in annotations:
+                image_path = annotation.image_path
+                if image_path not in export_dict:
+                    export_dict[image_path] = []
 
-            export_dict[image_path].append(annotation_dict)
-            progress_bar.update_progress()
+                # Convert annotation to dictionary based on its type
+                if isinstance(annotation, PatchAnnotation):
+                    annotation_dict = {
+                        'type': 'PatchAnnotation',
+                        **annotation.to_dict()
+                    }
+                elif isinstance(annotation, PolygonAnnotation):
+                    annotation_dict = {
+                        'type': 'PolygonAnnotation',
+                        **annotation.to_dict()
+                    }
+                elif isinstance(annotation, RectangleAnnotation):
+                    annotation_dict = {
+                        'type': 'RectangleAnnotation',
+                        **annotation.to_dict()
+                    }
+                else:
+                    raise ValueError(f"Unknown annotation type: {type(annotation)}")
 
-        with open(f"{output_dir}/annotations.json", 'w') as file:
-            json.dump(export_dict, file, indent=4)
-            file.flush()
+                export_dict[image_path].append(annotation_dict)
+                progress_bar.update_progress()
+
+            with open(f"{output_dir}/annotations.json", 'w') as file:
+                json.dump(export_dict, file, indent=4)
+                file.flush()
+
+        except Exception as e:
+            QMessageBox.warning(self,
+                                "Error Exporting Annotations",
+                                f"An error occurred while exporting the annotations: {str(e)}")
 
         progress_bar.stop_progress()
         progress_bar.close()
