@@ -42,7 +42,7 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks) using freehand or automatic methods
-- 🦾 SAM: Use [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), [`SAM2'](https://github.com/facebookresearch/sam2) to create polygons
+- 🦾 SAM: Use [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), [`SAM2`](https://github.com/facebookresearch/sam2) to create polygons
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
