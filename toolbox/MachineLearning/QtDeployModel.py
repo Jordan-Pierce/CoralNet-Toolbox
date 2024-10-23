@@ -399,7 +399,7 @@ class DeployModelDialog(QDialog):
                                                stream=True)
 
         # Check if the user selected to use SAM
-        if self.use_sam['detect'].isChecked():
+        if self.use_sam['detect'].isChecked() and self.sam_dialog.loaded_model:
             # Convert the boxes to SAM masks, process as segmentations
             results = self.sam_dialog.boxes_to_masks(results)
             self.process_segmentation_results(results)
@@ -510,7 +510,7 @@ class DeployModelDialog(QDialog):
                                                 stream=True)
 
         # Check if the user selected to use SAM
-        if self.use_sam['segment'].isChecked():
+        if self.use_sam['segment'].isChecked() and self.sam_dialog.loaded_model:
             # Convert the boxes to SAM masks
             results = self.sam_dialog.boxes_to_masks(results)
 
