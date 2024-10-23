@@ -35,15 +35,15 @@ class MergeDatasetsDialog(QDialog):
         self.tab_segmentation = QWidget()
 
         self.tabs.addTab(self.tab_classification, "Image Classification")
-        self.tabs.addTab(self.tab_detection, "Object Detection")
-        self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
+        # self.tabs.addTab(self.tab_detection, "Object Detection")
+        # self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
 
         self.layout.addWidget(self.tabs)
 
         # Setup tabs
         self.setup_tab(self.tab_classification, "classification")
-        self.setup_tab(self.tab_detection, "detection")
-        self.setup_tab(self.tab_segmentation, "segmentation")
+        # self.setup_tab(self.tab_detection, "detection")
+        # self.setup_tab(self.tab_segmentation, "segmentation")
 
         # OK and Cancel Buttons
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
