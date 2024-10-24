@@ -124,17 +124,18 @@ class SAMDeployModelDialog(QDialog):
         # Custom parameters section
         self.form_layout = QFormLayout()
 
+        # Add resize image dropdown (True / False)
+        self.resize_image_dropdown = QComboBox()
+        self.resize_image_dropdown.addItems(["True", "False"])
+        self.resize_image_dropdown.setCurrentIndex(0)
+        self.form_layout.addRow("Resize Image:", self.resize_image_dropdown)
+
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 4096)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
-
-        # Add resize image checkbox
-        self.resize_image_checkbox = QCheckBox("Resize Image")
-        self.resize_image_checkbox.setChecked(True)
-        self.form_layout.addRow("Resize Image:", self.resize_image_checkbox)
 
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -326,7 +327,7 @@ class SAMDeployModelDialog(QDialog):
                 self.original_image = image
 
                 # Resize the image if the checkbox is checked
-                if self.resize_image_checkbox.isChecked():
+                if self.resize_image_dropdown.currentText() == "True":
                     image = self.resize_image(image)
 
                 # Verify final dimensions

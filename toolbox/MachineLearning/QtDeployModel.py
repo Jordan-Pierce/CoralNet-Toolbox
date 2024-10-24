@@ -65,9 +65,9 @@ class DeployModelDialog(QDialog):
 
         # Task-specific status bars
         self.status_bars = {
-            'classify': QLabel("No classification model loaded"),
-            'detect': QLabel("No detection model loaded"),
-            'segment': QLabel("No segmentation model loaded")
+            'classify': QLabel("No model loaded"),
+            'detect': QLabel("No model loaded"),
+            'segment': QLabel("No model loaded")
         }
         self.layout.addWidget(self.status_bars['classify'])
         self.layout.addWidget(self.status_bars['detect'])
@@ -196,48 +196,37 @@ class DeployModelDialog(QDialog):
         return True
 
     def load_model(self, task):
-        if self.model_paths[task]:
-            try:
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                self.loaded_models[task] = YOLO(self.model_paths[task], task=task)
-                self.loaded_models[task](np.zeros((224, 224, 3), dtype=np.uint8))
+        if not self.model_paths[task]:
+            QMessageBox.warning(self, "Warning", f"No {task} model file selected")
+            return
 
-                # Check if class_mapping.json exists
-                if not self.class_mappings[task]:
-                    reply = QMessageBox.question(self,
-                                                 'No Class Mapping Found',
-                                                 'Do you want to create generic labels automatically?',
-                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                    if reply == QMessageBox.Yes:
-                        self.create_generic_labels(task)
-                    else:
-                        self.check_and_display_class_names(task)
-                        QMessageBox.information(self,
-                                                "Model Loaded",
-                                                f"{task.capitalize()} model loaded successfully.")
-                        return
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            self.loaded_models[task] = YOLO(self.model_paths[task], task=task)
+            self.loaded_models[task](np.zeros((224, 224, 3), dtype=np.uint8))
 
-                try:
-                    self.add_labels_to_label_window(task)
-                except Exception as e:
-                    QMessageBox.critical(self,
-                                         "Error",
-                                         f"Failed to add labels: {str(e)}")
-
-                QMessageBox.information(self,
-                                        "Model Loaded",
-                                        f"{task.capitalize()} model loaded successfully.")
+            if not self.class_mappings[task]:
+                self.handle_missing_class_mapping(task)
+            else:
+                self.add_labels_to_label_window(task)
                 self.check_and_display_class_names(task)
-            except Exception as e:
-                QMessageBox.critical(self,
-                                     "Error",
-                                     f"Failed to load {task} model: {str(e)}")
-            finally:
-                QApplication.restoreOverrideCursor()
+                QMessageBox.information(self, "Model Loaded", f"{task.capitalize()} model loaded successfully.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load {task} model: {str(e)}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def handle_missing_class_mapping(self, task):
+        reply = QMessageBox.question(self,
+                                     'No Class Mapping Found',
+                                     'Do you want to create generic labels automatically?',
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.create_generic_labels(task)
         else:
-            QMessageBox.warning(self,
-                                "Warning",
-                                f"No {task} model file selected")
+            self.check_and_display_class_names(task)
+            QMessageBox.information(self, "Model Loaded", f"{task.capitalize()} model loaded successfully.")
 
     def add_labels_to_label_window(self, task):
         if self.class_mappings[task]:

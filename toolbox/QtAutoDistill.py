@@ -1,7 +1,4 @@
 import warnings
-
-from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
-
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
@@ -11,11 +8,12 @@ import torch
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox, QLineEdit)
+                             QComboBox, QMessageBox, QApplication, QLineEdit)
 
 from torch.cuda import empty_cache
-from ultralytics.utils import ops
 from autodistill.detection import CaptionOntology
+
+from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
 
@@ -33,16 +31,12 @@ class AutoDistillDeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("AutoDistill Deploy Model")
-        self.resize(300, 300)
+        self.resize(300, 250)
 
         self.imgsz = 1024
         self.conf = 0.25
-        self.model_path = None
         self.loaded_model = None
         self.ontology = None
-
-        self.original_image = None
-        self.resized_image = None
 
         # Main layout
         self.main_layout = QVBoxLayout(self)
@@ -55,16 +49,27 @@ class AutoDistillDeployModelDialog(QDialog):
         # Ontology mapping form
         self.ontology_layout = QVBoxLayout()
         self.ontology_pairs = []  # To keep track of added pairs
-        self.add_ontology_pair()  # Add the first pair
 
+        # Add and remove buttons
+        add_remove_layout = QHBoxLayout()
+        self.remove_button = QPushButton("Remove")
+        self.remove_button.clicked.connect(self.remove_ontology_pair)
+        add_remove_layout.addWidget(self.remove_button)
         self.add_button = QPushButton("Add")
         self.add_button.clicked.connect(self.add_ontology_pair)
-        self.ontology_layout.addWidget(self.add_button)
+        add_remove_layout.addWidget(self.add_button)
+        self.ontology_layout.addLayout(add_remove_layout)
 
         self.main_layout.addLayout(self.ontology_layout)
 
         # Custom parameters section
         self.form_layout = QFormLayout()
+
+        # Add resize image dropdown (True / False)
+        self.resize_image_dropdown = QComboBox()
+        self.resize_image_dropdown.addItems(["True", "False"])
+        self.resize_image_dropdown.setCurrentIndex(0)
+        self.form_layout.addRow("Resize Image:", self.resize_image_dropdown)
 
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
@@ -73,10 +78,11 @@ class AutoDistillDeployModelDialog(QDialog):
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
-        # Add resize image checkbox
-        self.resize_image_checkbox = QCheckBox("Resize Image")
-        self.resize_image_checkbox.setChecked(True)
-        self.form_layout.addRow("Resize Image:", self.resize_image_checkbox)
+        # Add use SAM dropdown (True / False)
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False"])
+        self.use_sam_dropdown.setCurrentIndex(1)
+        self.form_layout.addRow("Use SAM:", self.use_sam_dropdown)
 
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -144,19 +150,15 @@ class AutoDistillDeployModelDialog(QDialog):
         self.ontology_pairs.append((text_input, label_dropdown))
         self.ontology_layout.insertLayout(self.ontology_layout.count() - 1, pair_layout)
 
-    def resize_image(self, image):
-        # Get the current image size
-        imgsz = self.imgsz_spinbox.value()
-        # Determine the target shape based on the long side
-        h, w = image.shape[:2]
-        if h > w:
-            target_shape = (imgsz, int(w * (imgsz / h)))
-        else:
-            target_shape = (int(h * (imgsz / w)), imgsz)
+    def remove_ontology_pair(self):
+        if len(self.ontology_pairs) > 1:
+            pair = self.ontology_pairs.pop()
+            pair[0].deleteLater()
+            pair[1].deleteLater()
 
-        # Use scale_image to resize and pad the image
-        resized_image = ops.scale_image(image, target_shape)
-        return resized_image
+            # Remove the layout
+            item = self.ontology_layout.itemAt(self.ontology_layout.count() - 2)
+            item.layout().deleteLater()
 
     def load_model(self):
         try:
@@ -166,6 +168,7 @@ class AutoDistillDeployModelDialog(QDialog):
                 if text_input.text() != "":
                     ontology_mapping[text_input.text()] = label_dropdown.currentText()
 
+            # Set the ontology
             self.ontology = CaptionOntology(ontology_mapping)
 
             # Threshold for confidence
@@ -182,6 +185,7 @@ class AutoDistillDeployModelDialog(QDialog):
                                                   box_threshold=conf,
                                                   text_threshold=conf)
 
+            self.status_bar.setText(f"Model loaded: {model_name}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
@@ -199,7 +203,8 @@ class AutoDistillDeployModelDialog(QDialog):
             image_paths = [self.annotation_window.current_image_path]
 
         for image_path in image_paths:
-            results = self.loaded_model.predict(image_path)
+            # Predict the image, process the results
+            results = self.loaded_model.predict(image_path).with_nms(self.main_window.get_iou_thresh())
             self.process_results(image_path, results)
 
         QApplication.restoreOverrideCursor()
@@ -277,9 +282,6 @@ class AutoDistillDeployModelDialog(QDialog):
 
     def deactivate_model(self):
         self.loaded_model = None
-        self.model_path = None
-        self.original_image = None
-        self.resized_image = None
         gc.collect()
         torch.cuda.empty_cache()
         self.main_window.untoggle_all_tools()
