@@ -6,7 +6,7 @@ import warnings
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
 from PyQt5.QtWidgets import (QFileDialog, QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QColorDialog, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication)
+                             QColorDialog, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication, QSizePolicy)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -21,19 +21,23 @@ class Label(QWidget):
     selected = pyqtSignal(object)  # Signal to emit the selected label
     label_deleted = pyqtSignal(object)  # Signal to emit when the label is deleted
 
-    def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None, fixed_width=80):
+    def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None):
         super().__init__()
 
         self.id = str(uuid.uuid4()) if label_id is None else label_id
         self.short_label_code = short_label_code
         self.long_label_code = long_label_code
         self.color = color
-        self.is_selected = False
-        self.fixed_width = fixed_width
         self.transparency = 64
+        self.is_selected = False
 
-        self.setCursor(Qt.PointingHandCursor)
+        # Set the fixed width and height
+        self.fixed_width = 100  # -20 for buffer
+        self.fixed_height = 30
+
         self.setFixedWidth(self.fixed_width)
+        self.setFixedHeight(self.fixed_height)
+        self.setCursor(Qt.PointingHandCursor)
 
         # Set tooltip for long label
         self.setToolTip(self.long_label_code)
@@ -64,11 +68,35 @@ class Label(QWidget):
         if event.button() == Qt.RightButton:
             self.drag_start_position = None
 
+    def select(self):
+        if not self.is_selected:
+            self.is_selected = True
+            self.update_selection()
+            self.selected.emit(self)
+
+    def deselect(self):
+        if self.is_selected:
+            self.is_selected = False
+            self.update_selection()
+
     def update_color(self):
         self.update()  # Trigger a repaint
 
     def update_selection(self):
         self.update()  # Trigger a repaint
+
+    def update_label_color(self, new_color: QColor):
+        if self.color != new_color:
+            self.color = new_color
+            self.update_color()
+            self.colorChanged.emit(new_color)
+
+    def update_transparency(self, transparency):
+        self.transparency = transparency
+
+    def delete_label(self):
+        self.label_deleted.emit(self)
+        self.deleteLater()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -77,50 +105,31 @@ class Label(QWidget):
         # Calculate the height based on the text height
         font_metrics = QFontMetrics(painter.font())
         text_height = font_metrics.height()
-        # Add some padding
-        self.setFixedHeight(text_height + 20)
+        self.setFixedHeight(text_height + 20)  # padding
 
-        # Draw the main rectangle with a light transparent fill
-        transparent_color = QColor(self.color)
-        # Set higher transparency (0-255, where 255 is fully opaque)
-        transparent_color.setAlpha(20)
-        # Light transparent fill
-        painter.setBrush(QBrush(transparent_color, Qt.SolidPattern))
+        # Draw the outer rectangle with a light transparent fill
+        outer_color = QColor(self.color)
+        outer_color.setAlpha(50)
+        painter.setBrush(QBrush(outer_color, Qt.SolidPattern))
 
         # Set the border color based on selection status
         if self.is_selected:
-            # Lighter version of the label color
-            selected_border_color = self.color.lighter(150)
-            # Thicker border when selected
-            painter.setPen(QPen(selected_border_color, 2, Qt.SolidLine))
+            painter.setPen(QPen(Qt.black, 4, Qt.DashLine))
         else:
             # Normal border with the color of the label
-            painter.setPen(QPen(self.color, 1, Qt.SolidLine))
+            painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
 
+        # Draw the outer rectangle
         painter.drawRect(0, 0, self.width(), self.height())
 
-        # Draw the color rectangle only if selected
-        if self.is_selected:
-            # Width 5 pixels less than the main rectangle's width
-            rectangle_width = self.width() - 10
-            rectangle_height = 20
-            inner_transparent_color = QColor(self.color)
-            inner_transparent_color.setAlpha(100)
-            painter.setBrush(QBrush(inner_transparent_color, Qt.SolidPattern))
-            painter.drawRect(5, (self.height() - rectangle_height) // 2, rectangle_width, rectangle_height)
-
-        # Draw the text
-        painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
+        # Set the text color to black
+        painter.setPen(QPen(Qt.black))
 
         # Truncate the text if it exceeds the width
-        elided_text = font_metrics.elidedText(self.short_label_code, Qt.ElideRight, self.width() - 30)
-        painter.drawText(12, 0, self.width() - 30, self.height(), Qt.AlignVCenter, elided_text)
+        truncated_text = font_metrics.elidedText(self.short_label_code, Qt.ElideRight, self.width() - self.height())
+        painter.drawText(12, 0, self.width() - self.height(), self.height(), Qt.AlignVCenter, truncated_text)
 
         super().paintEvent(event)
-
-    def delete_label(self):
-        self.label_deleted.emit(self)
-        self.deleteLater()
 
     def to_dict(self):
         return {
@@ -135,26 +144,6 @@ class Label(QWidget):
         color = QColor(*data['color'])
         return cls(data['short_label_code'], data['long_label_code'], color)
 
-    def select(self):
-        if not self.is_selected:
-            self.is_selected = True
-            self.update_selection()
-            self.selected.emit(self)
-
-    def deselect(self):
-        if self.is_selected:
-            self.is_selected = False
-            self.update_selection()
-
-    def update_label_color(self, new_color: QColor):
-        if self.color != new_color:
-            self.color = new_color
-            self.update_color()
-            self.colorChanged.emit(new_color)
-
-    def update_transparency(self, transparency):
-        self.transparency = transparency
-
     def __repr__(self):
         return (f"Label(id={self.id}, "
                 f"short_label_code={self.short_label_code}, "
@@ -166,12 +155,13 @@ class LabelWindow(QWidget):
     labelSelected = pyqtSignal(object)  # Signal to emit the entire Label object
     transparencyChanged = pyqtSignal(int)  # Signal to emit the transparency value
 
-    def __init__(self, main_window, label_width=100):
+    def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
-        self.label_width = label_width
+        self.label_height = 30
+        self.label_width = 100
         self.labels_per_row = 1  # Initial value, will be updated
 
         self.main_layout = QVBoxLayout(self)
@@ -181,16 +171,16 @@ class LabelWindow(QWidget):
         # Top bar with Add Label, Edit Label, and Delete Label buttons
         self.top_bar = QHBoxLayout()
         self.add_label_button = QPushButton("Add Label")
-        self.add_label_button.setFixedSize(100, 30)
+        self.add_label_button.setFixedSize(self.label_width, self.label_height)
         self.top_bar.addWidget(self.add_label_button)
 
         self.edit_label_button = QPushButton("Edit Label")
-        self.edit_label_button.setFixedSize(100, 30)
+        self.edit_label_button.setFixedSize(self.label_width, self.label_height)
         self.edit_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.edit_label_button)
 
         self.delete_label_button = QPushButton("Delete Label")
-        self.delete_label_button.setFixedSize(100, 30)
+        self.delete_label_button.setFixedSize(self.label_width, self.label_height)
         self.delete_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.delete_label_button)
 
@@ -280,7 +270,7 @@ class LabelWindow(QWidget):
 
     def add_label(self, short_label_code, long_label_code, color, label_id=None):
         # Create the label
-        label = Label(short_label_code, long_label_code, color, label_id, fixed_width=self.label_width)
+        label = Label(short_label_code, long_label_code, color, label_id)
         # Connect
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
@@ -308,7 +298,8 @@ class LabelWindow(QWidget):
 
         # Update annotations with the new label
         self.update_annotations_with_label(selected_label)
-        self.adjust_scrollbar_for_active_label()
+        # self.adjust_scrollbar_for_active_label()
+        self.scroll_area.ensureWidgetVisible(self.active_label)
 
     def set_label_transparency(self, transparency):
         if not self.active_label:
@@ -474,37 +465,6 @@ class LabelWindow(QWidget):
 
         if 0 <= new_index < len(self.labels):
             self.set_active_label(self.labels[new_index])
-
-            # Adjust the scrollbar if necessary
-            self.adjust_scrollbar_for_active_label()
-
-    def adjust_scrollbar_for_active_label(self):
-        if not self.active_label:
-            return
-
-        # Get the geometry of the active label and the scroll area's viewport
-        label_geometry = self.active_label.geometry()
-        viewport_geometry = self.scroll_area.viewport().geometry()
-
-        # Calculate the vertical scrollbar position to keep the active label in view
-        if label_geometry.top() < viewport_geometry.top():
-            # Scroll up
-            self.scroll_area.verticalScrollBar().setValue(
-                self.scroll_area.verticalScrollBar().value() - label_geometry.height())
-        elif label_geometry.bottom() > viewport_geometry.bottom():
-            # Scroll down
-            self.scroll_area.verticalScrollBar().setValue(
-                self.scroll_area.verticalScrollBar().value() + label_geometry.height())
-
-        # Calculate the horizontal scrollbar position to keep the active label in view
-        if label_geometry.left() < viewport_geometry.left():
-            # Scroll left
-            self.scroll_area.horizontalScrollBar().setValue(
-                self.scroll_area.horizontalScrollBar().value() - label_geometry.width())
-        elif label_geometry.right() > viewport_geometry.right():
-            # Scroll right
-            self.scroll_area.horizontalScrollBar().setValue(
-                self.scroll_area.horizontalScrollBar().value() + label_geometry.width())
 
 
 class AddLabelDialog(QDialog):

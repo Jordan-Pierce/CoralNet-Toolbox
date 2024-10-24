@@ -437,6 +437,8 @@ class SAMDeployModelDialog(QDialog):
             path = results.path.replace("\\", "/")
             results_dict[path] = []
             for i, result in enumerate(results):
+                if not len(result):
+                    continue
                 # Extract the results
                 cls = int(result.boxes.cls.cpu().numpy()[0])
                 cls_name = result.names[cls]
