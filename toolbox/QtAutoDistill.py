@@ -1,7 +1,6 @@
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import os
 import gc
 
 import torch
@@ -43,7 +42,8 @@ class AutoDistillDeployModelDialog(QDialog):
 
         # Model selection dropdown
         self.model_dropdown = QComboBox()
-        self.model_dropdown.addItem("Grounding DINO")
+        self.model_dropdown.addItems(["GroundingDINO"])
+
         self.main_layout.addWidget(self.model_dropdown)
 
         # Ontology mapping form
@@ -64,25 +64,6 @@ class AutoDistillDeployModelDialog(QDialog):
 
         # Custom parameters section
         self.form_layout = QFormLayout()
-
-        # Add resize image dropdown (True / False)
-        self.resize_image_dropdown = QComboBox()
-        self.resize_image_dropdown.addItems(["True", "False"])
-        self.resize_image_dropdown.setCurrentIndex(0)
-        self.form_layout.addRow("Resize Image:", self.resize_image_dropdown)
-
-        # Add imgsz parameter
-        self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 4096)
-        self.imgsz_spinbox.setSingleStep(1024)
-        self.imgsz_spinbox.setValue(self.imgsz)
-        self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
-
-        # Add use SAM dropdown (True / False)
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False"])
-        self.use_sam_dropdown.setCurrentIndex(1)
-        self.form_layout.addRow("Use SAM:", self.use_sam_dropdown)
 
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -133,8 +114,11 @@ class AutoDistillDeployModelDialog(QDialog):
     def update_label_options(self):
         label_options = [label.short_label_code for label in self.label_window.labels]
         for _, label_dropdown in self.ontology_pairs:
+            previous_label = label_dropdown.currentText()
             label_dropdown.clear()
             label_dropdown.addItems(label_options)
+            if previous_label in label_options:
+                label_dropdown.setCurrentText(previous_label)
 
     def add_ontology_pair(self):
         pair_layout = QHBoxLayout()
@@ -161,6 +145,9 @@ class AutoDistillDeployModelDialog(QDialog):
             item.layout().deleteLater()
 
     def load_model(self):
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         try:
             # Get the ontology mapping
             ontology_mapping = {}
@@ -179,7 +166,7 @@ class AutoDistillDeployModelDialog(QDialog):
 
             # Get the name of the model to load
             model_name = self.model_dropdown.currentText()
-            if model_name == "Grounding DINO":
+            if model_name == "GroundingDINO":
                 from autodistill_grounding_dino import GroundingDINO
                 self.loaded_model = GroundingDINO(ontology=self.ontology,
                                                   box_threshold=conf,
@@ -192,6 +179,9 @@ class AutoDistillDeployModelDialog(QDialog):
             QMessageBox.critical(self, "Error Loading Model", str(e))
             return
 
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
+
     def predict(self, image_paths=None):
         if not self.loaded_model:
             QMessageBox.critical(self, "Error", "No model loaded")
@@ -203,7 +193,7 @@ class AutoDistillDeployModelDialog(QDialog):
             image_paths = [self.annotation_window.current_image_path]
 
         for image_path in image_paths:
-            # Predict the image, process the results
+            # Predict the image, use NMS, process the results
             results = self.loaded_model.predict(image_path).with_nms(self.main_window.get_iou_thresh())
             self.process_results(image_path, results)
 
@@ -212,7 +202,7 @@ class AutoDistillDeployModelDialog(QDialog):
         empty_cache()
 
     def process_results(self, image_path, results):
-        progress_bar = ProgressBar(self, title=f"Making Detection Predictions")
+        progress_bar = ProgressBar(self, title=f"Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(results))
 
