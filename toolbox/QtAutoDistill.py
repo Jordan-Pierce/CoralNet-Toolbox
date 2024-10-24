@@ -35,6 +35,7 @@ class AutoDistillDeployModelDialog(QDialog):
         self.imgsz = 1024
         self.conf = 0.25
         self.loaded_model = None
+        self.model_name = None
         self.ontology = None
 
         # Main layout
@@ -64,6 +65,19 @@ class AutoDistillDeployModelDialog(QDialog):
 
         # Custom parameters section
         self.form_layout = QFormLayout()
+
+        # Add resize image dropdown (True / False)
+        self.resize_image_dropdown = QComboBox()
+        self.resize_image_dropdown.addItems(["True", "False"])
+        self.resize_image_dropdown.setCurrentIndex(0)
+        self.form_layout.addRow("Resize Image:", self.resize_image_dropdown)
+
+        # Add imgsz parameter
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setRange(512, 4096)
+        self.imgsz_spinbox.setSingleStep(1024)
+        self.imgsz_spinbox.setValue(self.imgsz)
+        self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -166,11 +180,17 @@ class AutoDistillDeployModelDialog(QDialog):
 
             # Get the name of the model to load
             model_name = self.model_dropdown.currentText()
-            if model_name == "GroundingDINO":
-                from autodistill_grounding_dino import GroundingDINO
-                self.loaded_model = GroundingDINO(ontology=self.ontology,
-                                                  box_threshold=conf,
-                                                  text_threshold=conf)
+
+            if model_name != self.model_name:
+                if model_name == "GroundingDINO":
+                    from autodistill_grounding_dino import GroundingDINO
+                    self.model_name = model_name
+                    self.loaded_model = GroundingDINO(ontology=self.ontology,
+                                                      box_threshold=conf,
+                                                      text_threshold=conf)
+            else:
+                # Update the model with the new ontology
+                self.loaded_model.ontology = self.ontology
 
             self.status_bar.setText(f"Model loaded: {model_name}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
@@ -272,6 +292,7 @@ class AutoDistillDeployModelDialog(QDialog):
 
     def deactivate_model(self):
         self.loaded_model = None
+        self.model_name = None
         gc.collect()
         torch.cuda.empty_cache()
         self.main_window.untoggle_all_tools()
