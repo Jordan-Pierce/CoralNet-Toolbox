@@ -13,6 +13,8 @@ from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSampling import PatchSamplingDialog
 
+from toolbox.QtIO import IODialog
+
 from toolbox.MachineLearning.QtBatchInference import BatchInferenceDialog
 from toolbox.MachineLearning.QtImportDataset import ImportDatasetDialog
 from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
@@ -24,7 +26,8 @@ from toolbox.MachineLearning.QtTrainModel import TrainModelDialog
 
 from toolbox.QtSAM import SAMDeployModelDialog
 
-from toolbox.QtIO import IODialog
+from toolbox.QtAutoDistill import AutoDistillDeployModelDialog
+
 
 from toolbox.utilities import get_available_device
 from toolbox.utilities import get_icon_path
@@ -69,6 +72,7 @@ class MainWindow(QMainWindow):
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
 
+        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
         self.import_dataset_dialog = ImportDatasetDialog(self)
         self.export_dataset_dialog = ExportDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
@@ -78,7 +82,7 @@ class MainWindow(QMainWindow):
         self.deploy_model_dialog = DeployModelDialog(self)
         self.batch_inference_dialog = BatchInferenceDialog(self)
         self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
-        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
+        self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -266,6 +270,13 @@ class MainWindow(QMainWindow):
         self.sam_deploy_model_action = QAction("Deploy Model", self)
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
         self.sam_menu.addAction(self.sam_deploy_model_action)
+
+        # Auto Distill menu
+        self.auto_distill_menu = self.menu_bar.addMenu("AutoDistill")
+
+        self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
+        self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
+        self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -771,6 +782,19 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_auto_distill_deploy_model_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "AutoDistill Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.auto_distill_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

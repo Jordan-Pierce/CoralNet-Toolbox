@@ -17,8 +17,9 @@ class GlobalEventFilter(QObject):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
-        self.deploy_model_dialog = main_window.deploy_model_dialog
         self.image_window = main_window.image_window
+        self.deploy_model_dialog = main_window.deploy_model_dialog
+        self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
 
     def eventFilter(self, obj, event):
         # Check if the event is a wheel event
@@ -53,6 +54,11 @@ class GlobalEventFilter(QObject):
                 # Handle hotkey for instance segmentation prediction
                 if event.key() == Qt.Key_3:
                     self.deploy_model_dialog.predict_segmentation()
+                    return True
+
+                # Handle hotkey for auto distill prediction
+                if event.key() == Qt.Key_4:
+                    self.auto_distill_deploy_model_dialog.predict()
                     return True
 
                 # Handle annotation cycling hotkeys

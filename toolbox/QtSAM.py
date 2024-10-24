@@ -12,6 +12,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
                              QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
 
+from torch.cuda import empty_cache
 from mobile_sam import SamPredictor as MobileSamPredictor
 from mobile_sam import sam_model_registry as mobile_sam_model_registry
 from sam2.build_sam import build_sam2
@@ -508,7 +509,7 @@ class SAMDeployModelDialog(QDialog):
         self.original_image = None
         self.resized_image = None
         gc.collect()
-        torch.cuda.empty_cache()
+        empty_cache()
         self.main_window.untoggle_all_tools()
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self, "Model Deactivated", "Model deactivated")
