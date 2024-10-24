@@ -249,6 +249,9 @@ class Annotation(QObject):
             self.transparency = transparency
             self.update_graphics_item(crop_image=False)
 
+    def get_center_xy(self):
+        return self.center_xy
+
     def update_graphics_item(self, crop_image=True):
         pass
 

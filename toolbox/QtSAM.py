@@ -12,6 +12,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
                              QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
 
+from torch.cuda import empty_cache
 from mobile_sam import SamPredictor as MobileSamPredictor
 from mobile_sam import sam_model_registry as mobile_sam_model_registry
 from sam2.build_sam import build_sam2
@@ -123,17 +124,18 @@ class SAMDeployModelDialog(QDialog):
         # Custom parameters section
         self.form_layout = QFormLayout()
 
+        # Add resize image dropdown (True / False)
+        self.resize_image_dropdown = QComboBox()
+        self.resize_image_dropdown.addItems(["True", "False"])
+        self.resize_image_dropdown.setCurrentIndex(0)
+        self.form_layout.addRow("Resize Image:", self.resize_image_dropdown)
+
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 4096)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
-
-        # Add resize image checkbox
-        self.resize_image_checkbox = QCheckBox("Resize Image")
-        self.resize_image_checkbox.setChecked(True)
-        self.form_layout.addRow("Resize Image:", self.resize_image_checkbox)
 
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -325,7 +327,7 @@ class SAMDeployModelDialog(QDialog):
                 self.original_image = image
 
                 # Resize the image if the checkbox is checked
-                if self.resize_image_checkbox.isChecked():
+                if self.resize_image_dropdown.currentText() == "True":
                     image = self.resize_image(image)
 
                 # Verify final dimensions
@@ -436,6 +438,8 @@ class SAMDeployModelDialog(QDialog):
             path = results.path.replace("\\", "/")
             results_dict[path] = []
             for i, result in enumerate(results):
+                if not len(result):
+                    continue
                 # Extract the results
                 cls = int(result.boxes.cls.cpu().numpy()[0])
                 cls_name = result.names[cls]
@@ -508,7 +512,7 @@ class SAMDeployModelDialog(QDialog):
         self.original_image = None
         self.resized_image = None
         gc.collect()
-        torch.cuda.empty_cache()
+        empty_cache()
         self.main_window.untoggle_all_tools()
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self, "Model Deactivated", "Model deactivated")

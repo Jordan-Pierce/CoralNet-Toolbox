@@ -87,23 +87,26 @@ pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
 ### CUDA
 
 If you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you 
-need, and then install the corresponding versions of `torch` and `torchvision`:
+need, and then install the corresponding versions of `torch` and `torchvision`. Below is an example of how that can be 
+done using `CUDA` version 11.8:
 ```bash
 # cmd
 
 # Example for CUDA 11.8
-conda install cuda-nvcc -c nvidia/label/cuda-11.8.0 -y
-conda install cudatoolkit=11.8 -c nvidia/label/cuda-11.8.0 -y
+conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
+conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
 
 # Example for torch w/ CUDA 11.8
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118     
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade  
 ```
 
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the 
 `toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon, 
 and if you're using a Mac with `Metal`, you should see an `🍎` icon (click on the icon to see the device information).
 
-See here for more details on [PyTorch](https://pytorch.org/get-started/locally/) versions.
+See here for more details [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc), 
+[`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit), and [`torch`](https://pytorch.org/get-started/locally/) 
+versions.
 
 ### Run
 Finally, you can run the `toolbox` from the command line:

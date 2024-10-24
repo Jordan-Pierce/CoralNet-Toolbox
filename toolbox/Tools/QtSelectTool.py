@@ -47,10 +47,24 @@ class SelectTool(Tool):
             all_items = rect_items + polygon_items
             all_items.sort(key=lambda item: item.zValue(), reverse=True)
 
+            # Filter items based on proximity to the center
+            center_proximity_items = []
             for item in all_items:
                 annotation_id = item.data(0)
+                annotation = self.annotation_window.annotations_dict.get(annotation_id)
+                if annotation and annotation.contains_point(position):
+                    center = annotation.get_center_xy()
+                    distance_to_center = (position - center).manhattanLength()
+                    center_proximity_items.append((item, distance_to_center))
+
+            # Sort items by proximity to the center
+            center_proximity_items.sort(key=lambda x: x[1])
+
+            # Select the closest item to the center
+            for item, _ in center_proximity_items:
+                annotation_id = item.data(0)
                 self.selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
-                if self.selected_annotation and self.selected_annotation.contains_point(position):
+                if self.selected_annotation:
                     self.annotation_window.select_annotation(self.selected_annotation)
                     self.annotation_window.drag_start_pos = position
 
