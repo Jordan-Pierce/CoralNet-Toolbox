@@ -29,6 +29,11 @@ class SelectTool(Tool):
         self.buffer = 50
 
         self.selected_annotation = None
+        self.selected_annotations = []  # List to store selected annotations
+
+        self.rectangle_selecting = False
+        self.rectangle_start_pos = None
+        self.rectangle_graphics = None
 
         # Listen for the annotation changed signals
         self.annotation_window.annotationSelected.connect(self.annotation_changed)
@@ -65,19 +70,33 @@ class SelectTool(Tool):
                 annotation_id = item.data(0)
                 self.selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
                 if self.selected_annotation:
-                    self.annotation_window.select_annotation(self.selected_annotation)
-                    self.annotation_window.drag_start_pos = position
-
                     if event.modifiers() & Qt.ControlModifier:
+                        if self.selected_annotation in self.selected_annotations:
+                            self.selected_annotations.remove(self.selected_annotation)
+                            self.selected_annotation.deselect()
+                        else:
+                            self.selected_annotations.append(self.selected_annotation)
+                            self.selected_annotation.select()
+                    else:
+                        self.annotation_window.select_annotation(self.selected_annotation)
+                        self.annotation_window.drag_start_pos = position
+
                         self.resize_handle = self.detect_resize_handle(self.selected_annotation, position)
                         if self.resize_handle:
                             self.resizing = True
                             self.resize_start_pos = position
                             break
-                    else:
-                        self.moving = True
-                        self.move_start_pos = position
-                        break
+                        else:
+                            self.moving = True
+                            self.move_start_pos = position
+                            break
+
+            if event.modifiers() & Qt.ControlModifier and not center_proximity_items:
+                self.rectangle_selecting = True
+                self.rectangle_start_pos = position
+                self.rectangle_graphics = QGraphicsRectItem(QRectF(position, position))
+                self.rectangle_graphics.setPen(QPen(Qt.DashLine))
+                self.annotation_window.scene.addItem(self.rectangle_graphics)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
@@ -107,6 +126,10 @@ class SelectTool(Tool):
                     self.annotation_window.main_window.confidence_window.display_cropped_image(selected_annotation)
                     self.move_start_pos = current_pos
 
+        elif self.rectangle_selecting:
+            rect = QRectF(self.rectangle_start_pos, current_pos).normalized()
+            self.rectangle_graphics.setRect(rect)
+
     def mouseReleaseEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
@@ -122,6 +145,18 @@ class SelectTool(Tool):
             self.moving = False
             self.move_start_pos = None
         self.annotation_window.drag_start_pos = None
+
+        if self.rectangle_selecting:
+            self.rectangle_selecting = False
+            rect = self.rectangle_graphics.rect()
+            self.annotation_window.scene.removeItem(self.rectangle_graphics)
+            self.rectangle_graphics = None
+
+            for annotation in self.annotation_window.annotations_dict.values():
+                if rect.contains(annotation.get_center_xy()):
+                    if annotation not in self.selected_annotations:
+                        self.selected_annotations.append(annotation)
+                        annotation.select()
 
     def keyPressEvent(self, event):
         if self.annotation_window.selected_annotation is None:
