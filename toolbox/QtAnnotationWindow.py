@@ -175,10 +175,6 @@ class AnnotationWindow(QGraphicsView):
                 annotation.update_user_confidence(self.selected_label)
                 annotation.create_cropped_image(self.rasterio_image)
 
-        # If multiple annotations are selected, deselect the currently active label
-        if self.tools["select"].selected_annotations:
-            self.label_window.deselect_active_label()
-
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         if annotation_id in self.annotations_dict:
             annotation = self.annotations_dict[annotation_id]

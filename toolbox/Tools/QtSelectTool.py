@@ -10,14 +10,11 @@ from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
-
-
 class SelectTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
+        self.annotation = annotation_window
+
         self.cursor = Qt.PointingHandCursor
         self.resizing = False
         self.moving = False
@@ -39,6 +36,27 @@ class SelectTool(Tool):
         self.annotation_window.annotationSelected.connect(self.annotation_changed)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_changed)
         self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
+
+    def toggle_annotation_selection(self, annotation):
+
+        self.clear_resize_handles()
+
+        if self.selected_annotation:
+            self.selected_annotation.deselect()
+            self.selected_annotation = None
+
+        if annotation in self.selected_annotations:
+            self.selected_annotations.remove(annotation)
+            annotation.deselect()
+        else:
+            self.annotation_window.main_window.label_window.deselect_active_label()
+            self.selected_annotations.append(annotation)
+            annotation.select()
+
+    def clear_selected_annotations(self):
+        for annotation in self.selected_annotations:
+            annotation.deselect()
+        self.selected_annotations.clear()
 
     def mousePressEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
@@ -71,12 +89,7 @@ class SelectTool(Tool):
                 self.selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
                 if self.selected_annotation:
                     if event.modifiers() & Qt.ControlModifier:
-                        if self.selected_annotation in self.selected_annotations:
-                            self.selected_annotations.remove(self.selected_annotation)
-                            self.selected_annotation.deselect()
-                        else:
-                            self.selected_annotations.append(self.selected_annotation)
-                            self.selected_annotation.select()
+                        self.toggle_annotation_selection(self.selected_annotation)
                     else:
                         self.annotation_window.select_annotation(self.selected_annotation)
                         self.annotation_window.drag_start_pos = position
@@ -97,6 +110,10 @@ class SelectTool(Tool):
                 self.rectangle_graphics = QGraphicsRectItem(QRectF(position, position))
                 self.rectangle_graphics.setPen(QPen(Qt.DashLine))
                 self.annotation_window.scene.addItem(self.rectangle_graphics)
+
+            # If no annotation is selected and Ctrl is not held, clear the selection
+            if not self.selected_annotation and not event.modifiers() & Qt.ControlModifier:
+                self.clear_selected_annotations()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
@@ -127,6 +144,7 @@ class SelectTool(Tool):
                     self.move_start_pos = current_pos
 
         elif self.rectangle_selecting:
+            self.clear_resize_handles()
             rect = QRectF(self.rectangle_start_pos, current_pos).normalized()
             self.rectangle_graphics.setRect(rect)
 
@@ -152,31 +170,41 @@ class SelectTool(Tool):
             self.annotation_window.scene.removeItem(self.rectangle_graphics)
             self.rectangle_graphics = None
 
+            # Clear the current selection
+            self.clear_selected_annotations()
+
+            # Select annotations within the rectangle
             for annotation in self.annotation_window.annotations_dict.values():
                 if rect.contains(annotation.get_center_xy()):
-                    if annotation not in self.selected_annotations:
-                        self.selected_annotations.append(annotation)
-                        annotation.select()
+                    self.selected_annotations.append(annotation)
+                    annotation.select()
 
     def keyPressEvent(self, event):
-        if self.annotation_window.selected_annotation is None:
-            return
-
         self.selected_annotation = self.annotation_window.selected_annotation
+        if self.selected_annotation is None:
+            return
         if event.modifiers() & Qt.ControlModifier:
             self.display_resize_handles(self.selected_annotation)
 
     def keyReleaseEvent(self, event):
-        if self.annotation_window.selected_annotation is None:
+        self.selected_annotation = self.annotation_window.selected_annotation
+        if self.selected_annotation is None:
             return
-
         if not event.modifiers() & Qt.ControlModifier:
-            self.remove_resize_handles()
+            if self.selected_annotation:
+                self.remove_resize_handles()
+            else:
+                self.clear_selected_annotations()
 
     def annotation_changed(self, annotation_id):
         # Clear the resize handles if the selected annotation changed
         # via clicking or cycling through the annotations
         self.clear_resize_handles()
+
+        # If there are selected annotations, batch edit them
+        if self.selected_annotations:
+            new_label = self.annotation_window.selected_annotation.label
+            self.batch_edit_annotations(new_label)
 
     def get_rectangle_handles(self, annotation):
         top_left = annotation.top_left
@@ -229,8 +257,8 @@ class SelectTool(Tool):
 
         handle_size = 10
         for handle, point in handles.items():
-            ellipse = QGraphicsEllipseItem(point.x() - handle_size//2,
-                                           point.y() - handle_size//2,
+            ellipse = QGraphicsEllipseItem(point.x() - handle_size // 2,
+                                           point.y() - handle_size // 2,
                                            handle_size,
                                            handle_size)
 
@@ -257,3 +285,8 @@ class SelectTool(Tool):
 
     def clear_resize_handles(self):
         self.remove_resize_handles()
+
+    def batch_edit_annotations(self, new_label):
+        for annotation in self.selected_annotations:
+            annotation.set_label(new_label)
+            annotation.update()
