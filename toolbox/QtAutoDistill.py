@@ -15,6 +15,7 @@ from autodistill.detection import CaptionOntology
 from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.QtRangeSlider import QRangeSlider
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,7 +34,9 @@ class AutoDistillDeployModelDialog(QDialog):
         self.resize(300, 250)
 
         self.imgsz = 1024
-        self.conf = 0.25
+        self.uncertainty_thresh = 0.25
+        self.area_thresh_min = 0.25
+        self.area_thresh_max = 0.75
         self.loaded_model = None
         self.model_name = None
         self.ontology = None
@@ -79,12 +82,22 @@ class AutoDistillDeployModelDialog(QDialog):
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
+        # Set the threshold slider for area
+        self.area_threshold_slider = QRangeSlider()
+        self.area_threshold_slider.setRange(0, 100)
+        self.area_threshold_slider.setValue((int(self.area_thresh_min * 100), int(self.area_thresh_max * 100)))
+        self.area_threshold_slider.rangeChanged.connect(self.update_area_label)
+
+        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.form_layout.addRow("Area Threshold", self.area_threshold_slider)
+        self.form_layout.addRow("", self.area_threshold_label)
+
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
         self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
         self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
+        self.uncertainty_threshold_slider.setTickInterval(5)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
 
         self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
@@ -112,18 +125,30 @@ class AutoDistillDeployModelDialog(QDialog):
         super().showEvent(event)
         self.update_label_options()
 
+    def update_area_label(self, min_val, max_val):
+        # Update the area threshold values
+        self.area_thresh_min = min_val / 100.0
+        self.area_thresh_max = max_val / 100.0
+        self.area_threshold_label.setText(f"Area Threshold: {self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+
+    def get_area_thresh(self, image_path):
+        h, w = self.main_window.image_window.rasterio_open(image_path).shape
+        area_thresh_min = (h * w) * self.area_thresh_min
+        area_thresh_max = (h * w) * self.area_thresh_max
+        return area_thresh_min, area_thresh_max
+
     def update_uncertainty_label(self):
         # Convert the slider value to a ratio (0-1)
         value = self.uncertainty_threshold_slider.value() / 100.0
         self.main_window.update_uncertainty_thresh(value)
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
-        self.conf = self.uncertainty_threshold_slider.value() / 100.0
+        self.uncertainty_thresh = self.uncertainty_threshold_slider.value() / 100.0
 
     def on_uncertainty_changed(self, value):
         # Update the slider and label when the shared data changes
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
-        self.conf = self.uncertainty_threshold_slider.value() / 100.0
+        self.uncertainty_thresh = self.uncertainty_threshold_slider.value() / 100.0
 
     def update_label_options(self):
         label_options = [label.short_label_code for label in self.label_window.labels]
@@ -161,7 +186,9 @@ class AutoDistillDeployModelDialog(QDialog):
     def load_model(self):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+        # Show a progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
+        progress_bar.show()
         try:
             # Get the ontology mapping
             ontology_mapping = {}
@@ -174,9 +201,9 @@ class AutoDistillDeployModelDialog(QDialog):
 
             # Threshold for confidence
             if self.main_window.get_uncertainty_thresh() < 0.10:
-                conf = self.main_window.get_uncertainty_thresh()
+                uncertainty_thresh = self.main_window.get_uncertainty_thresh()
             else:
-                conf = 0.10  # Arbitrary value to prevent too many detections
+                uncertainty_thresh = 0.10  # Arbitrary value to prevent too many detections
 
             # Get the name of the model to load
             model_name = self.model_dropdown.currentText()
@@ -186,8 +213,8 @@ class AutoDistillDeployModelDialog(QDialog):
                     from autodistill_grounding_dino import GroundingDINO
                     self.model_name = model_name
                     self.loaded_model = GroundingDINO(ontology=self.ontology,
-                                                      box_threshold=conf,
-                                                      text_threshold=conf)
+                                                      box_threshold=uncertainty_thresh,
+                                                      text_threshold=uncertainty_thresh)
             else:
                 # Update the model with the new ontology
                 self.loaded_model.ontology = self.ontology
@@ -197,10 +224,14 @@ class AutoDistillDeployModelDialog(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Model", str(e))
-            return
 
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
         # Restore cursor
         QApplication.restoreOverrideCursor()
+        # Exit the dialog box
+        self.accept()
 
     def predict(self, image_paths=None):
         if not self.loaded_model:
@@ -214,7 +245,14 @@ class AutoDistillDeployModelDialog(QDialog):
 
         for image_path in image_paths:
             # Predict the image, use NMS, process the results
-            results = self.loaded_model.predict(image_path).with_nms(self.main_window.get_iou_thresh())
+            results = self.loaded_model.predict(image_path)
+            # Perform NMS thresholding
+            results = results.with_nms(self.main_window.get_iou_thresh())
+            # Perform area thresholding
+            min_area_thresh, max_area_thresh = self.get_area_thresh(image_path)
+            results = results[min_area_thresh <= results.area]
+            results = results[results.area <= max_area_thresh]
+            # Process the results
             self.process_results(image_path, results)
 
         QApplication.restoreOverrideCursor()

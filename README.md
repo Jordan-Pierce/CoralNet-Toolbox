@@ -4,11 +4,7 @@
   <img src="figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
-The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on
-[CoralNet](https://coralnet.ucsd.edu/). It uses ✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a 
-base, which is an open-source library for computer vision and deep learning built in `PyTorch`. For more information on
-their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). It also uses [`SAM`](https://github.com/facebookresearch/segment-anything), [`SAM2`](https://github.com/facebookresearch/sam2) 
-and [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM) for polygon creation.
+The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on [CoralNet](https://coralnet.ucsd.edu/). It uses ✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a  base, which is an open-source library for computer vision and deep learning built in `PyTorch`. For more information on their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). The `toolbox` also uses [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), and [`SAM2`](https://github.com/facebookresearch/sam2), and [`AutoDistill`](https://github.com/autodistill) for creating rectangle and polygon annotations.
 
 ## Quick Start
 
