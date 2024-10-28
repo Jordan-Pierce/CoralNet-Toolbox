@@ -6,6 +6,8 @@ import json
 import os
 
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,6 +35,10 @@ class ConfusionMatrixMetrics:
         self.matrix = matrix
         self.num_classes = matrix.shape[0]
         self.class_mapping = class_mapping
+
+        if len(self.class_mapping) + 1 == self.num_classes:
+            # Add background class to class mapping
+            self.class_mapping[self.num_classes] = 'background'
 
     def calculate_tp(self):
         """
@@ -198,3 +204,70 @@ class ConfusionMatrixMetrics:
         file_path = os.path.join(directory, filename)
         with open(file_path, 'w') as f:
             json.dump(results, f, indent=4)
+
+    def save_confusion_matrix_png(self, directory, filename="confusion_matrix_toolbox.png", normalized=False):
+        """
+        Save the confusion matrix as a PNG image.
+
+        Args:
+            directory (str): The directory where the PNG file will be saved.
+            filename (str): The name of the PNG file. Default is "confusion_matrix.png".
+            normalized (bool): Whether to normalize the confusion matrix. Default is False.
+        """
+        os.makedirs(directory, exist_ok=True)
+
+        if normalized:
+            cm = self.matrix.astype('float') / self.matrix.sum(axis=1)[:, np.newaxis]
+            title = "Normalized Confusion Matrix"
+            fmt = '.2f'
+        else:
+            cm = self.matrix.astype(int)  # Ensure the matrix is integer type
+            title = "Confusion Matrix"
+            fmt = 'd'
+
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(cm,
+                    annot=True,
+                    fmt=fmt,
+                    cmap='Blues',
+                    xticklabels=self.class_mapping.values(),
+                    yticklabels=self.class_mapping.values())
+
+        plt.title(title)
+        plt.ylabel('True label')
+        plt.xlabel('Predicted label')
+
+        file_path = os.path.join(directory, filename)
+        plt.savefig(file_path)
+        plt.close()
+
+    def save_normalized_confusion_matrix_png(self, directory, filename="confusion_matrix_normalized_toolbox.png"):
+        """
+        Save the normalized confusion matrix as a PNG image.
+
+        Args:
+            directory (str): The directory where the PNG file will be saved.
+            filename (str): The name of the PNG file. Default is
+        """
+        self.save_confusion_matrix_png(directory, filename, normalized=True)
+
+    def save_real_confusion_matrix_png(self, directory, filename="confusion_matrix_toolbox.png"):
+        """
+        Save the real-valued confusion matrix as a PNG image.
+
+        Args:
+            directory (str): The directory where the PNG file will be saved.
+            filename (str): The name of the PNG file.
+        """
+        self.save_confusion_matrix_png(directory, filename, normalized=False)
+
+    def save_results(self, directory):
+        """
+        Save the metrics and confusion matrix as PNG images.
+
+        Args:
+            directory (str): The directory where the results will be saved.
+        """
+        self.save_metrics_to_json(directory)
+        self.save_normalized_confusion_matrix_png(directory)
+        self.save_real_confusion_matrix_png(directory)
