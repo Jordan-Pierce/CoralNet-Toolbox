@@ -106,10 +106,11 @@ The main window consists of several components:
 - **Home**: Untoggle all tools.
 - **Escape**: Exit the program.
 
-- **Machine Learning**: After a model is loaded
+- **Machine Learning and AutoDistill**: After a model is loaded
   - **Ctrl + 1**: Make prediction on selected Patch annotation, else all in the image with Review label.
   - **Ctrl + 2**: Make predictions using Object Detection model.
   - **Ctrl + 3**: Make predictions using Instance Segmentation model.
+  - **Ctrl + 4**: Make predictions using AutoDistill model.
 
 - **SAM**: After a model is loaded
   - **Space Bar**: Set working area; finalize prediction.

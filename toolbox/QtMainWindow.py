@@ -1,5 +1,9 @@
 import warnings
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import re
+
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget)
@@ -28,11 +32,8 @@ from toolbox.QtSAM import SAMDeployModelDialog
 
 from toolbox.QtAutoDistill import AutoDistillDeployModelDialog
 
-
 from toolbox.utilities import get_available_device
 from toolbox.utilities import get_icon_path
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -569,21 +570,19 @@ class MainWindow(QMainWindow):
             if len(self.selected_devices) == 1:
                 self.device = self.selected_devices[0]
             else:
-                cuda_devices = [device for device in self.selected_devices if device.startswith('cuda')]
-                if cuda_devices:
-                    self.device = f"cuda:{','.join(cuda_devices)}"
-                else:
-                    self.device = self.selected_devices[0]  # Default to the first selected device if no CUDA devices
+                # Get only the numerical values for cuda
+                cuda_devices = [re.search(r'\d+', device).group() for device in self.selected_devices]
+                self.device = f"{','.join(cuda_devices)} "
 
             # Update the icon and tooltip
-            if self.device.startswith('cuda'):
+            if self.device.startswith('cuda') or len(self.selected_devices) > 1:
                 if len(self.selected_devices) == 1:
                     device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(
                         self.rocket_icon_path)
                     device_tooltip = self.device
                 else:
                     device_icon = QIcon(self.rocket_icon_path)  # Use a different icon for multiple devices
-                    device_tooltip = f"Multiple CUDA Devices: {', '.join(self.selected_devices)}"
+                    device_tooltip = f"Multiple CUDA Devices: {self.selected_devices}"
             elif self.device == 'mps':
                 device_icon = QIcon(self.apple_icon_path)
                 device_tooltip = 'mps'
@@ -682,7 +681,6 @@ class MainWindow(QMainWindow):
 
         self.patch_annotation_sampling_dialog = None
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
-
 
     def open_import_dataset_dialog(self):
         try:
@@ -799,16 +797,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
 
-class ClickableAction(QAction):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self.trigger()
-        super().mousePressEvent(event)
-
-
 class DeviceSelectionDialog(QDialog):
     def __init__(self, devices, parent=None):
         super().__init__(parent)
@@ -844,3 +832,13 @@ class DeviceSelectionDialog(QDialog):
         if cuda_selected and (cpu_selected or mps_selected):
             return False
         return True
+
+
+class ClickableAction(QAction):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.trigger()
+        super().mousePressEvent(event)

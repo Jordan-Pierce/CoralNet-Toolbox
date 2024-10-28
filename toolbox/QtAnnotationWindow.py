@@ -131,6 +131,10 @@ class AnnotationWindow(QGraphicsView):
             self.tools[self.selected_tool].keyReleaseEvent(event)
         super().keyReleaseEvent(event)
 
+        # Deselect all annotations if Cntrl is not held
+        if not event.modifiers() & Qt.ControlModifier:
+            self.deselect_all_annotations()
+
     def cursorInWindow(self, pos, mapped=False):
         if not pos or not self.image_pixmap:
             return False
@@ -164,6 +168,12 @@ class AnnotationWindow(QGraphicsView):
         if self.cursor_annotation:
             if self.cursor_annotation.label.id != label.id:
                 self.toggle_cursor_annotation()
+
+        # Update all selected annotations
+        if self.tools["select"].selected_annotations:
+            for annotation in self.tools["select"].selected_annotations:
+                annotation.update_user_confidence(self.selected_label)
+                annotation.create_cropped_image(self.rasterio_image)
 
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         if annotation_id in self.annotations_dict:
@@ -330,6 +340,11 @@ class AnnotationWindow(QGraphicsView):
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
+
+    def deselect_all_annotations(self):
+        for annotation in self.tools["select"].selected_annotations:
+            annotation.deselect()
+        self.tools["select"].selected_annotations.clear()
 
     def load_annotation(self, annotation):
         # Create the graphics item (scene previously cleared)
