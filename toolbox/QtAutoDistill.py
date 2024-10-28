@@ -35,7 +35,7 @@ class AutoDistillDeployModelDialog(QDialog):
 
         self.imgsz = 1024
         self.uncertainty_thresh = 0.25
-        self.area_thresh_min = 0.25
+        self.area_thresh_min = 0.01
         self.area_thresh_max = 0.75
         self.loaded_model = None
         self.model_name = None
@@ -250,7 +250,7 @@ class AutoDistillDeployModelDialog(QDialog):
             results = results.with_nms(self.main_window.get_iou_thresh())
             # Perform area thresholding
             min_area_thresh, max_area_thresh = self.get_area_thresh(image_path)
-            results = results[min_area_thresh <= results.area]
+            results = results[results.area >= min_area_thresh]
             results = results[results.area <= max_area_thresh]
             # Process the results
             self.process_results(image_path, results)
