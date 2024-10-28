@@ -1,13 +1,10 @@
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
-import json
-import os
-
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.ticker import FuncFormatter
+import os
+import json
+import pandas as pd
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -17,12 +14,14 @@ import seaborn as sns
 
 class ConfusionMatrixMetrics:
     """
-    A class for calculating TP, FP, TN, FN, precision, recall, accuracy,
-    and per-class accuracy from a confusion matrix.
+    A comprehensive class for calculating and visualizing confusion matrix metrics.
 
     Attributes:
         matrix (np.ndarray): The confusion matrix.
         num_classes (int): The number of classes.
+        class_mapping (dict): Mapping of class indices to class names.
+        total_predictions (int): Total number of predictions.
+        class_distributions (np.ndarray): Distribution of samples across classes.
     """
 
     def __init__(self, matrix, class_mapping):
@@ -31,49 +30,34 @@ class ConfusionMatrixMetrics:
 
         Args:
             matrix (np.ndarray): The confusion matrix.
+            class_mapping (dict): Mapping of class indices to class names.
         """
         self.matrix = matrix
         self.num_classes = matrix.shape[0]
         self.class_mapping = class_mapping
 
+        # Add background class if needed
         if len(self.class_mapping) + 1 == self.num_classes:
-            # Add background class to class mapping
             self.class_mapping[self.num_classes] = 'background'
 
-    def calculate_tp(self):
-        """
-        Calculate true positives for each class.
+        # Calculate total predictions and class distributions
+        self.total_predictions = np.sum(matrix)
+        self.class_distributions = np.sum(matrix, axis=1) / self.total_predictions
 
-        Returns:
-            np.ndarray: An array of true positives for each class.
-        """
+    def calculate_tp(self):
+        """Calculate true positives for each class."""
         return np.diagonal(self.matrix)
 
     def calculate_fp(self):
-        """
-        Calculate false positives for each class.
-
-        Returns:
-            np.ndarray: An array of false positives for each class.
-        """
+        """Calculate false positives for each class."""
         return self.matrix.sum(axis=0) - np.diagonal(self.matrix)
 
     def calculate_fn(self):
-        """
-        Calculate false negatives for each class.
-
-        Returns:
-            np.ndarray: An array of false negatives for each class.
-        """
+        """Calculate false negatives for each class."""
         return self.matrix.sum(axis=1) - np.diagonal(self.matrix)
 
     def calculate_tn(self):
-        """
-        Calculate true negatives for each class.
-
-        Returns:
-            np.ndarray: An array of true negatives for each class.
-        """
+        """Calculate true negatives for each class."""
         total = self.matrix.sum()
         tp = self.calculate_tp()
         fp = self.calculate_fp()
@@ -81,81 +65,93 @@ class ConfusionMatrixMetrics:
         return total - (tp + fp + fn)
 
     def calculate_precision(self):
-        """
-        Calculate precision for each class.
-
-        Returns:
-            np.ndarray: An array of precision values for each class.
-        """
+        """Calculate precision for each class."""
         tp = self.calculate_tp()
         fp = self.calculate_fp()
-        return tp / (tp + fp + 1e-16)  # avoid division by zero
+        return tp / (tp + fp + 1e-16)
 
     def calculate_recall(self):
-        """
-        Calculate recall for each class.
-
-        Returns:
-            np.ndarray: An array of recall values for each class.
-        """
+        """Calculate recall for each class."""
         tp = self.calculate_tp()
         fn = self.calculate_fn()
-        return tp / (tp + fn + 1e-16)  # avoid division by zero
+        return tp / (tp + fn + 1e-16)
+
+    def calculate_f1_score(self):
+        """Calculate F1 score for each class."""
+        precision = self.calculate_precision()
+        recall = self.calculate_recall()
+        return 2 * (precision * recall) / (precision + recall + 1e-16)
+
+    def calculate_specificity(self):
+        """Calculate specificity (true negative rate) for each class."""
+        tn = self.calculate_tn()
+        fp = self.calculate_fp()
+        return tn / (tn + fp + 1e-16)
 
     def calculate_accuracy(self):
-        """
-        Calculate accuracy for all classes combined.
-
-        Returns:
-            float: The accuracy value.
-        """
+        """Calculate overall accuracy."""
         tp = self.calculate_tp().sum()
         total = self.matrix.sum()
         return tp / total
 
     def calculate_per_class_accuracy(self):
-        """
-        Calculate per-class accuracy.
-
-        Returns:
-            np.ndarray: An array of accuracy values for each class.
-        """
+        """Calculate accuracy for each class."""
         tp = self.calculate_tp()
         total_per_class = self.matrix.sum(axis=1)
-        return tp / (total_per_class + 1e-16)  # avoid division by zero
+        return tp / (total_per_class + 1e-16)
+
+    def calculate_balanced_accuracy(self):
+        """Calculate balanced accuracy for each class."""
+        return (self.calculate_recall() + self.calculate_specificity()) / 2
+
+    def calculate_metrics_summary(self):
+        """
+        Calculate a comprehensive summary of metrics.
+
+        Returns:
+            dict: Dictionary containing summary metrics.
+        """
+        metrics = {
+            'Accuracy': self.calculate_accuracy(),
+            'Macro Precision': np.mean(self.calculate_precision()),
+            'Macro Recall': np.mean(self.calculate_recall()),
+            'Macro F1': np.mean(self.calculate_f1_score()),
+            'Weighted F1': np.average(self.calculate_f1_score(), weights=self.class_distributions),
+            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy())
+        }
+        return metrics
 
     def get_metrics_all(self):
         """
-        Get all metrics (TP, FP, TN, FN, precision, recall, accuracy) for all classes combined.
+        Get all metrics for all classes combined.
 
         Returns:
-            dict: A dictionary containing all calculated metrics for all classes combined.
+            dict: Dictionary containing combined metrics.
         """
         tp = self.calculate_tp().sum()
         fp = self.calculate_fp().sum()
         tn = self.calculate_tn().sum()
         fn = self.calculate_fn().sum()
-        precision = tp / (tp + fp + 1e-16)  # avoid division by zero
-        recall = tp / (tp + fn + 1e-16)  # avoid division by zero
-        accuracy = self.calculate_accuracy()
 
-        return {
+        metrics = {
             'TP': tp,
             'FP': fp,
             'TN': tn,
             'FN': fn,
-            'Precision': precision,
-            'Recall': recall,
-            'Accuracy': accuracy
+            'Precision': tp / (tp + fp + 1e-16),
+            'Recall': tp / (tp + fn + 1e-16),
+            'Accuracy': self.calculate_accuracy(),
+            'F1 Score': np.mean(self.calculate_f1_score()),
+            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy())
         }
+        return metrics
 
     def get_metrics_per_class(self):
         """
-        Get all metrics (TP, FP, TN, FN, precision, recall, accuracy)
-        per class in a dictionary.
+        Get detailed metrics for each class.
 
         Returns:
-            dict: A dictionary containing all calculated metrics per class.
+            dict: Dictionary containing per-class metrics.
         """
         tp = self.calculate_tp()
         fp = self.calculate_fp()
@@ -163,7 +159,9 @@ class ConfusionMatrixMetrics:
         fn = self.calculate_fn()
         precision = self.calculate_precision()
         recall = self.calculate_recall()
-        accuracy = self.calculate_per_class_accuracy()
+        f1 = self.calculate_f1_score()
+        specificity = self.calculate_specificity()
+        balanced_acc = self.calculate_balanced_accuracy()
 
         metrics_per_class = {}
         for i in range(self.num_classes):
@@ -176,34 +174,16 @@ class ConfusionMatrixMetrics:
                     'FN': fn[i],
                     'Precision': precision[i],
                     'Recall': recall[i],
-                    'Accuracy': accuracy[i]
+                    'F1 Score': f1[i],
+                    'Specificity': specificity[i],
+                    'Balanced Accuracy': balanced_acc[i],
+                    'Support': np.sum(self.matrix[i]),
+                    'Distribution (%)': self.class_distributions[i] * 100
                 }
             except KeyError:
-                print("Warning: Class mapping not found for class index", i)
+                print(f"Warning: Class mapping not found for class index {i}")
 
         return metrics_per_class
-
-    def save_metrics_to_json(self, directory, filename="metrics.json"):
-        """
-        Save the metrics to a JSON file.
-
-        Args:
-            directory (str): The directory where the JSON file will be saved.
-            filename (str): The name of the JSON file. Default is "metrics.json".
-        """
-        os.makedirs(directory, exist_ok=True)
-
-        metrics_all = self.get_metrics_all()
-        metrics_per_class = self.get_metrics_per_class()
-
-        results = {
-            'All Classes': metrics_all,
-            'Per Class': metrics_per_class
-        }
-
-        file_path = os.path.join(directory, filename)
-        with open(file_path, 'w') as f:
-            json.dump(results, f, indent=4)
 
     def save_confusion_matrix_png(self, directory, filename="confusion_matrix_toolbox.png", normalized=False):
         """
@@ -219,26 +199,54 @@ class ConfusionMatrixMetrics:
         if normalized:
             cm = self.matrix.astype('float') / self.matrix.sum(axis=1)[:, np.newaxis]
             title = "Normalized Confusion Matrix"
-            fmt = '.2f'
         else:
             cm = self.matrix.astype(int)  # Ensure the matrix is integer type
             title = "Confusion Matrix"
-            fmt = 'd'
 
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(cm,
-                    annot=True,
-                    fmt=fmt,
-                    cmap='Blues',
-                    xticklabels=self.class_mapping.values(),
-                    yticklabels=self.class_mapping.values())
+        # Dynamically adjust figure size based on number of classes but maintain square shape
+        figsize = (8 + (self.num_classes // 2), 8 + (self.num_classes // 2))
+        plt.figure(figsize=figsize)
+
+        def format_value(x):
+            """Format values with K, M suffix for thousands and millions"""
+            if not normalized:
+                if x >= 1e6:
+                    return f'{x / 1e6:.1f}M'
+                elif x >= 1000:
+                    return f'{x / 1000:.1f}K'
+                else:
+                    return f'{int(x)}'
+            else:
+                return f'{x:.2f}'  # 2 decimal places for normalized values
+
+        # Create annotation array
+        annot = np.zeros_like(cm, dtype='<U10')
+        for i in range(cm.shape[0]):
+            for j in range(cm.shape[1]):
+                annot[i, j] = format_value(cm[i, j])
+
+        # Create the heatmap
+        ax = sns.heatmap(cm,
+                         annot=annot,
+                         fmt='',  # Empty format string as we're using custom annotations
+                         cmap='Blues',
+                         xticklabels=self.class_mapping.values(),
+                         yticklabels=self.class_mapping.values(),
+                         annot_kws={"size": max(8, 16 - self.num_classes // 2)},
+                         cbar_kws={'format': FuncFormatter(lambda x, p: format_value(x))})
+
+        # Highlight the diagonal squares with green perimeters
+        for i in range(self.num_classes):
+            ax.add_patch(plt.Rectangle((i, i), 1, 1, fill=False, edgecolor='green', lw=2))
 
         plt.title(title)
         plt.ylabel('True label')
         plt.xlabel('Predicted label')
+        plt.xticks(rotation=45, ha='right')
+        plt.yticks(rotation=0)
 
         file_path = os.path.join(directory, filename)
-        plt.savefig(file_path)
+        plt.savefig(file_path, bbox_inches='tight')
         plt.close()
 
     def save_normalized_confusion_matrix_png(self, directory, filename="confusion_matrix_normalized_toolbox.png"):
@@ -261,13 +269,61 @@ class ConfusionMatrixMetrics:
         """
         self.save_confusion_matrix_png(directory, filename, normalized=False)
 
-    def save_results(self, directory):
+    def save_metrics_report(self, directory, filename="metrics_report.csv"):
         """
-        Save the metrics and confusion matrix as PNG images.
+        Save a detailed metrics report as CSV.
 
         Args:
-            directory (str): The directory where the results will be saved.
+            directory (str): Output directory
+            filename (str): Output filename
         """
-        self.save_metrics_to_json(directory)
+        metrics_dict = {
+            'Class': list(self.class_mapping.values()),
+            'Total Samples': np.sum(self.matrix, axis=1),
+            'True Positives': self.calculate_tp(),
+            'False Positives': self.calculate_fp(),
+            'False Negatives': self.calculate_fn(),
+            'True Negatives': self.calculate_tn(),
+            'Precision': self.calculate_precision(),
+            'Recall': self.calculate_recall(),
+            'F1 Score': self.calculate_f1_score(),
+            'Specificity': self.calculate_specificity(),
+            'Balanced Accuracy': self.calculate_balanced_accuracy(),
+            'Class Distribution (%)': self.class_distributions * 100
+        }
+
+        df = pd.DataFrame(metrics_dict)
+        df.to_csv(os.path.join(directory, filename), index=False, float_format='%.4f')
+
+    def save_results(self, directory):
+        """
+        Save comprehensive results including metrics, visualizations, and optional report.
+
+        Args:
+            directory (str): Output directory
+            include_report (bool): Whether to include detailed CSV report
+        """
+        # Create output directory
+        os.makedirs(directory, exist_ok=True)
+
+        # Save metrics as JSON
+        metrics_all = self.get_metrics_all()
+        metrics_per_class = self.get_metrics_per_class()
+        summary_metrics = self.calculate_metrics_summary()
+
+        results = {
+            'Summary Metrics': summary_metrics,
+            'All Classes': metrics_all,
+            'Per Class': metrics_per_class
+        }
+
+        # Dump results to JSON file
+        with open(os.path.join(directory, "metrics.json"), 'w') as f:
+            json.dump(results, f, indent=4)
+
+        # Save detailed report if requested
+        self.save_metrics_report(directory)
+
+        # Save confusion matrices (both normalized and real versions)
         self.save_normalized_confusion_matrix_png(directory)
         self.save_real_confusion_matrix_png(directory)
