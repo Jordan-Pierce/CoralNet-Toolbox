@@ -38,7 +38,8 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks) using freehand or automatic methods
-- 🦾 SAM: Use [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), [`SAM2`](https://github.com/facebookresearch/sam2) to create polygons
+- 🦾 SAM: Use [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), and [`SAM2`](https://github.com/facebookresearch/sam2) to create polygons
+- 🧪 AutoDistill: Use [`AutoDistill`](https://github.com/autodistill) to access GroundingDINO for creating rectangles
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
@@ -100,7 +101,7 @@ If `CUDA` is installed on your computer, and `torch` was built with it properly,
 `toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon, 
 and if you're using a Mac with `Metal`, you should see an `🍎` icon (click on the icon to see the device information).
 
-See here for more details [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc), 
+See here for more details on [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc), 
 [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit), and [`torch`](https://pytorch.org/get-started/locally/) 
 versions.
 
