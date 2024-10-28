@@ -442,17 +442,18 @@ class AnnotationWindow(QGraphicsView):
 
     def delete_annotation(self, annotation_id):
         if annotation_id in self.annotations_dict:
+            # Get the annotation from dict, delete it
             annotation = self.annotations_dict[annotation_id]
             annotation.delete()
+            self.annotationDeleted.emit(self.selected_annotation.id)
             del self.annotations_dict[annotation_id]
+            # Clear the confidence window
+            self.main_window.confidence_window.clear_display()
 
     def delete_selected_annotation(self):
         if self.selected_annotation:
-            self.annotationDeleted.emit(self.selected_annotation.id)  # Pf8ca
             self.delete_annotation(self.selected_annotation.id)
-            self.selected_annotation = None
-            # Clear the confidence window
-            self.main_window.confidence_window.clear_display()
+            self.unselect_annotation()
 
     def delete_annotations(self, annotations):
         for annotation in annotations:

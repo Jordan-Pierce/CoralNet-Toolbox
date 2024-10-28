@@ -2,6 +2,10 @@
 #   - CoralNet tools
 #   - Merge Datasets
 #   - Resample polygon to be smoother, uniformly spaced
+#   - Don't access all points when updating polygon
+#   - Fix the cuda device string
+#   - Show a loading model window when using AutoDistill (like SAM)
+#   - Look into SAM resizing images bigger than 1024
 
 import traceback
 
