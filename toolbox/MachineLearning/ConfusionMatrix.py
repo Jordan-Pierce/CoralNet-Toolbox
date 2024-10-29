@@ -104,6 +104,27 @@ class ConfusionMatrixMetrics:
         """Calculate balanced accuracy for each class."""
         return (self.calculate_recall() + self.calculate_specificity()) / 2
 
+    def calculate_top_k_accuracy(self, k):
+        """Calculate top-k accuracy."""
+        # Reconstruct predictions and true labels from the confusion matrix
+        true_labels = []
+        predictions = []
+        for i in range(self.num_classes):
+            for j in range(self.num_classes):
+                count = self.matrix[i, j].astype(int)
+                true_labels.extend([i] * count)
+                predictions.extend([j] * count)
+
+        true_labels = np.array(true_labels)
+        predictions = np.array(predictions)
+
+        # Calculate top-k accuracy
+        top_k_acc = 0
+        for i in range(len(true_labels)):
+            if true_labels[i] in predictions[i:i+k]:
+                top_k_acc += 1
+        return top_k_acc / len(true_labels)
+
     def calculate_metrics_summary(self):
         """
         Calculate a comprehensive summary of metrics.
@@ -117,7 +138,9 @@ class ConfusionMatrixMetrics:
             'Macro Recall': np.mean(self.calculate_recall()),
             'Macro F1': np.mean(self.calculate_f1_score()),
             'Weighted F1': np.average(self.calculate_f1_score(), weights=self.class_distributions),
-            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy())
+            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy()),
+            'Top-5 Accuracy': self.calculate_top_k_accuracy(5),
+            'Top-10 Accuracy': self.calculate_top_k_accuracy(10)
         }
         return metrics
 
@@ -142,7 +165,9 @@ class ConfusionMatrixMetrics:
             'Recall': tp / (tp + fn + 1e-16),
             'Accuracy': self.calculate_accuracy(),
             'F1 Score': np.mean(self.calculate_f1_score()),
-            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy())
+            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy()),
+            'Top-5 Accuracy': self.calculate_top_k_accuracy(5),
+            'Top-10 Accuracy': self.calculate_top_k_accuracy(10)
         }
         return metrics
 
@@ -277,6 +302,9 @@ class ConfusionMatrixMetrics:
             directory (str): Output directory
             filename (str): Output filename
         """
+        top_5_accuracy = self.calculate_top_k_accuracy(5)
+        top_10_accuracy = self.calculate_top_k_accuracy(10)
+
         metrics_dict = {
             'Class': list(self.class_mapping.values()),
             'Total Samples': np.sum(self.matrix, axis=1),
@@ -289,7 +317,9 @@ class ConfusionMatrixMetrics:
             'F1 Score': self.calculate_f1_score(),
             'Specificity': self.calculate_specificity(),
             'Balanced Accuracy': self.calculate_balanced_accuracy(),
-            'Class Distribution (%)': self.class_distributions * 100
+            'Class Distribution (%)': self.class_distributions * 100,
+            'Top-5 Accuracy': [top_5_accuracy] * self.num_classes,
+            'Top-10 Accuracy': [top_10_accuracy] * self.num_classes
         }
 
         df = pd.DataFrame(metrics_dict)
