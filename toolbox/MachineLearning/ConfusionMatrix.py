@@ -17,6 +17,8 @@ class ConfusionMatrixMetrics:
     A comprehensive class for calculating and visualizing confusion matrix metrics.
 
     Attributes:
+        top1 (float): Top-1 accuracy.
+        top5 (float): Top-5 accuracy.
         matrix (np.ndarray): The confusion matrix.
         num_classes (int): The number of classes.
         class_mapping (dict): Mapping of class indices to class names.
@@ -24,16 +26,17 @@ class ConfusionMatrixMetrics:
         class_distributions (np.ndarray): Distribution of samples across classes.
     """
 
-    def __init__(self, matrix, class_mapping):
+    def __init__(self, results, class_mapping):
         """
-        Initialize the ConfusionMatrixMetrics with a given confusion matrix.
+        Initialize the ConfusionMatrixMetrics class.
 
         Args:
-            matrix (np.ndarray): The confusion matrix.
+            results: An object containing confusion matrix and accuracy metrics.
             class_mapping (dict): Mapping of class indices to class names.
         """
-        self.matrix = matrix
-        self.num_classes = matrix.shape[0]
+        self.top1, self.top5 = results.top1, results.top5
+        self.matrix = results.confusion_matrix.matrix
+        self.num_classes = self.matrix.shape[0]
         self.class_mapping = class_mapping
 
         # Add background class if needed
@@ -41,8 +44,8 @@ class ConfusionMatrixMetrics:
             self.class_mapping[self.num_classes] = 'background'
 
         # Calculate total predictions and class distributions
-        self.total_predictions = np.sum(matrix)
-        self.class_distributions = np.sum(matrix, axis=1) / self.total_predictions
+        self.total_predictions = np.sum(self.matrix)
+        self.class_distributions = np.sum(self.matrix, axis=1) / self.total_predictions
 
     def calculate_tp(self):
         """Calculate true positives for each class."""
@@ -104,27 +107,6 @@ class ConfusionMatrixMetrics:
         """Calculate balanced accuracy for each class."""
         return (self.calculate_recall() + self.calculate_specificity()) / 2
 
-    def calculate_top_k_accuracy(self, k):
-        """Calculate top-k accuracy."""
-        # Reconstruct predictions and true labels from the confusion matrix
-        true_labels = []
-        predictions = []
-        for i in range(self.num_classes):
-            for j in range(self.num_classes):
-                count = self.matrix[i, j].astype(int)
-                true_labels.extend([i] * count)
-                predictions.extend([j] * count)
-
-        true_labels = np.array(true_labels)
-        predictions = np.array(predictions)
-
-        # Calculate top-k accuracy
-        top_k_acc = 0
-        for i in range(len(true_labels)):
-            if true_labels[i] in predictions[i:i+k]:
-                top_k_acc += 1
-        return top_k_acc / len(true_labels)
-
     def calculate_metrics_summary(self):
         """
         Calculate a comprehensive summary of metrics.
@@ -134,13 +116,13 @@ class ConfusionMatrixMetrics:
         """
         metrics = {
             'Accuracy': self.calculate_accuracy(),
+            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy()),
+            'Top1 Accuracy': self.top1,
+            'Top5 Accuracy': self.top5,
             'Macro Precision': np.mean(self.calculate_precision()),
             'Macro Recall': np.mean(self.calculate_recall()),
             'Macro F1': np.mean(self.calculate_f1_score()),
             'Weighted F1': np.average(self.calculate_f1_score(), weights=self.class_distributions),
-            'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy()),
-            'Top-5 Accuracy': self.calculate_top_k_accuracy(5),
-            'Top-10 Accuracy': self.calculate_top_k_accuracy(10)
         }
         return metrics
 
@@ -166,8 +148,6 @@ class ConfusionMatrixMetrics:
             'Accuracy': self.calculate_accuracy(),
             'F1 Score': np.mean(self.calculate_f1_score()),
             'Balanced Accuracy': np.mean(self.calculate_balanced_accuracy()),
-            'Top-5 Accuracy': self.calculate_top_k_accuracy(5),
-            'Top-10 Accuracy': self.calculate_top_k_accuracy(10)
         }
         return metrics
 
@@ -257,12 +237,12 @@ class ConfusionMatrixMetrics:
                          cmap='Blues',
                          xticklabels=self.class_mapping.values(),
                          yticklabels=self.class_mapping.values(),
-                         annot_kws={"size": max(8, 16 - self.num_classes // 2)},
+                         square=True,
                          cbar_kws={'format': FuncFormatter(lambda x, p: format_value(x))})
 
         # Highlight the diagonal squares with green perimeters
         for i in range(self.num_classes):
-            ax.add_patch(plt.Rectangle((i, i), 1, 1, fill=False, edgecolor='green', lw=2))
+            ax.add_patch(plt.Rectangle((i, i), 1, 1, fill=False, edgecolor='lightblue', lw=2))
 
         plt.title(title)
         plt.ylabel('True label')
@@ -302,9 +282,6 @@ class ConfusionMatrixMetrics:
             directory (str): Output directory
             filename (str): Output filename
         """
-        top_5_accuracy = self.calculate_top_k_accuracy(5)
-        top_10_accuracy = self.calculate_top_k_accuracy(10)
-
         metrics_dict = {
             'Class': list(self.class_mapping.values()),
             'Total Samples': np.sum(self.matrix, axis=1),
@@ -318,8 +295,6 @@ class ConfusionMatrixMetrics:
             'Specificity': self.calculate_specificity(),
             'Balanced Accuracy': self.calculate_balanced_accuracy(),
             'Class Distribution (%)': self.class_distributions * 100,
-            'Top-5 Accuracy': [top_5_accuracy] * self.num_classes,
-            'Top-10 Accuracy': [top_10_accuracy] * self.num_classes
         }
 
         df = pd.DataFrame(metrics_dict)
@@ -331,7 +306,6 @@ class ConfusionMatrixMetrics:
 
         Args:
             directory (str): Output directory
-            include_report (bool): Whether to include detailed CSV report
         """
         # Create output directory
         os.makedirs(directory, exist_ok=True)
