@@ -3,8 +3,8 @@ import warnings
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
-from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem
+from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem
 
 from toolbox.Tools.QtTool import Tool
 from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -35,6 +35,7 @@ class SAMTool(Tool):
         self.negative_points = []
 
         self.working_area = None
+        self.shadow_area = None
 
         self.original_image = None
         self.original_width = None
@@ -264,11 +265,31 @@ class SAMTool(Tool):
         # Set the working area
         working_rect = QRectF(left, top, right - left, bottom - top)
 
-        # Create the graphic
+        # Create the graphic for the working area
         pen = QPen(Qt.green)
         pen.setStyle(Qt.DashLine)
         pen.setWidth(10)
-        self.working_area = self.annotation_window.scene.addRect(working_rect, pen=pen)
+        self.working_area = QGraphicsRectItem(working_rect)
+        self.working_area.setPen(pen)
+
+        # Add the working area to the scene
+        self.annotation_window.scene.addItem(self.working_area)
+
+        # Create a semi-transparent overlay for the shadow
+        shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
+        shadow_path = QPainterPath()
+        shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
+        shadow_path.addRect(working_rect)  # Add the work area rect
+        # Subtract the work area from the overlay
+        shadow_path = shadow_path.simplified()
+
+        # Create the shadow item
+        self.shadow_area = QGraphicsPathItem(shadow_path)
+        self.shadow_area.setBrush(shadow_brush)
+        self.shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
+
+        # Add the shadow item to the scene
+        self.annotation_window.scene.addItem(self.shadow_area)
 
         # Crop the image based on the working_rect
         self.image = self.original_image[top:bottom, left:right]
@@ -400,4 +421,9 @@ class SAMTool(Tool):
         if self.working_area:
             self.annotation_window.scene.removeItem(self.working_area)
             self.working_area = None
-            self.image = None
+
+        if self.shadow_area:
+            self.annotation_window.scene.removeItem(self.shadow_area)
+            self.shadow_area = None
+
+        self.image = None
