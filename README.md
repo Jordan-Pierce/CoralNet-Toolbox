@@ -116,11 +116,14 @@ coralnet-toolbox
 
 ## GitHub Repository
 
-If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following after
-creating an `Anaconda` environment:
+If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following:
 
 ```bash
 # cmd
+
+# Create and activate an environment
+conda create --name coralnet-toolbox python=3.10 -y
+conda activate coralnet-toolbox
 
 # Clone and enter the repository
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
@@ -129,52 +132,15 @@ cd CoralNet-Toolbox
 # Install the latest
 pip install -e .
 
-# Install CUDA requirements
-...
+# Install CUDA requirements (if applicable)
+conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
+conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
+
+# Example for torch w/ CUDA 11.8
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade 
 
 # Run
 coralnet-toolbox
-```
-
-## What Happened to the Old Repository?
-
-The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
-running the `toolshed` are the same as above; after creating an `Anaconda` environment, you can install the `toolshed` 
-with the following link:
-
-```bash
-# cmd
-
-# Change directories
-cd CoralNet-Toolbox/toolshed
-
-# Install the latest
-pip install -e .
-
-# Run
-python main.py
-```
-Alternatively, you can work with the functions within a script:
-```python
-# python
-
-import argparse
-from coralnet_toolshed.Download import download
-
-# Create an empty parser
-args = argparse.Namespace()
-
-# Add an argument
-args.username = "username"
-args.password = "password"
-args.source_id = 3420
-
-# Run the function
-download(args)
-```
-And also command line:
-```bash
-python coralnet_toolshed/Download.py --username username --password password --source_id 3420
 ```
 
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
@@ -187,7 +153,7 @@ CoralNet allows users to upload photos of coral reefs and annotate them with det
 about the coral species and other features present in the images. The platform also provides tools 
 for analyzing the annotated images, and create patch-based image classifiers. 
 
-The CoralNet Toolbox is an unofficial tool developed to augment processes associated with analyses that 
+The CoralNet-Toolbox is an unofficial tool developed to augment processes associated with analyses that 
 use CoralNet and Coral Point Count (CPCe).
 
 
