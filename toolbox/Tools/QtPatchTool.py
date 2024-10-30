@@ -33,7 +33,7 @@ class PatchTool(Tool):
             return None
 
         if event.button() == Qt.LeftButton:
-            self.annotation_window.unselect_annotation()
+            self.annotation_window.unselect_annotations()
             self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
 
     def mouseMoveEvent(self, event: QMouseEvent):
