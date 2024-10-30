@@ -54,7 +54,7 @@ class EvaluateModelWorker(QThread):
             )
 
             # Output confusion matrix metrics as json
-            metrics = ConfusionMatrixMetrics(results.confusion_matrix.matrix, self.model.names)
+            metrics = ConfusionMatrixMetrics(results, self.model.names)
             metrics.save_results(save_dir)
 
             # Emit signal to indicate evaluation has completed
