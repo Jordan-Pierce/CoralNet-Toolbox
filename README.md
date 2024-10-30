@@ -136,47 +136,6 @@ pip install -e .
 coralnet-toolbox
 ```
 
-## What Happened to the Old Repository?
-
-The previous repository can be found in the [Toolshed](toolshed/README.md) folder. The instructions for installing and 
-running the `toolshed` are the same as above; after creating an `Anaconda` environment, you can install the `toolshed` 
-with the following link:
-
-```bash
-# cmd
-
-# Change directories
-cd CoralNet-Toolbox/toolshed
-
-# Install the latest
-pip install -e .
-
-# Run
-python main.py
-```
-Alternatively, you can work with the functions within a script:
-```python
-# python
-
-import argparse
-from coralnet_toolshed.Download import download
-
-# Create an empty parser
-args = argparse.Namespace()
-
-# Add an argument
-args.username = "username"
-args.password = "password"
-args.source_id = 3420
-
-# Run the function
-download(args)
-```
-And also command line:
-```bash
-python coralnet_toolshed/Download.py --username username --password password --source_id 3420
-```
-
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous 
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing, 
@@ -187,7 +146,7 @@ CoralNet allows users to upload photos of coral reefs and annotate them with det
 about the coral species and other features present in the images. The platform also provides tools 
 for analyzing the annotated images, and create patch-based image classifiers. 
 
-The CoralNet Toolbox is an unofficial tool developed to augment processes associated with analyses that 
+The CoralNet-Toolbox is an unofficial tool developed to augment processes associated with analyses that 
 use CoralNet and Coral Point Count (CPCe).
 
 
