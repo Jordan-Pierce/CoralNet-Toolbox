@@ -237,7 +237,7 @@ class ConfusionMatrixMetrics:
                          cmap='Blues',
                          xticklabels=self.class_mapping.values(),
                          yticklabels=self.class_mapping.values(),
-                         annot_kws={"size": max(8, 16 - self.num_classes // 2)},
+                         square=True,
                          cbar_kws={'format': FuncFormatter(lambda x, p: format_value(x))})
 
         # Highlight the diagonal squares with green perimeters
