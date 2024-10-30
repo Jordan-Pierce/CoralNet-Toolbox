@@ -28,7 +28,7 @@ class SelectTool(Tool):
 
         self.buffer = 50
 
-        self.selected_annotation = None
+        self.selected_annotations = []
 
         # Listen for the annotation changed signals
         self.annotation_window.annotationSelected.connect(self.annotation_changed)
@@ -63,13 +63,13 @@ class SelectTool(Tool):
             # Select the closest item to the center
             for item, _ in center_proximity_items:
                 annotation_id = item.data(0)
-                self.selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
-                if self.selected_annotation:
-                    self.annotation_window.select_annotation(self.selected_annotation)
+                selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
+                if selected_annotation:
+                    self.annotation_window.select_annotation(selected_annotation)
                     self.annotation_window.drag_start_pos = position
 
                     if event.modifiers() & Qt.ControlModifier:
-                        self.resize_handle = self.detect_resize_handle(self.selected_annotation, position)
+                        self.resize_handle = self.detect_resize_handle(selected_annotation, position)
                         if self.resize_handle:
                             self.resizing = True
                             self.resize_start_pos = position
@@ -86,53 +86,54 @@ class SelectTool(Tool):
         current_pos = self.annotation_window.mapToScene(event.pos())
 
         if self.resizing and self.resize_handle and event.modifiers() & Qt.ControlModifier:
-            if self.annotation_window.selected_annotation is not None:
-                self.selected_annotation = self.annotation_window.selected_annotation
-                self.resize_annotation(self.selected_annotation, current_pos)
-                self.display_resize_handles(self.selected_annotation)
+            if self.annotation_window.selected_annotations:
+                for selected_annotation in self.annotation_window.selected_annotations:
+                    self.resize_annotation(selected_annotation, current_pos)
+                    self.display_resize_handles(selected_annotation)
 
             self.resize_start_pos = current_pos
-            self.resize_annotation(self.annotation_window.selected_annotation, current_pos)
 
         elif self.moving and event.buttons() & Qt.LeftButton and not event.modifiers() & Qt.ControlModifier:
-            if self.annotation_window.selected_annotation:
-                delta = current_pos - self.move_start_pos
-                new_center = self.annotation_window.selected_annotation.center_xy + delta
+            if self.annotation_window.selected_annotations:
+                for selected_annotation in self.annotation_window.selected_annotations:
+                    delta = current_pos - self.move_start_pos
+                    new_center = selected_annotation.center_xy + delta
 
-                if self.annotation_window.cursorInWindow(current_pos, mapped=True):
-                    selected_annotation = self.annotation_window.selected_annotation
-                    rasterio_image = self.annotation_window.rasterio_image
-                    self.annotation_window.set_annotation_location(selected_annotation.id, new_center)
-                    self.annotation_window.selected_annotation.create_cropped_image(rasterio_image)
-                    self.annotation_window.main_window.confidence_window.display_cropped_image(selected_annotation)
-                    self.move_start_pos = current_pos
+                    if self.annotation_window.cursorInWindow(current_pos, mapped=True):
+                        rasterio_image = self.annotation_window.rasterio_image
+                        self.annotation_window.set_annotation_location(selected_annotation.id, new_center)
+                        selected_annotation.create_cropped_image(rasterio_image)
+                        self.annotation_window.main_window.confidence_window.display_cropped_image(selected_annotation)
+                        self.move_start_pos = current_pos
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
 
-        self.selected_annotation = self.annotation_window.selected_annotation
+        self.selected_annotations = self.annotation_window.selected_annotations
 
         if self.resizing:
             self.resizing = False
             self.resize_handle = None
             self.resize_start_pos = None
-            self.display_resize_handles(self.selected_annotation)
+            for selected_annotation in self.selected_annotations:
+                self.display_resize_handles(selected_annotation)
         if self.moving:
             self.moving = False
             self.move_start_pos = None
         self.annotation_window.drag_start_pos = None
 
     def keyPressEvent(self, event):
-        if self.annotation_window.selected_annotation is None:
+        if not self.annotation_window.selected_annotations:
             return
 
-        self.selected_annotation = self.annotation_window.selected_annotation
+        self.selected_annotations = self.annotation_window.selected_annotations
         if event.modifiers() & Qt.ControlModifier:
-            self.display_resize_handles(self.selected_annotation)
+            for selected_annotation in self.selected_annotations:
+                self.display_resize_handles(selected_annotation)
 
     def keyReleaseEvent(self, event):
-        if self.annotation_window.selected_annotation is None:
+        if not self.annotation_window.selected_annotations:
             return
 
         if not event.modifiers() & Qt.ControlModifier:

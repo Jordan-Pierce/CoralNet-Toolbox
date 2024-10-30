@@ -57,7 +57,7 @@ class AnnotationWindow(QGraphicsView):
 
         self.annotations_dict = {}  # Dictionary to store annotations by UUID
 
-        self.selected_annotation = None  # Stores the selected annotation
+        self.selected_annotations = []  # Stores the selected annotations
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
 
@@ -148,18 +148,18 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_tool:
             self.tools[self.selected_tool].activate()
 
-        self.unselect_annotation()
+        self.unselect_annotations()
         self.toggle_cursor_annotation()
 
     def set_selected_label(self, label):
         self.selected_label = label
         self.annotation_color = label.color
 
-        if self.selected_annotation:
-            if self.selected_annotation.label.id != label.id:
-                self.selected_annotation.update_user_confidence(self.selected_label)
-                self.selected_annotation.create_cropped_image(self.rasterio_image)
-                self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+        for annotation in self.selected_annotations:
+            if annotation.label.id != label.id:
+                annotation.update_user_confidence(self.selected_label)
+                annotation.create_cropped_image(self.rasterio_image)
+                self.main_window.confidence_window.display_cropped_image(annotation)
 
         if self.cursor_annotation:
             if self.cursor_annotation.label.id != label.id:
@@ -177,24 +177,24 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_size += delta
             self.annotation_size = max(1, self.annotation_size)
 
-        if isinstance(self.selected_annotation, PatchAnnotation):
-            self.selected_annotation.update_annotation_size(self.annotation_size)
-            if self.cursor_annotation:
-                self.cursor_annotation.update_annotation_size(self.annotation_size)
-        elif isinstance(self.selected_annotation, PolygonAnnotation):
-            scale_factor = 1 + delta / 100.0
-            self.selected_annotation.update_annotation_size(scale_factor)
-            if self.cursor_annotation:
-                self.cursor_annotation.update_annotation_size(scale_factor)
-        elif isinstance(self.selected_annotation, RectangleAnnotation):
-            scale_factor = 1 + delta / 100.0
-            self.selected_annotation.update_annotation_size(scale_factor)
-            if self.cursor_annotation:
-                self.cursor_annotation.update_annotation_size(scale_factor)
+        for annotation in self.selected_annotations:
+            if isinstance(annotation, PatchAnnotation):
+                annotation.update_annotation_size(self.annotation_size)
+                if self.cursor_annotation:
+                    self.cursor_annotation.update_annotation_size(self.annotation_size)
+            elif isinstance(annotation, PolygonAnnotation):
+                scale_factor = 1 + delta / 100.0
+                annotation.update_annotation_size(scale_factor)
+                if self.cursor_annotation:
+                    self.cursor_annotation.update_annotation_size(scale_factor)
+            elif isinstance(annotation, RectangleAnnotation):
+                scale_factor = 1 + delta / 100.0
+                annotation.update_annotation_size(scale_factor)
+                if self.cursor_annotation:
+                    self.cursor_annotation.update_annotation_size(scale_factor)
 
-        if self.selected_annotation:
-            self.selected_annotation.create_cropped_image(self.rasterio_image)
-            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+            annotation.create_cropped_image(self.rasterio_image)
+            self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Emit that the annotation size has changed
         self.annotationSizeChanged.emit(self.annotation_size)
@@ -288,8 +288,8 @@ class AnnotationWindow(QGraphicsView):
         if self.selected_tool == "select" and self.active_image:
             annotations = self.get_image_annotations()
             if annotations:
-                if self.selected_annotation:
-                    current_index = annotations.index(self.selected_annotation)
+                if self.selected_annotations:
+                    current_index = annotations.index(self.selected_annotations[0])
                     new_index = (current_index + direction) % len(annotations)
                 else:
                     new_index = 0
@@ -299,34 +299,38 @@ class AnnotationWindow(QGraphicsView):
                 self.center_on_annotation(annotations[new_index])
 
     def select_annotation(self, annotation):
-        if self.selected_annotation != annotation:
-            if self.selected_annotation:
-                self.unselect_annotation()
-
-            # Select the annotation
-            self.selected_annotation = annotation
-            self.selected_annotation.select()
+        if annotation not in self.selected_annotations:
+            self.selected_annotations.append(annotation)
+            annotation.select()
 
             # Set the label and color for selected annotation
-            self.selected_label = self.selected_annotation.label
-            self.annotation_color = self.selected_annotation.label.color
+            self.selected_label = annotation.label
+            self.annotation_color = annotation.label.color
 
             # Emit a signal indicating the selected annotations label to LabelWindow
             # which then update the label in the label window, followed by transparency.
-            self.labelSelected.emit(self.selected_annotation.label.id)
-            self.annotationSelected.emit(self.selected_annotation.id)
+            self.labelSelected.emit(annotation.label.id)
+            self.annotationSelected.emit(annotation.id)
 
-            if not self.selected_annotation.cropped_image:
+            if not annotation.cropped_image:
                 # Crop the image from annotation using current image item
-                self.selected_annotation.create_cropped_image(self.rasterio_image)
+                annotation.create_cropped_image(self.rasterio_image)
 
             # Display the selected annotation in confidence window
-            self.main_window.confidence_window.display_cropped_image(self.selected_annotation)
+            self.main_window.confidence_window.display_cropped_image(annotation)
 
-    def unselect_annotation(self):
-        if self.selected_annotation:
-            self.selected_annotation.deselect()
-            self.selected_annotation = None
+    def unselect_annotation(self, annotation):
+        if annotation in self.selected_annotations:
+            annotation.deselect()
+            self.selected_annotations.remove(annotation)
+
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
+
+    def unselect_annotations(self):
+        for annotation in self.selected_annotations:
+            annotation.deselect()
+        self.selected_annotations = []
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
@@ -445,15 +449,15 @@ class AnnotationWindow(QGraphicsView):
             # Get the annotation from dict, delete it
             annotation = self.annotations_dict[annotation_id]
             annotation.delete()
-            self.annotationDeleted.emit(self.selected_annotation.id)
+            self.annotationDeleted.emit(annotation.id)
             del self.annotations_dict[annotation_id]
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
 
     def delete_selected_annotation(self):
-        if self.selected_annotation:
-            self.delete_annotation(self.selected_annotation.id)
-            self.unselect_annotation()
+        for annotation in self.selected_annotations:
+            self.delete_annotation(annotation.id)
+        self.unselect_annotations()
 
     def delete_annotations(self, annotations):
         for annotation in annotations:
@@ -482,7 +486,7 @@ class AnnotationWindow(QGraphicsView):
 
     def clear_scene(self):
         # Clean up
-        self.unselect_annotation()
+        self.unselect_annotations()
 
         # Clear the previous scene and delete its items
         if self.scene:
