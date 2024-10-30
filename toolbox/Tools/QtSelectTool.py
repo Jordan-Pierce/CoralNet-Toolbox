@@ -65,6 +65,9 @@ class SelectTool(Tool):
                 annotation_id = item.data(0)
                 selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
                 if selected_annotation:
+                    if selected_annotation in self.annotation_window.selected_annotations:
+                        self.annotation_window.unselect_annotation(selected_annotation)
+                        return
                     if not (event.modifiers() & Qt.ControlModifier):
                         self.annotation_window.unselect_annotations()
                     self.annotation_window.select_annotation(selected_annotation, ctrl_pressed=event.modifiers() & Qt.ControlModifier)
@@ -88,7 +91,7 @@ class SelectTool(Tool):
         current_pos = self.annotation_window.mapToScene(event.pos())
 
         if self.resizing and self.resize_handle and event.modifiers() & Qt.ControlModifier:
-            if self.annotation_window.selected_annotations:
+            if len(self.annotation_window.selected_annotations) == 1:
                 for selected_annotation in self.annotation_window.selected_annotations:
                     self.resize_annotation(selected_annotation, current_pos)
                     self.display_resize_handles(selected_annotation)
@@ -131,8 +134,9 @@ class SelectTool(Tool):
 
         self.selected_annotations = self.annotation_window.selected_annotations
         if event.modifiers() & Qt.ControlModifier:
-            for selected_annotation in self.selected_annotations:
-                self.display_resize_handles(selected_annotation)
+            if len(self.selected_annotations) == 1:
+                for selected_annotation in self.selected_annotations:
+                    self.display_resize_handles(selected_annotation)
 
     def keyReleaseEvent(self, event):
         if not self.annotation_window.selected_annotations:

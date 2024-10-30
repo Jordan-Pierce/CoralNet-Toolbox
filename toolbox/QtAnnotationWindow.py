@@ -302,6 +302,10 @@ class AnnotationWindow(QGraphicsView):
         if not ctrl_pressed:
             self.unselect_annotations()
 
+        if annotation in self.selected_annotations:
+            self.unselect_annotation(annotation)
+            return
+
         if annotation not in self.selected_annotations:
             self.selected_annotations.append(annotation)
             annotation.select()
@@ -321,6 +325,9 @@ class AnnotationWindow(QGraphicsView):
 
             # Display the selected annotation in confidence window
             self.main_window.confidence_window.display_cropped_image(annotation)
+
+        if len(self.selected_annotations) > 1:
+            self.labelSelected.emit(None)
 
     def unselect_annotation(self, annotation):
         if annotation in self.selected_annotations:
