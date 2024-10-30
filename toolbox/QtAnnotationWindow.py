@@ -298,7 +298,10 @@ class AnnotationWindow(QGraphicsView):
                 # Center the view on the new annotation
                 self.center_on_annotation(annotations[new_index])
 
-    def select_annotation(self, annotation):
+    def select_annotation(self, annotation, ctrl_pressed=False):
+        if not ctrl_pressed:
+            self.unselect_annotations()
+
         if annotation not in self.selected_annotations:
             self.selected_annotations.append(annotation)
             annotation.select()

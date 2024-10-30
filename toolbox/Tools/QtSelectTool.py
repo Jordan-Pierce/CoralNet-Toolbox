@@ -65,7 +65,9 @@ class SelectTool(Tool):
                 annotation_id = item.data(0)
                 selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
                 if selected_annotation:
-                    self.annotation_window.select_annotation(selected_annotation)
+                    if not (event.modifiers() & Qt.ControlModifier):
+                        self.annotation_window.unselect_annotations()
+                    self.annotation_window.select_annotation(selected_annotation, ctrl_pressed=event.modifiers() & Qt.ControlModifier)
                     self.annotation_window.drag_start_pos = position
 
                     if event.modifiers() & Qt.ControlModifier:
