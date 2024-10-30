@@ -116,11 +116,14 @@ coralnet-toolbox
 
 ## GitHub Repository
 
-If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following after
-creating an `Anaconda` environment:
+If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following:
 
 ```bash
 # cmd
+
+# Create and activate an environment
+conda create --name coralnet-toolbox python=3.10 -y
+conda activate coralnet-toolbox
 
 # Clone and enter the repository
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
@@ -129,8 +132,12 @@ cd CoralNet-Toolbox
 # Install the latest
 pip install -e .
 
-# Install CUDA requirements
-...
+# Install CUDA requirements (if applicable)
+conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
+conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
+
+# Example for torch w/ CUDA 11.8
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade 
 
 # Run
 coralnet-toolbox
