@@ -299,21 +299,20 @@ class DeployModelDialog(QDialog):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+
         if not annotations:
             # Predict only the selected annotation
             annotations = self.annotation_window.selected_annotations
         if not annotations:
             # If no annotations are selected, predict all annotations in the image
             annotations = self.annotation_window.get_image_review_annotations()
-        if not annotations:
-            # If no annotations are found, return
-            return
 
         # Preprocess the annotations
         self.preprocess_classification_annotations(annotations)
         # Unselect all annotations
         self.annotation_window.unselect_annotations()
 
+        # Make cursor normal
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
@@ -346,12 +345,17 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
 
     def process_classification_result(self, annotation, results):
-        class_names = results.names
-        top5 = results.probs.top5
-        top5conf = results.probs.top5conf
-        top1conf = top5conf[0].item()
-
         predictions = {}
+
+        try:
+            class_names = results.names
+            top5 = results.probs.top5
+            top5conf = results.probs.top5conf
+            top1conf = top5conf[0].item()
+        except Exception as e:
+            print(f"Warning: Failed to process classification result\n{e}")
+            return predictions
+
         for idx, conf in zip(top5, top5conf):
             class_name = class_names[idx]
             label = self.label_window.get_label_by_short_code(class_name)

@@ -34,10 +34,13 @@ class ConfusionMatrixMetrics:
             results: An object containing confusion matrix and accuracy metrics.
             class_mapping (dict): Mapping of class indices to class names.
         """
-        self.top1, self.top5 = results.top1, results.top5
         self.matrix = results.confusion_matrix.matrix
         self.num_classes = self.matrix.shape[0]
         self.class_mapping = class_mapping
+
+        # Get the top-1 and top-5 accuracies, if available
+        self.top1 = results.top1 if hasattr(results, 'top1') else None
+        self.top5 = results.top5 if hasattr(results, 'top5') else None
 
         # Add background class if needed
         if len(self.class_mapping) + 1 == self.num_classes:
