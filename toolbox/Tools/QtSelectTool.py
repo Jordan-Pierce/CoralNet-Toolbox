@@ -57,7 +57,7 @@ class SelectTool(Tool):
                 self.rectangle_selection = True
                 self.selection_start_pos = position
                 self.selection_rectangle = QGraphicsRectItem()
-                self.selection_rectangle.setPen(QPen(Qt.blue, 2, Qt.DashLine))
+                self.selection_rectangle.setPen(QPen(Qt.black, 2, Qt.DashLine))
                 self.annotation_window.scene.addItem(self.selection_rectangle)
 
             selected_annotation = self.select_annotation(position, items, event.modifiers())
