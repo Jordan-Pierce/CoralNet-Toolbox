@@ -64,7 +64,7 @@ The main window consists of several components:
   - **Deploy Model**: Deploy MobileSAM, SAM, or SAM2 model to use interactively (points, box)
 
 ## Tool Bar
-- **Select Tool**: Select, move and change the size of annotations.
+- **Select Tool**: Select multiple annotations; move and change the size of annotations.
 - **Patch Tool**: Add new PatchAnnotations.
 - **Polygon Tool**: Add new PolygonAnnotations.
 - **Rectangle Tool**: Add new RectangleAnnotations.
@@ -73,12 +73,14 @@ The main window consists of several components:
 ## Annotation Window
 - **Zoom**: Use the mouse wheel to zoom in and out.
 - **Pan**: Hold Ctrl + Right-click the mouse button to pan the image.
-- **Add Annotation**: Click with the left mouse button while using the annotate tool.
-- **Select Annotation**: Click on an annotation while using the select tool.
-  - **Move Annotation**: Drag the selected annotation.
-  - **Modify Annotation**: Hold Ctrl and drag the corners of the selected annotation (Rectangle, Polygon).
-  - **Resize Annotation**: Hold Ctrl and Zoom in / out to increase / decrease annotation size.
-  - **Delete Annotation**: Press Ctrl + Delete to delete the selected annotation.
+- **Add Annotation**: Click with the Left mouse button while using one of the annotation tools.
+- **Select Annotations**: 
+  - Ctrl + Left-Click on multiple annotations while using the select tool.
+  - Ctrl + Left-Click and drag to select multiple annotations while using the select tool.
+    - **Move Annotation**: Drag a selected annotation.
+    - **Modify Annotation**: Hold Shift and drag the vertices of the selected annotation (Rectangle, Polygon).
+    - **Resize Annotation**: Hold Ctrl and Zoom in / out to increase / decrease a selected annotation's size.
+    - **Delete Annotations**: Press Ctrl + Delete to delete the selected annotations.
 
 ## Label Window
 - **Move Label**: Right-click and drag to move labels.

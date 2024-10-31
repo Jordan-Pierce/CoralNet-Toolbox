@@ -22,18 +22,7 @@ class GlobalEventFilter(QObject):
         self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
 
     def eventFilter(self, obj, event):
-        # Check if the event is a wheel event
-        if event.type() == QEvent.Wheel:
-            # Handle Zoom wheel for setting annotation size
-            if event.modifiers() & Qt.ControlModifier:
-                delta = event.angleDelta().y()
-                if delta > 0:
-                    self.annotation_window.set_annotation_size(delta=16)  # Zoom in
-                else:
-                    self.annotation_window.set_annotation_size(delta=-16)  # Zoom out
-                return True
-
-        elif event.type() == QEvent.KeyPress:
+        if event.type() == QEvent.KeyPress:
             if event.modifiers() & Qt.ControlModifier:
 
                 # Handle WASD keys for selecting Label
@@ -80,7 +69,7 @@ class GlobalEventFilter(QObject):
                 # Handle Delete key for Deleting selected annotations or images
                 if event.key() == Qt.Key_Delete:
 
-                    if self.annotation_window.selected_annotation:
+                    if self.annotation_window.selected_annotations:
                         self.annotation_window.delete_selected_annotation()
                         return True
 
@@ -91,7 +80,7 @@ class GlobalEventFilter(QObject):
 
             # Unselect annotation on End key press
             if event.key() == Qt.Key_End:
-                self.annotation_window.unselect_annotation()
+                self.annotation_window.unselect_annotations()
                 return True
 
             # Untoggle all tools on Home key press

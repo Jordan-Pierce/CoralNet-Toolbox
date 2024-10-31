@@ -167,6 +167,9 @@ class Annotation(QObject):
 
         return self.cropped_image
 
+    def get_cropped_image_graphic(self):
+        return None
+
     def create_center_graphics_item(self, center_xy, scene):
         if self.center_graphics_item:
             scene.removeItem(self.center_graphics_item)

@@ -32,14 +32,14 @@ Enhance your CoralNet experience with these tools:
 - 🔍 API: Get predictions from any CoralNet source model  
 - 📥 Download: Retrieve source data from CoralNet 
 - 📤 Upload: Add images and annotations to CoralNet
-- ✏️ Annotate: Create patches manually or from annotations  
-- 👁️ Visualize: See Patches, Rectangles, and Polygons on images  
+- ✏️ Annotate: Create annotations freely
+- 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images  
 - 📍  Sample: Sample patches using various methods (Uniform, Random, Stratified)  
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
-- 🟣 Polygons: Create polygons (instance masks) using freehand or automatic methods
+- 🟣 Polygons: Create polygons (instance masks)
 - 🦾 SAM: Use [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), and [`SAM2`](https://github.com/facebookresearch/sam2) to create polygons
-- 🧪 AutoDistill: Use [`AutoDistill`](https://github.com/autodistill) to access GroundingDINO for creating rectangles
+- 🧪 AutoDistill: Use [`AutoDistill`](https://github.com/autodistill) to access `GroundingDINO` for creating rectangles
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance

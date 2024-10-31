@@ -297,27 +297,26 @@ class DeployModelDialog(QDialog):
         if self.loaded_models['classify'] is None:
             return
 
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        selected_annotation = self.annotation_window.selected_annotation
-        if selected_annotation and not annotations:
+        if not annotations:
             # Predict only the selected annotation
-            self.predict_classification_annotation(selected_annotation)
-            self.main_window.annotation_window.unselect_annotation()
-            self.main_window.annotation_window.select_annotation(selected_annotation)
-        else:
-            # Predict all annotations in the image
-            if not annotations:
-                annotations = self.annotation_window.get_image_review_annotations()
-            self.preprocess_classification_annotations(annotations)
+            annotations = self.annotation_window.selected_annotations
+        if not annotations:
+            # If no annotations are selected, predict all annotations in the image
+            annotations = self.annotation_window.get_image_review_annotations()
+        if not annotations:
+            # If no annotations are found, return
+            return
+
+        # Preprocess the annotations
+        self.preprocess_classification_annotations(annotations)
+        # Unselect all annotations
+        self.annotation_window.unselect_annotations()
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
-
-    def predict_classification_annotation(self, annotation):
-        image_np = pixmap_to_numpy(annotation.cropped_image)
-        results = self.loaded_models['classify'](image_np, device=self.main_window.device)[0]
-        self.process_classification_result(annotation, results)
 
     def preprocess_classification_annotations(self, annotations):
         if not annotations:

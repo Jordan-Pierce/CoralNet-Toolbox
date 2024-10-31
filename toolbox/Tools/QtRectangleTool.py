@@ -38,12 +38,12 @@ class RectangleTool(Tool):
             # Start drawing the rectangle
             self.start_point = self.annotation_window.mapToScene(event.pos())
             self.drawing_rectangle = True
-            self.annotation_window.unselect_annotation()
+            self.annotation_window.unselect_annotations()
             self.annotation_window.toggle_cursor_annotation(self.start_point)
         elif event.button() == Qt.LeftButton and self.drawing_rectangle:
             # Finish drawing the rectangle
             self.end_point = self.annotation_window.mapToScene(event.pos())
-            self.annotation_window.unselect_annotation()
+            self.annotation_window.unselect_annotations()
             self.annotation_window.add_annotation(self.end_point)
             self.drawing_rectangle = False
         elif event.button() == Qt.RightButton and self.drawing_rectangle:
