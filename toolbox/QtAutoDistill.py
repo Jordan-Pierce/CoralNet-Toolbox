@@ -191,30 +191,19 @@ class AutoDistillDeployModelDialog(QDialog):
         progress_bar.show()
         try:
             # Get the ontology mapping
-            ontology_mapping = {}
-            for text_input, label_dropdown in self.ontology_pairs:
-                if text_input.text() != "":
-                    ontology_mapping[text_input.text()] = label_dropdown.currentText()
+            ontology_mapping = self.get_ontology_mapping()
 
             # Set the ontology
             self.ontology = CaptionOntology(ontology_mapping)
 
             # Threshold for confidence
-            if self.main_window.get_uncertainty_thresh() < 0.10:
-                uncertainty_thresh = self.main_window.get_uncertainty_thresh()
-            else:
-                uncertainty_thresh = 0.10  # Arbitrary value to prevent too many detections
+            uncertainty_thresh = self.get_uncertainty_threshold()
 
             # Get the name of the model to load
             model_name = self.model_dropdown.currentText()
 
             if model_name != self.model_name:
-                if model_name == "GroundingDINO":
-                    from autodistill_grounding_dino import GroundingDINO
-                    self.model_name = model_name
-                    self.loaded_model = GroundingDINO(ontology=self.ontology,
-                                                      box_threshold=uncertainty_thresh,
-                                                      text_threshold=uncertainty_thresh)
+                self.load_new_model(model_name, uncertainty_thresh)
             else:
                 # Update the model with the new ontology
                 self.loaded_model.ontology = self.ontology
@@ -232,6 +221,27 @@ class AutoDistillDeployModelDialog(QDialog):
         QApplication.restoreOverrideCursor()
         # Exit the dialog box
         self.accept()
+
+    def get_ontology_mapping(self):
+        ontology_mapping = {}
+        for text_input, label_dropdown in self.ontology_pairs:
+            if text_input.text() != "":
+                ontology_mapping[text_input.text()] = label_dropdown.currentText()
+        return ontology_mapping
+
+    def get_uncertainty_threshold(self):
+        if self.main_window.get_uncertainty_thresh() < 0.10:
+            return self.main_window.get_uncertainty_thresh()
+        else:
+            return 0.10  # Arbitrary value to prevent too many detections
+
+    def load_new_model(self, model_name, uncertainty_thresh):
+        if model_name == "GroundingDINO":
+            from autodistill_grounding_dino import GroundingDINO
+            self.model_name = model_name
+            self.loaded_model = GroundingDINO(ontology=self.ontology,
+                                              box_threshold=uncertainty_thresh,
+                                              text_threshold=uncertainty_thresh)
 
     def predict(self, image_paths=None):
         if not self.loaded_model:
