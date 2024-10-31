@@ -135,16 +135,23 @@ class ConfidenceWindow(QWidget):
             self.clear_display()  # Clear the current display before updating
             self.update_annotation(annotation)
             if self.cropped_image:  # Ensure cropped_image is not None
-                annotation.get_cropped_image(self.downscale_factor)
-                self.scene.addPixmap(annotation.cropped_image)
-                self.scene.setSceneRect(QRectF(annotation.cropped_image.rect()))
+                cropped_image = annotation.get_cropped_image(self.downscale_factor)
+                cropped_image_graphic = annotation.get_cropped_image_graphic()
+                # Add the image
+                self.scene.addPixmap(cropped_image)
+                # Add the annotation graphic
+                self.scene.addItem(cropped_image_graphic)
+                # Add the border color
+                self.scene.setSceneRect(QRectF(cropped_image.rect()))
+                # Fit the view to the scene
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
+                # Create the bar charts
                 self.create_bar_chart()
 
                 # Update dimensions label
-                height = annotation.cropped_image.height()
-                width = annotation.cropped_image.width()
+                height = cropped_image.height()
+                width = cropped_image.width()
                 self.dimensions_label.setText(f"Crop: {height} x {width}")
 
         except:

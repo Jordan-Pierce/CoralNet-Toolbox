@@ -226,6 +226,25 @@ class PolygonAnnotation(Annotation):
 
         return self.cropped_image
 
+    def get_cropped_image_graphic(self):
+        if self.cropped_image is None:
+            return None
+
+        # Create a copy of the points that are transformed to be relative to the cropped_image
+        cropped_points = [QPointF(point.x() - self.cropped_bbox[0],
+                                  point.y() - self.cropped_bbox[1]) for point in self.points]
+
+        cropped_polygon = QPolygonF(cropped_points)
+        cropped_image_graphic = QGraphicsPolygonItem(cropped_polygon)
+
+        color = QColor(self.label.color)
+        color.setAlpha(64)
+        brush = QBrush(color)
+        cropped_image_graphic.setBrush(brush)
+        cropped_image_graphic.update()
+
+        return cropped_image_graphic
+
     def create_graphics_item(self, scene: QGraphicsScene):
         polygon = QPolygonF(self.points)
         self.graphics_item = QGraphicsPolygonItem(polygon)
