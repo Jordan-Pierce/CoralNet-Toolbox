@@ -33,8 +33,8 @@ Enhance your CoralNet experience with these tools:
 - 📥 Download: Retrieve source data from CoralNet 
 - 📤 Upload: Add images and annotations to CoralNet
 - ✏️ Annotate: Create annotations freely
-- 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images  
-- 📍  Sample: Sample patches using various methods (Uniform, Random, Stratified)  
+- 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
+- 🔬 Sample: Sample patches using various methods (Uniform, Random, Stratified)  
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
