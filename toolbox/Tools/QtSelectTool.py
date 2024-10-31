@@ -66,23 +66,32 @@ class SelectTool(Tool):
                 selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
                 if selected_annotation:
                     if selected_annotation in self.annotation_window.selected_annotations:
-                        self.annotation_window.unselect_annotation(selected_annotation)
-                        return
-                    if not (event.modifiers() & Qt.ControlModifier):
-                        self.annotation_window.unselect_annotations()
-                    self.annotation_window.select_annotation(selected_annotation, ctrl_pressed=event.modifiers() & Qt.ControlModifier)
-                    self.annotation_window.drag_start_pos = position
-
-                    if event.modifiers() & Qt.ControlModifier:
-                        self.resize_handle = self.detect_resize_handle(selected_annotation, position)
-                        if self.resize_handle:
-                            self.resizing = True
-                            self.resize_start_pos = position
+                        if event.modifiers() & Qt.ControlModifier:
+                            self.annotation_window.unselect_annotation(selected_annotation)
+                            return
+                        else:
+                            self.annotation_window.unselect_annotations()
+                            self.annotation_window.select_annotation(selected_annotation)
+                            self.annotation_window.drag_start_pos = position
+                            self.moving = True
+                            self.move_start_pos = position
                             break
                     else:
-                        self.moving = True
-                        self.move_start_pos = position
-                        break
+                        if not (event.modifiers() & Qt.ControlModifier):
+                            self.annotation_window.unselect_annotations()
+                        self.annotation_window.select_annotation(selected_annotation, ctrl_pressed=event.modifiers() & Qt.ControlModifier)
+                        self.annotation_window.drag_start_pos = position
+
+                        if event.modifiers() & Qt.ControlModifier:
+                            self.resize_handle = self.detect_resize_handle(selected_annotation, position)
+                            if self.resize_handle:
+                                self.resizing = True
+                                self.resize_start_pos = position
+                                break
+                        else:
+                            self.moving = True
+                            self.move_start_pos = position
+                            break
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if not self.annotation_window.cursorInWindow(event.pos()):
@@ -135,8 +144,7 @@ class SelectTool(Tool):
         self.selected_annotations = self.annotation_window.selected_annotations
         if event.modifiers() & Qt.ControlModifier:
             if len(self.selected_annotations) == 1:
-                for selected_annotation in self.selected_annotations:
-                    self.display_resize_handles(selected_annotation)
+                self.display_resize_handles(self.selected_annotations[0])
 
     def keyReleaseEvent(self, event):
         if not self.annotation_window.selected_annotations:
@@ -144,6 +152,15 @@ class SelectTool(Tool):
 
         if not event.modifiers() & Qt.ControlModifier:
             self.remove_resize_handles()
+
+    def wheelEvent(self, event: QMouseEvent):
+        # Handle Zoom wheel for setting annotation size
+        if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.annotation_window.set_annotation_size(delta=16)  # Zoom in
+            else:
+                self.annotation_window.set_annotation_size(delta=-16)  # Zoom out
 
     def annotation_changed(self, annotation_id):
         # Clear the resize handles if the selected annotation changed

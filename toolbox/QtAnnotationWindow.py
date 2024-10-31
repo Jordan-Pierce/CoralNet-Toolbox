@@ -85,10 +85,11 @@ class AnnotationWindow(QGraphicsView):
         }
 
     def wheelEvent(self, event: QMouseEvent):
-        if self.active_image:
-            self.tools["zoom"].wheelEvent(event)
-        if self.selected_tool:
+        # Handle zooming with the mouse wheel
+        if self.selected_tool and event.modifiers() & Qt.ControlModifier:
             self.tools[self.selected_tool].wheelEvent(event)
+        elif self.active_image:
+            self.tools["zoom"].wheelEvent(event)
 
         self.viewChanged.emit(*self.get_image_dimensions())
 
@@ -177,7 +178,9 @@ class AnnotationWindow(QGraphicsView):
             self.annotation_size += delta
             self.annotation_size = max(1, self.annotation_size)
 
-        for annotation in self.selected_annotations:
+        # Cursor or 1 annotation selected
+        if len(self.selected_annotations) == 1:
+            annotation = self.selected_annotations[0]
             if isinstance(annotation, PatchAnnotation):
                 annotation.update_annotation_size(self.annotation_size)
                 if self.cursor_annotation:
@@ -196,8 +199,10 @@ class AnnotationWindow(QGraphicsView):
             annotation.create_cropped_image(self.rasterio_image)
             self.main_window.confidence_window.display_cropped_image(annotation)
 
-        # Emit that the annotation size has changed
-        self.annotationSizeChanged.emit(self.annotation_size)
+        # Only emit if 1 or no annotations are selected
+        if len(self.selected_annotations) <= 1:
+            # Emit that the annotation size has changed
+            self.annotationSizeChanged.emit(self.annotation_size)
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
 
@@ -327,7 +332,7 @@ class AnnotationWindow(QGraphicsView):
             self.main_window.confidence_window.display_cropped_image(annotation)
 
         if len(self.selected_annotations) > 1:
-            self.labelSelected.emit(None)
+            self.main_window.label_window.deselect_active_label()
 
     def unselect_annotation(self, annotation):
         if annotation in self.selected_annotations:
