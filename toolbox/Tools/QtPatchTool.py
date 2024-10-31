@@ -33,7 +33,7 @@ class PatchTool(Tool):
             return None
 
         if event.button() == Qt.LeftButton:
-            self.annotation_window.unselect_annotation()
+            self.annotation_window.unselect_annotations()
             self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
 
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -47,7 +47,14 @@ class PatchTool(Tool):
         self.annotation_window.toggle_cursor_annotation()
 
     def wheelEvent(self, event: QMouseEvent):
+        # Handle Zoom wheel for setting annotation size
         if event.modifiers() & Qt.ControlModifier:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.annotation_window.set_annotation_size(delta=16)  # Zoom in
+            else:
+                self.annotation_window.set_annotation_size(delta=-16)  # Zoom out
+
             self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
