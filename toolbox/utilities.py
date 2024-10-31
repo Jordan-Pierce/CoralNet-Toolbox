@@ -39,6 +39,42 @@ def get_available_device():
     return devices
 
 
+def preprocess_image(image):
+    """
+    Ensure the image has correct dimensions (h, w, 3).
+
+    :param image:
+    :return:
+    """
+    if len(image.shape) == 2:  # Grayscale image
+        image = np.stack((image,) * 3, axis=-1)
+    elif len(image.shape) == 3:
+        if image.shape[2] == 4:  # RGBA image
+            image = image[..., :3]  # Drop alpha channel
+        elif image.shape[2] != 3:  # If channels are not last
+            # Check if channels are first (c, h, w)
+            if image.shape[0] == 3:
+                image = np.transpose(image, (1, 2, 0))
+            elif image.shape[0] == 4:  # RGBA in channels-first format
+                image = np.transpose(image, (1, 2, 0))[..., :3]
+            else:
+                raise ValueError("Image must have 3 or 4 color channels")
+    else:
+        raise ValueError("Image must be 2D or 3D array")
+
+    return image
+
+
+def rasterio_to_numpy(rasterio_src):
+    """
+    Convert a Rasterio dataset to a NumPy array.
+
+    :param rasterio_src:
+    :return:
+    """
+    return rasterio_src.read().transpose(1, 2, 0)
+
+
 def pixmap_to_numpy(pixmap):
     """
     Convert a QPixmap to a NumPy array.

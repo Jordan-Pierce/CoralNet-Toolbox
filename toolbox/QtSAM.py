@@ -10,7 +10,7 @@ import torch
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
+                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget)
 
 from torch.cuda import empty_cache
 from mobile_sam import SamPredictor as MobileSamPredictor
@@ -25,6 +25,8 @@ from ultralytics.utils import ops
 from ultralytics.utils.downloads import attempt_download_asset
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.utilities import preprocess_image
+from toolbox.utilities import rasterio_to_numpy
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -32,7 +34,7 @@ from toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def custom_postprocess(masks, scores, logits, resized_image, original_image):
+def postprocess_sam_results(masks, scores, logits, resized_image, original_image):
     """
     Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
 
@@ -306,22 +308,8 @@ class SAMDeployModelDialog(QDialog):
 
         try:
             if self.predictor is not None:
-                # Ensure image has correct dimensions (h, w, 3)
-                if len(image.shape) == 2:  # Grayscale image
-                    image = np.stack((image,) * 3, axis=-1)
-                elif len(image.shape) == 3:
-                    if image.shape[2] == 4:  # RGBA image
-                        image = image[..., :3]  # Drop alpha channel
-                    elif image.shape[2] != 3:  # If channels are not last
-                        # Check if channels are first (c, h, w)
-                        if image.shape[0] == 3:
-                            image = np.transpose(image, (1, 2, 0))
-                        elif image.shape[0] == 4:  # RGBA in channels-first format
-                            image = np.transpose(image, (1, 2, 0))[..., :3]
-                        else:
-                            raise ValueError("Image must have 3 or 4 color channels")
-                else:
-                    raise ValueError("Image must be 2D or 3D array")
+                # Reshape image if needed
+                image = preprocess_image(image)
 
                 # Save the original image
                 self.original_image = image
@@ -423,7 +411,7 @@ class SAMDeployModelDialog(QDialog):
                                                                   multimask_output=False)
 
             # Post-process the results
-            results = custom_postprocess(mask, score, logit, self.resized_image, self.original_image)[0]
+            results = postprocess_sam_results(mask, score, logit, self.resized_image, self.original_image)[0]
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
@@ -451,7 +439,7 @@ class SAMDeployModelDialog(QDialog):
         for image_path in results_dict:
             # Convert rasterio image to numpy array
             image = self.main_window.image_window.rasterio_open(image_path)
-            image = image.read().transpose(1, 2, 0)
+            image = rasterio_to_numpy(image)
 
             # Set the image
             self.set_image(image)
@@ -498,7 +486,7 @@ class SAMDeployModelDialog(QDialog):
                                                                   multimask_output=False)
 
             # Post-process the results
-            sam_results = custom_postprocess(mask, score, logit, self.resized_image, self.original_image)
+            sam_results = postprocess_sam_results(mask, score, logit, self.resized_image, self.original_image)
             sam_results.boxes = results.boxes
             sam_results.names = results.names
             sam_results.path = image_path

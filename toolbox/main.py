@@ -1,7 +1,6 @@
 # TODO Later:
 #   - CoralNet tools
 #   - Resample polygon to be smoother, uniformly spaced
-#   - Look into SAM resizing images bigger than 1024
 
 import traceback
 
