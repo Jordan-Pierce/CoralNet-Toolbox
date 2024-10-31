@@ -1,5 +1,5 @@
 import warnings
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPen, QBrush
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem
 from toolbox.Tools.QtTool import Tool
@@ -25,6 +25,9 @@ class SelectTool(Tool):
         self.move_start_pos = None
         self.resize_handles = []
         self.buffer = 50
+        self.rectangle_selection = False
+        self.selection_rectangle = None
+        self.selection_start_pos = None
 
         # Manage selected annotations
         self.annotation_window.annotationSelected.connect(self.clear_resize_handles)
@@ -50,25 +53,41 @@ class SelectTool(Tool):
             position = self.annotation_window.mapToScene(event.pos())
             items = self.get_clickable_items(position)
 
+            if event.modifiers() & Qt.ControlModifier:
+                self.rectangle_selection = True
+                self.selection_start_pos = position
+                self.selection_rectangle = QGraphicsRectItem()
+                self.selection_rectangle.setPen(QPen(Qt.blue, 2, Qt.DashLine))
+                self.annotation_window.scene.addItem(self.selection_rectangle)
+
             selected_annotation = self.select_annotation(position, items, event.modifiers())
             if selected_annotation:
                 self.init_drag_or_resize(selected_annotation, position, event.modifiers())
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        """Handle mouse move events for resizing or moving annotations."""
-        if not self.annotation_window.cursorInWindow(event.pos()) or not self.annotation_window.selected_annotations:
+        """Handle mouse move events for resizing, moving, or drawing selection rectangle."""
+        if not self.annotation_window.cursorInWindow(event.pos()):
             return
 
         current_pos = self.annotation_window.mapToScene(event.pos())
-        if self.resizing:
+        if self.rectangle_selection:
+            self.update_selection_rectangle(current_pos)
+        elif self.resizing:
             self.handle_resize(current_pos)
         elif self.moving:
             self.handle_move(current_pos)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        """Handle mouse release events to stop moving or resizing annotations."""
+        """Handle mouse release events to stop moving, resizing, or finalize selection rectangle."""
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
+
+        if self.rectangle_selection:
+            self.finalize_selection_rectangle()
+            self.rectangle_selection = False
+            self.selection_start_pos = None
+            self.annotation_window.scene.removeItem(self.selection_rectangle)
+            self.selection_rectangle = None
 
         self.resizing = False
         self.moving = False
@@ -110,6 +129,22 @@ class SelectTool(Tool):
 
         return None
 
+    def update_selection_rectangle(self, current_pos):
+        """Update the selection rectangle while dragging."""
+        if self.selection_rectangle:
+            rect = QRectF(self.selection_start_pos, current_pos).normalized()
+            self.selection_rectangle.setRect(rect)
+
+    def finalize_selection_rectangle(self):
+        """Finalize the selection rectangle and select annotations within it."""
+        if self.selection_rectangle:
+            rect = self.selection_rectangle.rect()
+            # Don't clear previous selection when using rectangle selection
+            for annotation in self.annotation_window.annotations_dict.values():
+                if rect.contains(annotation.center_xy):
+                    # Always add to selection when using rectangle
+                    self.annotation_window.select_annotation(annotation, True)
+
     def get_item_center(self, item):
         """Return the center point of the item."""
         if isinstance(item, QGraphicsRectItem):
@@ -128,18 +163,25 @@ class SelectTool(Tool):
 
     def handle_selection(self, selected_annotation, modifiers):
         """Handle annotation selection logic."""
+        ctrl_pressed = modifiers & Qt.ControlModifier
+
         if selected_annotation in self.annotation_window.selected_annotations:
-            if modifiers & Qt.ControlModifier:
+            if ctrl_pressed:
+                # Toggle selection when Ctrl is pressed
                 self.annotation_window.unselect_annotation(selected_annotation)
+                return None
             else:
+                # If Ctrl is not pressed, keep only this annotation selected
                 self.annotation_window.unselect_annotations()
                 self.annotation_window.select_annotation(selected_annotation)
                 return selected_annotation
         else:
-            ctrl_pressed = modifiers & Qt.ControlModifier
+            # If annotation is not selected
             if not ctrl_pressed:
+                # Clear selection if Ctrl is not pressed
                 self.annotation_window.unselect_annotations()
-            self.annotation_window.select_annotation(selected_annotation, ctrl_pressed)
+            # Add to selection
+            self.annotation_window.select_annotation(selected_annotation, True)
             return selected_annotation
 
     def init_drag_or_resize(self, selected_annotation, position, modifiers):
