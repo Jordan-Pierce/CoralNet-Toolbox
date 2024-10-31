@@ -1,6 +1,5 @@
 import warnings
-import math
-from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QPen, QBrush
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem
 from toolbox.Tools.QtTool import Tool
