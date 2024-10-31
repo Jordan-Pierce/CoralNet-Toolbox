@@ -384,7 +384,7 @@ class SAMDeployModelDialog(QDialog):
                 scaled_points[:, :, 1] *= scale_y
                 point_coords = scaled_points.long()  # Cast back to int64
 
-                if self.model_path.startswith("sam_"):
+                if not self.model_path.startswith("sam2"):
                     # Apply the scaled points to the predictor
                     point_coords = self.predictor.transform.apply_coords_torch(point_coords,
                                                                                self.resized_image.shape[:2])
@@ -401,7 +401,7 @@ class SAMDeployModelDialog(QDialog):
                 scaled_bbox[:, 3] *= scale_y
                 bbox_coords = scaled_bbox.long()  # Cast back to int64
 
-                if self.model_path.startswith("sam_"):
+                if not self.model_path.startswith("sam2"):
                     # Apply the scaled boxes to the predictor
                     bbox_coords = self.predictor.transform.apply_boxes_torch(bbox_coords,
                                                                              self.resized_image.shape[:2])

@@ -315,7 +315,7 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
-    def update_annotation_size(self, delta: float):
+    def update_annotation_size(self, delta: float, selected_point: QPointF):
         if self.machine_confidence and self.show_message:
             self.show_warning_message()
             return
@@ -327,7 +327,15 @@ class PolygonAnnotation(Annotation):
         new_points = []
         num_points = len(self.points)
 
-        for i in range(num_points):
+        # Calculate distances from the selected point to all other points
+        distances = [(i, math.sqrt((self.points[i].x() - selected_point.x()) ** 2 +
+                                   (self.points[i].y() - selected_point.y()) ** 2))
+                     for i in range(num_points)]
+
+        # Sort points by distance and select the 10 nearest points
+        nearest_points_indices = [i for i, _ in sorted(distances, key=lambda x: x[1])[:10]]
+
+        for i in nearest_points_indices:
             p1 = self.points[i]
             p2 = self.points[(i + 1) % num_points]
 
