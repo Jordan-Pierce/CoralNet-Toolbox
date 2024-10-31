@@ -311,6 +311,8 @@ class DeployModelDialog(QDialog):
 
         # Preprocess the annotations
         self.preprocess_classification_annotations(annotations)
+        # Unselect all annotations
+        self.annotation_window.unselect_annotations()
 
         QApplication.restoreOverrideCursor()
         gc.collect()

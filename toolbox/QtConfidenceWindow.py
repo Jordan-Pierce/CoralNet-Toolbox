@@ -207,5 +207,5 @@ class ConfidenceWindow(QWidget):
         # Update the label to whichever bar was selected
         self.annotation.update_label(label)
         # Update everything (essentially)
-        self.main_window.annotation_window.unselect_annotation()
+        self.main_window.annotation_window.unselect_annotation(self.annotation)
         self.main_window.annotation_window.select_annotation(self.annotation)
