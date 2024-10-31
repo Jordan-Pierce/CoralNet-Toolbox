@@ -69,7 +69,7 @@ class GlobalEventFilter(QObject):
                 # Handle Delete key for Deleting selected annotations or images
                 if event.key() == Qt.Key_Delete:
 
-                    if self.annotation_window.selected_annotation:
+                    if self.annotation_window.selected_annotations:
                         self.annotation_window.delete_selected_annotation()
                         return True
 
@@ -80,7 +80,7 @@ class GlobalEventFilter(QObject):
 
             # Unselect annotation on End key press
             if event.key() == Qt.Key_End:
-                self.annotation_window.unselect_annotation()
+                self.annotation_window.unselect_annotations()
                 return True
 
             # Untoggle all tools on Home key press
