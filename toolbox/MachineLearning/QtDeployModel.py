@@ -60,11 +60,19 @@ class DeployModelDialog(QDialog):
         self.setLayout(self.layout)
 
     def showEvent(self, event: QShowEvent):
+        """
+        Handle the show event to check and display class names and update status bar visibility.
+        
+        :param event: QShowEvent object
+        """
         super().showEvent(event)
         self.check_and_display_class_names()
         self.update_status_bar_visibility(self.tab_widget.currentIndex())
 
     def setup_tabs(self):
+        """
+        Set up the tabs for different tasks (classification, detection, segmentation).
+        """
         self.tab_widget = QTabWidget()
         self.layout.addWidget(self.tab_widget)
 
@@ -79,6 +87,13 @@ class DeployModelDialog(QDialog):
             setattr(self, f"{task}_text_area", text_area)
 
     def setup_tab(self, tab, task):
+        """
+        Set up a single tab with text area and buttons for the given task.
+        
+        :param tab: QWidget object
+        :param task: Task identifier as a string
+        :return: QTextEdit widget
+        """
         layout = QVBoxLayout()
         text_area = QTextEdit()
         text_area.setReadOnly(True)
@@ -106,6 +121,9 @@ class DeployModelDialog(QDialog):
         return text_area
 
     def setup_status_bars(self):
+        """
+        Set up status bars for each task.
+        """
         self.status_bars = {
             'classify': QLabel("No model loaded"),
             'detect': QLabel("No model loaded"),
@@ -115,11 +133,21 @@ class DeployModelDialog(QDialog):
             self.layout.addWidget(bar)
 
     def update_status_bar_visibility(self, index):
+        """
+        Update the visibility of status bars based on the selected tab.
+        
+        :param index: Index of the selected tab
+        """
         current_task = self.get_current_task()
         for task, status_bar in self.status_bars.items():
             status_bar.setVisible(task == current_task)
 
     def browse_file(self, task):
+        """
+        Browse and select a model file for the given task.
+        
+        :param task: Task identifier as a string
+        """
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Open Model File", "",
@@ -140,6 +168,11 @@ class DeployModelDialog(QDialog):
                 self.load_class_mapping(task, class_mapping_path)
 
     def browse_class_mapping_file(self, task):
+        """
+        Browse and select a class mapping file for the given task.
+        
+        :param task: Task identifier as a string
+        """
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Open Class Mapping File", "",
@@ -175,6 +208,12 @@ class DeployModelDialog(QDialog):
         return tasks[current_index]
 
     def load_class_mapping(self, task, file_path):
+        """
+        Load the class mapping file for the given task.
+        
+        :param task: Task identifier as a string
+        :param file_path: Path to the class mapping file
+        """
         try:
             with open(file_path, 'r') as f:
                 self.class_mappings[task] = json.load(f)
@@ -183,6 +222,11 @@ class DeployModelDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Failed to load class mapping file: {str(e)}")
 
     def is_sam_model_deployed(self):
+        """
+        Check if the SAM model is deployed and update the checkbox state accordingly.
+        
+        :return: Boolean indicating whether the SAM model is deployed
+        """
         self.sam_dialog = self.main_window.sam_deploy_model_dialog
 
         if not self.sam_dialog.loaded_model:
@@ -194,6 +238,11 @@ class DeployModelDialog(QDialog):
         return True
 
     def load_model(self, task):
+        """
+        Load the model for the given task.
+        
+        :param task: Task identifier as a string
+        """
         if not self.model_paths[task]:
             QMessageBox.warning(self, "Warning", f"No {task} model file selected")
             return
@@ -216,6 +265,11 @@ class DeployModelDialog(QDialog):
             QApplication.restoreOverrideCursor()
 
     def handle_missing_class_mapping(self, task):
+        """
+        Handle the case when the class mapping file is missing.
+        
+        :param task: Task identifier as a string
+        """
         reply = QMessageBox.question(self,
                                      'No Class Mapping Found',
                                      'Do you want to create generic labels automatically?',
@@ -227,6 +281,11 @@ class DeployModelDialog(QDialog):
             QMessageBox.information(self, "Model Loaded", f"{task.capitalize()} model loaded successfully.")
 
     def add_labels_to_label_window(self, task):
+        """
+        Add labels to the label window based on the class mapping.
+        
+        :param task: Task identifier as a string
+        """
         if self.class_mappings[task]:
             for label in self.class_mappings[task].values():
                 self.label_window.add_label_if_not_exists(label['short_label_code'],
@@ -234,6 +293,11 @@ class DeployModelDialog(QDialog):
                                                           QColor(*label['color']))
 
     def create_generic_labels(self, task):
+        """
+        Create generic labels for the given task.
+        
+        :param task: Task identifier as a string
+        """
         class_names = list(self.loaded_models[task].names.values())
         for class_name in class_names:
             r = random.randint(0, 255)
@@ -254,6 +318,11 @@ class DeployModelDialog(QDialog):
         self.class_mappings[task] = class_mapping
 
     def check_and_display_class_names(self, task=None):
+        """
+        Check and display the class names for the given task.
+        
+        :param task: Task identifier as a string (optional)
+        """
         if task is None:
             task = self.get_current_task()
 
@@ -283,6 +352,11 @@ class DeployModelDialog(QDialog):
                                     f"\n{missing_labels_str}")
 
     def deactivate_model(self, task):
+        """
+        Deactivate the model for the given task.
+        
+        :param task: Task identifier as a string
+        """
         self.loaded_models[task] = None
         self.model_paths[task] = None
         self.class_mappings[task] = None
@@ -292,6 +366,11 @@ class DeployModelDialog(QDialog):
         self.get_text_area(task).setText(f"No {task} model file selected")
 
     def predict_classification(self, annotations=None):
+        """
+        Predict the classification results for the given annotations.
+        
+        :param annotations: List of annotations (optional)
+        """
         if self.loaded_models['classify'] is None:
             return
 
@@ -316,6 +395,11 @@ class DeployModelDialog(QDialog):
         empty_cache()
 
     def preprocess_classification_annotations(self, annotations):
+        """
+        Preprocess the given annotations for classification.
+        
+        :param annotations: List of annotations
+        """
         if not annotations:
             return
 
@@ -347,6 +431,12 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
 
     def process_classification_result(self, annotation, results):
+        """
+        Process the classification result for a single annotation.
+        
+        :param annotation: Annotation object
+        :param results: Classification results
+        """
         predictions = {}
 
         try:
@@ -371,6 +461,11 @@ class DeployModelDialog(QDialog):
                 annotation.update_label(label)
 
     def predict_detection(self, image_paths=None):
+        """
+        Predict the detection results for the given image paths.
+        
+        :param image_paths: List of image paths (optional)
+        """
         if self.loaded_models['detect'] is None:
             return
 
@@ -399,10 +494,20 @@ class DeployModelDialog(QDialog):
         empty_cache()
 
     def get_confidence_threshold(self):
+        """
+        Get the confidence threshold for predictions.
+        
+        :return: Confidence threshold as a float
+        """
         threshold = self.main_window.get_uncertainty_thresh()
         return threshold if threshold < 0.10 else 0.10
 
     def process_detection_results(self, results_generator):
+        """
+        Process the detection results from the results generator.
+        
+        :param results_generator: Generator yielding detection results
+        """
         class_mapping = self.class_mappings['detect']
         progress_bar = ProgressBar(self, title="Making Detection Predictions")
         progress_bar.show()
@@ -417,6 +522,12 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
 
     def process_single_detection_result(self, result, class_mapping):
+        """
+        Process a single detection result.
+        
+        :param result: Detection result
+        :param class_mapping: Class mapping dictionary
+        """
         try:
             image_path = result.path.replace("\\", "/")
             cls, cls_name, conf, x_min, y_min, x_max, y_max = self.extract_detection_result(result)
@@ -428,6 +539,12 @@ class DeployModelDialog(QDialog):
             print(f"Warning: Failed to process detection result\n{e}")
 
     def extract_detection_result(self, result):
+        """
+        Extract relevant information from a detection result.
+        
+        :param result: Detection result
+        :return: Tuple containing class, class name, confidence, and bounding box coordinates
+        """
         cls = int(result.boxes.cls.cpu().numpy()[0])
         cls_name = result.names[cls]
         conf = float(result.boxes.conf.cpu().numpy()[0])
@@ -435,11 +552,30 @@ class DeployModelDialog(QDialog):
         return cls, cls_name, conf, x_min, y_min, x_max, y_max
 
     def get_short_label_for_detection(self, cls_name, conf, class_mapping):
+        """
+        Get the short label for a detection result based on confidence and class mapping.
+        
+        :param cls_name: Class name
+        :param conf: Confidence score
+        :param class_mapping: Class mapping dictionary
+        :return: Short label as a string
+        """
         if conf <= self.main_window.get_uncertainty_thresh():
             return 'Review'
         return class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
 
     def create_rectangle_annotation(self, x_min, y_min, x_max, y_max, label, image_path):
+        """
+        Create a rectangle annotation for the given bounding box coordinates and label.
+        
+        :param x_min: Minimum x-coordinate
+        :param y_min: Minimum y-coordinate
+        :param x_max: Maximum x-coordinate
+        :param y_max: Maximum y-coordinate
+        :param label: Label object
+        :param image_path: Path to the image
+        :return: RectangleAnnotation object
+        """
         top_left = QPointF(x_min, y_min)
         bottom_right = QPointF(x_max, y_max)
         return RectangleAnnotation(top_left, 
@@ -453,6 +589,14 @@ class DeployModelDialog(QDialog):
                                    show_msg=True)
 
     def store_and_display_annotation(self, annotation, image_path, cls_name, conf):
+        """
+        Store and display the annotation in the annotation window and image window.
+        
+        :param annotation: Annotation object
+        :param image_path: Path to the image
+        :param cls_name: Class name
+        :param conf: Confidence score
+        """
         self.annotation_window.annotations_dict[annotation.id] = annotation
         annotation.selected.connect(self.annotation_window.select_annotation)
         annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
@@ -469,6 +613,11 @@ class DeployModelDialog(QDialog):
         self.main_window.image_window.update_image_annotations(image_path)
 
     def predict_segmentation(self, image_paths=None):
+        """
+        Predict the segmentation results for the given image paths.
+        
+        :param image_paths: List of image paths (optional)
+        """
         if self.loaded_models['segment'] is None:
             return
 
@@ -496,6 +645,11 @@ class DeployModelDialog(QDialog):
         empty_cache()
 
     def process_segmentation_results(self, results_generator):
+        """
+        Process the segmentation results from the results generator.
+        
+        :param results_generator: Generator yielding segmentation results
+        """
         class_mapping = self.class_mappings['segment']
         if not class_mapping:
             class_mapping = self.class_mappings['detect']
@@ -513,6 +667,12 @@ class DeployModelDialog(QDialog):
         progress_bar.close()
 
     def process_single_segmentation_result(self, result, class_mapping):
+        """
+        Process a single segmentation result.
+        
+        :param result: Segmentation result
+        :param class_mapping: Class mapping dictionary
+        """
         try:
             image_path = result.path.replace("\\", "/")
             cls, cls_name, conf, points = self.extract_segmentation_result(result)
@@ -524,6 +684,12 @@ class DeployModelDialog(QDialog):
             print(f"Warning: Failed to process segmentation result\n{e}")
 
     def extract_segmentation_result(self, result):
+        """
+        Extract relevant information from a segmentation result.
+        
+        :param result: Segmentation result
+        :return: Tuple containing class, class name, confidence, and polygon points
+        """
         cls = int(result.boxes.cls.cpu().numpy()[0])
         cls_name = result.names[cls]
         conf = float(result.boxes.conf.cpu().numpy()[0])
@@ -531,6 +697,14 @@ class DeployModelDialog(QDialog):
         return cls, cls_name, conf, points
 
     def create_polygon_annotation(self, points, label, image_path):
+        """
+        Create a polygon annotation for the given points and label.
+        
+        :param points: List of polygon points
+        :param label: Label object
+        :param image_path: Path to the image
+        :return: PolygonAnnotation object
+        """
         points = [QPointF(x, y) for x, y in points]
         return PolygonAnnotation(points, 
                                  label.short_label_code, 

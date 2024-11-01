@@ -26,16 +26,34 @@ from toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
 
 
 class EvaluateModelWorker(QThread):
+    """
+    Worker thread for evaluating a model.
+
+    Signals:
+        evaluation_started: Emitted when the evaluation starts.
+        evaluation_completed: Emitted when the evaluation completes.
+        evaluation_error: Emitted when an error occurs during evaluation.
+    """
     evaluation_started = pyqtSignal()
     evaluation_completed = pyqtSignal()
     evaluation_error = pyqtSignal(str)
 
     def __init__(self, model, params):
+        """
+        Initialize the EvaluateModelWorker.
+
+        Args:
+            model: The model to be evaluated.
+            params: A dictionary of parameters for evaluation.
+        """
         super().__init__()
         self.model = model
         self.params = params
 
     def run(self):
+        """
+        Run the evaluation process in a separate thread.
+        """
         try:
             # Emit signal to indicate evaluation has started
             self.evaluation_started.emit()
@@ -65,6 +83,13 @@ class EvaluateModelWorker(QThread):
 
 
 class EvaluateModelDialog(QDialog):
+    """
+    Dialog for evaluating machine learning models for image classification, object detection, 
+    and instance segmentation.
+
+    :param main_window: MainWindow object
+    :param parent: Parent widget
+    """
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -94,6 +119,9 @@ class EvaluateModelDialog(QDialog):
         self.setLayout(self.main_layout)
 
     def setup_ui(self):
+        """
+        Set up the user interface for the dialog.
+        """
         # Create a QTabWidget for different model types
         self.tab_widget = QTabWidget()
 
@@ -114,6 +142,12 @@ class EvaluateModelDialog(QDialog):
         self.main_layout.addWidget(self.cancel_button)
 
     def setup_image_classification_tab(self):
+        """
+        Set up the layout and widgets for the image classification tab.
+
+        Returns:
+            QWidget: The image classification tab widget.
+        """
         tab = QWidget()
         layout = QVBoxLayout()
 
@@ -169,6 +203,12 @@ class EvaluateModelDialog(QDialog):
         return tab
 
     def setup_object_detection_tab(self):
+        """
+        Set up the layout and widgets for the object detection tab.
+
+        Returns:
+            QWidget: The object detection tab widget.
+        """
         tab = QWidget()
         layout = QVBoxLayout()
 
@@ -224,6 +264,12 @@ class EvaluateModelDialog(QDialog):
         return tab
 
     def setup_instance_segmentation_tab(self):
+        """
+        Set up the layout and widgets for the instance segmentation tab.
+
+        Returns:
+            QWidget: The instance segmentation tab widget.
+        """
         tab = QWidget()
         layout = QVBoxLayout()
 
@@ -279,6 +325,9 @@ class EvaluateModelDialog(QDialog):
         return tab
 
     def browse_model_file(self):
+        """
+        Browse and select a model file.
+        """
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
             if self.tab_widget.currentIndex() == 0:
@@ -292,11 +341,17 @@ class EvaluateModelDialog(QDialog):
             dir_path = os.path.dirname(os.path.dirname(file_path))
 
     def browse_dataset_dir(self):
+        """
+        Browse and select a dataset directory.
+        """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
             self.dataset_dir_edit.setText(dir_path)
 
     def browse_object_detection_yaml(self):
+        """
+        Browse and select a YAML file for object detection.
+        """
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Select Object Detection YAML File",
                                                    "",
@@ -305,6 +360,9 @@ class EvaluateModelDialog(QDialog):
             self.object_detection_yaml_edit.setText(file_path)
 
     def browse_instance_segmentation_yaml(self):
+        """
+        Browse and select a YAML file for instance segmentation.
+        """
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Select Instance Segmentation YAML File",
                                                    "",
@@ -313,6 +371,9 @@ class EvaluateModelDialog(QDialog):
             self.instance_segmentation_yaml_edit.setText(file_path)
 
     def browse_save_dir(self):
+        """
+        Browse and select a save directory.
+        """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if dir_path:
             if self.tab_widget.currentIndex() == 0:
@@ -323,6 +384,9 @@ class EvaluateModelDialog(QDialog):
                 self.save_dir_edit_instance_segmentation.setText(dir_path)
 
     def accept(self):
+        """
+        Handle the OK button click event.
+        """
         if self.tab_widget.currentIndex() == 0:
             # Image Classification
             if not self.dataset_dir_edit.text():
@@ -349,6 +413,12 @@ class EvaluateModelDialog(QDialog):
         super().accept()
 
     def get_evaluation_parameters(self):
+        """
+        Get the evaluation parameters from the dialog widgets.
+
+        Returns:
+            dict: A dictionary of evaluation parameters.
+        """
         # Extract values from dialog widgets based on the current tab
         params = {
             'verbose': True,
@@ -399,6 +469,9 @@ class EvaluateModelDialog(QDialog):
         return params
 
     def evaluate_model(self):
+        """
+        Evaluate the model based on the provided parameters.
+        """
         # Get evaluation parameters
         self.params = self.get_evaluation_parameters()
 
@@ -423,13 +496,25 @@ class EvaluateModelDialog(QDialog):
             print(error_message)
 
     def on_evaluation_started(self):
+        """
+        Handle the event when the evaluation starts.
+        """
         message = "Model evaluation has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Evaluation Status", message)
 
     def on_evaluation_completed(self):
+        """
+        Handle the event when the evaluation completes.
+        """
         message = "Model evaluation has successfully been completed."
         QMessageBox.information(self, "Model Evaluation Status", message)
 
     def on_evaluation_error(self, error_message):
+        """
+        Handle the event when an error occurs during evaluation.
+
+        Args:
+            error_message (str): The error message.
+        """
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
