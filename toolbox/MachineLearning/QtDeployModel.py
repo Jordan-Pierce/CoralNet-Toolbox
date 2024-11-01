@@ -30,14 +30,14 @@ from toolbox.utilities import pixmap_to_numpy
 
 
 class DeployModelDialog(QDialog):
+    """
+    Dialog for deploying machine learning models for image classification, object detection, 
+    and instance segmentation.
+    
+    :param main_window: MainWindow object
+    :param parent: Parent widget
+    """
     def __init__(self, main_window, parent=None):
-        """
-        Dialog for deploying machine learning models for image classification, object detection, 
-        and instance segmentation.
-        
-        :param main_window: MainWindow object
-        :param parent: Parent widget
-        """
         super().__init__(parent)
         self.main_window = main_window
         self.label_window = main_window.label_window
