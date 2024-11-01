@@ -19,6 +19,13 @@ from toolbox.QtProgressBar import ProgressBar
 
 
 class BatchInferenceDialog(QDialog):
+    """
+    Dialog for performing batch inference on images for image classification, object detection, 
+    and instance segmentation.
+    
+    :param main_window: MainWindow object
+    :param parent: Parent widget
+    """
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -78,16 +85,26 @@ class BatchInferenceDialog(QDialog):
         self.main_window.uncertaintyChanged.connect(self.on_uncertainty_changed)
 
     def update_uncertainty_label(self):
+        """
+        Update the uncertainty threshold label based on the slider value.
+        """
         # Convert the slider value to a ratio (0-1)
         value = self.uncertainty_threshold_slider.value() / 100.0
         self.main_window.update_uncertainty_thresh(value)
 
     def on_uncertainty_changed(self, value):
-        # Update the slider and label when the shared data changes
+        """
+        Update the slider and label when the shared data changes.
+        
+        :param value: New uncertainty threshold value
+        """
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
 
     def setup_classification_tab(self):
+        """
+        Set up the layout and widgets for the image classification tab.
+        """
         layout = QVBoxLayout()
 
         # Create a group box for annotation options
@@ -151,6 +168,9 @@ class BatchInferenceDialog(QDialog):
         self.classification_tab.setLayout(layout)
 
     def setup_detection_tab(self):
+        """
+        Set up the layout and widgets for the object detection tab.
+        """
         layout = QVBoxLayout()
 
         # Create a group box for image options
@@ -188,6 +208,9 @@ class BatchInferenceDialog(QDialog):
         self.detection_tab.setLayout(layout)
 
     def setup_segmentation_tab(self):
+        """
+        Set up the layout and widgets for the instance segmentation tab.
+        """
         layout = QVBoxLayout()
 
         # Create a group box for image options
@@ -225,6 +248,9 @@ class BatchInferenceDialog(QDialog):
         self.segmentation_tab.setLayout(layout)
 
     def on_ok_clicked(self):
+        """
+        Handle the "OK" button click event.
+        """
         if self.classification_all_checkbox.isChecked():
             reply = QMessageBox.warning(self,
                                         "Warning",
@@ -237,6 +263,9 @@ class BatchInferenceDialog(QDialog):
         self.accept()  # Close the dialog after applying the changes
 
     def apply(self):
+        """
+        Apply the selected batch inference options.
+        """
         # Pause the cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -260,6 +289,9 @@ class BatchInferenceDialog(QDialog):
         QApplication.restoreOverrideCursor()
 
     def apply_classification(self):
+        """
+        Apply batch inference for image classification.
+        """
         # Get the Review Annotations
         if self.classification_review_checkbox.isChecked():
             for image_path in self.get_selected_image_paths():
@@ -274,14 +306,25 @@ class BatchInferenceDialog(QDialog):
         self.batch_inference('classify')
 
     def apply_detection(self):
+        """
+        Apply batch inference for object detection.
+        """
         self.image_paths = self.get_selected_image_paths()
         self.batch_inference('detect')
 
     def apply_segmentation(self):
+        """
+        Apply batch inference for instance segmentation.
+        """
         self.image_paths = self.get_selected_image_paths()
         self.batch_inference('segment')
 
     def get_selected_image_paths(self):
+        """
+        Get the selected image paths based on the current tab and options.
+        
+        :return: List of selected image paths
+        """
         if self.tab_widget.currentIndex() == 0:  # Classification
             if self.apply_filtered_checkbox.isChecked():
                 return self.image_window.filtered_image_paths
@@ -317,6 +360,9 @@ class BatchInferenceDialog(QDialog):
                 return self.image_window.image_paths
 
     def preprocess_patch_annotations(self):
+        """
+        Preprocess patch annotations by cropping the images based on the annotations.
+        """
         # Get unique image paths
         self.image_paths = list(set(a.image_path for a in self.annotations))
         if not self.image_paths:
@@ -352,6 +398,11 @@ class BatchInferenceDialog(QDialog):
         progress_bar.close()
 
     def batch_inference(self, task):
+        """
+        Perform batch inference on the selected images and annotations.
+        
+        :param task: Task type ('classify', 'detect', or 'segment')
+        """
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self, title=f"Batch Inference")
         progress_bar.show()
