@@ -29,6 +29,12 @@ from toolbox.QtProgressBar import ProgressBar
 
 
 class ImportDatasetDialog(QDialog):
+    """
+    Dialog for importing datasets for object detection and instance segmentation.
+
+    :param main_window: MainWindow object
+    :param parent: Parent widget
+    """
     def __init__(self, main_window, parent=None):
         super(ImportDatasetDialog, self).__init__(parent)
         self.main_window = main_window
@@ -40,6 +46,9 @@ class ImportDatasetDialog(QDialog):
         self.init_ui()
 
     def init_ui(self):
+        """
+        Initialize the user interface for the ImportDatasetDialog.
+        """
         main_layout = QVBoxLayout()
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(20, 20, 20, 20)
@@ -106,6 +115,9 @@ class ImportDatasetDialog(QDialog):
         self.setLayout(main_layout)
 
     def browse_data_yaml(self):
+        """
+        Browse and select a data.yaml file.
+        """
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Select data.yaml", "", "YAML Files (*.yaml);;All Files (*)", options=options
@@ -114,12 +126,18 @@ class ImportDatasetDialog(QDialog):
             self.yaml_path_label.setText(file_path)
 
     def browse_output_dir(self):
+        """
+        Browse and select an output directory.
+        """
         options = QFileDialog.Options()
         dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_path:
             self.output_dir_label.setText(dir_path)
 
     def accept(self):
+        """
+        Handle the OK button click event to validate and process the dataset.
+        """
         # Perform validation and processing here
         if not self.yaml_path_label.text():
             QMessageBox.warning(self, "Error", "Please select a data.yaml file.")
@@ -138,16 +156,20 @@ class ImportDatasetDialog(QDialog):
         super().accept()
 
     def reject(self):
-        # Handle cancel action if needed
+        """
+        Handle the cancel action.
+        """
         super().reject()
 
     def process_dataset(self):
+        """
+        Process the dataset based on the selected data.yaml file and output directory.
+        """
         if not self.yaml_path_label.text():
             QMessageBox.warning(self,
                                 "No File Selected",
                                 "Please select a data.yaml file.")
             return
-
 
         output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
         os.makedirs(f"{output_folder}/images", exist_ok=True)
@@ -322,6 +344,12 @@ class ImportDatasetDialog(QDialog):
                                 "Dataset has been successfully imported.")
 
     def export_annotations(self, annotations, output_dir):
+        """
+        Export the annotations as a JSON file in the specified output directory.
+
+        :param annotations: List of annotations to export
+        :param output_dir: Path to the output directory
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")

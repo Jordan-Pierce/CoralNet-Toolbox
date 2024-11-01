@@ -30,17 +30,35 @@ from toolbox.MachineLearning.QtEvaluateModel import EvaluateModelWorker
 
 
 class TrainModelWorker(QThread):
+    """
+    Worker thread for training a model.
+
+    Signals:
+        training_started: Emitted when the training starts.
+        training_completed: Emitted when the training completes.
+        training_error: Emitted when an error occurs during training.
+    """
     training_started = pyqtSignal()
     training_completed = pyqtSignal()
     training_error = pyqtSignal(str)
 
     def __init__(self, params, device):
+        """
+        Initialize the TrainModelWorker.
+
+        Args:
+            params: A dictionary of parameters for training.
+            device: The device to use for training (e.g., 'cpu' or 'cuda').
+        """
         super().__init__()
         self.params = params
         self.device = device
         self.model = None
 
     def run(self):
+        """
+        Run the training process in a separate thread.
+        """
         try:
             # Emit signal to indicate training has started
             self.training_started.emit()
@@ -69,6 +87,9 @@ class TrainModelWorker(QThread):
             self._cleanup()
 
     def evaluate_model(self):
+        """
+        Evaluate the model after training.
+        """
         try:
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
@@ -88,22 +109,43 @@ class TrainModelWorker(QThread):
             self.training_error.emit(str(e))
 
     def on_evaluation_started(self):
+        """
+        Handle the event when the evaluation starts.
+        """
         pass
 
     def on_evaluation_completed(self):
+        """
+        Handle the event when the evaluation completes.
+        """
         pass
 
     def on_evaluation_error(self, error_message):
-        # Handle any errors that occur during evaluation
+        """
+        Handle the event when an error occurs during evaluation.
+
+        Args:
+            error_message (str): The error message.
+        """
         self.training_error.emit(error_message)
 
     def _cleanup(self):
+        """
+        Clean up resources after training.
+        """
         del self.model
         gc.collect()
         empty_cache()
 
 
 class TrainModelDialog(QDialog):
+    """
+    Dialog for training machine learning models for image classification, object detection, 
+    and instance segmentation.
+
+    :param main_window: MainWindow object
+    :param parent: Parent widget
+    """
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -145,6 +187,9 @@ class TrainModelDialog(QDialog):
         self.layout().addWidget(scroll_area)
 
     def setup_ui(self):
+        """
+        Set up the user interface for the dialog.
+        """
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Details on different hyperparameters can be found "
                             "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
@@ -314,6 +359,9 @@ class TrainModelDialog(QDialog):
         self.main_layout.addWidget(self.cancel_button)
 
     def add_parameter_pair(self):
+        """
+        Add a new pair of parameter name and value input fields.
+        """
         param_layout = QHBoxLayout()
         param_name = QLineEdit()
         param_value = QLineEdit()
@@ -324,6 +372,9 @@ class TrainModelDialog(QDialog):
         self.custom_params_layout.addLayout(param_layout)
 
     def browse_dataset_dir(self):
+        """
+        Browse and select a dataset directory.
+        """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
             # Load the class mapping if it exists
@@ -335,6 +386,9 @@ class TrainModelDialog(QDialog):
             self.classify_dataset_edit.setText(dir_path)
 
     def browse_dataset_yaml(self):
+        """
+        Browse and select a dataset YAML file.
+        """
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Select Dataset YAML File",
                                                    "",
@@ -354,6 +408,9 @@ class TrainModelDialog(QDialog):
                 self.segmentation_mapping_edit.setText(class_mapping_path)
 
     def browse_class_mapping_file(self):
+        """
+        Browse and select a class mapping file.
+        """
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Select Class Mapping File",
                                                    "",
@@ -369,16 +426,25 @@ class TrainModelDialog(QDialog):
                 self.segmentation_mapping_edit.setText(file_path)
 
     def browse_project_dir(self):
+        """
+        Browse and select a project directory.
+        """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Project Directory")
         if dir_path:
             self.project_edit.setText(dir_path)
 
     def browse_model_file(self):
+        """
+        Browse and select a model file.
+        """
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
             self.model_edit.setText(file_path)
 
     def setup_classification_tab(self):
+        """
+        Set up the layout and widgets for the image classification tab.
+        """
         layout = QVBoxLayout()
 
         # Dataset Directory
@@ -416,6 +482,9 @@ class TrainModelDialog(QDialog):
         self.tab_classification.setLayout(layout)
 
     def setup_detection_tab(self):
+        """
+        Set up the layout and widgets for the object detection tab.
+        """
         layout = QVBoxLayout()
 
         self.detection_dataset_edit = QLineEdit()
@@ -452,6 +521,9 @@ class TrainModelDialog(QDialog):
         self.tab_detection.setLayout(layout)
 
     def setup_segmentation_tab(self):
+        """
+        Set up the layout and widgets for the instance segmentation tab.
+        """
         layout = QVBoxLayout()
 
         self.segmentation_dataset_edit = QLineEdit()
@@ -488,11 +560,19 @@ class TrainModelDialog(QDialog):
         self.tab_segmentation.setLayout(layout)
 
     def accept(self):
+        """
+        Handle the OK button click event.
+        """
         self.train_model()
         super().accept()
 
     def get_parameters(self):
+        """
+        Get the training parameters from the dialog widgets.
 
+        Returns:
+            dict: A dictionary of training parameters.
+        """
         # Determine the selected tab
         selected_tab = self.tabs.currentWidget()
         if selected_tab == self.tab_classification:
@@ -566,7 +646,9 @@ class TrainModelDialog(QDialog):
         return params
 
     def train_model(self):
-
+        """
+        Train the model based on the provided parameters.
+        """
         # Get training parameters
         self.params = self.get_parameters()
         # Create and start the worker thread
@@ -577,6 +659,9 @@ class TrainModelDialog(QDialog):
         self.worker.start()
 
     def on_training_started(self):
+        """
+        Handle the event when the training starts.
+        """
         # Save the class mapping JSON file
         output_dir_path = os.path.join(self.params['project'], self.params['name'])
         os.makedirs(output_dir_path, exist_ok=True)
@@ -589,9 +674,18 @@ class TrainModelDialog(QDialog):
         QMessageBox.information(self, "Model Training Status", message)
 
     def on_training_completed(self):
+        """
+        Handle the event when the training completes.
+        """
         message = "Model training has successfully been completed."
         QMessageBox.information(self, "Model Training Status", message)
 
     def on_training_error(self, error_message):
+        """
+        Handle the event when an error occurs during training.
+
+        Args:
+            error_message (str): The error message.
+        """
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)

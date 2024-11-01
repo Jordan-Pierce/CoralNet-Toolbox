@@ -33,6 +33,13 @@ from toolbox.QtProgressBar import ProgressBar
 
 class ExportDatasetDialog(QDialog):
     def __init__(self, main_window, parent=None):
+        """
+        Initialize the ExportDatasetDialog class.
+
+        Args:
+            main_window: The main window object.
+            parent: The parent widget.
+        """
         super().__init__(parent)
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
@@ -84,17 +91,33 @@ class ExportDatasetDialog(QDialog):
         self.radio_segmentation.toggled.connect(self.update_annotation_type_checkboxes)
 
     def showEvent(self, event):
+        """
+        Handle the show event to update annotation type checkboxes, populate class filter list,
+        and update summary statistics.
+
+        Args:
+            event: The show event.
+        """
         super().showEvent(event)
         self.update_annotation_type_checkboxes()
         self.populate_class_filter_list()
         self.update_summary_statistics()
 
     def browse_output_dir(self):
+        """
+        Browse and select an output directory.
+        """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_path:
             self.output_dir_edit.setText(dir_path)
 
     def get_class_mapping(self):
+        """
+        Get the class mapping for the selected labels.
+
+        Returns:
+            dict: Dictionary containing class mappings.
+        """
         # Get the label objects for the selected labels
         labels = [l for l in self.main_window.label_window.labels if l.short_label_code in self.selected_labels]
 
@@ -107,6 +130,13 @@ class ExportDatasetDialog(QDialog):
 
     @staticmethod
     def save_class_mapping_json(class_mapping, output_dir_path):
+        """
+        Save the class mapping dictionary as a JSON file.
+
+        Args:
+            class_mapping (dict): Dictionary containing class mappings.
+            output_dir_path (str): Path to the output directory.
+        """
         # Save the class_mapping dictionary as a JSON file
         class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
         with open(class_mapping_path, 'w') as json_file:
@@ -114,6 +144,16 @@ class ExportDatasetDialog(QDialog):
 
     @staticmethod
     def merge_class_mappings(existing_mapping, new_mapping):
+        """
+        Merge the new class mappings with the existing ones without duplicates.
+
+        Args:
+            existing_mapping (dict): Existing class mappings.
+            new_mapping (dict): New class mappings.
+
+        Returns:
+            dict: Merged class mappings.
+        """
         # Merge the new class mappings with the existing ones without duplicates
         merged_mapping = existing_mapping.copy()
         for key, value in new_mapping.items():
@@ -123,6 +163,9 @@ class ExportDatasetDialog(QDialog):
         return merged_mapping
 
     def setup_layout(self):
+        """
+        Set up the layout for the ExportDatasetDialog.
+        """
         # Dataset Name and Output Directory
         self.dataset_name_edit = QLineEdit()
         self.output_dir_edit = QLineEdit()
@@ -206,6 +249,9 @@ class ExportDatasetDialog(QDialog):
         self.layout.addWidget(self.shuffle_button)
 
     def update_annotation_type_checkboxes(self):
+        """
+        Update the state of annotation type checkboxes based on the selected dataset type.
+        """
         if self.radio_classification.isChecked():  # Classification
             self.include_patches_checkbox.setChecked(True)
             self.include_patches_checkbox.setEnabled(False)
@@ -229,6 +275,12 @@ class ExportDatasetDialog(QDialog):
             self.include_polygons_checkbox.setEnabled(False)
 
     def filter_annotations(self):
+        """
+        Filter annotations based on the selected annotation types and current tab.
+
+        Returns:
+            list: List of filtered annotations.
+        """
         annotations = list(self.annotation_window.annotations_dict.values())
         filtered_annotations = []
 
@@ -237,22 +289,39 @@ class ExportDatasetDialog(QDialog):
         if self.include_rectangles_checkbox.isChecked():
             filtered_annotations += [a for a in annotations if isinstance(a, RectangleAnnotation)]
         if self.include_polygons_checkbox.isChecked():
-            filtered_annotations += [a for a in annotations if isinstance(a, PolygonAnnotation)]
+            filtered_annotations += [a for a in filtered_annotations if isinstance(a, PolygonAnnotation)]
 
         return [a for a in filtered_annotations if a.label.short_label_code in self.selected_labels]
 
     def on_include_checkbox_state_changed(self, state):
+        """
+        Handle the state change event of the include checkboxes.
+
+        Args:
+            state: The new state of the checkbox.
+        """
         if state == Qt.Checked:
             self.update_summary_statistics()
         elif state == Qt.Unchecked:
             self.update_summary_statistics()
 
     def set_cell_color(self, row, column, color):
+        """
+        Set the background color of a cell in the label counts table.
+
+        Args:
+            row: The row index of the cell.
+            column: The column index of the cell.
+            color: The color to set as the background.
+        """
         item = self.label_counts_table.item(row, column)
         if item is not None:
             item.setBackground(QBrush(color))
 
     def populate_class_filter_list(self):
+        """
+        Populate the class filter list with labels and their counts.
+        """
         try:
             # Temporarily disconnect the cellChanged signal
             self.label_counts_table.cellChanged.disconnect()
@@ -319,6 +388,9 @@ class ExportDatasetDialog(QDialog):
         self.label_counts_table.cellChanged.connect(self.update_summary_statistics)
 
     def split_data(self):
+        """
+        Split the data by images based on the specified ratios.
+        """
         self.train_ratio = self.train_ratio_spinbox.value()
         self.val_ratio = self.val_ratio_spinbox.value()
         self.test_ratio = self.test_ratio_spinbox.value()
@@ -343,11 +415,20 @@ class ExportDatasetDialog(QDialog):
             self.test_images = images[val_split:]
 
     def determine_splits(self):
+        """
+        Determine the splits for train, validation, and test annotations.
+        """
         self.train_annotations = [a for a in self.selected_annotations if a.image_path in self.train_images]
         self.val_annotations = [a for a in self.selected_annotations if a.image_path in self.val_images]
         self.test_annotations = [a for a in self.selected_annotations if a.image_path in self.test_images]
 
     def check_label_distribution(self):
+        """
+        Check the label distribution in the splits to ensure all labels are present.
+
+        Returns:
+            bool: True if all labels are present in all splits, False otherwise.
+        """
         # Get the ratios from the spinboxes
         train_ratio = self.train_ratio_spinbox.value()
         val_ratio = self.val_ratio_spinbox.value()
@@ -399,6 +480,9 @@ class ExportDatasetDialog(QDialog):
         return True
 
     def update_summary_statistics(self):
+        """
+        Update the summary statistics for the dataset creation.
+        """
         if self.updating_summary_statistics:
             return
 
@@ -460,6 +544,9 @@ class ExportDatasetDialog(QDialog):
         self.updating_summary_statistics = False
 
     def accept(self):
+        """
+        Handle the OK button click event to create the dataset.
+        """
         dataset_name = self.dataset_name_edit.text()
         output_dir = self.output_dir_edit.text()
         train_ratio = self.train_ratio_spinbox.value()
@@ -532,7 +619,12 @@ class ExportDatasetDialog(QDialog):
         super().accept()
 
     def create_classification_dataset(self, output_dir_path):
+        """
+        Create an image classification dataset.
 
+        Args:
+            output_dir_path (str): Path to the output directory.
+        """
         # Create the train, val, and test directories
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'val')
@@ -559,6 +651,14 @@ class ExportDatasetDialog(QDialog):
         pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
 
     def process_classification_annotations(self, annotations, split_dir, split):
+        """
+        Process and save classification annotations.
+
+        Args:
+            annotations (list): List of annotations.
+            split_dir (str): Path to the split directory.
+            split (str): Split name (e.g., "Training", "Validation", "Testing").
+        """
         # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
@@ -616,7 +716,12 @@ class ExportDatasetDialog(QDialog):
         progress_bar.close()
 
     def create_detection_dataset(self, output_dir_path):
+        """
+        Create an object detection dataset.
 
+        Args:
+            output_dir_path (str): Path to the output directory.
+        """
         # Create the yaml file
         yaml_path = os.path.join(output_dir_path, 'data.yaml')
 
@@ -653,6 +758,14 @@ class ExportDatasetDialog(QDialog):
         self.process_detection_annotations(self.test_annotations, test_dir, "Testing")
 
     def process_detection_annotations(self, annotations, split_dir, split):
+        """
+        Process and save detection annotations.
+
+        Args:
+            annotations (list): List of annotations.
+            split_dir (str): Path to the split directory.
+            split (str): Split name (e.g., "Training", "Validation", "Testing").
+        """
         # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
@@ -691,6 +804,12 @@ class ExportDatasetDialog(QDialog):
         progress_bar.close()
 
     def create_segmentation_dataset(self, output_dir_path):
+        """
+        Create an instance segmentation dataset.
+
+        Args:
+            output_dir_path (str): Path to the output directory.
+        """
         # Create the yaml file
         yaml_path = os.path.join(output_dir_path, 'data.yaml')
 
@@ -722,6 +841,14 @@ class ExportDatasetDialog(QDialog):
         self.process_segmentation_annotations(self.test_annotations, test_dir, "Testing")
 
     def process_segmentation_annotations(self, annotations, split_dir, split):
+        """
+        Process and save segmentation annotations.
+
+        Args:
+            annotations (list): List of annotations.
+            split_dir (str): Path to the split directory.
+            split (str): Split name (e.g., "Training", "Validation", "Testing").
+        """
         # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
@@ -758,4 +885,3 @@ class ExportDatasetDialog(QDialog):
 
         progress_bar.stop_progress()
         progress_bar.close()
-

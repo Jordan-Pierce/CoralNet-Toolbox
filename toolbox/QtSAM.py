@@ -10,7 +10,7 @@ import torch
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget, QCheckBox)
+                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget)
 
 from torch.cuda import empty_cache
 from mobile_sam import SamPredictor as MobileSamPredictor
@@ -25,6 +25,8 @@ from ultralytics.utils import ops
 from ultralytics.utils.downloads import attempt_download_asset
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.utilities import preprocess_image
+from toolbox.utilities import rasterio_to_numpy
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -32,19 +34,17 @@ from toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def custom_postprocess(masks, scores, logits, resized_image, original_image):
+def to_ultralytics(masks, scores, original_image):
     """
     Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
 
     Args:
         masks (torch.Tensor): Predicted masks with shape (N, 1, H, W).
         scores (torch.Tensor): Confidence scores for each mask with shape (N, 1).
-        logits (torch.Tensor): Logits for each mask with shape (N, 1, H, W).
-        resized_image (np.ndarray): The resized image used for inference.
         original_image (np.ndarray): The original, unprocessed image.
 
     Returns:
-        (Results): Results object containing detection masks, bounding boxes, and other metadata.
+        (Results): Ultralytics Results object containing detection masks, bounding boxes, and other metadata.
     """
     # Ensure the original image is in the correct format
     if not isinstance(original_image, np.ndarray):
@@ -87,9 +87,7 @@ def custom_postprocess(masks, scores, logits, resized_image, original_image):
     names = dict(enumerate(str(i) for i in range(len(masks))))
 
     # Create Results object
-    result = Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
-
-    return result
+    return Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -99,6 +97,9 @@ def custom_postprocess(masks, scores, logits, resized_image, original_image):
 
 class SAMDeployModelDialog(QDialog):
     def __init__(self, main_window, parent=None):
+        """
+        Initialize the SAM Deploy Model dialog.
+        """
         super().__init__(parent)
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
@@ -167,6 +168,9 @@ class SAMDeployModelDialog(QDialog):
         self.main_layout.addWidget(self.status_bar)
 
     def update_uncertainty_label(self):
+        """
+        Update the uncertainty threshold label when the slider value changes.
+        """
         # Convert the slider value to a ratio (0-1)
         value = self.uncertainty_threshold_slider.value() / 100.0
         self.main_window.update_uncertainty_thresh(value)
@@ -174,12 +178,21 @@ class SAMDeployModelDialog(QDialog):
         self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
     def on_uncertainty_changed(self, value):
+        """
+        Update the uncertainty threshold slider and label when the shared data changes.
+        
+        Args:
+            value (float): The new value of the uncertainty threshold.
+        """
         # Update the slider and label when the shared data changes
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
         self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
     def setup_tabs(self):
+        """
+        Set up the tabs for the different models.
+        """
         self.tabs = QTabWidget()
 
         # Create tabs
@@ -195,6 +208,12 @@ class SAMDeployModelDialog(QDialog):
         self.main_layout.addWidget(self.tabs)
 
     def create_model_tab(self, model_name):
+        """
+        Create a tab for the specified model.
+        
+        Args:
+            model_name (str): The name of the model to create a tab for.
+        """
         tab = QWidget()
         layout = QVBoxLayout(tab)
         combo_box = QComboBox()
@@ -216,6 +235,9 @@ class SAMDeployModelDialog(QDialog):
         return tab
 
     def load_model(self):
+        """
+        Load the model selected in the combo box.
+        """
         # Make the cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         # Show a progress bar
@@ -286,6 +308,12 @@ class SAMDeployModelDialog(QDialog):
         self.accept()
 
     def resize_image(self, image):
+        """
+        Resize the image to the specified size.
+        
+        Args:
+            image (np.ndarray): The image to resize.
+        """
         # Get the current image size
         imgsz = self.imgsz_spinbox.value()
         # Determine the target shape based on the long side
@@ -300,28 +328,20 @@ class SAMDeployModelDialog(QDialog):
         return resized_image
 
     def set_image(self, image):
+        """
+        Set the image in the predictor.
+        
+        Args:
+            image (np.ndarray): The image to set.
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Setting Image")
         progress_bar.show()
 
         try:
             if self.predictor is not None:
-                # Ensure image has correct dimensions (h, w, 3)
-                if len(image.shape) == 2:  # Grayscale image
-                    image = np.stack((image,) * 3, axis=-1)
-                elif len(image.shape) == 3:
-                    if image.shape[2] == 4:  # RGBA image
-                        image = image[..., :3]  # Drop alpha channel
-                    elif image.shape[2] != 3:  # If channels are not last
-                        # Check if channels are first (c, h, w)
-                        if image.shape[0] == 3:
-                            image = np.transpose(image, (1, 2, 0))
-                        elif image.shape[0] == 4:  # RGBA in channels-first format
-                            image = np.transpose(image, (1, 2, 0))[..., :3]
-                        else:
-                            raise ValueError("Image must have 3 or 4 color channels")
-                else:
-                    raise ValueError("Image must be 2D or 3D array")
+                # Reshape image if needed
+                image = preprocess_image(image)
 
                 # Save the original image
                 self.original_image = image
@@ -350,9 +370,18 @@ class SAMDeployModelDialog(QDialog):
             QApplication.restoreOverrideCursor()
 
     def predict(self, bbox, points, labels):
+        """
+        Make predictions using the currently loaded model.
+        
+        Args:
+            bbox (list): List of bounding box coordinates in the form [xmin, ymin, xmax, ymax].
+            points (np.ndarray): Array of points in the form [[x1, y1], [x2, y2], ...].
+            labels (list): List of class labels for each point.
+        """
         if not self.predictor:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded, cannot make predictions")
             return None
+        
         try:
             point_labels = None
             point_coords = None
@@ -384,7 +413,7 @@ class SAMDeployModelDialog(QDialog):
                 scaled_points[:, :, 1] *= scale_y
                 point_coords = scaled_points.long()  # Cast back to int64
 
-                if self.model_path.startswith("sam_"):
+                if not self.model_path.startswith("sam2"):
                     # Apply the scaled points to the predictor
                     point_coords = self.predictor.transform.apply_coords_torch(point_coords,
                                                                                self.resized_image.shape[:2])
@@ -401,29 +430,28 @@ class SAMDeployModelDialog(QDialog):
                 scaled_bbox[:, 3] *= scale_y
                 bbox_coords = scaled_bbox.long()  # Cast back to int64
 
-                if self.model_path.startswith("sam_"):
+                if not self.model_path.startswith("sam2"):
                     # Apply the scaled boxes to the predictor
                     bbox_coords = self.predictor.transform.apply_boxes_torch(bbox_coords,
                                                                              self.resized_image.shape[:2])
 
             if self.model_path.startswith("sam2"):
-                mask, score, logit = self.predictor.predict(box=bbox_coords,
+                mask, score, _ = self.predictor.predict(box=bbox_coords,
                                                             point_coords=point_coords,
                                                             point_labels=point_labels,
                                                             multimask_output=False)
 
                 mask = torch.tensor(mask).unsqueeze(0)
                 score = torch.tensor(score).unsqueeze(0)
-                logit = torch.tensor(logit).unsqueeze(0)
 
             else:
-                mask, score, logit = self.predictor.predict_torch(boxes=bbox_coords,
+                mask, score, _ = self.predictor.predict_torch(boxes=bbox_coords,
                                                                   point_coords=point_coords,
                                                                   point_labels=point_labels,
                                                                   multimask_output=False)
 
             # Post-process the results
-            results = custom_postprocess(mask, score, logit, self.resized_image, self.original_image)[0]
+            results = to_ultralytics(mask, score, self.original_image)[0]
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
@@ -432,7 +460,12 @@ class SAMDeployModelDialog(QDialog):
         return results
 
     def boxes_to_masks(self, results_generator):
-
+        """
+        Convert bounding boxes to masks using the currently loaded model.
+        
+        Args:
+            results_generator (generator): Generator of Results objects containing bounding boxes.
+        """
         results_dict = {}
         for results in results_generator:
             path = results.path.replace("\\", "/")
@@ -451,7 +484,7 @@ class SAMDeployModelDialog(QDialog):
         for image_path in results_dict:
             # Convert rasterio image to numpy array
             image = self.main_window.image_window.rasterio_open(image_path)
-            image = image.read().transpose(1, 2, 0)
+            image = rasterio_to_numpy(image)
 
             # Set the image
             self.set_image(image)
@@ -476,7 +509,7 @@ class SAMDeployModelDialog(QDialog):
             scaled_bbox[:, 3] *= scale_y
             bbox_coords = scaled_bbox.long()  # Cast back to int64
 
-            if self.model_path.startswith("sam_"):
+            if not self.model_path.startswith("sam2"):
                 # Apply the scaled boxes to the predictor
                 bbox_coords = self.predictor.transform.apply_boxes_torch(bbox_coords,
                                                                          self.resized_image.shape[:2])
@@ -489,16 +522,15 @@ class SAMDeployModelDialog(QDialog):
 
                 mask = torch.tensor(mask).unsqueeze(0)
                 score = torch.tensor(score).unsqueeze(0)
-                logit = torch.tensor(logit).unsqueeze(0)
 
             else:
-                mask, score, logit = self.predictor.predict_torch(boxes=bbox_coords,
+                mask, score, _ = self.predictor.predict_torch(boxes=bbox_coords,
                                                                   point_coords=None,
                                                                   point_labels=None,
                                                                   multimask_output=False)
 
             # Post-process the results
-            sam_results = custom_postprocess(mask, score, logit, self.resized_image, self.original_image)
+            sam_results = to_ultralytics(mask, score, self.original_image)
             sam_results.boxes = results.boxes
             sam_results.names = results.names
             sam_results.path = image_path
@@ -506,6 +538,9 @@ class SAMDeployModelDialog(QDialog):
             yield sam_results
 
     def deactivate_model(self):
+        """
+        Deactivate the currently loaded model.
+        """
         self.loaded_model = None
         self.predictor = None
         self.model_path = None
