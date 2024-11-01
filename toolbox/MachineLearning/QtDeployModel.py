@@ -31,50 +31,32 @@ from toolbox.utilities import pixmap_to_numpy
 
 class DeployModelDialog(QDialog):
     def __init__(self, main_window, parent=None):
+        """
+        Dialog for deploying machine learning models for image classification, object detection, 
+        and instance segmentation.
+        
+        :param main_window: MainWindow object
+        :param parent: Parent widget
+        """
         super().__init__(parent)
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
-
         self.sam_dialog = None
 
         self.setWindowTitle("Deploy Model")
         self.resize(400, 300)
 
         self.layout = QVBoxLayout(self)
-
         self.model_paths = {'classify': None, 'detect': None, 'segment': None}
         self.loaded_models = {'classify': None, 'detect': None, 'segment': None}
         self.class_mappings = {'classify': None, 'detect': None, 'segment': None}
         self.use_sam = {'classify': None, 'detect': None, 'segment': None}
 
-        self.tab_widget = QTabWidget()
-        self.layout.addWidget(self.tab_widget)
-
-        self.classification_tab = QWidget()
-        self.detection_tab = QWidget()
-        self.segmentation_tab = QWidget()
-
-        self.tab_widget.addTab(self.classification_tab, "Image Classification")
-        self.tab_widget.addTab(self.detection_tab, "Object Detection")
-        self.tab_widget.addTab(self.segmentation_tab, "Instance Segmentation")
-
-        self.setup_classification_tab()
-        self.setup_detection_tab()
-        self.setup_segmentation_tab()
-
-        # Task-specific status bars
-        self.status_bars = {
-            'classify': QLabel("No model loaded"),
-            'detect': QLabel("No model loaded"),
-            'segment': QLabel("No model loaded")
-        }
-        self.layout.addWidget(self.status_bars['classify'])
-        self.layout.addWidget(self.status_bars['detect'])
-        self.layout.addWidget(self.status_bars['segment'])
+        self.setup_tabs()
+        self.setup_status_bars()
 
         self.tab_widget.currentChanged.connect(self.update_status_bar_visibility)
-
         self.setLayout(self.layout)
 
     def showEvent(self, event: QShowEvent):
@@ -82,65 +64,55 @@ class DeployModelDialog(QDialog):
         self.check_and_display_class_names()
         self.update_status_bar_visibility(self.tab_widget.currentIndex())
 
+    def setup_tabs(self):
+        self.tab_widget = QTabWidget()
+        self.layout.addWidget(self.tab_widget)
+
+        tasks = [("Image Classification", "classify"),
+                 ("Object Detection", "detect"),
+                 ("Instance Segmentation", "segment")]
+
+        for label, task in tasks:
+            tab = QWidget()
+            text_area = self.setup_tab(tab, task)
+            self.tab_widget.addTab(tab, label)
+            setattr(self, f"{task}_text_area", text_area)
+
     def setup_tab(self, tab, task):
         layout = QVBoxLayout()
-
         text_area = QTextEdit()
         text_area.setReadOnly(True)
         layout.addWidget(text_area)
 
-        browse_model_button = QPushButton("Browse Model")
-        browse_model_button.clicked.connect(lambda: self.browse_file(task))
-        layout.addWidget(browse_model_button)
+        buttons = [
+            ("Browse Model", lambda: self.browse_file(task)),
+            ("Browse Class Mapping", lambda: self.browse_class_mapping_file(task)),
+            ("Load Model", lambda: self.load_model(task)),
+            ("Deactivate Model", lambda: self.deactivate_model(task))
+        ]
 
-        browse_class_mapping_button = QPushButton("Browse Class Mapping")
-        browse_class_mapping_button.clicked.connect(lambda: self.browse_class_mapping_file(task))
-        layout.addWidget(browse_class_mapping_button)
-
-        load_button = QPushButton("Load Model")
-        load_button.clicked.connect(lambda: self.load_model(task))
-        layout.addWidget(load_button)
-
-        deactivate_button = QPushButton("Deactivate Model")
-        deactivate_button.clicked.connect(lambda: self.deactivate_model(task))
-        layout.addWidget(deactivate_button)
+        for btn_text, callback in buttons:
+            button = QPushButton(btn_text)
+            button.clicked.connect(callback)
+            layout.addWidget(button)
 
         use_sam_checkbox = QCheckBox("Use SAM for creating Polygons")
-        use_sam_checkbox.stateChanged.connect(lambda: self.is_sam_model_deployed())
-
-        if task == 'classify':
-            use_sam_checkbox.setChecked(False)
-            use_sam_checkbox.setEnabled(False)
-
+        use_sam_checkbox.stateChanged.connect(self.is_sam_model_deployed)
+        use_sam_checkbox.setEnabled(task != 'classify')
         layout.addWidget(use_sam_checkbox)
-
-        # Store the checkbox in the dictionary
         self.use_sam[task] = use_sam_checkbox
 
         tab.setLayout(layout)
-
         return text_area
 
-    def setup_classification_tab(self):
-        self.classification_text_area = self.setup_tab(self.classification_tab, 'classify')
-
-    def setup_detection_tab(self):
-        self.detection_text_area = self.setup_tab(self.detection_tab, 'detect')
-
-    def setup_segmentation_tab(self):
-        self.segmentation_text_area = self.setup_tab(self.segmentation_tab, 'segment')
-
-    def get_current_task(self):
-        index = self.tab_widget.currentIndex()
-        return ['classify', 'detect', 'segment'][index]
-
-    def get_text_area(self, task):
-        if task == 'classify':
-            return self.classification_text_area
-        elif task == 'detect':
-            return self.detection_text_area
-        elif task == 'segment':
-            return self.segmentation_text_area
+    def setup_status_bars(self):
+        self.status_bars = {
+            'classify': QLabel("No model loaded"),
+            'detect': QLabel("No model loaded"),
+            'segment': QLabel("No model loaded")
+        }
+        for bar in self.status_bars.values():
+            self.layout.addWidget(bar)
 
     def update_status_bar_visibility(self, index):
         current_task = self.get_current_task()
@@ -175,6 +147,32 @@ class DeployModelDialog(QDialog):
                                                    options=options)
         if file_path:
             self.load_class_mapping(task, file_path)
+
+    def get_text_area(self, task):
+        """
+        Retrieves the text area widget associated with the given task.
+        
+        :param task: Task identifier as a string
+        :return: QTextEdit widget corresponding to the task
+        """
+        if task == "classify":
+            return self.classify_text_area
+        elif task == "detect":
+            return self.detect_text_area
+        elif task == "segment":
+            return self.segment_text_area
+        else:
+            raise ValueError(f"Unknown task: {task}")
+
+    def get_current_task(self):
+        """
+        Retrieves the current task based on the selected tab in the deployment dialog.
+        
+        :return: Selected task identifier as a string
+        """
+        current_index = self.tab_widget.currentIndex()
+        tasks = ["classify", "detect", "segment"]
+        return tasks[current_index]
 
     def load_class_mapping(self, task, file_path):
         try:
@@ -325,18 +323,22 @@ class DeployModelDialog(QDialog):
         for annotation in annotations:
             images_np.append(pixmap_to_numpy(annotation.cropped_image))
 
-        progress_bar = ProgressBar(self, title=f"Making Classification Predictions")
+        progress_bar = ProgressBar(self, title="Making Classification Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(annotations))
 
+        # Predict the classification results
         results = self.loaded_models['classify'](images_np, stream=True, device=self.main_window.device)
 
+        # Process the classification results
         for annotation, result in zip(annotations, results):
             self.process_classification_result(annotation, result)
             progress_bar.update_progress()
 
+        # Update the image window and confidence window
         self.main_window.confidence_window.display_cropped_image(annotation)
 
+        # Update the annotations for each image in the image window
         image_paths = list(set([annotation.image_path for annotation in annotations]))
         for image_path in image_paths:
             self.main_window.image_window.update_image_annotations(image_path)
@@ -377,11 +379,7 @@ class DeployModelDialog(QDialog):
         if not image_paths:
             image_paths = [self.annotation_window.current_image_path]
 
-        # Perform detection
-        if self.main_window.get_uncertainty_thresh() < 0.10:
-            conf = self.main_window.get_uncertainty_thresh()
-        else:
-            conf = 0.10  # Arbitrary value to prevent too many detections
+        conf = self.get_confidence_threshold()
 
         results = self.loaded_models['detect'](image_paths,
                                                agnostic_nms=True,
@@ -390,94 +388,85 @@ class DeployModelDialog(QDialog):
                                                device=self.main_window.device,
                                                stream=True)
 
-        # Check if the user selected to use SAM
         if self.use_sam['detect'].isChecked() and self.sam_dialog.loaded_model:
-            # Convert the boxes to SAM masks, process as segmentations
             results = self.sam_dialog.boxes_to_masks(results)
             self.process_segmentation_results(results)
         else:
-            # Process as detections
             self.process_detection_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
-    def process_detection_results(self, results_generator):
-        # Get the class mapping for detection
-        class_mapping = self.class_mappings['detect']
+    def get_confidence_threshold(self):
+        threshold = self.main_window.get_uncertainty_thresh()
+        return threshold if threshold < 0.10 else 0.10
 
-        progress_bar = ProgressBar(self, title=f"Making Detection Predictions")
+    def process_detection_results(self, results_generator):
+        class_mapping = self.class_mappings['detect']
+        progress_bar = ProgressBar(self, title="Making Detection Predictions")
         progress_bar.show()
 
         for results in results_generator:
             progress_bar.start_progress(len(results))
             for result in results:
-                try:
-                    # Get the image path
-                    image_path = result.path.replace("\\", "/")
-
-                    # Extract the results
-                    cls = int(result.boxes.cls.cpu().numpy()[0])
-                    cls_name = result.names[cls]
-                    conf = float(result.boxes.conf.cpu().numpy()[0])
-                    x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
-
-                    # Determine the short label
-                    short_label = 'Review'
-                    if conf > self.main_window.get_uncertainty_thresh():
-                        short_label = class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
-
-                    # Prepare the annotation data
-                    label = self.label_window.get_label_by_short_code(short_label)
-                    top_left = QPointF(x_min, y_min)
-                    bottom_right = QPointF(x_max, y_max)
-
-                    # Create the rectangle annotation
-                    annotation = RectangleAnnotation(top_left,
-                                                     bottom_right,
-                                                     label.short_label_code,
-                                                     label.long_label_code,
-                                                     label.color,
-                                                     image_path,
-                                                     label.id,
-                                                     self.main_window.get_transparency_value(),
-                                                     show_msg=True)
-
-                    # Store the annotation and display the cropped image
-                    self.annotation_window.annotations_dict[annotation.id] = annotation
-
-                    # Connect update signals
-                    annotation.selected.connect(self.annotation_window.select_annotation)
-                    annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
-                    annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-                    # Add the prediction for the confidence window
-                    predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
-                    annotation.update_machine_confidence(predictions)
-
-                    # Update label if confidence is below threshold
-                    if conf < self.main_window.get_uncertainty_thresh():
-                        review_label = self.label_window.get_label_by_id('-1')
-                        annotation.update_label(review_label)
-
-                    # Create the graphics and cropped image
-                    if image_path == self.annotation_window.current_image_path:
-                        annotation.create_graphics_item(self.annotation_window.scene)
-                        annotation.create_cropped_image(self.annotation_window.rasterio_image)
-                        self.main_window.confidence_window.display_cropped_image(annotation)
-
-                    # Update the image annotations
-                    self.main_window.image_window.update_image_annotations(image_path)
-
-                    # Update the progress bar
-                    progress_bar.update_progress()
-
-                except Exception as e:
-                    print(f"Warning: Failed to process detection result\n{e}")
+                self.process_single_detection_result(result, class_mapping)
+                progress_bar.update_progress()
 
         progress_bar.stop_progress()
         progress_bar.close()
+
+    def process_single_detection_result(self, result, class_mapping):
+        try:
+            image_path = result.path.replace("\\", "/")
+            cls, cls_name, conf, x_min, y_min, x_max, y_max = self.extract_detection_result(result)
+            short_label = self.get_short_label_for_detection(cls_name, conf, class_mapping)
+            label = self.label_window.get_label_by_short_code(short_label)
+            annotation = self.create_rectangle_annotation(x_min, y_min, x_max, y_max, label, image_path)
+            self.store_and_display_annotation(annotation, image_path, cls_name, conf)
+        except Exception as e:
+            print(f"Warning: Failed to process detection result\n{e}")
+
+    def extract_detection_result(self, result):
+        cls = int(result.boxes.cls.cpu().numpy()[0])
+        cls_name = result.names[cls]
+        conf = float(result.boxes.conf.cpu().numpy()[0])
+        x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
+        return cls, cls_name, conf, x_min, y_min, x_max, y_max
+
+    def get_short_label_for_detection(self, cls_name, conf, class_mapping):
+        if conf <= self.main_window.get_uncertainty_thresh():
+            return 'Review'
+        return class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
+
+    def create_rectangle_annotation(self, x_min, y_min, x_max, y_max, label, image_path):
+        top_left = QPointF(x_min, y_min)
+        bottom_right = QPointF(x_max, y_max)
+        return RectangleAnnotation(top_left, 
+                                   bottom_right, 
+                                   label.short_label_code, 
+                                   label.long_label_code, 
+                                   label.color, 
+                                   image_path, 
+                                   label.id, 
+                                   self.main_window.get_transparency_value(), 
+                                   show_msg=True)
+
+    def store_and_display_annotation(self, annotation, image_path, cls_name, conf):
+        self.annotation_window.annotations_dict[annotation.id] = annotation
+        annotation.selected.connect(self.annotation_window.select_annotation)
+        annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+        predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
+        annotation.update_machine_confidence(predictions)
+        if conf < self.main_window.get_uncertainty_thresh():
+            review_label = self.label_window.get_label_by_id('-1')
+            annotation.update_label(review_label)
+        if image_path == self.annotation_window.current_image_path:
+            annotation.create_graphics_item(self.annotation_window.scene)
+            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+            self.main_window.confidence_window.display_cropped_image(annotation)
+        self.main_window.image_window.update_image_annotations(image_path)
 
     def predict_segmentation(self, image_paths=None):
         if self.loaded_models['segment'] is None:
@@ -488,11 +477,7 @@ class DeployModelDialog(QDialog):
         if not image_paths:
             image_paths = [self.annotation_window.current_image_path]
 
-        # Perform detection
-        if self.main_window.get_uncertainty_thresh() < 0.10:
-            conf = self.main_window.get_uncertainty_thresh()
-        else:
-            conf = 0.10  # Arbitrary value to prevent too many detections
+        conf = self.get_confidence_threshold()
 
         results = self.loaded_models['segment'](image_paths,
                                                 agnostic_nms=True,
@@ -501,12 +486,9 @@ class DeployModelDialog(QDialog):
                                                 device=self.main_window.device,
                                                 stream=True)
 
-        # Check if the user selected to use SAM
         if self.use_sam['segment'].isChecked() and self.sam_dialog.loaded_model:
-            # Convert the boxes to SAM masks
             results = self.sam_dialog.boxes_to_masks(results)
 
-        # Process the segmentation results
         self.process_segmentation_results(results)
 
         QApplication.restoreOverrideCursor()
@@ -514,9 +496,9 @@ class DeployModelDialog(QDialog):
         empty_cache()
 
     def process_segmentation_results(self, results_generator):
-        # If SAM is being used, and there is no class mapping for segmentation, use the detection class mapping
         class_mapping = self.class_mappings['segment']
-        class_mapping = class_mapping if class_mapping else self.class_mappings['detect']
+        if not class_mapping:
+            class_mapping = self.class_mappings['detect']
 
         progress_bar = ProgressBar(self, title=f"Making Segmentation Predictions")
         progress_bar.show()
@@ -524,66 +506,37 @@ class DeployModelDialog(QDialog):
         for results in results_generator:
             progress_bar.start_progress(len(results))
             for result in results:
-                try:
-                    # Get the image path
-                    image_path = result.path.replace("\\", "/")
-
-                    # Extract the results
-                    cls = int(result.boxes.cls.cpu().numpy()[0])
-                    cls_name = result.names[cls]
-                    conf = float(result.boxes.conf.cpu().numpy()[0])
-                    points = result.masks.cpu().xy[0].astype(float)
-
-                    # Determine the short label
-                    short_label = 'Review'
-                    if conf > self.main_window.get_uncertainty_thresh():
-                        short_label = class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
-
-                    # Prepare the annotation data
-                    label = self.label_window.get_label_by_short_code(short_label)
-                    points = [QPointF(x, y) for x, y in points]
-
-                    # Create the rectangle annotation
-                    annotation = PolygonAnnotation(points,
-                                                   label.short_label_code,
-                                                   label.long_label_code,
-                                                   label.color,
-                                                   image_path,
-                                                   label.id,
-                                                   self.main_window.get_transparency_value(),
-                                                   show_msg=True)
-
-                    # Store the annotation and display the cropped image
-                    self.annotation_window.annotations_dict[annotation.id] = annotation
-
-                    # Connect update signals
-                    annotation.selected.connect(self.annotation_window.select_annotation)
-                    annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
-                    annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-                    # Add the prediction for the confidence window
-                    predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
-                    annotation.update_machine_confidence(predictions)
-
-                    # Update label if confidence is below threshold
-                    if conf < self.main_window.get_uncertainty_thresh():
-                        review_label = self.label_window.get_label_by_id('-1')
-                        annotation.update_label(review_label)
-
-                    # Create the graphics and cropped image
-                    if image_path == self.annotation_window.current_image_path:
-                        annotation.create_graphics_item(self.annotation_window.scene)
-                        annotation.create_cropped_image(self.annotation_window.rasterio_image)
-                        self.main_window.confidence_window.display_cropped_image(annotation)
-
-                    # Update the image annotations
-                    self.main_window.image_window.update_image_annotations(image_path)
-
-                    # Update the progress bar
-                    progress_bar.update_progress()
-
-                except Exception as e:
-                    print(f"Warning: Failed to process detection result\n{e}")
+                self.process_single_segmentation_result(result, class_mapping)
+                progress_bar.update_progress()
 
         progress_bar.stop_progress()
         progress_bar.close()
+
+    def process_single_segmentation_result(self, result, class_mapping):
+        try:
+            image_path = result.path.replace("\\", "/")
+            cls, cls_name, conf, points = self.extract_segmentation_result(result)
+            short_label = self.get_short_label_for_detection(cls_name, conf, class_mapping)
+            label = self.label_window.get_label_by_short_code(short_label)
+            annotation = self.create_polygon_annotation(points, label, image_path)
+            self.store_and_display_annotation(annotation, image_path, cls_name, conf)
+        except Exception as e:
+            print(f"Warning: Failed to process segmentation result\n{e}")
+
+    def extract_segmentation_result(self, result):
+        cls = int(result.boxes.cls.cpu().numpy()[0])
+        cls_name = result.names[cls]
+        conf = float(result.boxes.conf.cpu().numpy()[0])
+        points = result.masks.cpu().xy[0].astype(float)
+        return cls, cls_name, conf, points
+
+    def create_polygon_annotation(self, points, label, image_path):
+        points = [QPointF(x, y) for x, y in points]
+        return PolygonAnnotation(points, 
+                                 label.short_label_code, 
+                                 label.long_label_code, 
+                                 label.color, 
+                                 image_path, 
+                                 label.id, 
+                                 self.main_window.get_transparency_value(), 
+                                 show_msg=True)
