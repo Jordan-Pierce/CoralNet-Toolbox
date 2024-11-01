@@ -67,7 +67,7 @@ class DeployModelDialog(QDialog):
         """
         super().showEvent(event)
         self.check_and_display_class_names()
-        self.update_status_bar_visibility(self.tab_widget.currentIndex())
+        self.update_status_bar_visibility()
 
     def setup_tabs(self):
         """
@@ -132,7 +132,7 @@ class DeployModelDialog(QDialog):
         for bar in self.status_bars.values():
             self.layout.addWidget(bar)
 
-    def update_status_bar_visibility(self, index):
+    def update_status_bar_visibility(self):
         """
         Update the visibility of status bars based on the selected tab.
         
@@ -364,6 +364,15 @@ class DeployModelDialog(QDialog):
         empty_cache()
         self.status_bars[task].setText(f"No {task} model loaded")
         self.get_text_area(task).setText(f"No {task} model file selected")
+        
+    def get_confidence_threshold(self):
+        """
+        Get the confidence threshold for predictions.
+        
+        :return: Confidence threshold as a float
+        """
+        threshold = self.main_window.get_uncertainty_thresh()
+        return threshold if threshold < 0.10 else 0.10
 
     def predict_classification(self, annotations=None):
         """
@@ -493,14 +502,6 @@ class DeployModelDialog(QDialog):
         gc.collect()
         empty_cache()
 
-    def get_confidence_threshold(self):
-        """
-        Get the confidence threshold for predictions.
-        
-        :return: Confidence threshold as a float
-        """
-        threshold = self.main_window.get_uncertainty_thresh()
-        return threshold if threshold < 0.10 else 0.10
 
     def process_detection_results(self, results_generator):
         """

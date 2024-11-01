@@ -24,7 +24,19 @@ from toolbox.QtRangeSlider import QRangeSlider
 
 
 class AutoDistillDeployModelDialog(QDialog):
+    """
+    Dialog for deploying and managing AutoDistill models.
+    Allows users to load, configure, and deactivate models, as well as make predictions on images.
+    """
+
     def __init__(self, main_window, parent=None):
+        """
+        Initialize the AutoDistillDeployModelDialog.
+
+        Args:
+            main_window: The main application window.
+            parent: The parent widget, default is None.
+        """
         super().__init__(parent)
         self.main_window = main_window
         self.label_window = main_window.label_window
@@ -122,22 +134,47 @@ class AutoDistillDeployModelDialog(QDialog):
         self.main_layout.addWidget(self.status_bar)
 
     def showEvent(self, event):
+        """
+        Handle the show event to update label options.
+
+        Args:
+            event: The event object.
+        """
         super().showEvent(event)
         self.update_label_options()
 
     def update_area_label(self, min_val, max_val):
+        """
+        Update the area threshold label based on slider values.
+
+        Args:
+            min_val: Minimum slider value.
+            max_val: Maximum slider value.
+        """
         # Update the area threshold values
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"Area Threshold: {self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
 
     def get_area_thresh(self, image_path):
+        """
+        Calculate area thresholds based on image dimensions.
+
+        Args:
+            image_path: Path to the image.
+
+        Returns:
+            Tuple of (min_area_thresh, max_area_thresh).
+        """
         h, w = self.main_window.image_window.rasterio_open(image_path).shape
         area_thresh_min = (h * w) * self.area_thresh_min
         area_thresh_max = (h * w) * self.area_thresh_max
         return area_thresh_min, area_thresh_max
 
     def update_uncertainty_label(self):
+        """
+        Update the uncertainty threshold label based on slider value.
+        """
         # Convert the slider value to a ratio (0-1)
         value = self.uncertainty_threshold_slider.value() / 100.0
         self.main_window.update_uncertainty_thresh(value)
@@ -145,12 +182,21 @@ class AutoDistillDeployModelDialog(QDialog):
         self.uncertainty_thresh = self.uncertainty_threshold_slider.value() / 100.0
 
     def on_uncertainty_changed(self, value):
+        """
+        Update the slider and label when the uncertainty threshold changes.
+
+        Args:
+            value: New uncertainty threshold value.
+        """
         # Update the slider and label when the shared data changes
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
         self.uncertainty_thresh = self.uncertainty_threshold_slider.value() / 100.0
 
     def update_label_options(self):
+        """
+        Update the label options in ontology pairs based on available labels.
+        """
         label_options = [label.short_label_code for label in self.label_window.labels]
         for _, label_dropdown in self.ontology_pairs:
             previous_label = label_dropdown.currentText()
@@ -160,6 +206,9 @@ class AutoDistillDeployModelDialog(QDialog):
                 label_dropdown.setCurrentText(previous_label)
 
     def add_ontology_pair(self):
+        """
+        Add a new ontology pair input (text input and label dropdown).
+        """
         pair_layout = QHBoxLayout()
 
         text_input = QLineEdit()
@@ -174,6 +223,9 @@ class AutoDistillDeployModelDialog(QDialog):
         self.ontology_layout.insertLayout(self.ontology_layout.count() - 1, pair_layout)
 
     def remove_ontology_pair(self):
+        """
+        Remove the last ontology pair input if more than one exists.
+        """
         if len(self.ontology_pairs) > 1:
             pair = self.ontology_pairs.pop()
             pair[0].deleteLater()
@@ -184,6 +236,9 @@ class AutoDistillDeployModelDialog(QDialog):
             item.layout().deleteLater()
 
     def load_model(self):
+        """
+        Load the selected model with the current configuration.
+        """
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         # Show a progress bar
@@ -223,6 +278,12 @@ class AutoDistillDeployModelDialog(QDialog):
         self.accept()
 
     def get_ontology_mapping(self):
+        """
+        Retrieve the ontology mapping from user inputs.
+
+        Returns:
+            Dictionary mapping texts to label codes.
+        """
         ontology_mapping = {}
         for text_input, label_dropdown in self.ontology_pairs:
             if text_input.text() != "":
@@ -230,12 +291,25 @@ class AutoDistillDeployModelDialog(QDialog):
         return ontology_mapping
 
     def get_uncertainty_threshold(self):
+        """
+        Get the uncertainty threshold, limiting it to a maximum of 0.10.
+
+        Returns:
+            Adjusted uncertainty threshold value.
+        """
         if self.main_window.get_uncertainty_thresh() < 0.10:
             return self.main_window.get_uncertainty_thresh()
         else:
             return 0.10  # Arbitrary value to prevent too many detections
 
     def load_new_model(self, model_name, uncertainty_thresh):
+        """
+        Load a new model based on the selected model name.
+
+        Args:
+            model_name: Name of the model to load.
+            uncertainty_thresh: Threshold for uncertainty.
+        """
         if model_name == "GroundingDINO":
             from autodistill_grounding_dino import GroundingDINO
             self.model_name = model_name
@@ -244,6 +318,12 @@ class AutoDistillDeployModelDialog(QDialog):
                                               text_threshold=uncertainty_thresh)
 
     def predict(self, image_paths=None):
+        """
+        Make predictions on the given image paths using the loaded model.
+
+        Args:
+            image_paths: List of image paths to process. If None, uses the current image.
+        """
         if not self.loaded_model:
             QMessageBox.critical(self, "Error", "No model loaded")
             return
@@ -270,6 +350,13 @@ class AutoDistillDeployModelDialog(QDialog):
         empty_cache()
 
     def process_results(self, image_path, results):
+        """
+        Process the prediction results and create annotations.
+
+        Args:
+            image_path: Path to the image being processed.
+            results: Prediction results to process.
+        """
         progress_bar = ProgressBar(self, title=f"Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(results))
@@ -339,6 +426,9 @@ class AutoDistillDeployModelDialog(QDialog):
         progress_bar.close()
 
     def deactivate_model(self):
+        """
+        Deactivate the currently loaded model and clean up resources.
+        """
         self.loaded_model = None
         self.model_name = None
         gc.collect()
