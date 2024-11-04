@@ -567,6 +567,7 @@ class MainWindow(QMainWindow):
             if not self.selected_devices:
                 return
 
+            # Convert the string to multi-CUDA format: "cuda:0,1,2"
             if len(self.selected_devices) == 1:
                 self.device = self.selected_devices[0]
             else:
@@ -575,14 +576,19 @@ class MainWindow(QMainWindow):
                 self.device = f"{','.join(cuda_devices)} "
 
             # Update the icon and tooltip
-            if self.device.startswith('cuda') or len(self.selected_devices) > 1:
+            if self.device.startswith('cuda'):
                 if len(self.selected_devices) == 1:
-                    device_icon = QIcon(self.rabbit_icon_path) if self.device == 'cuda:0' else QIcon(
-                        self.rocket_icon_path)
+                    if self.device == 'cuda:0':
+                        device_icon = QIcon(self.rabbit_icon_path)
+                    else:
+                        # Use a different icon for other CUDA devices
+                        device_icon = QIcon(self.rocket_icon_path)
                     device_tooltip = self.device
                 else:
-                    device_icon = QIcon(self.rocket_icon_path)  # Use a different icon for multiple devices
+                    # Use a different icon for multiple devices
+                    device_icon = QIcon(self.rocket_icon_path)
                     device_tooltip = f"Multiple CUDA Devices: {self.selected_devices}"
+
             elif self.device == 'mps':
                 device_icon = QIcon(self.apple_icon_path)
                 device_tooltip = 'mps'
@@ -808,7 +814,7 @@ class DeviceSelectionDialog(QDialog):
 
         self.device_list = QListWidget()
         self.device_list.addItems(self.devices)
-        self.device_list.setSelectionMode(QListWidget.MultiSelection)
+        self.device_list.setSelectionMode(QListWidget.SingleSelection)  # Allow only single selection
         layout.addWidget(self.device_list)
 
         self.ok_button = QPushButton("OK")
