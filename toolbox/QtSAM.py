@@ -1,4 +1,5 @@
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
@@ -36,7 +37,7 @@ from toolbox.utilities import rasterio_to_numpy
 
 def to_ultralytics(masks, scores, original_image):
     """
-    Post-processes SAM's inference outputs to generate object detection masks and bounding boxes.
+    Converts SAM output to Ultralytics Results Object.
 
     Args:
         masks (torch.Tensor): Predicted masks with shape (N, 1, H, W).
@@ -381,7 +382,7 @@ class SAMDeployModelDialog(QDialog):
         if not self.predictor:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded, cannot make predictions")
             return None
-        
+
         try:
             point_labels = None
             point_coords = None
@@ -437,18 +438,18 @@ class SAMDeployModelDialog(QDialog):
 
             if self.model_path.startswith("sam2"):
                 mask, score, _ = self.predictor.predict(box=bbox_coords,
-                                                            point_coords=point_coords,
-                                                            point_labels=point_labels,
-                                                            multimask_output=False)
+                                                        point_coords=point_coords,
+                                                        point_labels=point_labels,
+                                                        multimask_output=False)
 
                 mask = torch.tensor(mask).unsqueeze(0)
                 score = torch.tensor(score).unsqueeze(0)
 
             else:
                 mask, score, _ = self.predictor.predict_torch(boxes=bbox_coords,
-                                                                  point_coords=point_coords,
-                                                                  point_labels=point_labels,
-                                                                  multimask_output=False)
+                                                              point_coords=point_coords,
+                                                              point_labels=point_labels,
+                                                              multimask_output=False)
 
             # Post-process the results
             results = to_ultralytics(mask, score, self.original_image)[0]
@@ -525,9 +526,9 @@ class SAMDeployModelDialog(QDialog):
 
             else:
                 mask, score, _ = self.predictor.predict_torch(boxes=bbox_coords,
-                                                                  point_coords=None,
-                                                                  point_labels=None,
-                                                                  multimask_output=False)
+                                                              point_coords=None,
+                                                              point_labels=None,
+                                                              multimask_output=False)
 
             # Post-process the results
             sam_results = to_ultralytics(mask, score, self.original_image)

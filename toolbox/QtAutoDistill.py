@@ -4,18 +4,95 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import gc
 
 import torch
+import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
                              QComboBox, QMessageBox, QApplication, QLineEdit)
 
 from torch.cuda import empty_cache
+from supervision import Detections
+from ultralytics.engine.results import Results
+from ultralytics.utils.ops import scale_masks
 from autodistill.detection import CaptionOntology
 
 from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.QtRangeSlider import QRangeSlider
+from toolbox.utilities import rasterio_to_numpy
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def to_ultralytics(detections, orig_img, path=None, names=None):
+    """
+    Convert Supervision Detections to Ultralytics Results format with proper mask handling.
+
+    Args:
+        detections (Detections): Supervision detection object
+        orig_img (np.ndarray): Original image array
+        path (str, optional): Path to the image file
+        names (dict, optional): Dictionary mapping class ids to class names
+
+    Returns:
+        Results: Ultralytics Results object
+    """
+    # Ensure orig_img is numpy array
+    if torch.is_tensor(orig_img):
+        orig_img = orig_img.cpu().numpy()
+
+    # Create default names if not provided
+    if names is None:
+        names = {i: str(i) for i in range(len(detections))} if len(detections) > 0 else {}
+
+    if len(detections) == 0:
+        return Results(orig_img=orig_img, path=path, names=names)
+
+    # Handle masks if present
+    if hasattr(detections, 'mask') and detections.mask is not None:
+        # Convert masks to torch tensor if needed
+        masks = torch.as_tensor(detections.mask, dtype=torch.float32)
+
+        # Ensure masks have shape (N, 1, H, W)
+        if masks.ndim == 3:
+            masks = masks.unsqueeze(1)
+
+        # Scale masks to match original image size
+        scaled_masks = scale_masks(masks, orig_img.shape[:2], padding=False)
+        scaled_masks = scaled_masks > 0.5  # Apply threshold
+
+        # Ensure scaled_masks is 3D (N, H, W)
+        if scaled_masks.ndim == 4:
+            scaled_masks = scaled_masks.squeeze(1)
+    else:
+        scaled_masks = None
+
+    # Convert boxes and scores to torch tensors
+    boxes = torch.as_tensor(detections.xyxy, dtype=torch.float32)
+    scores = torch.as_tensor(detections.confidence, dtype=torch.float32).view(-1, 1)
+
+    # Convert class IDs to torch tensor
+    cls = torch.as_tensor(detections.class_id, dtype=torch.int32).view(-1, 1)
+
+    # Combine boxes, scores, and class IDs
+    if boxes.ndim == 1:
+        boxes = boxes.unsqueeze(0)
+    pred_boxes = torch.cat([boxes, scores, cls], dim=1)
+
+    # Create Results object
+    results = Results(
+        orig_img=orig_img,
+        path=path,
+        names=names,
+        boxes=pred_boxes,
+        masks=scaled_masks
+    )
+
+    return results
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -344,6 +421,9 @@ class AutoDistillDeployModelDialog(QDialog):
             results = results[results.area <= max_area_thresh]
             # Process the results
             self.process_results(image_path, results)
+            # class_names = {k: v for k, v in enumerate(self.ontology.classes())}
+            # image = rasterio_to_numpy(image_path)
+            # results = to_ultralytics(detections, image, path=image_path, names=class_names)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
