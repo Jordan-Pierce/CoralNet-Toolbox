@@ -6,6 +6,7 @@ import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 
+from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from toolbox.QtProgressBar import ProgressBar
 
@@ -92,9 +93,8 @@ class ExportTagLabAnnotations:
                 # Collect all images and their annotations
                 image_annotations = {}
                 for idx, annotation in enumerate(self.annotation_window.annotations_dict.values()):
-                    if isinstance(annotation, PolygonAnnotation):
-                        continue
 
+                    # Get the image once, create a dict entry
                     image_path = annotation.image_path
                     if image_path not in image_annotations:
                         image_annotations[image_path] = {
@@ -102,10 +102,16 @@ class ExportTagLabAnnotations:
                             "map_px_to_mm_factor": "1",
                             "width": 0,
                             "height": 0,
-                            "annotations": [],
+                            "annotations": {
+                                "regions": [],
+                                "points": []
+                            },
                             "layers": [],
                             "channels": [
-                                {"filename": image_path, "type": "RGB"}
+                                {
+                                    "filename": image_path,
+                                    "type": "RGB"
+                                }
                             ],
                             "id": os.path.basename(image_path),
                             "name": os.path.basename(image_path),
@@ -117,34 +123,53 @@ class ExportTagLabAnnotations:
                             "grid": None
                         }
 
-                    # Calculate bounding box, centroid, area, perimeter, and contour
-                    points = annotation.points
-                    min_x = min(point.x() for point in points)
-                    min_y = min(point.y() for point in points)
-                    max_x = max(point.x() for point in points)
-                    max_y = max(point.y() for point in points)
-                    centroid_x = sum(point.x() for point in points) / len(points)
-                    centroid_y = sum(point.y() for point in points) / len(points)
-                    area = annotation.calculate_area()
-                    perimeter = annotation.calculate_perimeter()
-                    contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
+                    # Create a polygon annotation
+                    if isinstance(annotation, PolygonAnnotation):
+                        # Calculate bounding box, centroid, area, perimeter, and contour
+                        points = annotation.points
+                        min_x = min(point.x() for point in points)
+                        min_y = min(point.y() for point in points)
+                        max_x = max(point.x() for point in points)
+                        max_y = max(point.y() for point in points)
+                        centroid_x = sum(point.x() for point in points) / len(points)
+                        centroid_y = sum(point.y() for point in points) / len(points)
+                        area = annotation.calculate_area()
+                        perimeter = annotation.calculate_perimeter()
+                        contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
 
-                    annotation_dict = {
-                        "bbox": [min_x, min_y, max_x, max_y],
-                        "centroid": [centroid_x, centroid_y],
-                        "area": area,
-                        "perimeter": perimeter,
-                        "contour": contour,
-                        "inner contours": [],
-                        "class name": annotation.label.short_label_code,
-                        "instance name": "coral0",  # Placeholder, update as needed
-                        "blob name": f"c-0-{centroid_x}x-{centroid_y}y",
-                        # Placeholder, update as needed
-                        "id": idx,
-                        "note": "",  # Placeholder, update as needed
-                        "data": {}  # Placeholder, update as needed
-                    }
-                    image_annotations[image_path]["annotations"].append(annotation_dict)
+                        annotation_dict = {
+                            "bbox": [min_x, min_y, max_x, max_y],
+                            "centroid": [centroid_x, centroid_y],
+                            "area": area,
+                            "perimeter": perimeter,
+                            "contour": contour,
+                            "inner contours": [],
+                            "class name": annotation.label.short_label_code,
+                            "instance name": "coral0",  # Placeholder, update as needed
+                            "blob name": f"c-0-{centroid_x}x-{centroid_y}y",
+                            "id": idx,
+                            "note": "",
+                            "data": {}
+                        }
+                        image_annotations[image_path]["annotations"]["regions"].append(annotation_dict)
+
+                    # Create a point annotation
+                    if isinstance(annotation, PatchAnnotation):
+                        # Calculate the XY
+                        x = annotation.center_xy.x()
+                        y = annotation.center_xy.y()
+
+                        annotation_dict = {
+                            "X": x,
+                            "Y": y,
+                            "Class": annotation.label.short_label_code,
+                            "Id": idx,
+                            "Note": "",
+                            "Data": {}
+                        }
+                        image_annotations[image_path]["annotations"]["points"].append(annotation_dict)
+
+                    # Update the progress bar
                     progress_bar.update_progress()
 
                 # Add images to the main data structure
