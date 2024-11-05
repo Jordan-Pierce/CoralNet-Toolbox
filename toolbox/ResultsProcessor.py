@@ -5,19 +5,19 @@ from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
 
 class ResultsProcessor:
-    def __init__(self, main_window, class_mapping, use_sam):
+    def __init__(self, main_window, class_mapping):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
         self.class_mapping = class_mapping
-        self.use_sam = use_sam
 
     def extract_classification_result(self, result):
         """
@@ -85,21 +85,6 @@ class ResultsProcessor:
 
         return image_path, cls, cls_name, conf, x_min, y_min, x_max, y_max
 
-    def process_detection_results(self, results_generator):
-        """
-        Process the detection results from the results generator.
-        """
-        progress_bar = ProgressBar(self.annotation_window, title="Making Detection Predictions")
-        progress_bar.show()
-
-        for results in results_generator:
-            for result in results:
-                self.process_single_detection_result(result)
-                progress_bar.update_progress()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
     def process_single_detection_result(self, result):
         """
         Process a single detection result.
@@ -114,6 +99,21 @@ class ResultsProcessor:
         annotation = self.create_rectangle_annotation(x_min, y_min, x_max, y_max, label, image_path)
         # Store and display the annotation
         self.store_and_display_annotation(annotation, image_path, cls_name, conf)
+
+    def process_detection_results(self, results_generator):
+        """
+        Process the detection results from the results generator.
+        """
+        progress_bar = ProgressBar(self.annotation_window, title="Making Detection Predictions")
+        progress_bar.show()
+
+        for results in results_generator:
+            for result in results:
+                self.process_single_detection_result(result)
+                progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def extract_segmentation_result(self, result):
         """

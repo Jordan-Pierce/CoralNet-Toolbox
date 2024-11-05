@@ -26,6 +26,8 @@ from ultralytics.utils import ops
 from ultralytics.utils.downloads import attempt_download_asset
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.ResultsProcessor import ResultsProcessor
+
 from toolbox.utilities import preprocess_image
 from toolbox.utilities import rasterio_to_numpy
 
@@ -112,7 +114,6 @@ class DeployModelDialog(QDialog):
         self.conf = 0.25
         self.model_path = None
         self.loaded_model = None
-        self.predictor = None
 
         self.original_image = None
         self.resized_image = None
@@ -235,6 +236,63 @@ class DeployModelDialog(QDialog):
         layout.addWidget(combo_box)
         return tab
 
+    def download_model_weights(self, model_path):
+        """
+        Download the model weights if they are not present.
+        """
+        attempt_download_asset(model_path)
+
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not downloaded: {model_path}")
+
+    def load_mobile_model(self, model_path):
+        """
+        Load a mobile SAM model.
+        """
+        model = "vit_t"
+        loaded_model = mobile_sam_model_registry[model](checkpoint=model_path)
+        return MobileSamPredictor(loaded_model)
+
+    def load_sam_model(self, model_path):
+        """
+        Load a SAM model.
+        """
+        if "_b" in model_path.lower():
+            model = "vit_b"
+        elif "_l" in model_path.lower():
+            model = "vit_l"
+        else:
+            raise ValueError(f"Model not recognized: {model_path}")
+
+        loaded_model = sam_model_registry[model](checkpoint=model_path)
+        return SamPredictor(loaded_model)
+
+    def load_sam2_model(self, model_path):
+        """
+        Load a SAM2 model.
+        """
+        model_ver = model_path.split("_")[0]
+        config_dir = os.path.join(os.path.dirname(sam2.__file__), "configs")
+        config = f"{config_dir}\\{model_ver}\\"
+
+        if "_t" in model_path.lower():
+            config += f"{model_ver}_hiera_t.yaml"
+        elif "_s" in model_path.lower():
+            config += f"{model_ver}_hiera_s.yaml"
+        elif "_b" in model_path.lower():
+            config += f"{model_ver}_hiera_b+.yaml"
+        elif "_l" in model_path.lower():
+            config += f"{model_ver}_hiera_l.yaml"
+        else:
+            raise ValueError(f"Model not recognized: {model_path}")
+
+        loaded_model = build_sam2(config_file=config,
+                                  ckpt_path=model_path,
+                                  device=self.main_window.device,
+                                  apply_postprocess=False)
+
+        return Sam2Predictor(loaded_model)
+
     def load_model(self):
         """
         Load the model selected in the combo box.
@@ -244,56 +302,23 @@ class DeployModelDialog(QDialog):
         # Show a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
+
         try:
+            # Get the model path from the current tab
             self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
+            self.download_model_weights(self.model_path)
 
-            # Download the weights from ultralytics if they are not present
-            attempt_download_asset(self.model_path)
-
-            if not os.path.exists(self.model_path):
-                raise FileNotFoundError(f"Model file not downloaded: {self.model_path}")
-
-            # Load the model
             if "mobile_" in self.model_path.lower():
-                model = "vit_t"
-                self.loaded_model = mobile_sam_model_registry[model](checkpoint=self.model_path)
-                self.predictor = MobileSamPredictor(self.loaded_model)
+                self.loaded_model = self.load_mobile_model(self.model_path)
             elif "sam_" in self.model_path.lower():
-                if "_b" in self.model_path.lower():
-                    model = "vit_b"
-                elif "_l" in self.model_path.lower():
-                    model = "vit_l"
-                else:
-                    raise ValueError(f"Model not recognized: {self.model_path}")
-                self.loaded_model = sam_model_registry[model](checkpoint=self.model_path)
-                self.predictor = SamPredictor(self.loaded_model)
+                self.loaded_model = self.load_sam_model(self.model_path)
             elif "sam2" in self.model_path.lower():
-                model_ver = self.model_path.split("_")[0]
-                config_dir = os.path.join(os.path.dirname(sam2.__file__), "configs")
-                config = f"{config_dir}\\{model_ver}\\"
-                if "_t" in self.model_path.lower():
-                    config += f"{model_ver}_hiera_t.yaml"
-                elif "_s" in self.model_path.lower():
-                    config += f"{model_ver}_hiera_s.yaml"
-                elif "_b" in self.model_path.lower():
-                    config += f"{model_ver}_hiera_b+.yaml"
-                elif "_l" in self.model_path.lower():
-                    config += f"{model_ver}_hiera_l.yaml"
-                else:
-                    raise ValueError(f"Model not recognized: {self.model_path}")
-
-                self.loaded_model = build_sam2(config_file=config,
-                                               ckpt_path=self.model_path,
-                                               device=self.main_window.device,
-                                               apply_postprocess=False)
-
-                self.predictor = Sam2Predictor(self.loaded_model)
+                self.loaded_model = self.load_sam2_model(self.model_path)
             else:
                 raise ValueError(f"Model not recognized: {self.model_path}")
 
-            self.predictor.model.to(device=self.main_window.device)
-            self.predictor.model.eval()
-
+            self.loaded_model.model.to(device=self.main_window.device)
+            self.loaded_model.model.eval()
             self.status_bar.setText(f"Model loaded")
             QMessageBox.information(self, "Model Loaded", f"Model loaded successfully")
 
@@ -311,37 +336,32 @@ class DeployModelDialog(QDialog):
     def resize_image(self, image):
         """
         Resize the image to the specified size.
-        
-        Args:
-            image (np.ndarray): The image to resize.
         """
-        # Get the current image size
         imgsz = self.imgsz_spinbox.value()
-        # Determine the target shape based on the long side
+        target_shape = self.get_target_shape(image, imgsz)
+        return ops.scale_image(image, target_shape)
+
+    def get_target_shape(self, image, imgsz):
+        """
+        Determine the target shape based on the long side.
+        """
         h, w = image.shape[:2]
         if h > w:
-            target_shape = (imgsz, int(w * (imgsz / h)))
+            return imgsz, int(w * (imgsz / h))
         else:
-            target_shape = (int(h * (imgsz / w)), imgsz)
-
-        # Use scale_image to resize and pad the image
-        resized_image = ops.scale_image(image, target_shape)
-        return resized_image
+            return int(h * (imgsz / w)), imgsz
 
     def set_image(self, image):
         """
         Set the image in the predictor.
-        
-        Args:
-            image (np.ndarray): The image to set.
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Setting Image")
         progress_bar.show()
 
         try:
-            if self.predictor is not None:
-                # Reshape image if needed
+            if self.loaded_model is not None:
+                # Preprocess the image
                 image = preprocess_image(image)
 
                 # Save the original image
@@ -351,12 +371,8 @@ class DeployModelDialog(QDialog):
                 if self.resize_image_dropdown.currentText() == "True":
                     image = self.resize_image(image)
 
-                # Verify final dimensions
-                if len(image.shape) != 3 or image.shape[2] != 3:
-                    raise ValueError(f"Invalid image dimensions: {image.shape}. Expected (H, W, 3)")
-
                 # Set the image in the predictor
-                self.predictor.set_image(image)
+                self.loaded_model.set_image(image)
                 self.resized_image = image
             else:
                 raise Exception("Model not loaded")
@@ -370,16 +386,103 @@ class DeployModelDialog(QDialog):
             progress_bar.close()
             QApplication.restoreOverrideCursor()
 
-    def predict(self, bbox, points, labels):
+    def scale_points(self, points):
         """
-        Make predictions using the currently loaded model.
-        
+        Scale the points based on the original and resized image dimensions.
+
         Args:
-            bbox (list): List of bounding box coordinates in the form [xmin, ymin, xmax, ymax].
-            points (np.ndarray): Array of points in the form [[x1, y1], [x2, y2], ...].
-            labels (list): List of class labels for each point.
+            points (torch.tensor): The points to scale.
         """
-        if not self.predictor:
+        # Calculate scaling factors
+        original_height, original_width = self.original_image.shape[:2]
+        resized_height, resized_width = self.resized_image.shape[:2]
+
+        scale_x = resized_width / original_width
+        scale_y = resized_height / original_height
+
+        # Scale the points based on the original image dimensions
+        scaled_points = points.clone().float()  # Cast to float32
+        scaled_points[:, :, 0] *= scale_x
+        scaled_points[:, :, 1] *= scale_y
+        point_coords = scaled_points.long()  # Cast back to int64
+        return point_coords
+
+    def scale_boxes(self, boxes):
+        """
+        Scale the bounding boxes based on the original and resized image dimensions.
+
+        Args:
+            boxes (torch.tensor): The bounding boxes to scale.
+        """
+        # Calculate scaling factors
+        original_height, original_width = self.original_image.shape[:2]
+        resized_height, resized_width = self.resized_image.shape[:2]
+
+        scale_x = resized_width / original_width
+        scale_y = resized_height / original_height
+
+        # Scale the box based on the original image dimensions
+        scaled_bbox = boxes.clone().float()  # Cast to float32
+        scaled_bbox[:, 0] *= scale_x
+        scaled_bbox[:, 1] *= scale_y
+        scaled_bbox[:, 2] *= scale_x
+        scaled_bbox[:, 3] *= scale_y
+        bbox_coords = scaled_bbox.long()  # Cast back to int64
+        return bbox_coords
+
+    def transform_points(self, points, labels):
+        """
+        Transform the points based on the original and resized image dimensions.
+
+        Args:
+            points (np.ndarray): The points to transform.
+            labels (list): The labels for each point.
+        """
+        input_labels = torch.tensor(labels)
+        point_labels = input_labels.to(self.main_window.device).unsqueeze(0)
+
+        # Provide prompt to SAM model in form of numpy array
+        input_points = torch.as_tensor(points.astype(int), dtype=torch.int64)
+        input_points = input_points.to(self.main_window.device).unsqueeze(0)
+
+        # Scale the points
+        point_coords = self.scale_points(input_points)
+
+        if not self.model_path.startswith("sam2"):
+            point_coords = self.loaded_model.transform.apply_coords_torch(point_coords,
+                                                                          self.resized_image.shape[:2])
+
+        return point_coords, point_labels
+
+    def transform_bboxes(self, bboxes):
+        """
+        Transform the bounding boxes based on the original and resized image dimensions.
+
+        Args:
+            bboxes (np.ndarray): The bounding boxes to transform.
+        """
+        try:
+            input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
+            input_bbox = input_bbox.to(self.main_window.device).unsqueeze(0)
+            # Scale the bounding boxes
+            bbox_coords = self.scale_boxes(input_bbox)
+        except Exception as e:
+            input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
+            input_bbox = input_bbox.to(self.main_window.device)
+            # Scale the bounding boxes
+            bbox_coords = self.scale_boxes(input_bbox)
+
+        if not self.model_path.startswith("sam2"):
+            bbox_coords = self.loaded_model.transform.apply_boxes_torch(bbox_coords,
+                                                                        self.resized_image.shape[:2])
+
+        return bbox_coords
+
+    def predict_from_prompts(self, bbox, points, labels):
+        """
+        Make predictions using the currently loaded model using prompts.
+        """
+        if not self.loaded_model:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded, cannot make predictions")
             return None
 
@@ -388,68 +491,24 @@ class DeployModelDialog(QDialog):
             point_coords = None
             bbox_coords = None
 
-            # Calculate scaling factors
-            original_height, original_width = self.original_image.shape[:2]
-            resized_height, resized_width = self.resized_image.shape[:2]
-            scale_x = resized_width / original_width
-            scale_y = resized_height / original_height
+            if len(points) != 0:
+                point_coords, point_labels = self.transform_points(points, labels)
 
-            has_points = len(points) != 0
-            has_bbox = len(bbox) != 0
+            if len(bbox) != 0:
+                bbox_coords = self.transform_bboxes(bbox)
 
-            if not has_points and not has_bbox:
-                return None
-
-            if has_points:
-                input_labels = torch.tensor(labels)
-                point_labels = input_labels.to(self.main_window.device).unsqueeze(0)
-
-                # Provide prompt to SAM model in form of numpy array
-                input_points = torch.as_tensor(points.astype(int), dtype=torch.int64)
-                input_points = input_points.to(self.main_window.device).unsqueeze(0)
-
-                # Scale the points based on the original image dimensions
-                scaled_points = input_points.clone().float()  # Cast to float32
-                scaled_points[:, :, 0] *= scale_x
-                scaled_points[:, :, 1] *= scale_y
-                point_coords = scaled_points.long()  # Cast back to int64
-
-                if not self.model_path.startswith("sam2"):
-                    # Apply the scaled points to the predictor
-                    point_coords = self.predictor.transform.apply_coords_torch(point_coords,
-                                                                               self.resized_image.shape[:2])
-
-            if has_bbox:
-                input_bbox = torch.as_tensor(bbox, dtype=torch.int64)
-                input_bbox = input_bbox.to(self.main_window.device).unsqueeze(0)
-
-                # Scale the box based on the original image dimensions
-                scaled_bbox = input_bbox.clone().float()  # Cast to float32
-                scaled_bbox[:, 0] *= scale_x
-                scaled_bbox[:, 1] *= scale_y
-                scaled_bbox[:, 2] *= scale_x
-                scaled_bbox[:, 3] *= scale_y
-                bbox_coords = scaled_bbox.long()  # Cast back to int64
-
-                if not self.model_path.startswith("sam2"):
-                    # Apply the scaled boxes to the predictor
-                    bbox_coords = self.predictor.transform.apply_boxes_torch(bbox_coords,
-                                                                             self.resized_image.shape[:2])
-
-            if self.model_path.startswith("sam2"):
-                mask, score, _ = self.predictor.predict(box=bbox_coords,
-                                                        point_coords=point_coords,
-                                                        point_labels=point_labels,
-                                                        multimask_output=False)
-
+            if not self.model_path.startswith("sam2"):
+                mask, score, _ = self.loaded_model.predict_torch(boxes=bbox_coords,
+                                                                 point_coords=point_coords,
+                                                                 point_labels=point_labels,
+                                                                 multimask_output=False)
+            else:
+                mask, score, _ = self.loaded_model.predict(box=bbox_coords,
+                                                           point_coords=point_coords,
+                                                           point_labels=point_labels,
+                                                           multimask_output=False)
                 mask = torch.tensor(mask).unsqueeze(0)
                 score = torch.tensor(score).unsqueeze(0)
-
-            else:
-                mask, score, _ = self.predictor.predict_torch(boxes=bbox_coords,
-                                                              point_coords=point_coords,
-                                                              point_labels=point_labels,
-                                                              multimask_output=False)
 
             # Post-process the results
             results = to_ultralytics(mask, score, self.original_image)[0]
@@ -460,90 +519,55 @@ class DeployModelDialog(QDialog):
 
         return results
 
-    def boxes_to_masks(self, results_generator):
+    def predict_from_results(self, results_generator):
         """
-        Convert bounding boxes to masks using the currently loaded model.
-        
-        Args:
-            results_generator (generator): Generator of Results objects containing bounding boxes.
+        Make predictions using the currently loaded model using results.
         """
+        # Create a result processor
+        result_processor = ResultsProcessor(self.main_window, class_mapping=None)
+
         results_dict = {}
+
         for results in results_generator:
-            path = results.path.replace("\\", "/")
-            results_dict[path] = []
-            for i, result in enumerate(results):
-                if not len(result):
-                    continue
+            for result in results:
                 # Extract the results
-                cls = int(result.boxes.cls.cpu().numpy()[0])
-                cls_name = result.names[cls]
-                conf = float(result.boxes.conf.cpu().numpy()[0])
-                xmin, ymin, xmax, ymax = map(float, result.boxes.xyxy.cpu().numpy()[0])
-                bbox = np.array([xmin, ymin, xmax, ymax])
-                results_dict[path].append((bbox, conf, cls_name))
+                image_path, cls, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
 
+                if image_path not in results_dict:
+                    results_dict[image_path] = []
+
+                # Add the results to the dictionary
+                results_dict[image_path].append([np.array(bbox), conf, cls_name])
+
+        # Loop through each unique image path
         for image_path in results_dict:
-            # Convert rasterio image to numpy array
-            image = self.main_window.image_window.rasterio_open(image_path)
-            image = rasterio_to_numpy(image)
+            try:
+                # Convert rasterio image to numpy array
+                image = self.main_window.image_window.rasterio_open(image_path)
+                image = rasterio_to_numpy(image)
 
-            # Set the image
-            self.set_image(image)
+                # Set the image
+                self.set_image(image)
 
-            # Calculate scaling factors
-            original_height, original_width = self.original_image.shape[:2]
-            resized_height, resized_width = self.resized_image.shape[:2]
-            scale_x = resized_width / original_width
-            scale_y = resized_height / original_height
+                # Unpack the results as lists
+                bboxes, scores, names = map(np.array, zip(*results_dict[image_path]))
+                bboxes = np.stack(bboxes)
 
-            bboxes, scores, cls_names = zip(*results_dict[image_path])
+                # Make predictions
+                results = self.predict_from_prompts(bboxes, [], [])
+                results.names = names
+                results.path = image_path
 
-            # Prepare the input
-            input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
-            input_bbox = input_bbox.to(self.main_window.device)
+                yield results
 
-            # Scale the box based on the original image dimensions
-            scaled_bbox = input_bbox.clone().float()  # Cast to float32
-            scaled_bbox[:, 0] *= scale_x
-            scaled_bbox[:, 1] *= scale_y
-            scaled_bbox[:, 2] *= scale_x
-            scaled_bbox[:, 3] *= scale_y
-            bbox_coords = scaled_bbox.long()  # Cast back to int64
-
-            if not self.model_path.startswith("sam2"):
-                # Apply the scaled boxes to the predictor
-                bbox_coords = self.predictor.transform.apply_boxes_torch(bbox_coords,
-                                                                         self.resized_image.shape[:2])
-
-            if self.model_path.startswith("sam2"):
-                mask, score, logit = self.predictor.predict(box=bbox_coords,
-                                                            point_coords=None,
-                                                            point_labels=None,
-                                                            multimask_output=False)
-
-                mask = torch.tensor(mask).unsqueeze(0)
-                score = torch.tensor(score).unsqueeze(0)
-
-            else:
-                mask, score, _ = self.predictor.predict_torch(boxes=bbox_coords,
-                                                              point_coords=None,
-                                                              point_labels=None,
-                                                              multimask_output=False)
-
-            # Post-process the results
-            sam_results = to_ultralytics(mask, score, self.original_image)
-            sam_results.boxes = results.boxes
-            sam_results.names = results.names
-            sam_results.path = image_path
-
-            yield sam_results
+            except Exception as e:
+                QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
 
     def deactivate_model(self):
         """
         Deactivate the currently loaded model.
         """
         self.loaded_model = None
-        self.predictor = None
         self.model_path = None
         self.original_image = None
         self.resized_image = None

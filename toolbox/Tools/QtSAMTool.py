@@ -324,15 +324,15 @@ class SAMTool(Tool):
         labels = np.array([1] * len(positive) + [0] * len(negative))
         points = np.array(positive + negative)
 
-        # Predict the mask
-        results = self.sam_dialog.predict(bbox, points, labels)
+        # Predict the mask provided prompts
+        results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
 
         if not results:
             return None
 
         if results.boxes.conf[0] < self.sam_dialog.conf:
             return None
-
+        # TODO use results processor
         # Get the points of the top1 mask
         top1_index = np.argmax(results.boxes.conf)
         predictions = results[top1_index].masks.xy[0]

@@ -391,8 +391,8 @@ class DeployModelDialog(QDialog):
                                                  stream=True)
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
-                                             self.class_mappings['classify'],
-                                             use_sam=False)
+                                             self.class_mappings['classify'])
+
         # Process the classification results
         results_processor.process_classification_results(results, annotations)
 
@@ -427,11 +427,16 @@ class DeployModelDialog(QDialog):
 
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
-                                             self.class_mappings['detect'],
-                                             use_sam=self.use_sam['detect'].isChecked())
-
-        # Process the detection results
-        results_processor.process_detection_results(results)
+                                             self.class_mappings['detect'])
+        # Check if SAM model is deployed
+        if self.use_sam['detect'].isChecked():
+            # Apply SAM to the detection results
+            results = self.sam_dialog.predict_from_results(results)
+            # Process the segmentation results
+            results_processor.process_segmentation_results(results)
+        else:
+            # Process the detection results
+            results_processor.process_detection_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
@@ -463,8 +468,11 @@ class DeployModelDialog(QDialog):
 
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
-                                             self.class_mappings['segment'],
-                                             use_sam=self.use_sam['segment'].isChecked())
+                                             self.class_mappings['segment'])
+        # Check if SAM model is deployed
+        if self.use_sam['segment'].isChecked():
+            # Apply SAM to the segmentation results
+            results = self.sam_dialog.predict_from_results(results)
 
         # Process the segmentation results
         results_processor.process_segmentation_results(results)
