@@ -92,7 +92,7 @@ class ExportTagLabAnnotations:
                 # Collect all images and their annotations
                 image_annotations = {}
                 for idx, annotation in enumerate(self.annotation_window.annotations_dict.values()):
-                    if not isinstance(annotation, PolygonAnnotation):
+                    if isinstance(annotation, PolygonAnnotation):
                         continue
 
                     image_path = annotation.image_path

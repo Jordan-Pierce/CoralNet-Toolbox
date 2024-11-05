@@ -46,6 +46,13 @@ class ImportCoralNetAnnotations:
         if not file_path:
             return
 
+        annotation_size, ok = QInputDialog.getInt(self.annotation_window,
+                                                  "Patch Annotation Size",
+                                                  "Enter the default patch annotation size for imported annotations:",
+                                                  224, 1, 10000, 1)
+        if not ok:
+            return
+
         try:
             progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
             progress_bar.show()
@@ -57,13 +64,6 @@ class ImportCoralNetAnnotations:
                 QMessageBox.warning(self.annotation_window,
                                     "Invalid CSV Format",
                                     "The selected CSV file does not match the expected CoralNet format.")
-                return
-
-            annotation_size, ok = QInputDialog.getInt(self.annotation_window,
-                                                      "Annotation Size",
-                                                      "Enter the default annotation size for imported annotations:",
-                                                      224, 1, 10000, 1)
-            if not ok:
                 return
 
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
