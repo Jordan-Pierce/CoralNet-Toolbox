@@ -537,7 +537,7 @@ class DeployModelDialog(QDialog):
                     results_dict[image_path] = []
 
                 # Add the results to the dictionary
-                results_dict[image_path].append([np.array(bbox), conf, cls_name])
+                results_dict[image_path].append(np.array(bbox))
 
         # Loop through each unique image path
         for image_path in results_dict:
@@ -554,11 +554,12 @@ class DeployModelDialog(QDialog):
                 bboxes = np.stack(bboxes)
 
                 # Make predictions
-                results = self.predict_from_prompts(bboxes, [], [])
-                results.names = names
-                results.path = image_path
+                new_results = self.predict_from_prompts(bboxes, [], [])
+                new_results.path = image_path
+                new_results.names = results.names
+                new_results.boxes = results.boxes
 
-                yield results
+                yield new_results
 
             except Exception as e:
                 QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
