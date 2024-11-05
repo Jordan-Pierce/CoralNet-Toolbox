@@ -241,8 +241,6 @@ class AnnotationWindow(QGraphicsView):
 
         # Clean up
         self.clear_scene()
-        # Clear the confidence window
-        self.main_window.confidence_window.clear_display()
 
         # Set the image representations
         self.image_pixmap = QPixmap(self.main_window.image_window.images[image_path])
@@ -263,6 +261,8 @@ class AnnotationWindow(QGraphicsView):
         self.load_annotations()
         # Update the image window's image dict
         self.main_window.image_window.update_image_annotations(image_path)
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
 
         QApplication.processEvents()
 
@@ -323,16 +323,17 @@ class AnnotationWindow(QGraphicsView):
             # which then update the label in the label window, followed by transparency.
             # Only do this if only one annotation is selected, otherwise all selected
             # annotations will change label
-            if len(self.selected_annotations) == 1:
-                self.labelSelected.emit(annotation.label.id)
             self.annotationSelected.emit(annotation.id)
 
-            if not annotation.cropped_image:
-                # Crop the image from annotation using current image item
-                annotation.create_cropped_image(self.rasterio_image)
+            if len(self.selected_annotations) == 1:
+                self.labelSelected.emit(annotation.label.id)
 
-            # Display the selected annotation in confidence window
-            self.main_window.confidence_window.display_cropped_image(annotation)
+                if not annotation.cropped_image:
+                    # Crop the image from annotation using current image item
+                    annotation.create_cropped_image(self.rasterio_image)
+
+                # Display the selected annotation in confidence window
+                self.main_window.confidence_window.display_cropped_image(annotation)
 
         if len(self.selected_annotations) > 1:
             self.main_window.label_window.deselect_active_label()

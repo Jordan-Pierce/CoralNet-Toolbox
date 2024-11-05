@@ -6,7 +6,7 @@ import re
 
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget)
+from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget, QCheckBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
                              QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, QPushButton)
 
@@ -400,6 +400,10 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(64)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
+        # Add a checkbox labeled "All" next to the transparency slider
+        self.all_labels_checkbox = QCheckBox("All")
+        self.all_labels_checkbox.stateChanged.connect(self.update_all_labels_transparency)
+
         # Spin box for IoU threshold control
         self.iou_thresh_spinbox = QDoubleSpinBox()
         self.iou_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
@@ -429,6 +433,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
+        self.status_bar_layout.addWidget(self.all_labels_checkbox)
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("IoU Threshold:"))
         self.status_bar_layout.addWidget(self.iou_thresh_spinbox)
@@ -661,11 +666,21 @@ class MainWindow(QMainWindow):
         return self.transparency_slider.value()
 
     def update_label_transparency(self, value):
-        self.label_window.set_label_transparency(value)
-        self.update_transparency_slider(value)  # Update the slider value
+        if self.all_labels_checkbox.isChecked():
+            self.label_window.set_all_labels_transparency(value)
+        else:
+            self.label_window.set_label_transparency(value)
+        self.update_transparency_slider(value)
 
     def update_transparency_slider(self, transparency):
         self.transparency_slider.setValue(transparency)
+
+    def update_all_labels_transparency(self, state):
+        if state == Qt.Checked:
+            self.label_window.set_all_labels_transparency(self.transparency_slider.value())
+        else:
+            self.label_window.set_label_transparency(self.transparency_slider.value())
+
 
     def get_uncertainty_thresh(self):
         return self.uncertainty_thresh

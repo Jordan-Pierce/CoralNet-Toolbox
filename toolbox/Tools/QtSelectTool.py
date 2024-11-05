@@ -66,9 +66,6 @@ class SelectTool(Tool):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events for resizing, moving, or drawing selection rectangle."""
-        if not self.annotation_window.cursorInWindow(event.pos()):
-            return
-
         current_pos = self.annotation_window.mapToScene(event.pos())
         if self.rectangle_selection:
             self.update_selection_rectangle(current_pos)
@@ -79,9 +76,6 @@ class SelectTool(Tool):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events to stop moving, resizing, or finalize selection rectangle."""
-        if not self.annotation_window.cursorInWindow(event.pos()):
-            return
-
         if self.rectangle_selection:
             self.finalize_selection_rectangle()
             self.rectangle_selection = False
