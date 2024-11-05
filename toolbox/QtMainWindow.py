@@ -38,9 +38,9 @@ from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
 from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
 from toolbox.MachineLearning.QtTrainModel import TrainModelDialog
 
-from toolbox.QtSAM import SAMDeployModelDialog
+from toolbox.SAM.QtDeployModel import DeployModelDialog as SAMDeployModelDialog
 
-from toolbox.QtAutoDistill import AutoDistillDeployModelDialog
+from toolbox.AutoDistill.QtDeployModel import DeployModelDialog as AutoDistillDeployModelDialog
 
 from toolbox.utilities import get_available_device
 from toolbox.utilities import get_icon_path

@@ -96,7 +96,7 @@ def to_ultralytics(masks, scores, original_image):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class SAMDeployModelDialog(QDialog):
+class DeployModelDialog(QDialog):
     def __init__(self, main_window, parent=None):
         """
         Initialize the SAM Deploy Model dialog.

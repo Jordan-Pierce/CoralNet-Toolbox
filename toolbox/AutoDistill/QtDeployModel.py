@@ -100,7 +100,7 @@ def to_ultralytics(detections, orig_img, path=None, names=None):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class AutoDistillDeployModelDialog(QDialog):
+class DeployModelDialog(QDialog):
     """
     Dialog for deploying and managing AutoDistill models.
     Allows users to load, configure, and deactivate models, as well as make predictions on images.
