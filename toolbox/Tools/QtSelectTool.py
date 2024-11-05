@@ -119,7 +119,13 @@ class SelectTool(Tool):
             selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
 
             if selected_annotation:
-                return self.handle_selection(selected_annotation, modifiers)
+                ctrl_pressed = modifiers & Qt.ControlModifier
+                if selected_annotation in self.annotation_window.selected_annotations and ctrl_pressed:
+                    # Unselect the annotation if Ctrl is pressed and it is already selected
+                    self.annotation_window.unselect_annotation(selected_annotation)
+                    return None
+                else:
+                    return self.handle_selection(selected_annotation, modifiers)
 
         return None
 

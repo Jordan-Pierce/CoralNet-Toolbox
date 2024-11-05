@@ -421,7 +421,7 @@ class MainWindow(QMainWindow):
         # Spin box for annotation size control
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(1000)
+        self.annotation_size_spinbox.setMaximum(5000)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
