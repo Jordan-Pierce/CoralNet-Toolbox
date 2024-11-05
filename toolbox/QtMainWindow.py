@@ -17,7 +17,17 @@ from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSampling import PatchSamplingDialog
 
-from toolbox.QtIO import IODialog
+from toolbox.IO.QtImportImages import ImportImages
+from toolbox.IO.QtImportLabels import ImportLabels
+from toolbox.IO.QtImportAnnotations import ImportAnnotations
+from toolbox.IO.QtImportCoralNetAnnotations import ImportCoralNetAnnotations
+from toolbox.IO.QtImportViscoreAnnotations import ImportViscoreAnnotations
+from toolbox.IO.QtImportTagLabAnnotations import ImportTagLabAnnotations
+from toolbox.IO.QtExportLabels import ExportLabels
+from toolbox.IO.QtExportAnnotations import ExportAnnotations
+from toolbox.IO.QtExportCoralNetAnnotations import ExportCoralNetAnnotations
+from toolbox.IO.QtExportViscoreAnnotations import ExportViscoreAnnotations
+from toolbox.IO.QtExportTagLabAnnotations import ExportTagLabAnnotations
 
 from toolbox.MachineLearning.QtBatchInference import BatchInferenceDialog
 from toolbox.MachineLearning.QtImportDataset import ImportDatasetDialog
@@ -67,7 +77,17 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
-        self.io_dialog = IODialog(self)
+        self.import_images = ImportImages(self)
+        self.import_labels = ImportLabels(self)
+        self.import_annotations = ImportAnnotations(self)
+        self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
+        self.import_viscore_annotations = ImportViscoreAnnotations(self)
+        self.import_taglab_annotations = ImportTagLabAnnotations(self)
+        self.export_labels = ExportLabels(self)
+        self.export_annotations = ExportAnnotations(self)
+        self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
+        self.export_viscore_annotations = ExportViscoreAnnotations(self)
+        self.export_taglab_annotations = ExportTagLabAnnotations(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
         self.iou_thresh = 0.70
@@ -126,7 +146,7 @@ class MainWindow(QMainWindow):
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
 
         self.import_images_action = QAction("Images", self)
-        self.import_images_action.triggered.connect(self.io_dialog.import_images)
+        self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
 
         self.import_ortho_action = QAction("Orthomosaic", self)
@@ -143,26 +163,26 @@ class MainWindow(QMainWindow):
         self.import_labels_menu = self.import_menu.addMenu("Labels")
 
         self.import_labels_action = QAction("Labels (JSON)", self)
-        self.import_labels_action.triggered.connect(self.io_dialog.import_labels)
+        self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
 
         # Annotations submenu
         self.import_annotations_menu = self.import_menu.addMenu("Annotations")
 
         self.import_annotations_action = QAction("Annotations (JSON)", self)
-        self.import_annotations_action.triggered.connect(self.io_dialog.import_annotations)
+        self.import_annotations_action.triggered.connect(self.import_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_annotations_action)
 
         self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
-        self.import_coralnet_annotations_action.triggered.connect(self.io_dialog.import_coralnet_annotations)
+        self.import_coralnet_annotations_action.triggered.connect(self.import_coralnet_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
 
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.import_viscore_annotations_action.triggered.connect(self.io_dialog.import_viscore_annotations)
+        self.import_viscore_annotations_action.triggered.connect(self.import_viscore_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
 
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
-        self.import_taglab_annotations_action.triggered.connect(self.io_dialog.import_taglab_annotations)
+        self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
 
         # Dataset submenu
@@ -180,26 +200,26 @@ class MainWindow(QMainWindow):
         self.export_labels_menu = self.export_menu.addMenu("Labels")
 
         self.export_labels_action = QAction("Labels (JSON)", self)
-        self.export_labels_action.triggered.connect(self.io_dialog.export_labels)
+        self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
 
         # Annotations submenu
         self.export_annotations_menu = self.export_menu.addMenu("Annotations")
 
         self.export_annotations_action = QAction("Annotations (JSON)", self)
-        self.export_annotations_action.triggered.connect(self.io_dialog.export_annotations)
+        self.export_annotations_action.triggered.connect(self.export_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_annotations_action)
 
         self.export_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
-        self.export_coralnet_annotations_action.triggered.connect(self.io_dialog.export_coralnet_annotations)
+        self.export_coralnet_annotations_action.triggered.connect(self.export_coralnet_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
         self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.export_viscore_annotations_action.triggered.connect(self.io_dialog.export_viscore_annotations)
+        self.export_viscore_annotations_action.triggered.connect(self.export_viscore_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
 
         self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
-        self.export_taglab_annotations_action.triggered.connect(self.io_dialog.export_taglab_annotations)
+        self.export_taglab_annotations_action.triggered.connect(self.export_taglab_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
 
         # Dataset submenu
@@ -664,10 +684,6 @@ class MainWindow(QMainWindow):
             self.iou_thresh = value
             self.iou_thresh_spinbox.setValue(value)
             self.iouChanged.emit(value)
-
-    def open_import_images_dialog(self):
-        self.untoggle_all_tools()
-        self.io_dialog.import_images()
 
     def open_patch_annotation_sampling_dialog(self):
 
