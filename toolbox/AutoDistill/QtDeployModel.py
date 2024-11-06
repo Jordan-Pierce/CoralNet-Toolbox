@@ -393,11 +393,16 @@ class DeployModelDialog(QDialog):
         if not self.loaded_model:
             QMessageBox.critical(self, "Error", "No model loaded")
             return
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
+   
         if not image_paths:
             image_paths = [self.annotation_window.current_image_path]
+            
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+        progress_bar = ProgressBar(self.annotation_window, title=f"Making {self.model_name} Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
             # Open the image
@@ -414,6 +419,9 @@ class DeployModelDialog(QDialog):
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, self.class_mapping)
             results = results_processor.from_supervision(results, image, image_path, self.class_mapping)
+            
+            # Update the progress bar
+            progress_bar.update_progress()
 
             if self.use_sam.isChecked():
                 # Apply SAM to the detection results
@@ -423,6 +431,11 @@ class DeployModelDialog(QDialog):
             else:
                 # Process the detection results
                 results_processor.process_detection_results(results)
+                
+        # Stop the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
+                
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         gc.collect()

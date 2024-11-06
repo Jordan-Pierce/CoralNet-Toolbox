@@ -41,6 +41,7 @@ from toolbox.MachineLearning.QtTrainModel import TrainModelDialog
 from toolbox.SAM.QtDeployModel import DeployModelDialog as SAMDeployModelDialog
 
 from toolbox.AutoDistill.QtDeployModel import DeployModelDialog as AutoDistillDeployModelDialog
+from toolbox.AutoDistill.QtBatchInference import BatchInferenceDialog as AutoDistillBatchInferenceDialog
 
 from toolbox.utilities import get_available_device
 from toolbox.utilities import get_icon_path
@@ -104,6 +105,7 @@ class MainWindow(QMainWindow):
         self.batch_inference_dialog = BatchInferenceDialog(self)
         self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
+        self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -298,6 +300,10 @@ class MainWindow(QMainWindow):
         self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
         self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
+        
+        self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
+        self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
+        self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -830,6 +836,25 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.auto_distill_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_auto_distill_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "AutoDistill Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.auto_distill_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "AutoDistill Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.auto_distill_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
