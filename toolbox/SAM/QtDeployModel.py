@@ -351,10 +351,16 @@ class DeployModelDialog(QDialog):
     def scale_boxes(self, boxes):
         """
         Scale the bounding boxes based on the original and resized image dimensions.
+        Handles both single boxes (4,) and multiple boxes (N, 4).
 
         Args:
-            boxes (torch.tensor): The bounding boxes to scale.
+            boxes (torch.tensor): The bounding boxes to scale, shape (4,) or (N, 4)
         """
+        # Convert to correct shape
+        original_shape = boxes.shape
+        if len(original_shape) == 1:
+            boxes = boxes.unsqueeze(0)  # Add batch dimension
+
         # Calculate scaling factors
         original_height, original_width = self.original_image.shape[:2]
         resized_height, resized_width = self.resized_image.shape[:2]
@@ -369,6 +375,11 @@ class DeployModelDialog(QDialog):
         scaled_bbox[:, 2] *= scale_x
         scaled_bbox[:, 3] *= scale_y
         bbox_coords = scaled_bbox.long()  # Cast back to int64
+
+        # Return in original shape if it was a single box
+        if len(original_shape) == 1:
+            bbox_coords = bbox_coords.squeeze(0)
+            
         return bbox_coords
 
     def transform_points(self, points, labels):
@@ -402,16 +413,11 @@ class DeployModelDialog(QDialog):
         Args:
             bboxes (np.ndarray): The bounding boxes to transform.
         """
-        try:
-            input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
-            input_bbox = input_bbox.to(self.main_window.device).unsqueeze(0)
-            # Scale the bounding boxes
-            bbox_coords = self.scale_boxes(input_bbox)
-        except Exception:
-            input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
-            input_bbox = input_bbox.to(self.main_window.device)
-            # Scale the bounding boxes
-            bbox_coords = self.scale_boxes(input_bbox)
+        input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
+        input_bbox = input_bbox.to(self.main_window.device)
+        
+        # Scale the bounding boxes
+        bbox_coords = self.scale_boxes(input_bbox)
 
         if not self.model_path.startswith("sam2"):
             bbox_coords = self.loaded_model.transform.apply_boxes_torch(bbox_coords,
