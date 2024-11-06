@@ -1,10 +1,14 @@
+import numpy as np
+import torch
 from PyQt5.QtCore import QPointF
+from ultralytics.engine.results import Results
+from ultralytics.models.sam.amg import batched_mask_to_box
+from ultralytics.utils import ops
+from ultralytics.utils.ops import scale_masks
 
 from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
-
 from toolbox.QtProgressBar import ProgressBar
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -97,8 +101,10 @@ class ResultsProcessor:
         label = self.label_window.get_label_by_short_code(short_label)
         # Create the rectangle annotation
         annotation = self.create_rectangle_annotation(x_min, y_min, x_max, y_max, label, image_path)
-        # Store and display the annotation
-        self.store_and_display_annotation(annotation, image_path, cls_name, conf)
+        
+        if annotation:
+            # Store and display the annotation
+            self.store_and_display_annotation(annotation, image_path, cls_name, conf)
 
     def process_detection_results(self, results_generator):
         """
@@ -142,14 +148,16 @@ class ResultsProcessor:
         label = self.label_window.get_label_by_short_code(short_label)
         # Create the polygon annotation
         annotation = self.create_polygon_annotation(points, label, image_path)
-        # Store and display the annotation
-        self.store_and_display_annotation(annotation, image_path, cls_name, conf)
+        
+        if annotation:
+            # Store and display the annotation
+            self.store_and_display_annotation(annotation, image_path, cls_name, conf)
 
     def process_segmentation_results(self, results_generator):
         """
         Process the segmentation results from the results generator.
         """
-        progress_bar = ProgressBar(self.annotation_window, title=f"Making Segmentation Predictions")
+        progress_bar = ProgressBar(self.annotation_window, title="Making Segmentation Predictions")
         progress_bar.show()
 
         for results in results_generator:
@@ -184,17 +192,22 @@ class ResultsProcessor:
         :param image_path: Path to the image
         :return: RectangleAnnotation object
         """
-        top_left = QPointF(x_min, y_min)
-        bottom_right = QPointF(x_max, y_max)
-        return RectangleAnnotation(top_left,
-                                   bottom_right,
-                                   label.short_label_code,
-                                   label.long_label_code,
-                                   label.color,
-                                   image_path,
-                                   label.id,
-                                   self.main_window.get_transparency_value(),
-                                   show_msg=True)
+        try:
+            top_left = QPointF(x_min, y_min)
+            bottom_right = QPointF(x_max, y_max)
+            annotation = RectangleAnnotation(top_left,
+                                             bottom_right,
+                                             label.short_label_code,
+                                             label.long_label_code,
+                                             label.color,
+                                             image_path,
+                                             label.id,
+                                             self.main_window.get_transparency_value(),
+                                             show_msg=True)
+        except Exception:
+            annotation = None
+            
+        return annotation
 
     def create_polygon_annotation(self, points, label, image_path):
         """
@@ -205,15 +218,20 @@ class ResultsProcessor:
         :param image_path: Path to the image
         :return: PolygonAnnotation object
         """
-        points = [QPointF(x, y) for x, y in points]
-        return PolygonAnnotation(points,
-                                 label.short_label_code,
-                                 label.long_label_code,
-                                 label.color,
-                                 image_path,
-                                 label.id,
-                                 self.main_window.get_transparency_value(),
-                                 show_msg=True)
+        try:
+            points = [QPointF(x, y) for x, y in points]
+            annotation = PolygonAnnotation(points,
+                                           label.short_label_code,
+                                           label.long_label_code,
+                                           label.color,
+                                           image_path,
+                                           label.id,
+                                           self.main_window.get_transparency_value(),
+                                           show_msg=True)
+        except Exception:
+            annotation = None
+            
+        return annotation
 
     def store_and_display_annotation(self, annotation, image_path, cls_name, conf, predictions=None):
         """
@@ -254,3 +272,129 @@ class ResultsProcessor:
         self.main_window.image_window.update_image_annotations(image_path)
         # Unselect all annotations
         self.annotation_window.unselect_annotations()
+                
+    def from_sam(self, masks, scores, image, image_path):
+        """
+        Converts SAM results to Ultralytics Results Object.
+
+        Args:
+            masks (torch.Tensor): Predicted masks with shape (N, 1, H, W).
+            scores (torch.Tensor): Confidence scores for each mask with shape (N, 1).
+            image (np.ndarray): The original, unprocessed image.
+            image_path (str): Path to the image file.
+
+        Returns:
+            results (Results): Ultralytics Results object.
+        """
+        # Ensure the original image is in the correct format
+        if not isinstance(image, np.ndarray):
+            image = image.cpu().numpy()
+
+        # Ensure masks have the correct shape (N, 1, H, W)
+        if masks.ndim != 4 or masks.shape[1] != 1:
+            raise ValueError(f"Expected masks to have shape (N, 1, H, W), but got {masks.shape}")
+
+        # Scale masks to the original image size and remove extra dimensions
+        scaled_masks = ops.scale_masks(masks.float(), image.shape[:2], padding=False)
+        scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
+
+        # Ensure scaled_masks is 3D (N, H, W)
+        if scaled_masks.ndim == 4:
+            scaled_masks = scaled_masks.squeeze(1)
+
+        # Generate bounding boxes from masks using batched_mask_to_box
+        scaled_boxes = batched_mask_to_box(scaled_masks)
+
+        # Ensure scores has shape (N,) by removing extra dimensions
+        scores = scores.squeeze().cpu()
+        if scores.ndim == 0:  # If only one score, make it a 1D tensor
+            scores = scores.unsqueeze(0)
+
+        # Generate class labels
+        cls = torch.arange(len(masks), dtype=torch.int32).cpu()
+
+        # Ensure all tensors are 2D before concatenating
+        scaled_boxes = scaled_boxes.cpu()
+        if scaled_boxes.ndim == 1:
+            scaled_boxes = scaled_boxes.unsqueeze(0)
+        scores = scores.view(-1, 1)  # Reshape to (N, 1)
+        cls = cls.view(-1, 1)  # Reshape to (N, 1)
+
+        # Combine bounding boxes, scores, and class labels
+        scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
+
+        # Create names dictionary (placeholder for consistency)
+        names = dict(enumerate(str(i) for i in range(len(masks))))
+
+        # Create Results object
+        results = Results(image, 
+                          path=image_path, 
+                          names=names, 
+                          masks=scaled_masks, 
+                          boxes=scaled_boxes)
+        
+        return results
+    
+    def from_supervision(self, detections, image, image_path, names):
+        """
+        Convert Supervision Detections to Ultralytics Results format with proper mask handling.
+
+        Args:
+            detections (Detections): Supervision detection object
+            image (np.ndarray): Original image array
+            image_path (str, optional): Path to the image file
+            names (dict, optional): Dictionary mapping class ids to class names
+
+        Returns:
+            results_generator (generator): A generator that yields Ultralytics Results.
+        """
+        # Ensure original image is numpy array
+        if torch.is_tensor(image):
+            image = image.cpu().numpy()
+
+        # Create default names if not provided
+        if names is None:
+            names = {i: str(i) for i in range(len(detections))} if len(detections) > 0 else {}
+
+        if len(detections) == 0:
+            return Results(orig_img=image, path=image_path, names=names)
+
+        # Handle masks if present
+        if hasattr(detections, 'mask') and detections.mask is not None:
+            # Convert masks to torch tensor if needed
+            masks = torch.as_tensor(detections.mask, dtype=torch.float32)
+
+            # Ensure masks have shape (N, 1, H, W)
+            if masks.ndim == 3:
+                masks = masks.unsqueeze(1)
+
+            # Scale masks to match original image size
+            scaled_masks = scale_masks(masks, image.shape[:2], padding=False)
+            scaled_masks = scaled_masks > 0.5  # Apply threshold
+
+            # Ensure scaled_masks is 3D (N, H, W)
+            if scaled_masks.ndim == 4:
+                scaled_masks = scaled_masks.squeeze(1)
+        else:
+            scaled_masks = None
+
+        # Convert boxes and scores to torch tensors
+        scaled_boxes = torch.as_tensor(detections.xyxy, dtype=torch.float32)
+        scores = torch.as_tensor(detections.confidence, dtype=torch.float32).view(-1, 1)
+
+        # Convert class IDs to torch tensor
+        cls = torch.as_tensor(detections.class_id, dtype=torch.int32).view(-1, 1)
+
+        # Combine boxes, scores, and class IDs
+        if scaled_boxes.ndim == 1:
+            scaled_boxes = scaled_boxes.unsqueeze(0)
+        scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
+
+        # Create Results object
+        results = Results(image,
+                          path=image_path,
+                          names=names,
+                          boxes=scaled_boxes, 
+                          masks=scaled_masks)
+
+        yield results

@@ -1,14 +1,21 @@
 import os
 import shutil
 import argparse
-import random
 import matplotlib.pyplot as plt
 import pandas as pd
-from collections import Counter
 from tqdm import tqdm
 
 
 def count_images_per_class(src_dir):
+    """
+    Count the number of images per class in the source directory.
+
+    Args:
+        src_dir (str): Source directory containing class subdirectories.
+
+    Returns:
+        dict: Dictionary with class names as keys and image counts as values.
+    """
     class_counts = {}
     for root, dirs, files in os.walk(src_dir):
         if not dirs:  # We are in a class directory
@@ -18,6 +25,14 @@ def count_images_per_class(src_dir):
 
 
 def subset_dataset(src_dir, dst_dir, min_count):
+    """
+    Create a subset of the dataset with a balanced number of images per class.
+
+    Args:
+        src_dir (str): Source directory containing the original dataset.
+        dst_dir (str): Destination directory for the subsetted dataset.
+        min_count (dict): Dictionary with class names as keys and minimum image counts as values.
+    """
     for root, dirs, files in os.walk(src_dir):
         for dir_name in dirs:
             class_dir = os.path.join(root, dir_name)
@@ -36,11 +51,22 @@ def subset_dataset(src_dir, dst_dir, min_count):
 
 
 def plot_distribution(dst_dir, dataset_type):
+    """
+    Plot and save the distribution of images per class for a given dataset type.
+
+    Args:
+        dst_dir (str): Destination directory containing the subsetted dataset.
+        dataset_type (str): Type of dataset (e.g., 'train', 'valid', 'test').
+    """
     class_counts = count_images_per_class(os.path.join(dst_dir, dataset_type))
     df = pd.DataFrame(list(class_counts.items()), columns=['Class', 'Count'])
 
     plt.figure(figsize=(10, 6))
-    plt.bar(df['Class'], df['Count'], color='skyblue')
+    colors = plt.cm.tab20.colors  # Use a colormap with discrete colors
+    color_map = {class_name: colors[i % len(colors)] for i, class_name in enumerate(df['Class'])}
+    bar_colors = [color_map[class_name] for class_name in df['Class']]
+    
+    plt.bar(df['Class'], df['Count'], color=bar_colors)
     plt.xlabel('Class')
     plt.ylabel('Number of Images')
     plt.title(f'Distribution of {dataset_type.capitalize()} Set')
@@ -53,6 +79,9 @@ def plot_distribution(dst_dir, dataset_type):
 
 
 def main():
+    """
+    Main function to subset a YOLO formatted dataset and plot the distribution of images per class.
+    """
     parser = argparse.ArgumentParser(description="Subset a YOLO formatted dataset.")
     parser.add_argument("src", type=str, help="Source directory of the YOLO formatted dataset.")
     parser.add_argument("dst", type=str, help="Destination directory for the subsetted dataset.")

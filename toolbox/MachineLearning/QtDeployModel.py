@@ -10,7 +10,7 @@ import random
 import numpy as np
 
 from PyQt5.QtGui import QColor, QShowEvent
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QVBoxLayout,
                              QLabel, QDialog, QTextEdit, QPushButton, QTabWidget, QCheckBox)
 
@@ -19,10 +19,6 @@ from ultralytics import YOLO
 
 from toolbox.ResultsProcessor import ResultsProcessor
 
-from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
-from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
-
-from toolbox.QtProgressBar import ProgressBar
 from toolbox.utilities import pixmap_to_numpy
 
 
@@ -431,7 +427,7 @@ class DeployModelDialog(QDialog):
         # Check if SAM model is deployed
         if self.use_sam['detect'].isChecked():
             # Apply SAM to the detection results
-            results = self.sam_dialog.predict_from_results(results)
+            results = self.sam_dialog.predict_from_results(results, self.class_mappings['detect'])
             # Process the segmentation results
             results_processor.process_segmentation_results(results)
         else:
@@ -472,7 +468,7 @@ class DeployModelDialog(QDialog):
         # Check if SAM model is deployed
         if self.use_sam['segment'].isChecked():
             # Apply SAM to the segmentation results
-            results = self.sam_dialog.predict_from_results(results)
+            results = self.sam_dialog.predict_from_results(results, self.class_mappings['segment'])
 
         # Process the segmentation results
         results_processor.process_segmentation_results(results)

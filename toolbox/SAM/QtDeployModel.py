@@ -2,96 +2,29 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import os
 import gc
+import os
 
 import numpy as np
 import sam2
 import torch
-
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QTabWidget, QComboBox, QMessageBox, QApplication, QWidget)
-
-from torch.cuda import empty_cache
 from mobile_sam import SamPredictor as MobileSamPredictor
 from mobile_sam import sam_model_registry as mobile_sam_model_registry
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
+                             QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                             QSlider, QSpinBox, QTabWidget, QVBoxLayout,
+                             QWidget)
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor as Sam2Predictor
-from segment_anything import SamPredictor
-from segment_anything import sam_model_registry
-from ultralytics.engine.results import Results
-from ultralytics.models.sam.amg import batched_mask_to_box
+from segment_anything import SamPredictor, sam_model_registry
+from torch.cuda import empty_cache
 from ultralytics.utils import ops
 from ultralytics.utils.downloads import attempt_download_asset
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.ResultsProcessor import ResultsProcessor
-
-from toolbox.utilities import preprocess_image
-from toolbox.utilities import rasterio_to_numpy
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Functions
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-def to_ultralytics(masks, scores, original_image):
-    """
-    Converts SAM output to Ultralytics Results Object.
-
-    Args:
-        masks (torch.Tensor): Predicted masks with shape (N, 1, H, W).
-        scores (torch.Tensor): Confidence scores for each mask with shape (N, 1).
-        original_image (np.ndarray): The original, unprocessed image.
-
-    Returns:
-        (Results): Ultralytics Results object containing detection masks, bounding boxes, and other metadata.
-    """
-    # Ensure the original image is in the correct format
-    if not isinstance(original_image, np.ndarray):
-        original_image = original_image.cpu().numpy()
-
-    # Ensure masks have the correct shape (N, 1, H, W)
-    if masks.ndim != 4 or masks.shape[1] != 1:
-        raise ValueError(f"Expected masks to have shape (N, 1, H, W), but got {masks.shape}")
-
-    # Scale masks to the original image size and remove extra dimensions
-    scaled_masks = ops.scale_masks(masks.float(), original_image.shape[:2], padding=False)
-    scaled_masks = scaled_masks > 0.5  # Apply threshold to masks
-
-    # Ensure scaled_masks is 3D (N, H, W)
-    if scaled_masks.ndim == 4:
-        scaled_masks = scaled_masks.squeeze(1)
-
-    # Generate bounding boxes from masks using batched_mask_to_box
-    pred_bboxes = batched_mask_to_box(scaled_masks)
-
-    # Ensure scores has shape (N,) by removing extra dimensions
-    scores = scores.squeeze().cpu()
-    if scores.ndim == 0:  # If only one score, make it a 1D tensor
-        scores = scores.unsqueeze(0)
-
-    # Generate class labels
-    cls = torch.arange(len(masks), dtype=torch.int32).cpu()
-
-    # Ensure all tensors are 2D before concatenating
-    pred_bboxes = pred_bboxes.cpu()
-    if pred_bboxes.ndim == 1:
-        pred_bboxes = pred_bboxes.unsqueeze(0)
-    scores = scores.view(-1, 1)  # Reshape to (N, 1)
-    cls = cls.view(-1, 1)  # Reshape to (N, 1)
-
-    # Combine bounding boxes, scores, and class labels
-    pred_bboxes = torch.cat([pred_bboxes, scores, cls], dim=1)
-
-    # Create names dictionary (placeholder for consistency)
-    names = dict(enumerate(str(i) for i in range(len(masks))))
-
-    # Create Results object
-    return Results(original_image, path="", names=names, masks=scaled_masks, boxes=pred_bboxes)
-
+from toolbox.utilities import preprocess_image, rasterio_to_numpy
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -115,6 +48,7 @@ class DeployModelDialog(QDialog):
         self.model_path = None
         self.loaded_model = None
 
+        self.image_path = None
         self.original_image = None
         self.resized_image = None
 
@@ -319,8 +253,8 @@ class DeployModelDialog(QDialog):
 
             self.loaded_model.model.to(device=self.main_window.device)
             self.loaded_model.model.eval()
-            self.status_bar.setText(f"Model loaded")
-            QMessageBox.information(self, "Model Loaded", f"Model loaded successfully")
+            self.status_bar.setText("Model loaded")
+            QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
@@ -351,7 +285,7 @@ class DeployModelDialog(QDialog):
         else:
             return int(h * (imgsz / w)), imgsz
 
-    def set_image(self, image):
+    def set_image(self, image, image_path):
         """
         Set the image in the predictor.
         """
@@ -361,11 +295,18 @@ class DeployModelDialog(QDialog):
 
         try:
             if self.loaded_model is not None:
+                
+                if image is None and image_path is not None:
+                    # Open the image using rasterio
+                    image = self.main_window.image_window.rasterio_open(image_path)
+                    image = rasterio_to_numpy(image)
+                    
                 # Preprocess the image
                 image = preprocess_image(image)
 
                 # Save the original image
                 self.original_image = image
+                self.image_path = image_path
 
                 # Resize the image if the checkbox is checked
                 if self.resize_image_dropdown.currentText() == "True":
@@ -466,7 +407,7 @@ class DeployModelDialog(QDialog):
             input_bbox = input_bbox.to(self.main_window.device).unsqueeze(0)
             # Scale the bounding boxes
             bbox_coords = self.scale_boxes(input_bbox)
-        except Exception as e:
+        except Exception:
             input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
             input_bbox = input_bbox.to(self.main_window.device)
             # Scale the bounding boxes
@@ -481,6 +422,14 @@ class DeployModelDialog(QDialog):
     def predict_from_prompts(self, bbox, points, labels):
         """
         Make predictions using the currently loaded model using prompts.
+        
+        Args:
+            bbox (np.ndarray): The bounding boxes to use as prompts.
+            points (np.ndarray): The points to use as prompts.
+            labels (list): The labels for each point.
+            
+        Returns:
+            results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
             QMessageBox.critical(self, "Model Not Loaded", "Model not loaded, cannot make predictions")
@@ -498,20 +447,23 @@ class DeployModelDialog(QDialog):
                 bbox_coords = self.transform_bboxes(bbox)
 
             if not self.model_path.startswith("sam2"):
-                mask, score, _ = self.loaded_model.predict_torch(boxes=bbox_coords,
-                                                                 point_coords=point_coords,
-                                                                 point_labels=point_labels,
-                                                                 multimask_output=False)
+                masks, scores, _ = self.loaded_model.predict_torch(boxes=bbox_coords,
+                                                                   point_coords=point_coords,
+                                                                   point_labels=point_labels,
+                                                                   multimask_output=False)
             else:
-                mask, score, _ = self.loaded_model.predict(box=bbox_coords,
-                                                           point_coords=point_coords,
-                                                           point_labels=point_labels,
-                                                           multimask_output=False)
-                mask = torch.tensor(mask).unsqueeze(0)
-                score = torch.tensor(score).unsqueeze(0)
+                masks, scores, _ = self.loaded_model.predict(box=bbox_coords,
+                                                             point_coords=point_coords,
+                                                             point_labels=point_labels,
+                                                             multimask_output=False)
+                masks = torch.tensor(masks).unsqueeze(0)
+                scores = torch.tensor(scores).unsqueeze(0)
+            
+            # Create a results processor
+            results_processor = ResultsProcessor(self.main_window, class_mapping=None)
 
             # Post-process the results
-            results = to_ultralytics(mask, score, self.original_image)[0]
+            results = results_processor.from_sam(masks, scores, self.original_image, self.image_path)
 
         except Exception as e:
             QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
@@ -519,19 +471,22 @@ class DeployModelDialog(QDialog):
 
         return results
 
-    def predict_from_results(self, results_generator):
+    def predict_from_results(self, results_generator, class_mapping):
         """
         Make predictions using the currently loaded model using results.
+        
+        Args:
+            results_generator (generator): A generator that yields Ultralytics Results.
         """
         # Create a result processor
-        result_processor = ResultsProcessor(self.main_window, class_mapping=None)
+        result_processor = ResultsProcessor(self.main_window, class_mapping=class_mapping)
 
         results_dict = {}
 
         for results in results_generator:
             for result in results:
                 # Extract the results
-                image_path, cls, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
+                image_path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
 
                 if image_path not in results_dict:
                     results_dict[image_path] = []
@@ -542,20 +497,14 @@ class DeployModelDialog(QDialog):
         # Loop through each unique image path
         for image_path in results_dict:
             try:
-                # Convert rasterio image to numpy array
-                image = self.main_window.image_window.rasterio_open(image_path)
-                image = rasterio_to_numpy(image)
-
                 # Set the image
-                self.set_image(image)
+                self.set_image(image=None, image_path=image_path)
 
-                # Unpack the results as lists
-                bboxes, scores, names = map(np.array, zip(*results_dict[image_path]))
-                bboxes = np.stack(bboxes)
+                # Unpack the results
+                bboxes = np.stack(results_dict[image_path])
 
                 # Make predictions
                 new_results = self.predict_from_prompts(bboxes, [], [])
-                new_results.path = image_path
                 new_results.names = results.names
                 new_results.boxes = results.boxes
 
@@ -570,6 +519,7 @@ class DeployModelDialog(QDialog):
         """
         self.loaded_model = None
         self.model_path = None
+        self.image_path = None
         self.original_image = None
         self.resized_image = None
         gc.collect()

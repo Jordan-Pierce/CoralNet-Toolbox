@@ -1,99 +1,22 @@
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import gc
 
 import torch
-import numpy as np
-
-from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QSpinBox, QSlider, QLabel, QHBoxLayout, QPushButton,
-                             QComboBox, QMessageBox, QApplication, QLineEdit)
-
-from torch.cuda import empty_cache
-from supervision import Detections
-from ultralytics.engine.results import Results
-from ultralytics.utils.ops import scale_masks
 from autodistill.detection import CaptionOntology
-
-from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
+                             QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QMessageBox, QPushButton, QSlider, QSpinBox,
+                             QVBoxLayout)
+from torch.cuda import empty_cache
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.QtRangeSlider import QRangeSlider
+from toolbox.ResultsProcessor import ResultsProcessor
 from toolbox.utilities import rasterio_to_numpy
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Functions
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-def to_ultralytics(detections, orig_img, path=None, names=None):
-    """
-    Convert Supervision Detections to Ultralytics Results format with proper mask handling.
-
-    Args:
-        detections (Detections): Supervision detection object
-        orig_img (np.ndarray): Original image array
-        path (str, optional): Path to the image file
-        names (dict, optional): Dictionary mapping class ids to class names
-
-    Returns:
-        Results: Ultralytics Results object
-    """
-    # Ensure orig_img is numpy array
-    if torch.is_tensor(orig_img):
-        orig_img = orig_img.cpu().numpy()
-
-    # Create default names if not provided
-    if names is None:
-        names = {i: str(i) for i in range(len(detections))} if len(detections) > 0 else {}
-
-    if len(detections) == 0:
-        return Results(orig_img=orig_img, path=path, names=names)
-
-    # Handle masks if present
-    if hasattr(detections, 'mask') and detections.mask is not None:
-        # Convert masks to torch tensor if needed
-        masks = torch.as_tensor(detections.mask, dtype=torch.float32)
-
-        # Ensure masks have shape (N, 1, H, W)
-        if masks.ndim == 3:
-            masks = masks.unsqueeze(1)
-
-        # Scale masks to match original image size
-        scaled_masks = scale_masks(masks, orig_img.shape[:2], padding=False)
-        scaled_masks = scaled_masks > 0.5  # Apply threshold
-
-        # Ensure scaled_masks is 3D (N, H, W)
-        if scaled_masks.ndim == 4:
-            scaled_masks = scaled_masks.squeeze(1)
-    else:
-        scaled_masks = None
-
-    # Convert boxes and scores to torch tensors
-    boxes = torch.as_tensor(detections.xyxy, dtype=torch.float32)
-    scores = torch.as_tensor(detections.confidence, dtype=torch.float32).view(-1, 1)
-
-    # Convert class IDs to torch tensor
-    cls = torch.as_tensor(detections.class_id, dtype=torch.int32).view(-1, 1)
-
-    # Combine boxes, scores, and class IDs
-    if boxes.ndim == 1:
-        boxes = boxes.unsqueeze(0)
-    pred_boxes = torch.cat([boxes, scores, cls], dim=1)
-
-    # Create Results object
-    results = Results(
-        orig_img=orig_img,
-        path=path,
-        names=names,
-        boxes=pred_boxes,
-        masks=scaled_masks
-    )
-
-    return results
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -119,9 +42,7 @@ class DeployModelDialog(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowTitle("AutoDistill Deploy Model")
-        self.resize(300, 250)
-
+        # Initialize instance variables
         self.imgsz = 1024
         self.uncertainty_thresh = 0.25
         self.area_thresh_min = 0.01
@@ -129,59 +50,112 @@ class DeployModelDialog(QDialog):
         self.loaded_model = None
         self.model_name = None
         self.ontology = None
+        self.class_mapping = {}
+        self.ontology_pairs = []
+        
+        self.use_sam = False
 
-        # Main layout
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Setup the user interface components."""
+        # Window configuration
+        self.setWindowTitle("AutoDistill Deploy Model")
+        self.resize(300, 250)
+        
+        # Create main layout
         self.main_layout = QVBoxLayout(self)
+        # Setup model selection
+        self.setup_model_selection()
+        # Setup ontology mapping 
+        self.setup_ontology_section()
+        # Setup parameter controls
+        self.setup_parameter_controls()
+        # Setup action buttons
+        self.setup_action_buttons()
+        # Setup status bar
+        self.status_bar = QLabel("No model loaded")
+        self.main_layout.addWidget(self.status_bar)
 
-        # Model selection dropdown
+    def setup_model_selection(self):
+        """
+        Setup model selection dropdown.
+        """
         self.model_dropdown = QComboBox()
         self.model_dropdown.addItems(["GroundingDINO"])
-
         self.main_layout.addWidget(self.model_dropdown)
 
-        # Ontology mapping form
+    def setup_ontology_section(self):
+        """
+        Setup ontology mapping section.
+        """
         self.ontology_layout = QVBoxLayout()
-        self.ontology_pairs = []  # To keep track of added pairs
-
-        # Add and remove buttons
+        
+        # Add/Remove buttons layout
         add_remove_layout = QHBoxLayout()
+        
         self.remove_button = QPushButton("Remove")
         self.remove_button.clicked.connect(self.remove_ontology_pair)
         add_remove_layout.addWidget(self.remove_button)
-        self.add_button = QPushButton("Add")
+        
+        self.add_button = QPushButton("Add")  
         self.add_button.clicked.connect(self.add_ontology_pair)
         add_remove_layout.addWidget(self.add_button)
+        
         self.ontology_layout.addLayout(add_remove_layout)
-
         self.main_layout.addLayout(self.ontology_layout)
 
-        # Custom parameters section
+    def setup_parameter_controls(self):
+        """
+        Setup parameter control sliders and inputs.
+        """
         self.form_layout = QFormLayout()
-
-        # Add resize image dropdown (True / False)
+        
+        # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.form_layout.addRow("Resize Image:", self.resize_image_dropdown)
-
-        # Add imgsz parameter
+        
+        # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 4096)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
+        
+        # Area threshold controls
+        self.setup_area_threshold_controls() 
+            
+        # Uncertainty threshold controls
+        self.setup_uncertainty_threshold_controls()
+        
+        # Add the form to the layout
+        self.main_layout.addLayout(self.form_layout)
+        
+        # SAM checkbox
+        self.use_sam_checkbox = QCheckBox("Use SAM for creating Polygons")
+        self.use_sam_checkbox.stateChanged.connect(self.is_sam_model_deployed)
+        self.main_layout.addWidget(self.use_sam_checkbox)
+        self.use_sam = self.use_sam_checkbox
 
-        # Set the threshold slider for area
+    def setup_area_threshold_controls(self):
+        """
+        Setup area threshold slider and label.
+        """
         self.area_threshold_slider = QRangeSlider()
         self.area_threshold_slider.setRange(0, 100)
         self.area_threshold_slider.setValue((int(self.area_thresh_min * 100), int(self.area_thresh_max * 100)))
         self.area_threshold_slider.rangeChanged.connect(self.update_area_label)
 
-        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.area_threshold_label = QLabel( f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
         self.form_layout.addRow("Area Threshold", self.area_threshold_slider)
         self.form_layout.addRow("", self.area_threshold_label)
 
-        # Set the threshold slider for uncertainty
+    def setup_uncertainty_threshold_controls(self):
+        """
+        Setup uncertainty threshold slider and label.
+        """
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
         self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
@@ -193,22 +167,21 @@ class DeployModelDialog(QDialog):
         self.form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
         self.form_layout.addRow("", self.uncertainty_threshold_label)
 
-        # Load and Deactivate buttons
+    def setup_action_buttons(self):
+        """
+        Setup load and deactivate buttons.
+        """
         button_layout = QHBoxLayout()
+        
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
         button_layout.addWidget(load_button)
-
+        
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
         button_layout.addWidget(deactivate_button)
-
-        self.main_layout.addLayout(self.form_layout)
+        
         self.main_layout.addLayout(button_layout)
-
-        # Status bar label
-        self.status_bar = QLabel("No model loaded")
-        self.main_layout.addWidget(self.status_bar)
 
     def showEvent(self, event):
         """
@@ -232,21 +205,6 @@ class DeployModelDialog(QDialog):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"Area Threshold: {self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-
-    def get_area_thresh(self, image_path):
-        """
-        Calculate area thresholds based on image dimensions.
-
-        Args:
-            image_path: Path to the image.
-
-        Returns:
-            Tuple of (min_area_thresh, max_area_thresh).
-        """
-        h, w = self.main_window.image_window.rasterio_open(image_path).shape
-        area_thresh_min = (h * w) * self.area_thresh_min
-        area_thresh_max = (h * w) * self.area_thresh_max
-        return area_thresh_min, area_thresh_max
 
     def update_uncertainty_label(self):
         """
@@ -311,6 +269,20 @@ class DeployModelDialog(QDialog):
             # Remove the layout
             item = self.ontology_layout.itemAt(self.ontology_layout.count() - 2)
             item.layout().deleteLater()
+            
+    def is_sam_model_deployed(self):
+        """
+        Check if the SAM model is deployed and update the checkbox state accordingly.
+        """
+        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+
+        if not self.sam_dialog.loaded_model:
+            # Ensure that the checkbox is not checked
+            self.sender().setChecked(False)
+            QMessageBox.warning(self, "SAM Model", "SAM model not currently deployed")
+            return False
+
+        return True
 
     def load_model(self):
         """
@@ -327,6 +299,8 @@ class DeployModelDialog(QDialog):
 
             # Set the ontology
             self.ontology = CaptionOntology(ontology_mapping)
+            # Set the class mapping
+            self.class_mapping = {k: v for k, v in enumerate(self.ontology.classes())}
 
             # Threshold for confidence
             uncertainty_thresh = self.get_uncertainty_threshold()
@@ -366,6 +340,21 @@ class DeployModelDialog(QDialog):
             if text_input.text() != "":
                 ontology_mapping[text_input.text()] = label_dropdown.currentText()
         return ontology_mapping
+    
+    def get_area_thresh(self, image):
+        """
+        Calculate area thresholds based on image dimensions.
+
+        Args:
+            image_path: Path to the image.
+
+        Returns:
+            Tuple of (min_area_thresh, max_area_thresh).
+        """
+        h, w, _ = image.shape
+        area_thresh_min = (h * w) * self.area_thresh_min
+        area_thresh_max = (h * w) * self.area_thresh_max
+        return area_thresh_min, area_thresh_max
 
     def get_uncertainty_threshold(self):
         """
@@ -404,106 +393,40 @@ class DeployModelDialog(QDialog):
         if not self.loaded_model:
             QMessageBox.critical(self, "Error", "No model loaded")
             return
-
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         if not image_paths:
             image_paths = [self.annotation_window.current_image_path]
 
         for image_path in image_paths:
-            # Predict the image, use NMS, process the results
-            results = self.loaded_model.predict(image_path)
+            # Open the image
+            image = self.main_window.image_window.rasterio_open(image_path)
+            image = rasterio_to_numpy(image)
+            # Predict the image
+            results = self.loaded_model.predict(image)
             # Perform NMS thresholding
             results = results.with_nms(self.main_window.get_iou_thresh())
             # Perform area thresholding
-            min_area_thresh, max_area_thresh = self.get_area_thresh(image_path)
+            min_area_thresh, max_area_thresh = self.get_area_thresh(image)
             results = results[results.area >= min_area_thresh]
             results = results[results.area <= max_area_thresh]
-            # Process the results
-            self.process_results(image_path, results)
-            # class_names = {k: v for k, v in enumerate(self.ontology.classes())}
-            # image = rasterio_to_numpy(image_path)
-            # results = to_ultralytics(detections, image, path=image_path, names=class_names)
+            # Create a results processor
+            results_processor = ResultsProcessor(self.main_window, self.class_mapping)
+            results = results_processor.from_supervision(results, image, image_path, self.class_mapping)
 
+            if self.use_sam.isChecked():
+                # Apply SAM to the detection results
+                results = self.sam_dialog.predict_from_results(results, self.class_mapping)
+                # Process the segmentation results
+                results_processor.process_segmentation_results(results)
+            else:
+                # Process the detection results
+                results_processor.process_detection_results(results)
+        # Make cursor normal
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
-
-    def process_results(self, image_path, results):
-        """
-        Process the prediction results and create annotations.
-
-        Args:
-            image_path: Path to the image being processed.
-            results: Prediction results to process.
-        """
-        progress_bar = ProgressBar(self, title=f"Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(results))
-
-        for result in results:
-            try:
-                x_min, y_min, x_max, y_max = map(float, result[0])
-                mask = result[1]
-                conf = result[2]
-                cls = result[3]
-                cls_name = self.ontology.classes()[cls]
-
-                # Determine the short label
-                short_label = 'Review'
-                if conf > self.main_window.get_uncertainty_thresh():
-                    short_label = cls_name
-
-                # Prepare the annotation data
-                label = self.label_window.get_label_by_short_code(short_label)
-                top_left = QPointF(x_min, y_min)
-                bottom_right = QPointF(x_max, y_max)
-
-                # Create the rectangle annotation
-                annotation = RectangleAnnotation(top_left,
-                                                 bottom_right,
-                                                 label.short_label_code,
-                                                 label.long_label_code,
-                                                 label.color,
-                                                 image_path,
-                                                 label.id,
-                                                 self.main_window.get_transparency_value(),
-                                                 show_msg=True)
-
-                # Store the annotation and display the cropped image
-                self.annotation_window.annotations_dict[annotation.id] = annotation
-
-                # Connect update signals
-                annotation.selected.connect(self.annotation_window.select_annotation)
-                annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
-                annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-                # Add the prediction for the confidence window
-                predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
-                annotation.update_machine_confidence(predictions)
-
-                # Update label if confidence is below threshold
-                if conf < self.main_window.get_uncertainty_thresh():
-                    review_label = self.label_window.get_label_by_id('-1')
-                    annotation.update_label(review_label)
-
-                # Create the graphics and cropped image
-                if image_path == self.annotation_window.current_image_path:
-                    annotation.create_graphics_item(self.annotation_window.scene)
-                    annotation.create_cropped_image(self.annotation_window.rasterio_image)
-                    self.main_window.confidence_window.display_cropped_image(annotation)
-
-                # Update the image annotations
-                self.main_window.image_window.update_image_annotations(image_path)
-
-                # Update the progress bar
-                progress_bar.update_progress()
-
-            except Exception as e:
-                print(f"Warning: Failed to process detection result\n{e}")
-
-        progress_bar.stop_progress()
-        progress_bar.close()
 
     def deactivate_model(self):
         """
