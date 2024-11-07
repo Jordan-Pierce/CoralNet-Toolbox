@@ -87,7 +87,7 @@ class DeployModelDialog(QDialog):
 
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(1024, 4096)
+        self.imgsz_spinbox.setRange(1024, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
