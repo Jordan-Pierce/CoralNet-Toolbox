@@ -6,7 +6,7 @@ import re
 
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget)
+from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget, QCheckBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
                              QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, QPushButton)
 
@@ -17,7 +17,17 @@ from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSampling import PatchSamplingDialog
 
-from toolbox.QtIO import IODialog
+from toolbox.IO.QtImportImages import ImportImages
+from toolbox.IO.QtImportLabels import ImportLabels
+from toolbox.IO.QtImportAnnotations import ImportAnnotations
+from toolbox.IO.QtImportCoralNetAnnotations import ImportCoralNetAnnotations
+from toolbox.IO.QtImportViscoreAnnotations import ImportViscoreAnnotations
+from toolbox.IO.QtImportTagLabAnnotations import ImportTagLabAnnotations
+from toolbox.IO.QtExportLabels import ExportLabels
+from toolbox.IO.QtExportAnnotations import ExportAnnotations
+from toolbox.IO.QtExportCoralNetAnnotations import ExportCoralNetAnnotations
+from toolbox.IO.QtExportViscoreAnnotations import ExportViscoreAnnotations
+from toolbox.IO.QtExportTagLabAnnotations import ExportTagLabAnnotations
 
 from toolbox.MachineLearning.QtBatchInference import BatchInferenceDialog
 from toolbox.MachineLearning.QtImportDataset import ImportDatasetDialog
@@ -28,9 +38,10 @@ from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
 from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
 from toolbox.MachineLearning.QtTrainModel import TrainModelDialog
 
-from toolbox.QtSAM import SAMDeployModelDialog
+from toolbox.SAM.QtDeployModel import DeployModelDialog as SAMDeployModelDialog
 
-from toolbox.QtAutoDistill import AutoDistillDeployModelDialog
+from toolbox.AutoDistill.QtDeployModel import DeployModelDialog as AutoDistillDeployModelDialog
+from toolbox.AutoDistill.QtBatchInference import BatchInferenceDialog as AutoDistillBatchInferenceDialog
 
 from toolbox.utilities import get_available_device
 from toolbox.utilities import get_icon_path
@@ -67,7 +78,17 @@ class MainWindow(QMainWindow):
         self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
-        self.io_dialog = IODialog(self)
+        self.import_images = ImportImages(self)
+        self.import_labels = ImportLabels(self)
+        self.import_annotations = ImportAnnotations(self)
+        self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
+        self.import_viscore_annotations = ImportViscoreAnnotations(self)
+        self.import_taglab_annotations = ImportTagLabAnnotations(self)
+        self.export_labels = ExportLabels(self)
+        self.export_annotations = ExportAnnotations(self)
+        self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
+        self.export_viscore_annotations = ExportViscoreAnnotations(self)
+        self.export_taglab_annotations = ExportTagLabAnnotations(self)
 
         # Set the default uncertainty threshold for Deploy Model and Batch Inference
         self.iou_thresh = 0.70
@@ -84,6 +105,7 @@ class MainWindow(QMainWindow):
         self.batch_inference_dialog = BatchInferenceDialog(self)
         self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
+        self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -126,7 +148,7 @@ class MainWindow(QMainWindow):
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
 
         self.import_images_action = QAction("Images", self)
-        self.import_images_action.triggered.connect(self.io_dialog.import_images)
+        self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
 
         self.import_ortho_action = QAction("Orthomosaic", self)
@@ -143,26 +165,26 @@ class MainWindow(QMainWindow):
         self.import_labels_menu = self.import_menu.addMenu("Labels")
 
         self.import_labels_action = QAction("Labels (JSON)", self)
-        self.import_labels_action.triggered.connect(self.io_dialog.import_labels)
+        self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
 
         # Annotations submenu
         self.import_annotations_menu = self.import_menu.addMenu("Annotations")
 
         self.import_annotations_action = QAction("Annotations (JSON)", self)
-        self.import_annotations_action.triggered.connect(self.io_dialog.import_annotations)
+        self.import_annotations_action.triggered.connect(self.import_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_annotations_action)
 
         self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
-        self.import_coralnet_annotations_action.triggered.connect(self.io_dialog.import_coralnet_annotations)
+        self.import_coralnet_annotations_action.triggered.connect(self.import_coralnet_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
 
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.import_viscore_annotations_action.triggered.connect(self.io_dialog.import_viscore_annotations)
+        self.import_viscore_annotations_action.triggered.connect(self.import_viscore_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
 
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
-        self.import_taglab_annotations_action.triggered.connect(self.io_dialog.import_taglab_annotations)
+        self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
 
         # Dataset submenu
@@ -180,26 +202,26 @@ class MainWindow(QMainWindow):
         self.export_labels_menu = self.export_menu.addMenu("Labels")
 
         self.export_labels_action = QAction("Labels (JSON)", self)
-        self.export_labels_action.triggered.connect(self.io_dialog.export_labels)
+        self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
 
         # Annotations submenu
         self.export_annotations_menu = self.export_menu.addMenu("Annotations")
 
         self.export_annotations_action = QAction("Annotations (JSON)", self)
-        self.export_annotations_action.triggered.connect(self.io_dialog.export_annotations)
+        self.export_annotations_action.triggered.connect(self.export_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_annotations_action)
 
         self.export_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
-        self.export_coralnet_annotations_action.triggered.connect(self.io_dialog.export_coralnet_annotations)
+        self.export_coralnet_annotations_action.triggered.connect(self.export_coralnet_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
         self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.export_viscore_annotations_action.triggered.connect(self.io_dialog.export_viscore_annotations)
+        self.export_viscore_annotations_action.triggered.connect(self.export_viscore_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
 
         self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
-        self.export_taglab_annotations_action.triggered.connect(self.io_dialog.export_taglab_annotations)
+        self.export_taglab_annotations_action.triggered.connect(self.export_taglab_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
 
         # Dataset submenu
@@ -278,6 +300,10 @@ class MainWindow(QMainWindow):
         self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
         self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
+        
+        self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
+        self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
+        self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
 
         # Create and add the toolbar
         self.toolbar = QToolBar("Tools", self)
@@ -380,6 +406,10 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(64)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
+        # Add a checkbox labeled "All" next to the transparency slider
+        self.all_labels_checkbox = QCheckBox("All")
+        self.all_labels_checkbox.stateChanged.connect(self.update_all_labels_transparency)
+
         # Spin box for IoU threshold control
         self.iou_thresh_spinbox = QDoubleSpinBox()
         self.iou_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
@@ -397,7 +427,7 @@ class MainWindow(QMainWindow):
         # Spin box for annotation size control
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(1000)
+        self.annotation_size_spinbox.setMaximum(5000)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
@@ -409,6 +439,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("Transparency:"))
         self.status_bar_layout.addWidget(self.transparency_slider)
+        self.status_bar_layout.addWidget(self.all_labels_checkbox)
         self.status_bar_layout.addStretch()
         self.status_bar_layout.addWidget(QLabel("IoU Threshold:"))
         self.status_bar_layout.addWidget(self.iou_thresh_spinbox)
@@ -641,11 +672,21 @@ class MainWindow(QMainWindow):
         return self.transparency_slider.value()
 
     def update_label_transparency(self, value):
-        self.label_window.set_label_transparency(value)
-        self.update_transparency_slider(value)  # Update the slider value
+        if self.all_labels_checkbox.isChecked():
+            self.label_window.set_all_labels_transparency(value)
+        else:
+            self.label_window.set_label_transparency(value)
+        self.update_transparency_slider(value)
 
     def update_transparency_slider(self, transparency):
         self.transparency_slider.setValue(transparency)
+
+    def update_all_labels_transparency(self, state):
+        if state == Qt.Checked:
+            self.label_window.set_all_labels_transparency(self.transparency_slider.value())
+        else:
+            self.label_window.set_label_transparency(self.transparency_slider.value())
+
 
     def get_uncertainty_thresh(self):
         return self.uncertainty_thresh
@@ -664,10 +705,6 @@ class MainWindow(QMainWindow):
             self.iou_thresh = value
             self.iou_thresh_spinbox.setValue(value)
             self.iouChanged.emit(value)
-
-    def open_import_images_dialog(self):
-        self.untoggle_all_tools()
-        self.io_dialog.import_images()
 
     def open_patch_annotation_sampling_dialog(self):
 
@@ -799,6 +836,25 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.auto_distill_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_auto_distill_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "AutoDistill Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.auto_distill_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "AutoDistill Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.auto_distill_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

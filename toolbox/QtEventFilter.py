@@ -44,9 +44,13 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_3:
                     self.deploy_model_dialog.predict_segmentation()
                     return True
+                
+                # Handle hotkey for instance segmentation prediction
+                if event.key() == Qt.Key_4:
+                    pass
 
                 # Handle hotkey for auto distill prediction
-                if event.key() == Qt.Key_4:
+                if event.key() == Qt.Key_5:
                     self.auto_distill_deploy_model_dialog.predict()
                     return True
 

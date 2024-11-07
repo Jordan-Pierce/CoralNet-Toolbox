@@ -1,6 +1,7 @@
 *.hd
 *.hdf5
 *.pt
+*.pth
 *.torchscript
 *.bin
 *.engine

@@ -317,6 +317,15 @@ class LabelWindow(QWidget):
             self.annotation_window.scene.update()
             self.annotation_window.viewport().update()
 
+    def set_all_labels_transparency(self, transparency):
+        for label in self.labels:
+            label.update_transparency(transparency)
+        for annotation in self.annotation_window.annotations_dict.values():
+            annotation.update_transparency(transparency)
+
+        self.annotation_window.scene.update()
+        self.annotation_window.viewport().update()
+
     def deselect_active_label(self):
         if self.active_label:
             self.active_label.deselect()

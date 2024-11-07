@@ -1,12 +1,18 @@
 import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import os
+import requests
 import pkg_resources
 
 import torch
 import numpy as np
 
 from PyQt5.QtGui import QImage
+from PyQt5.QtWidgets import QMessageBox
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from toolbox.QtProgressBar import ProgressBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -27,7 +33,6 @@ def get_available_device():
     """
     Get available devices
 
-    :param self:
     :return:
     """
     devices = ['cpu',]
@@ -37,6 +42,50 @@ def get_available_device():
     if torch.backends.mps.is_available():
         devices.append('mps')
     return devices
+
+
+def attempt_download_asset(app, asset_name, asset_url):
+    """
+    Attempt to download an asset from the given URL.
+
+    :param app:
+    :param asset_name:
+    :param asset_url:
+    :return:
+    """
+    # Create a progress dialog
+    progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
+
+    try:
+        # Get the asset name
+        asset_name = os.path.basename(asset_name)
+        asset_path = os.path.join(os.getcwd(), asset_name)
+
+        if os.path.exists(asset_path):
+            return
+
+        # Download the asset
+        response = requests.get(asset_url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 1024  # 1 Kibibyte
+
+        # Initialize the progress bar
+        progress_dialog.start_progress(total_size // block_size)
+        progress_dialog.show()
+
+        with open(asset_path, 'wb') as f:
+            for data in response.iter_content(block_size):
+                if progress_dialog.wasCanceled():
+                    raise Exception("Download canceled by user")
+                f.write(data)
+                progress_dialog.update_progress()
+
+    except Exception as e:
+        QMessageBox.critical(app, "Error", f"Failed to download {asset_name}.\n{e}")
+
+    # Close the progress dialog
+    progress_dialog.set_value(progress_dialog.max_value)
+    progress_dialog.close()
 
 
 def preprocess_image(image):

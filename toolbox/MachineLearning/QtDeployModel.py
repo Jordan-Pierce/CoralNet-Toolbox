@@ -10,17 +10,15 @@ import random
 import numpy as np
 
 from PyQt5.QtGui import QColor, QShowEvent
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QVBoxLayout,
                              QLabel, QDialog, QTextEdit, QPushButton, QTabWidget, QCheckBox)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
 
-from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
-from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from toolbox.ResultsProcessor import ResultsProcessor
 
-from toolbox.QtProgressBar import ProgressBar
 from toolbox.utilities import pixmap_to_numpy
 
 
@@ -200,17 +198,26 @@ class DeployModelDialog(QDialog):
     def get_current_task(self):
         """
         Retrieves the current task based on the selected tab in the deployment dialog.
-        
+
         :return: Selected task identifier as a string
         """
         current_index = self.tab_widget.currentIndex()
         tasks = ["classify", "detect", "segment"]
         return tasks[current_index]
 
+    def get_confidence_threshold(self):
+        """
+        Get the confidence threshold for predictions.
+
+        :return: Confidence threshold as a float
+        """
+        threshold = self.main_window.get_uncertainty_thresh()
+        return threshold if threshold < 0.10 else 0.10
+
     def load_class_mapping(self, task, file_path):
         """
         Load the class mapping file for the given task.
-        
+
         :param task: Task identifier as a string
         :param file_path: Path to the class mapping file
         """
@@ -224,7 +231,7 @@ class DeployModelDialog(QDialog):
     def is_sam_model_deployed(self):
         """
         Check if the SAM model is deployed and update the checkbox state accordingly.
-        
+
         :return: Boolean indicating whether the SAM model is deployed
         """
         self.sam_dialog = self.main_window.sam_deploy_model_dialog
@@ -240,7 +247,7 @@ class DeployModelDialog(QDialog):
     def load_model(self, task):
         """
         Load the model for the given task.
-        
+
         :param task: Task identifier as a string
         """
         if not self.model_paths[task]:
@@ -267,7 +274,7 @@ class DeployModelDialog(QDialog):
     def handle_missing_class_mapping(self, task):
         """
         Handle the case when the class mapping file is missing.
-        
+
         :param task: Task identifier as a string
         """
         reply = QMessageBox.question(self,
@@ -283,7 +290,7 @@ class DeployModelDialog(QDialog):
     def add_labels_to_label_window(self, task):
         """
         Add labels to the label window based on the class mapping.
-        
+
         :param task: Task identifier as a string
         """
         if self.class_mappings[task]:
@@ -295,7 +302,7 @@ class DeployModelDialog(QDialog):
     def create_generic_labels(self, task):
         """
         Create generic labels for the given task.
-        
+
         :param task: Task identifier as a string
         """
         class_names = list(self.loaded_models[task].names.values())
@@ -320,7 +327,7 @@ class DeployModelDialog(QDialog):
     def check_and_display_class_names(self, task=None):
         """
         Check and display the class names for the given task.
-        
+
         :param task: Task identifier as a string (optional)
         """
         if task is None:
@@ -350,34 +357,11 @@ class DeployModelDialog(QDialog):
                                     f"The following short labels are missing for {task} and "
                                     f"cannot be predicted until added manually:"
                                     f"\n{missing_labels_str}")
-
-    def deactivate_model(self, task):
-        """
-        Deactivate the model for the given task.
         
-        :param task: Task identifier as a string
-        """
-        self.loaded_models[task] = None
-        self.model_paths[task] = None
-        self.class_mappings[task] = None
-        gc.collect()
-        empty_cache()
-        self.status_bars[task].setText(f"No {task} model loaded")
-        self.get_text_area(task).setText(f"No {task} model file selected")
-        
-    def get_confidence_threshold(self):
-        """
-        Get the confidence threshold for predictions.
-        
-        :return: Confidence threshold as a float
-        """
-        threshold = self.main_window.get_uncertainty_thresh()
-        return threshold if threshold < 0.10 else 0.10
-
     def predict_classification(self, annotations=None):
         """
         Predict the classification results for the given annotations.
-        
+
         :param annotations: List of annotations (optional)
         """
         if self.loaded_models['classify'] is None:
@@ -393,325 +377,116 @@ class DeployModelDialog(QDialog):
             # If no annotations are selected, predict all annotations in the image
             annotations = self.annotation_window.get_image_review_annotations()
 
-        # Preprocess the annotations
-        self.preprocess_classification_annotations(annotations)
-        # Unselect all annotations
-        self.annotation_window.unselect_annotations()
+        images_np = []
+        for annotation in annotations:
+            images_np.append(pixmap_to_numpy(annotation.cropped_image))
+
+        # Predict the classification results
+        results = self.loaded_models['classify'](images_np,
+                                                 device=self.main_window.device,
+                                                 stream=True)
+        # Create a result processor
+        results_processor = ResultsProcessor(self.main_window,
+                                             self.class_mappings['classify'])
+
+        # Process the classification results
+        results_processor.process_classification_results(results, annotations)
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
-    def preprocess_classification_annotations(self, annotations):
-        """
-        Preprocess the given annotations for classification.
-        
-        :param annotations: List of annotations
-        """
-        if not annotations:
-            return
-
-        images_np = []
-        for annotation in annotations:
-            images_np.append(pixmap_to_numpy(annotation.cropped_image))
-
-        progress_bar = ProgressBar(self, title="Making Classification Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(annotations))
-
-        # Predict the classification results
-        results = self.loaded_models['classify'](images_np, stream=True, device=self.main_window.device)
-
-        # Process the classification results
-        for annotation, result in zip(annotations, results):
-            self.process_classification_result(annotation, result)
-            progress_bar.update_progress()
-
-        # Update the image window and confidence window
-        self.main_window.confidence_window.display_cropped_image(annotation)
-
-        # Update the annotations for each image in the image window
-        image_paths = list(set([annotation.image_path for annotation in annotations]))
-        for image_path in image_paths:
-            self.main_window.image_window.update_image_annotations(image_path)
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-    def process_classification_result(self, annotation, results):
-        """
-        Process the classification result for a single annotation.
-        
-        :param annotation: Annotation object
-        :param results: Classification results
-        """
-        predictions = {}
-
-        try:
-            class_names = results.names
-            top5 = results.probs.top5
-            top5conf = results.probs.top5conf
-            top1conf = top5conf[0].item()
-        except Exception as e:
-            print(f"Warning: Failed to process classification result\n{e}")
-            return predictions
-
-        for idx, conf in zip(top5, top5conf):
-            class_name = class_names[idx]
-            label = self.label_window.get_label_by_short_code(class_name)
-            if label:
-                predictions[label] = float(conf)
-
-        if predictions:
-            annotation.update_machine_confidence(predictions)
-            if top1conf < self.main_window.get_uncertainty_thresh():
-                label = self.label_window.get_label_by_id('-1')
-                annotation.update_label(label)
-
     def predict_detection(self, image_paths=None):
         """
         Predict the detection results for the given image paths.
-        
+
         :param image_paths: List of image paths (optional)
         """
         if self.loaded_models['detect'] is None:
             return
 
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         if not image_paths:
+            # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
 
-        conf = self.get_confidence_threshold()
-
+        # Predict the detection results
         results = self.loaded_models['detect'](image_paths,
                                                agnostic_nms=True,
-                                               conf=conf,
+                                               conf=self.get_confidence_threshold(),
                                                iou=self.main_window.get_iou_thresh(),
                                                device=self.main_window.device,
                                                stream=True)
 
-        if self.use_sam['detect'].isChecked() and self.sam_dialog.loaded_model:
-            results = self.sam_dialog.boxes_to_masks(results)
-            self.process_segmentation_results(results)
+        # Create a result processor
+        results_processor = ResultsProcessor(self.main_window,
+                                             self.class_mappings['detect'])
+        # Check if SAM model is deployed
+        if self.use_sam['detect'].isChecked():
+            # Apply SAM to the detection results
+            results = self.sam_dialog.predict_from_results(results, self.class_mappings['detect'])
+            # Process the segmentation results
+            results_processor.process_segmentation_results(results)
         else:
-            self.process_detection_results(results)
+            # Process the detection results
+            results_processor.process_detection_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
-
-    def process_detection_results(self, results_generator):
-        """
-        Process the detection results from the results generator.
-        
-        :param results_generator: Generator yielding detection results
-        """
-        class_mapping = self.class_mappings['detect']
-        progress_bar = ProgressBar(self, title="Making Detection Predictions")
-        progress_bar.show()
-
-        for results in results_generator:
-            progress_bar.start_progress(len(results))
-            for result in results:
-                self.process_single_detection_result(result, class_mapping)
-                progress_bar.update_progress()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-    def process_single_detection_result(self, result, class_mapping):
-        """
-        Process a single detection result.
-        
-        :param result: Detection result
-        :param class_mapping: Class mapping dictionary
-        """
-        try:
-            image_path = result.path.replace("\\", "/")
-            cls, cls_name, conf, x_min, y_min, x_max, y_max = self.extract_detection_result(result)
-            short_label = self.get_short_label_for_detection(cls_name, conf, class_mapping)
-            label = self.label_window.get_label_by_short_code(short_label)
-            annotation = self.create_rectangle_annotation(x_min, y_min, x_max, y_max, label, image_path)
-            self.store_and_display_annotation(annotation, image_path, cls_name, conf)
-        except Exception as e:
-            print(f"Warning: Failed to process detection result\n{e}")
-
-    def extract_detection_result(self, result):
-        """
-        Extract relevant information from a detection result.
-        
-        :param result: Detection result
-        :return: Tuple containing class, class name, confidence, and bounding box coordinates
-        """
-        cls = int(result.boxes.cls.cpu().numpy()[0])
-        cls_name = result.names[cls]
-        conf = float(result.boxes.conf.cpu().numpy()[0])
-        x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
-        return cls, cls_name, conf, x_min, y_min, x_max, y_max
-
-    def get_short_label_for_detection(self, cls_name, conf, class_mapping):
-        """
-        Get the short label for a detection result based on confidence and class mapping.
-        
-        :param cls_name: Class name
-        :param conf: Confidence score
-        :param class_mapping: Class mapping dictionary
-        :return: Short label as a string
-        """
-        if conf <= self.main_window.get_uncertainty_thresh():
-            return 'Review'
-        return class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
-
-    def create_rectangle_annotation(self, x_min, y_min, x_max, y_max, label, image_path):
-        """
-        Create a rectangle annotation for the given bounding box coordinates and label.
-        
-        :param x_min: Minimum x-coordinate
-        :param y_min: Minimum y-coordinate
-        :param x_max: Maximum x-coordinate
-        :param y_max: Maximum y-coordinate
-        :param label: Label object
-        :param image_path: Path to the image
-        :return: RectangleAnnotation object
-        """
-        top_left = QPointF(x_min, y_min)
-        bottom_right = QPointF(x_max, y_max)
-        return RectangleAnnotation(top_left, 
-                                   bottom_right, 
-                                   label.short_label_code, 
-                                   label.long_label_code, 
-                                   label.color, 
-                                   image_path, 
-                                   label.id, 
-                                   self.main_window.get_transparency_value(), 
-                                   show_msg=True)
-
-    def store_and_display_annotation(self, annotation, image_path, cls_name, conf):
-        """
-        Store and display the annotation in the annotation window and image window.
-        
-        :param annotation: Annotation object
-        :param image_path: Path to the image
-        :param cls_name: Class name
-        :param conf: Confidence score
-        """
-        self.annotation_window.annotations_dict[annotation.id] = annotation
-        annotation.selected.connect(self.annotation_window.select_annotation)
-        annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-        predictions = {self.label_window.get_label_by_short_code(cls_name): conf}
-        annotation.update_machine_confidence(predictions)
-        if conf < self.main_window.get_uncertainty_thresh():
-            review_label = self.label_window.get_label_by_id('-1')
-            annotation.update_label(review_label)
-        if image_path == self.annotation_window.current_image_path:
-            annotation.create_graphics_item(self.annotation_window.scene)
-            annotation.create_cropped_image(self.annotation_window.rasterio_image)
-            self.main_window.confidence_window.display_cropped_image(annotation)
-        self.main_window.image_window.update_image_annotations(image_path)
-
     def predict_segmentation(self, image_paths=None):
         """
         Predict the segmentation results for the given image paths.
-        
+
         :param image_paths: List of image paths (optional)
         """
         if self.loaded_models['segment'] is None:
             return
 
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         if not image_paths:
+            # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
 
-        conf = self.get_confidence_threshold()
-
+        # Predict the segmentation results
         results = self.loaded_models['segment'](image_paths,
                                                 agnostic_nms=True,
-                                                conf=conf,
+                                                conf=self.get_confidence_threshold(),
                                                 iou=self.main_window.get_iou_thresh(),
                                                 device=self.main_window.device,
                                                 stream=True)
 
-        if self.use_sam['segment'].isChecked() and self.sam_dialog.loaded_model:
-            results = self.sam_dialog.boxes_to_masks(results)
+        # Create a result processor
+        results_processor = ResultsProcessor(self.main_window,
+                                             self.class_mappings['segment'])
+        # Check if SAM model is deployed
+        if self.use_sam['segment'].isChecked():
+            # Apply SAM to the segmentation results
+            results = self.sam_dialog.predict_from_results(results, self.class_mappings['segment'])
 
-        self.process_segmentation_results(results)
+        # Process the segmentation results
+        results_processor.process_segmentation_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
 
-    def process_segmentation_results(self, results_generator):
+    def deactivate_model(self, task):
         """
-        Process the segmentation results from the results generator.
-        
-        :param results_generator: Generator yielding segmentation results
-        """
-        class_mapping = self.class_mappings['segment']
-        if not class_mapping:
-            class_mapping = self.class_mappings['detect']
+        Deactivate the model for the given task.
 
-        progress_bar = ProgressBar(self, title=f"Making Segmentation Predictions")
-        progress_bar.show()
-
-        for results in results_generator:
-            progress_bar.start_progress(len(results))
-            for result in results:
-                self.process_single_segmentation_result(result, class_mapping)
-                progress_bar.update_progress()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-    def process_single_segmentation_result(self, result, class_mapping):
+        :param task: Task identifier as a string
         """
-        Process a single segmentation result.
-        
-        :param result: Segmentation result
-        :param class_mapping: Class mapping dictionary
-        """
-        try:
-            image_path = result.path.replace("\\", "/")
-            cls, cls_name, conf, points = self.extract_segmentation_result(result)
-            short_label = self.get_short_label_for_detection(cls_name, conf, class_mapping)
-            label = self.label_window.get_label_by_short_code(short_label)
-            annotation = self.create_polygon_annotation(points, label, image_path)
-            self.store_and_display_annotation(annotation, image_path, cls_name, conf)
-        except Exception as e:
-            print(f"Warning: Failed to process segmentation result\n{e}")
-
-    def extract_segmentation_result(self, result):
-        """
-        Extract relevant information from a segmentation result.
-        
-        :param result: Segmentation result
-        :return: Tuple containing class, class name, confidence, and polygon points
-        """
-        cls = int(result.boxes.cls.cpu().numpy()[0])
-        cls_name = result.names[cls]
-        conf = float(result.boxes.conf.cpu().numpy()[0])
-        points = result.masks.cpu().xy[0].astype(float)
-        return cls, cls_name, conf, points
-
-    def create_polygon_annotation(self, points, label, image_path):
-        """
-        Create a polygon annotation for the given points and label.
-        
-        :param points: List of polygon points
-        :param label: Label object
-        :param image_path: Path to the image
-        :return: PolygonAnnotation object
-        """
-        points = [QPointF(x, y) for x, y in points]
-        return PolygonAnnotation(points, 
-                                 label.short_label_code, 
-                                 label.long_label_code, 
-                                 label.color, 
-                                 image_path, 
-                                 label.id, 
-                                 self.main_window.get_transparency_value(), 
-                                 show_msg=True)
+        self.loaded_models[task] = None
+        self.model_paths[task] = None
+        self.class_mappings[task] = None
+        gc.collect()
+        empty_cache()
+        self.status_bars[task].setText(f"No {task} model loaded")
+        self.get_text_area(task).setText(f"No {task} model file selected")

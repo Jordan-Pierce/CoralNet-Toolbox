@@ -61,7 +61,7 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferences.
 
 - **SAM**:
-  - **Deploy Model**: Deploy MobileSAM, SAM, or SAM2 model to use interactively (points, box)
+  - **Deploy Model**: Deploy EdgeSAM, MobileSAM, or SAM to use interactively (points, box)
 
 ## Tool Bar
 - **Select Tool**: Select multiple annotations; move and change the size of annotations.
@@ -112,7 +112,8 @@ The main window consists of several components:
   - **Ctrl + 1**: Make prediction on selected Patch annotation, else all in the image with Review label.
   - **Ctrl + 2**: Make predictions using Object Detection model.
   - **Ctrl + 3**: Make predictions using Instance Segmentation model.
-  - **Ctrl + 4**: Make predictions using AutoDistill model.
+  - **Ctrl + 4**: Converted selected annotations to polygons using SAM **in progress**.
+  - **Ctrl + 5**: Make predictions using AutoDistill model.
 
 - **SAM**: After a model is loaded
   - **Space Bar**: Set working area; finalize prediction.
