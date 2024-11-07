@@ -6,18 +6,19 @@ import gc
 import os
 
 import numpy as np
-import sam2
 import torch
-from mobile_sam import SamPredictor as MobileSamPredictor
-from mobile_sam import sam_model_registry as mobile_sam_model_registry
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSlider, QSpinBox, QTabWidget, QVBoxLayout,
                              QWidget)
-from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor as Sam2Predictor
-from segment_anything import SamPredictor, sam_model_registry
+
+from mobile_sam import SamPredictor as MobileSamPredictor
+from mobile_sam import sam_model_registry as mobile_sam_model_registry
+from segment_anything import SamPredictor
+from segment_anything import sam_model_registry
+
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
 from ultralytics.utils.downloads import attempt_download_asset
@@ -25,6 +26,7 @@ from ultralytics.utils.downloads import attempt_download_asset
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.ResultsProcessor import ResultsProcessor
 from toolbox.utilities import preprocess_image, rasterio_to_numpy
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -132,14 +134,14 @@ class DeployModelDialog(QDialog):
         self.tabs = QTabWidget()
 
         # Create tabs
+        self.edge_sam_tab = self.create_model_tab("EdgeSAM")
         self.mobile_sam_tab = self.create_model_tab("MobileSAM")
         self.sam_tab = self.create_model_tab("SAM")
-        self.sam2_tab = self.create_model_tab("SAM2")
 
         # Add tabs to the tab widget
+        self.tabs.addTab(self.edge_sam_tab, "EdgeSAM")
         self.tabs.addTab(self.mobile_sam_tab, "MobileSAM")
         self.tabs.addTab(self.sam_tab, "SAM")
-        self.tabs.addTab(self.sam2_tab, "SAM2")
 
         self.main_layout.addWidget(self.tabs)
 
@@ -157,9 +159,9 @@ class DeployModelDialog(QDialog):
 
         # Define items for each model
         model_items = {
+            "EdgeSAM": ["edge_sam.pth", "edge_sam_3x.pth"],
             "MobileSAM": ["mobile_sam.pt"],
             "SAM": ["sam_b.pt", "sam_l.pt"],
-            "SAM2": ["sam2_t.pt", "sam2_s.pt", "sam2_b.pt", "sam2_l.pt"],
         }
 
         # Add items to the combo box based on the model name
@@ -178,6 +180,14 @@ class DeployModelDialog(QDialog):
 
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not downloaded: {model_path}")
+
+    def load_edge_model(self, model_path):
+        """
+        Load an Edge SAM model.
+        """
+        model = "edge_sam"
+        loaded_model = sam_model_registry[model](checkpoint=model_path)
+        return SamPredictor(loaded_model)
 
     def load_mobile_model(self, model_path):
         """
@@ -201,32 +211,6 @@ class DeployModelDialog(QDialog):
         loaded_model = sam_model_registry[model](checkpoint=model_path)
         return SamPredictor(loaded_model)
 
-    def load_sam2_model(self, model_path):
-        """
-        Load a SAM2 model.
-        """
-        model_ver = model_path.split("_")[0]
-        config_dir = os.path.join(os.path.dirname(sam2.__file__), "configs")
-        config = f"{config_dir}\\{model_ver}\\"
-
-        if "_t" in model_path.lower():
-            config += f"{model_ver}_hiera_t.yaml"
-        elif "_s" in model_path.lower():
-            config += f"{model_ver}_hiera_s.yaml"
-        elif "_b" in model_path.lower():
-            config += f"{model_ver}_hiera_b+.yaml"
-        elif "_l" in model_path.lower():
-            config += f"{model_ver}_hiera_l.yaml"
-        else:
-            raise ValueError(f"Model not recognized: {model_path}")
-
-        loaded_model = build_sam2(config_file=config,
-                                  ckpt_path=model_path,
-                                  device=self.main_window.device,
-                                  apply_postprocess=False)
-
-        return Sam2Predictor(loaded_model)
-
     def load_model(self):
         """
         Load the model selected in the combo box.
@@ -242,12 +226,12 @@ class DeployModelDialog(QDialog):
             self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
             self.download_model_weights(self.model_path)
 
-            if "mobile_" in self.model_path.lower():
+            if "edge_" in self.model_path.lower():
+                self.loaded_model = self.load_edge_model(self.model_path)
+            elif "mobile_" in self.model_path.lower():
                 self.loaded_model = self.load_mobile_model(self.model_path)
             elif "sam_" in self.model_path.lower():
                 self.loaded_model = self.load_sam_model(self.model_path)
-            elif "sam2" in self.model_path.lower():
-                self.loaded_model = self.load_sam2_model(self.model_path)
             else:
                 raise ValueError(f"Model not recognized: {self.model_path}")
 
@@ -400,9 +384,8 @@ class DeployModelDialog(QDialog):
         # Scale the points
         point_coords = self.scale_points(input_points)
 
-        if not self.model_path.startswith("sam2"):
-            point_coords = self.loaded_model.transform.apply_coords_torch(point_coords,
-                                                                          self.resized_image.shape[:2])
+        point_coords = self.loaded_model.transform.apply_coords_torch(point_coords,
+                                                                      self.resized_image.shape[:2])
 
         return point_coords, point_labels
 
@@ -419,9 +402,8 @@ class DeployModelDialog(QDialog):
         # Scale the bounding boxes
         bbox_coords = self.scale_boxes(input_bbox)
 
-        if not self.model_path.startswith("sam2"):
-            bbox_coords = self.loaded_model.transform.apply_boxes_torch(bbox_coords,
-                                                                        self.resized_image.shape[:2])
+        bbox_coords = self.loaded_model.transform.apply_boxes_torch(bbox_coords,
+                                                                    self.resized_image.shape[:2])
 
         return bbox_coords
 
@@ -452,18 +434,10 @@ class DeployModelDialog(QDialog):
             if len(bbox) != 0:
                 bbox_coords = self.transform_bboxes(bbox)
 
-            if not self.model_path.startswith("sam2"):
-                masks, scores, _ = self.loaded_model.predict_torch(boxes=bbox_coords,
-                                                                   point_coords=point_coords,
-                                                                   point_labels=point_labels,
-                                                                   multimask_output=False)
-            else:
-                masks, scores, _ = self.loaded_model.predict(box=bbox_coords,
-                                                             point_coords=point_coords,
-                                                             point_labels=point_labels,
-                                                             multimask_output=False)
-                masks = torch.tensor(masks).unsqueeze(0)
-                scores = torch.tensor(scores).unsqueeze(0)
+            masks, scores, _ = self.loaded_model.predict_torch(boxes=bbox_coords,
+                                                               point_coords=point_coords,
+                                                               point_labels=point_labels,
+                                                               num_multimask_outputs=1)
             
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, class_mapping=None)

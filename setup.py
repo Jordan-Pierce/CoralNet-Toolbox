@@ -22,9 +22,8 @@ setup(
     author_email='jordan.pierce@noaa.gov',
     packages=find_packages(include=['toolbox', 'toolbox.*']),
     install_requires=required_packages + [
+        "segment-anything @ git+https://github.com/autodistill/EdgeSAM.git",
         "mobile-sam @ git+https://git@github.com/ChaoningZhang/MobileSAM.git",
-        "segment-anything @ git+https://git@github.com/facebookresearch/segment-anything.git",
-        "sam-2 @ git+https://git@github.com/facebookresearch/sam2.git"
     ],
     python_requires='>=3.10, <3.11',
     entry_points={

@@ -1,12 +1,16 @@
 import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+import os
+import requests
+from tqdm import tqdm
 import pkg_resources
 
 import torch
 import numpy as np
 
 from PyQt5.QtGui import QImage
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -27,7 +31,6 @@ def get_available_device():
     """
     Get available devices
 
-    :param self:
     :return:
     """
     devices = ['cpu',]
@@ -37,6 +40,39 @@ def get_available_device():
     if torch.backends.mps.is_available():
         devices.append('mps')
     return devices
+
+
+def attempt_download_asset(asset_name, asset_url):
+    """
+    Attempt to download an asset from the given URL.
+
+    :param asset_name:
+    :param asset_url:
+    :return:
+    """
+    try:
+        # Get the asset name
+        asset_name = os.path.basename(asset_url)
+        asset_path = os.path.join(os.getcwd(), asset_name)
+
+        # Download the asset
+        print(f"Downloading {asset_name}...")
+        response = requests.get(asset_url, stream=True)
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 1024  # 1 Kibibyte
+
+        with open(asset_path, 'wb') as f, tqdm(
+            total=total_size, unit='iB', unit_scale=True
+        ) as bar:
+            for data in response.iter_content(block_size):
+                bar.update(len(data))
+                f.write(data)
+
+        return asset_path
+
+    except Exception as e:
+        print(f"Failed to download asset {asset_name} from {asset_url}: {e}")
+        return None
 
 
 def preprocess_image(image):
