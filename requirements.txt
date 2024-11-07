@@ -2,11 +2,11 @@ PyQt5>=5.15.11
 ultralytics==8.3.0
 supervision==0.24.0
 pycocotools>=2.0.6
-timm==0.9.2
+timm>=0.9.2
 autodistill==0.1.28
 autodistill-grounding-dino==0.1.4
 roboflow==1.1.48
-x-segment-anything==0.0.3
+x-segment-anything
 rasterio>=1.4.1
 requests
 dill

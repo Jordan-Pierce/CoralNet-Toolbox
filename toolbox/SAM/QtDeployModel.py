@@ -62,16 +62,17 @@ class DeployModelDialog(QDialog):
         
         # Define available models
         self.models = {
-            "EdgeSAM": ["edge_sam.pt", "edge_sam_3x.pt"],
-            "MobileSAM": ["vit_t.pt"],
-            "SAM": ["vit_b.pt", "vit_l.pt", "vit_h.pt"]
+            "EdgeSAM": "edge_sam_3x.pt",
+            "MobileSAM": "vit_t.pt",
+            "SAM-Base": "vit_b.pt",
+            "SAM-Large": "vit_l.pt",
+            "SAM-Huge": "vit_h.pt"
         }
-        
+
         # Add all models to combo box
-        for model_type, model_variants in self.models.items():
-            for variant in model_variants:
-                self.model_combo.addItem(variant)
-                
+        for model_name in self.models.keys():
+            self.model_combo.addItem(model_name)
+
         model_layout.addWidget(self.model_combo)
         self.main_layout.addLayout(model_layout)
 
@@ -86,7 +87,7 @@ class DeployModelDialog(QDialog):
 
         # Add imgsz parameter
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 4096)
+        self.imgsz_spinbox.setRange(1024, 4096)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
@@ -166,14 +167,13 @@ class DeployModelDialog(QDialog):
 
         try:
             # Get selected model path and download weights if needed
-            self.model_path = self.model_combo.currentText()
+            self.model_path = self.models[self.model_combo.currentText()]
             self.download_model_weights(self.model_path)
 
             # Determine model type from filename
-            model_type = None
             if "edge_" in self.model_path.lower():
                 model_type = "edge_sam"
-            elif "vit_t" in self.model_path.lower():
+            elif "_t" in self.model_path.lower():
                 model_type = "vit_t"
             elif "_b" in self.model_path.lower():
                 model_type = "vit_b"
@@ -198,11 +198,10 @@ class DeployModelDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
 
-        finally:
-            progress_bar.stop_progress()
-            progress_bar.close()
-            QApplication.restoreOverrideCursor()
-            self.accept()
+        progress_bar.stop_progress()
+        progress_bar.close()
+        QApplication.restoreOverrideCursor()
+        self.accept()
 
     def resize_image(self, image):
         """

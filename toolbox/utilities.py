@@ -53,6 +53,9 @@ def attempt_download_asset(app, asset_name, asset_url):
     :param asset_url:
     :return:
     """
+    # Create a progress dialog
+    progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
+
     try:
         # Get the asset name
         asset_name = os.path.basename(asset_name)
@@ -67,7 +70,6 @@ def attempt_download_asset(app, asset_name, asset_url):
         block_size = 1024  # 1 Kibibyte
 
         # Initialize the progress bar
-        progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
         progress_dialog.start_progress(total_size // block_size)
         progress_dialog.show()
 
@@ -80,9 +82,10 @@ def attempt_download_asset(app, asset_name, asset_url):
 
     except Exception as e:
         QMessageBox.critical(app, "Error", f"Failed to download {asset_name}.\n{e}")
-    finally:
-        progress_dialog.set_value(progress_dialog.max_value)
-        progress_dialog.close()
+
+    # Close the progress dialog
+    progress_dialog.set_value(progress_dialog.max_value)
+    progress_dialog.close()
 
 
 def preprocess_image(image):
