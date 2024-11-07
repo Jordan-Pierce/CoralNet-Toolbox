@@ -157,7 +157,7 @@ class DeployModelDialog(QDialog):
 
         # Define items for each model
         model_items = {
-            "EdgeSAM": ["edge_sam.pth", "edge_sam_3x.pth"],
+            "EdgeSAM": ["edge_sam.pt", "edge_sam_3x.pt"],
             "MobileSAM": ["mobile_sam.pt"],
             "SAM": ["sam_b.pt", "sam_l.pt"],
         }
