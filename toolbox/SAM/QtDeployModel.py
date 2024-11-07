@@ -16,14 +16,16 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
 
 from x_segment_anything import SamPredictor
 from x_segment_anything import sam_model_registry
+from x_segment_anything import sam_model_urls
 
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
-from ultralytics.utils.downloads import attempt_download_asset
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.ResultsProcessor import ResultsProcessor
-from toolbox.utilities import preprocess_image, rasterio_to_numpy
+from toolbox.utilities import preprocess_image
+from toolbox.utilities import rasterio_to_numpy
+from toolbox.utilities import attempt_download_asset
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,21 +35,18 @@ from toolbox.utilities import preprocess_image, rasterio_to_numpy
 
 class DeployModelDialog(QDialog):
     def __init__(self, main_window, parent=None):
-        """
-        Initialize the SAM Deploy Model dialog.
-        """
+        """Initialize the SAM Deploy Model dialog."""
         super().__init__(parent)
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
-        self.setWindowTitle("SAM Deploy Model")
+        self.setWindowTitle("SAM Deploy Model") 
         self.resize(300, 200)
 
         self.imgsz = 1024
         self.conf = 0.25
         self.model_path = None
         self.loaded_model = None
-
         self.image_path = None
         self.original_image = None
         self.resized_image = None
@@ -55,13 +54,31 @@ class DeployModelDialog(QDialog):
         # Main layout
         self.main_layout = QVBoxLayout(self)
 
-        # Create and set up the tabs
-        self.setup_tabs()
+        # Model selection
+        model_layout = QVBoxLayout()
+        model_layout.addWidget(QLabel("Select Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        
+        # Define available models
+        self.models = {
+            "EdgeSAM": ["edge_sam.pt", "edge_sam_3x.pt"],
+            "MobileSAM": ["vit_t.pt"],
+            "SAM": ["vit_b.pt", "vit_l.pt", "vit_h.pt"]
+        }
+        
+        # Add all models to combo box
+        for model_type, model_variants in self.models.items():
+            for variant in model_variants:
+                self.model_combo.addItem(variant)
+                
+        model_layout.addWidget(self.model_combo)
+        self.main_layout.addLayout(model_layout)
 
         # Custom parameters section
         self.form_layout = QFormLayout()
 
-        # Add resize image dropdown (True / False)
+        # Add resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
@@ -74,7 +91,7 @@ class DeployModelDialog(QDialog):
         self.imgsz_spinbox.setValue(self.imgsz)
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
-        # Set the threshold slider for uncertainty
+        # Uncertainty threshold slider
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
         self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
@@ -86,7 +103,9 @@ class DeployModelDialog(QDialog):
         self.form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
         self.form_layout.addRow("", self.uncertainty_threshold_label)
 
-        # Load and Deactivate buttons
+        self.main_layout.addLayout(self.form_layout)
+
+        # Buttons
         button_layout = QHBoxLayout()
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
@@ -95,11 +114,10 @@ class DeployModelDialog(QDialog):
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
         button_layout.addWidget(deactivate_button)
-
-        self.main_layout.addLayout(self.form_layout)
+        
         self.main_layout.addLayout(button_layout)
 
-        # Status bar label
+        # Status bar
         self.status_bar = QLabel("No model loaded")
         self.main_layout.addWidget(self.status_bar)
 
@@ -125,129 +143,66 @@ class DeployModelDialog(QDialog):
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
         self.conf = self.uncertainty_threshold_slider.value() / 100.0
 
-    def setup_tabs(self):
-        """
-        Set up the tabs for the different models.
-        """
-        self.tabs = QTabWidget()
-
-        # Create tabs
-        self.edge_sam_tab = self.create_model_tab("EdgeSAM")
-        self.mobile_sam_tab = self.create_model_tab("MobileSAM")
-        self.sam_tab = self.create_model_tab("SAM")
-
-        # Add tabs to the tab widget
-        self.tabs.addTab(self.edge_sam_tab, "EdgeSAM")
-        self.tabs.addTab(self.mobile_sam_tab, "MobileSAM")
-        self.tabs.addTab(self.sam_tab, "SAM")
-
-        self.main_layout.addWidget(self.tabs)
-
-    def create_model_tab(self, model_name):
-        """
-        Create a tab for the specified model.
-        
-        Args:
-            model_name (str): The name of the model to create a tab for.
-        """
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        combo_box = QComboBox()
-        combo_box.setEditable(True)
-
-        # Define items for each model
-        model_items = {
-            "EdgeSAM": ["edge_sam.pt", "edge_sam_3x.pt"],
-            "MobileSAM": ["mobile_sam.pt"],
-            "SAM": ["sam_b.pt", "sam_l.pt"],
-        }
-
-        # Add items to the combo box based on the model name
-        if model_name in model_items:
-            combo_box.addItems(model_items[model_name])
-
-        layout.addWidget(QLabel(f"Select or Enter {model_name} Model:"))
-        layout.addWidget(combo_box)
-        return tab
-
     def download_model_weights(self, model_path):
         """
         Download the model weights if they are not present.
         """
-        attempt_download_asset(model_path)
+        model = os.path.basename(model_path).split(".")[0]
+        model_url = sam_model_urls[model]
+
+        # Download the model weights if they are not present
+        attempt_download_asset(self, model_path, model_url)
 
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model file not downloaded: {model_path}")
 
-    def load_edge_model(self, model_path):
-        """
-        Load an Edge SAM model.
-        """
-        model = "edge_sam"
-        loaded_model = sam_model_registry[model](checkpoint=model_path)
-        return SamPredictor(loaded_model)
-
-    def load_mobile_model(self, model_path):
-        """
-        Load a mobile SAM model.
-        """
-        model = "vit_t"
-        loaded_model = sam_model_registry[model](checkpoint=model_path)
-        return SamPredictor(loaded_model)
-
-    def load_sam_model(self, model_path):
-        """
-        Load a SAM model.
-        """
-        if "_b" in model_path.lower():
-            model = "vit_b"
-        elif "_l" in model_path.lower():
-            model = "vit_l"
-        else:
-            raise ValueError(f"Model not recognized: {model_path}")
-
-        loaded_model = sam_model_registry[model](checkpoint=model_path)
-        return SamPredictor(loaded_model)
-
     def load_model(self):
         """
-        Load the model selected in the combo box.
+        Load the selected model.
         """
-        # Make the cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Show a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
 
         try:
-            # Get the model path from the current tab
-            self.model_path = self.tabs.currentWidget().layout().itemAt(1).widget().currentText()
+            # Get selected model path and download weights if needed
+            self.model_path = self.model_combo.currentText()
             self.download_model_weights(self.model_path)
 
+            # Determine model type from filename
+            model_type = None
             if "edge_" in self.model_path.lower():
-                self.loaded_model = self.load_edge_model(self.model_path)
-            elif "mobile_" in self.model_path.lower():
-                self.loaded_model = self.load_mobile_model(self.model_path)
-            elif "sam_" in self.model_path.lower():
-                self.loaded_model = self.load_sam_model(self.model_path)
+                model_type = "edge_sam"
+            elif "vit_t" in self.model_path.lower():
+                model_type = "vit_t"
+            elif "_b" in self.model_path.lower():
+                model_type = "vit_b"
+            elif "_l" in self.model_path.lower():
+                model_type = "vit_l"
+            elif "_h" in self.model_path.lower():
+                model_type = "vit_h"
             else:
-                raise ValueError(f"Model not recognized: {self.model_path}")
+                raise ValueError(f"Model type not recognized from filename: {self.model_path}")
 
+            # Load model using registry
+            model = sam_model_registry[model_type](checkpoint=self.model_path)
+            self.loaded_model = SamPredictor(model)
+
+            # Move to device and set eval mode
             self.loaded_model.model.to(device=self.main_window.device)
             self.loaded_model.model.eval()
+            
             self.status_bar.setText("Model loaded")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
 
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-        # Reset the cursor
-        QApplication.restoreOverrideCursor()
-        # Exit the dialog box
-        self.accept()
+        finally:
+            progress_bar.stop_progress()
+            progress_bar.close()
+            QApplication.restoreOverrideCursor()
+            self.accept()
 
     def resize_image(self, image):
         """

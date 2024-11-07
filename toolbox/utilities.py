@@ -4,13 +4,15 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
 import requests
-from tqdm import tqdm
 import pkg_resources
 
 import torch
 import numpy as np
 
 from PyQt5.QtGui import QImage
+from PyQt5.QtWidgets import QMessageBox
+
+from toolbox.QtProgressBar import ProgressBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -42,37 +44,45 @@ def get_available_device():
     return devices
 
 
-def attempt_download_asset(asset_name, asset_url):
+def attempt_download_asset(app, asset_name, asset_url):
     """
     Attempt to download an asset from the given URL.
 
+    :param app:
     :param asset_name:
     :param asset_url:
     :return:
     """
     try:
         # Get the asset name
-        asset_name = os.path.basename(asset_url)
+        asset_name = os.path.basename(asset_name)
         asset_path = os.path.join(os.getcwd(), asset_name)
 
+        if os.path.exists(asset_path):
+            return
+
         # Download the asset
-        print(f"Downloading {asset_name}...")
         response = requests.get(asset_url, stream=True)
         total_size = int(response.headers.get('content-length', 0))
         block_size = 1024  # 1 Kibibyte
 
-        with open(asset_path, 'wb') as f, tqdm(
-            total=total_size, unit='iB', unit_scale=True
-        ) as bar:
-            for data in response.iter_content(block_size):
-                bar.update(len(data))
-                f.write(data)
+        # Initialize the progress bar
+        progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
+        progress_dialog.start_progress(total_size // block_size)
+        progress_dialog.show()
 
-        return asset_path
+        with open(asset_path, 'wb') as f:
+            for data in response.iter_content(block_size):
+                if progress_dialog.wasCanceled():
+                    raise Exception("Download canceled by user")
+                f.write(data)
+                progress_dialog.update_progress()
 
     except Exception as e:
-        print(f"Failed to download asset {asset_name} from {asset_url}: {e}")
-        return None
+        QMessageBox.critical(app, "Error", f"Failed to download {asset_name}.\n{e}")
+    finally:
+        progress_dialog.set_value(progress_dialog.max_value)
+        progress_dialog.close()
 
 
 def preprocess_image(image):
