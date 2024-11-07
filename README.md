@@ -4,7 +4,12 @@
   <img src="figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
-The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on [CoralNet](https://coralnet.ucsd.edu/). It uses ✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a  base, which is an open-source library for computer vision and deep learning built in `PyTorch`. For more information on their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). The `toolbox` also uses [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), and [`SAM2`](https://github.com/facebookresearch/sam2), and [`AutoDistill`](https://github.com/autodistill) for creating rectangle and polygon annotations.
+The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on 
+[CoralNet](https://coralnet.ucsd.edu/). It uses ✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a  base, which is an open-source library for computer vision and 
+deep learning built in `PyTorch`. For more information on their `AGPL-3.0` license, see [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE). The `toolbox` also 
+uses [`EdgeSAM`](https://github.com/chongzhou96/EdgeSAM), [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), 
+[`SAM`](https://github.com/facebookresearch/segment-anything), and [`AutoDistill`](https://github.com/autodistill) for 
+creating rectangle and polygon annotations.
 
 ## Quick Start
 
@@ -38,7 +43,7 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
-- 🦾 SAM: Use [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), [`SAM`](https://github.com/facebookresearch/segment-anything), and [`SAM2`](https://github.com/facebookresearch/sam2) to create polygons
+- 🦾 SAM: Use [`EdgeSAM`](https://github.com/chongzhou96/EdgeSAM), [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM), and [`SAM`](https://github.com/facebookresearch/segment-anything) to create polygons
 - 🧪 AutoDistill: Use [`AutoDistill`](https://github.com/autodistill) to access `GroundingDINO` for creating rectangles
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
