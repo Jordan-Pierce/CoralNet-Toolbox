@@ -14,10 +14,8 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QSlider, QSpinBox, QTabWidget, QVBoxLayout,
                              QWidget)
 
-from mobile_sam import SamPredictor as MobileSamPredictor
-from mobile_sam import sam_model_registry as mobile_sam_model_registry
-from segment_anything import SamPredictor
-from segment_anything import sam_model_registry
+from x_segment_anything import SamPredictor
+from x_segment_anything import sam_model_registry
 
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
@@ -194,8 +192,8 @@ class DeployModelDialog(QDialog):
         Load a mobile SAM model.
         """
         model = "vit_t"
-        loaded_model = mobile_sam_model_registry[model](checkpoint=model_path)
-        return MobileSamPredictor(loaded_model)
+        loaded_model = sam_model_registry[model](checkpoint=model_path)
+        return SamPredictor(loaded_model)
 
     def load_sam_model(self, model_path):
         """
