@@ -44,6 +44,9 @@ class Base(QDialog):
 
         self.layout = QVBoxLayout(self)
 
+        # Set up the generic layout first
+        self.setup_generic_layout()
+
         # Set the threshold slider for uncertainty
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
@@ -85,37 +88,17 @@ class Base(QDialog):
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
 
-    def setup_generic_layout(self):
+    def setup_generic_layout(self, title="Batch Inference"):
         """
         Set up a generic layout and widgets that are not specific to any task.
+        
+        :param title: Title for the dialog box group
         """
         layout = QVBoxLayout()
 
-        # Create a group box for annotation options
-        annotation_group_box = QGroupBox("Annotation Options")
-        annotation_layout = QVBoxLayout()
-
-        # Create a button group for the annotation checkboxes
-        self.annotation_options_group = QButtonGroup(self)
-
-        self.review_checkbox = QCheckBox("Predict Review Annotation")
-        self.all_checkbox = QCheckBox("Predict All Annotations")
-
-        # Add the checkboxes to the button group
-        self.annotation_options_group.addButton(self.review_checkbox)
-        self.annotation_options_group.addButton(self.all_checkbox)
-
-        # Ensure only one checkbox can be checked at a time
-        self.annotation_options_group.setExclusive(True)
-
-        # Set the default checkbox
-        self.review_checkbox.setChecked(True)
-
-        annotation_layout.addWidget(self.review_checkbox)
-        annotation_layout.addWidget(self.all_checkbox)
-        annotation_group_box.setLayout(annotation_layout)
-
-        layout.addWidget(annotation_group_box)
+        # Create a group box for image options with the specified title
+        image_group_box = QGroupBox(title)
+        image_layout = QVBoxLayout()
 
         # Create a group box for image options
         image_group_box = QGroupBox("Image Options")
@@ -205,67 +188,8 @@ class Base(QDialog):
         else:
             return self.image_window.image_paths
 
-    def preprocess_patch_annotations(self):
-        """
-        Preprocess patch annotations by cropping the images based on the annotations.
-        """
-        # Get unique image paths
-        self.image_paths = list(set(a.image_path for a in self.annotations))
-        if not self.image_paths:
-            return
-
-        progress_bar = ProgressBar(self, title=f"Cropping Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
-
-        def crop(image_path, image_annotations):
-            # Crop the image based on the annotations
-            return self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
-
-        # Group annotations by image path
-        groups = groupby(sorted(self.annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
-
-        with ThreadPoolExecutor() as executor:
-            future_to_image = {}
-            for path, group in groups:
-                future = executor.submit(crop, path, list(group))
-                future_to_image[future] = path
-
-            for future in as_completed(future_to_image):
-                image_path = future_to_image[future]
-                try:
-                    self.prepared_patches.extend(future.result())
-                except Exception as exc:
-                    print(f'{image_path} generated an exception: {exc}')
-                finally:
-                    progress_bar.update_progress()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
     def batch_inference(self):
         """
         Perform batch inference on the selected images and annotations.
         """
-        # Make predictions on each image's annotations
-        progress_bar = ProgressBar(self, title=f"Batch Inference")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
-
-        if self.loaded_models['classify'] is not None:
-            # Group annotations by image path
-            groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')), key=attrgetter('image_path'))
-
-            # Make predictions on each image's annotations
-            for path, patches in groups:
-                self.deploy_model_dialog.predict_classification(annotations=list(patches))
-                progress_bar.update_progress()
-
-        elif self.loaded_models['detect'] is not None:
-            self.deploy_model_dialog.predict_detection(image_paths=self.image_paths)
-
-        elif self.loaded_models['segment'] is not None:
-            self.deploy_model_dialog.predict_segmentation(image_paths=self.image_paths)
-
-        progress_bar.stop_progress()
-        progress_bar.close()
+        raise NotImplementedError("Subclasses must implement this method.")
