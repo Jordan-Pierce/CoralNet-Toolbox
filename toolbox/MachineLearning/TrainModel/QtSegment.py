@@ -32,4 +32,6 @@ from toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
 
 
 class Segment(Base):
-    pass
+    def __init__(self, main_window, parent=None):
+        super().__init__(main_window, parent)
+        self.setup_generic_layout()

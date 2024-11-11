@@ -172,8 +172,8 @@ class Base(QDialog):
         # Main layout
         self.main_layout = QVBoxLayout()
 
-        # Create and set up the tabs, parameters form, and console output
-        self.setup_ui()
+        # Create and set up the generic layout
+        self.setup_generic_layout()
 
         # Wrap the main layout in a QScrollArea
         scroll_area = QScrollArea()
@@ -186,9 +186,9 @@ class Base(QDialog):
         self.setLayout(QVBoxLayout())
         self.layout().addWidget(scroll_area)
 
-    def setup_ui(self):
+    def setup_generic_layout(self):
         """
-        Set up the user interface for the dialog.
+        Set up the layout and widgets for the generic layout.
         """
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Details on different hyperparameters can be found "
@@ -197,22 +197,29 @@ class Base(QDialog):
         info_label.setWordWrap(True)
         self.main_layout.addWidget(info_label)
 
-        # Create tabs
-        self.tabs = QTabWidget()
-        self.tab_classification = QWidget()
-        self.tab_detection = QWidget()
-        self.tab_segmentation = QWidget()
+        layout = QVBoxLayout()
 
-        self.tabs.addTab(self.tab_classification, "Image Classification")
-        self.tabs.addTab(self.tab_detection, "Object Detection")
-        self.tabs.addTab(self.tab_segmentation, "Instance Segmentation")
+        # Dataset Directory
+        self.dataset_edit = QLineEdit()
+        self.dataset_button = QPushButton("Browse...")
+        self.dataset_button.clicked.connect(self.browse_dataset_dir)
 
-        # Setup tabs
-        self.setup_classification_tab()
-        self.setup_detection_tab()
-        self.setup_segmentation_tab()
+        dataset_dir_layout = QHBoxLayout()
+        dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
+        dataset_dir_layout.addWidget(self.dataset_edit)
+        dataset_dir_layout.addWidget(self.dataset_button)
+        layout.addLayout(dataset_dir_layout)
 
-        self.main_layout.addWidget(self.tabs)
+        # Class Mapping
+        self.mapping_edit = QLineEdit()
+        self.mapping_button = QPushButton("Browse...")
+        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
+        class_mapping_layout.addWidget(self.mapping_edit)
+        class_mapping_layout.addWidget(self.mapping_button)
+        layout.addLayout(class_mapping_layout)
 
         # Parameters Form
         self.form_layout = QFormLayout()
@@ -381,9 +388,10 @@ class Base(QDialog):
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.classify_mapping_edit.setText(class_mapping_path)
-            # Set the dataset path for current tab
-            self.classify_dataset_edit.setText(dir_path)
+                self.mapping_edit.setText(class_mapping_path)
+
+            # Set the dataset path
+            self.dataset_edit.setText(dir_path)
 
     def browse_dataset_yaml(self):
         """
@@ -399,13 +407,11 @@ class Base(QDialog):
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
-            # Set the dataset and class mapping paths for current tab
-            if self.tabs.currentWidget() == self.tab_detection:
-                self.detection_dataset_edit.setText(file_path)
-                self.detection_mapping_edit.setText(class_mapping_path)
-            elif self.tabs.currentWidget() == self.tab_segmentation:
-                self.segmentation_dataset_edit.setText(file_path)
-                self.segmentation_mapping_edit.setText(class_mapping_path)
+
+            # Set the dataset and class mapping paths
+            self.dataset_edit.setText(file_path)
+            self.mapping_edit.setText(class_mapping_path)
+
 
     def browse_class_mapping_file(self):
         """
@@ -440,124 +446,6 @@ class Base(QDialog):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
             self.model_edit.setText(file_path)
-
-    def setup_classification_tab(self):
-        """
-        Set up the layout and widgets for the image classification tab.
-        """
-        layout = QVBoxLayout()
-
-        # Dataset Directory
-        self.classify_dataset_edit = QLineEdit()
-        self.classify_dataset_button = QPushButton("Browse...")
-        self.classify_dataset_button.clicked.connect(self.browse_dataset_dir)
-        dataset_dir_layout = QHBoxLayout()
-        dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
-        dataset_dir_layout.addWidget(self.classify_dataset_edit)
-        dataset_dir_layout.addWidget(self.classify_dataset_button)
-        layout.addLayout(dataset_dir_layout)
-
-        # Class Mapping
-        self.classify_mapping_edit = QLineEdit()
-        self.classify_mapping_button = QPushButton("Browse...")
-        self.classify_mapping_button.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
-        class_mapping_layout.addWidget(self.classify_mapping_edit)
-        class_mapping_layout.addWidget(self.classify_mapping_button)
-        layout.addLayout(class_mapping_layout)
-
-        # Classification Model Dropdown
-        self.classification_model_combo = QComboBox()
-        self.classification_model_combo.addItems(["yolov8n-cls.pt",
-                                                  "yolov8s-cls.pt",
-                                                  "yolov8m-cls.pt",
-                                                  "yolov8l-cls.pt",
-                                                  "yolov8x-cls.pt"])
-
-        self.classification_model_combo.setEditable(True)
-        layout.addWidget(QLabel("Select or Enter Classification Model:"))
-        layout.addWidget(self.classification_model_combo)
-
-        self.tab_classification.setLayout(layout)
-
-    def setup_detection_tab(self):
-        """
-        Set up the layout and widgets for the object detection tab.
-        """
-        layout = QVBoxLayout()
-
-        self.detection_dataset_edit = QLineEdit()
-        self.detection_dataset_button = QPushButton("Browse...")
-        self.detection_dataset_button.clicked.connect(self.browse_dataset_yaml)
-        dataset_yaml_layout = QHBoxLayout()
-        dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
-        dataset_yaml_layout.addWidget(self.detection_dataset_edit)
-        dataset_yaml_layout.addWidget(self.detection_dataset_button)
-        layout.addLayout(dataset_yaml_layout)
-
-        # Class Mapping
-        self.detection_mapping_edit = QLineEdit()
-        self.detection_mapping_button = QPushButton("Browse...")
-        self.detection_mapping_button.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
-        class_mapping_layout.addWidget(self.detection_mapping_edit)
-        class_mapping_layout.addWidget(self.detection_mapping_button)
-        layout.addLayout(class_mapping_layout)
-
-        # Segmentation Model Dropdown
-        self.detection_model_combo = QComboBox()
-        self.detection_model_combo.addItems(["yolov8n.pt",
-                                             "yolov8s.pt",
-                                             "yolov8m.pt",
-                                             "yolov8l.pt",
-                                             "yolov8x.pt"])
-
-        self.detection_model_combo.setEditable(True)
-        layout.addWidget(QLabel("Select or Enter Detection Model:"))
-        layout.addWidget(self.detection_model_combo)
-
-        self.tab_detection.setLayout(layout)
-
-    def setup_segmentation_tab(self):
-        """
-        Set up the layout and widgets for the instance segmentation tab.
-        """
-        layout = QVBoxLayout()
-
-        self.segmentation_dataset_edit = QLineEdit()
-        self.segmentation_dataset_button = QPushButton("Browse...")
-        self.segmentation_dataset_button.clicked.connect(self.browse_dataset_yaml)
-        dataset_yaml_layout = QHBoxLayout()
-        dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
-        dataset_yaml_layout.addWidget(self.segmentation_dataset_edit)
-        dataset_yaml_layout.addWidget(self.segmentation_dataset_button)
-        layout.addLayout(dataset_yaml_layout)
-
-        # Class Mapping
-        self.segmentation_mapping_edit = QLineEdit()
-        self.segmentation_mapping_button = QPushButton("Browse...")
-        self.segmentation_mapping_button.clicked.connect(self.browse_class_mapping_file)
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
-        class_mapping_layout.addWidget(self.segmentation_mapping_edit)
-        class_mapping_layout.addWidget(self.segmentation_mapping_button)
-        layout.addLayout(class_mapping_layout)
-
-        # Segmentation Model Dropdown
-        self.segmentation_model_combo = QComboBox()
-        self.segmentation_model_combo.addItems(["yolov8n-seg.pt",
-                                                "yolov8s-seg.pt",
-                                                "yolov8m-seg.pt",
-                                                "yolov8l-seg.pt",
-                                                "yolov8x-seg.pt"])
-
-        self.segmentation_model_combo.setEditable(True)
-        layout.addWidget(QLabel("Select or Enter Segmentation Model:"))
-        layout.addWidget(self.segmentation_model_combo)
-
-        self.tab_segmentation.setLayout(layout)
 
     def accept(self):
         """
