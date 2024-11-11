@@ -45,7 +45,7 @@ class GlobalEventFilter(QObject):
                     self.deploy_model_dialog.predict_segmentation()
                     return True
                 
-                # Handle hotkey for instance segmentation prediction
+                # Handle hotkey for segment everything prediction
                 if event.key() == Qt.Key_4:
                     pass
 

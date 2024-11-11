@@ -1,6 +1,11 @@
 from PyQt5.QtGui import QPainter, QColor
-from PyQt5.QtWidgets import QSlider, QStyleOptionSlider, QStyle
+from PyQt5.QtWidgets import QSlider, QStyleOptionSlider, QStyle, QSpinBox, QHBoxLayout
 from PyQt5.QtCore import Qt, pyqtSignal, QRect
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class QRangeSlider(QSlider):
@@ -9,21 +14,50 @@ class QRangeSlider(QSlider):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._min = 0
-        self._max = 100
-        self._active_slider = None  # Tracks which handle is being dragged
-        self._handle_width = 10
+        
+        # Create layout
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create widgets
+        self.min_spin = QSpinBox()
+        self.slider = QRangeSlider()
+        self.max_spin = QSpinBox()
+        
+        # Setup spin boxes
+        self.min_spin.setRange(self.slider.minimum(), self.slider.maximum())
+        self.max_spin.setRange(self.slider.minimum(), self.slider.maximum())
+        
+        # Add widgets to layout
+        layout.addWidget(self.min_spin)
+        layout.addWidget(self.slider)
+        layout.addWidget(self.max_spin)
+        self.setLayout(layout)
+        
+        # Connect signals
+        self.slider.rangeChanged.connect(self._update_spin_boxes)
+        self.min_spin.valueChanged.connect(self._min_spin_changed)
+        self.max_spin.valueChanged.connect(self._max_spin_changed)
+        
+        # Initial values
+        min_val, max_val = self.slider.value()
+        self.min_spin.setValue(min_val)
+        self.max_spin.setValue(max_val)
+        
+    def _update_spin_boxes(self, min_val, max_val):
+        """Update spin boxes when slider changes"""
+        self.min_spin.setValue(min_val)
+        self.max_spin.setValue(max_val)
 
-        # Setup slider appearance
-        self.setRange(0, 100)
-        self.setTickPosition(QSlider.TicksBelow)
-        self.setTickInterval(5)
-        self.setOrientation(Qt.Horizontal)
+    def _min_spin_changed(self, value):
+        """Update slider when min spin box changes"""
+        current_min, current_max = self.slider.value()
+        self.slider.setValue((value, current_max))
 
-        # Custom colors
-        self._active_color = QColor(0, 123, 255)  # Blue
-        self._inactive_color = QColor(200, 200, 200)  # Light gray
-        self._range_color = QColor(0, 123, 255, 127)  # Semi-transparent blue
+    def _max_spin_changed(self, value):
+        """Update slider when max spin box changes"""
+        current_min, current_max = self.slider.value()
+        self.slider.setValue((current_min, value))
 
     def setRange(self, min_value, max_value):
         """Set the range while ensuring min <= max"""
@@ -31,6 +65,14 @@ class QRangeSlider(QSlider):
         self._max = max(min_value, max_value)
         self.rangeChanged.emit(self._min, self._max)
         self.update()
+        
+    def value(self):
+        """Get current range values"""
+        return self.slider.value()
+
+    def setValue(self, value):
+        """Set range values"""
+        self.slider.setValue(value)
 
     def _pixelPosToValue(self, pos):
         """Convert pixel position to slider value"""

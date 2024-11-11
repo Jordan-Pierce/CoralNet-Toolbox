@@ -40,13 +40,17 @@ class Segment(Base):
         super().setup_generic_layout()
         
         # Add a new grouping 
-        self.layout.addWidget(QLabel("Parameters"))
+        parameters_group = QGroupBox("Parameters")
+        parameters_layout = QVBoxLayout()
         
         # Add the SAM checkbox       
         use_sam_checkbox = QCheckBox("Use SAM for creating Polygons")
         use_sam_checkbox.stateChanged.connect(self.is_sam_model_deployed)
-        self.layout.addWidget(use_sam_checkbox)
-        self.use_sam = use_sam_checkbox 
+        parameters_layout.addWidget(use_sam_checkbox)
+        self.use_sam = use_sam_checkbox
+        
+        parameters_group.setLayout(parameters_layout)
+        self.layout.addWidget(parameters_group)
         
     def load_model(self):
         """
