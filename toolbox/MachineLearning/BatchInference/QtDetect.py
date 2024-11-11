@@ -3,7 +3,7 @@ from toolbox.MachineLearning.BatchInference.QtBase import Base
 class Detect(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        self.setup_detection_tab()
+        self.setup_generic_layout()
 
     def apply(self):
         """
