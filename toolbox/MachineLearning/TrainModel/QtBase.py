@@ -150,6 +150,8 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
+        # Task
+        self.task = None
         # For holding parameters
         self.params = {}
         self.custom_params = []
@@ -171,6 +173,14 @@ class Base(QDialog):
 
         # Main layout
         self.main_layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Details on different hyperparameters can be found "
+                            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        self.main_layout.addWidget(info_label)
 
         # Create and set up the generic layout
         self.setup_generic_layout()
@@ -185,30 +195,44 @@ class Base(QDialog):
         # Set the scroll area as the main layout of the dialog
         self.setLayout(QVBoxLayout())
         self.layout().addWidget(scroll_area)
-
-    def setup_generic_layout(self):
+        
+    def setup_generic_layout(self, title="Train Model"):
         """
         Set up the layout and widgets for the generic layout.
         """
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Details on different hyperparameters can be found "
-                            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        self.main_layout.addWidget(info_label)
+        ###
+        # Model layout
+        model_layout = QVBoxLayout()
+        
+        if "Classification" in title:
+            self.task = "classify"
+        elif "Detection" in title:
+            self.task = "detect"
+        else:
+            self.task = "segment"
 
-        layout = QVBoxLayout()
+        if self.task == "classify":
+            # Dataset Directory
+            self.dataset_edit = QLineEdit()
+            self.dataset_button = QPushButton("Browse...")
+            self.dataset_button.clicked.connect(self.browse_dataset_dir)
 
-        # Dataset Directory
-        self.dataset_edit = QLineEdit()
-        self.dataset_button = QPushButton("Browse...")
-        self.dataset_button.clicked.connect(self.browse_dataset_dir)
-
-        dataset_dir_layout = QHBoxLayout()
-        dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
-        dataset_dir_layout.addWidget(self.dataset_edit)
-        dataset_dir_layout.addWidget(self.dataset_button)
-        layout.addLayout(dataset_dir_layout)
+            dataset_dir_layout = QHBoxLayout()
+            dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
+            dataset_dir_layout.addWidget(self.dataset_edit)
+            dataset_dir_layout.addWidget(self.dataset_button)
+            model_layout.addLayout(dataset_dir_layout)
+            
+        else:
+            # Dataset YAML
+            self.dataset_edit = QLineEdit()
+            self.dataset_button = QPushButton("Browse...")
+            self.dataset_button.clicked.connect(self.browse_dataset_yaml)
+            
+            dataset_yaml_layout = QHBoxLayout()
+            dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
+            dataset_yaml_layout.addWidget(self.dataset_edit)
+            dataset_yaml_layout.addWidget(self.dataset_button)
 
         # Class Mapping
         self.mapping_edit = QLineEdit()
@@ -219,8 +243,22 @@ class Base(QDialog):
         class_mapping_layout.addWidget(QLabel("Class Mapping:"))
         class_mapping_layout.addWidget(self.mapping_edit)
         class_mapping_layout.addWidget(self.mapping_button)
-        layout.addLayout(class_mapping_layout)
+        model_layout.addLayout(class_mapping_layout)
+        
+        # Model combo box
+        self.model_combo = QComboBox()
+        self.load_model_combobox()
+        
+        model_combo_layout = QHBoxLayout()
+        model_combo_layout.addWidget(QLabel("Model:"))
+        model_combo_layout.addWidget(self.model_combo)
+        model_layout.addLayout(model_combo_layout)
+        model_layout.addWidget(self.model_combo)
+        
+        # Add to main layout
+        self.main_layout.addLayout(model_layout)
 
+        ### 
         # Parameters Form
         self.form_layout = QFormLayout()
 
@@ -377,6 +415,9 @@ class Base(QDialog):
 
         self.custom_params.append((param_name, param_value))
         self.custom_params_layout.addLayout(param_layout)
+        
+    def load_model_combobox(self):
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def browse_dataset_dir(self):
         """
@@ -407,11 +448,10 @@ class Base(QDialog):
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                self.mapping_edit.setText(class_mapping_path)
 
             # Set the dataset and class mapping paths
             self.dataset_edit.setText(file_path)
-            self.mapping_edit.setText(class_mapping_path)
-
 
     def browse_class_mapping_file(self):
         """
@@ -424,12 +464,9 @@ class Base(QDialog):
         if file_path:
             # Load the class mapping
             self.class_mapping = json.load(open(file_path, 'r'))
-            if self.tabs.currentWidget() == self.tab_classification:
-                self.classify_mapping_edit.setText(file_path)
-            elif self.tabs.currentWidget() == self.tab_detection:
-                self.detection_mapping_edit.setText(file_path)
-            elif self.tabs.currentWidget() == self.tab_segmentation:
-                self.segmentation_mapping_edit.setText(file_path)
+            
+            # Set the class mapping path
+            self.mapping_edit.setText(file_path)
 
     def browse_project_dir(self):
         """
@@ -461,30 +498,13 @@ class Base(QDialog):
         Returns:
             dict: A dictionary of training parameters.
         """
-        # Determine the selected tab
-        selected_tab = self.tabs.currentWidget()
-        if selected_tab == self.tab_classification:
-            task = 'classify'
-            data = self.classify_dataset_edit.text()
-            model = self.classification_model_combo.currentText()
-        elif selected_tab == self.tab_detection:
-            task = 'detect'
-            data = self.detection_dataset_edit.text()
-            model = self.detection_model_combo.currentText()
-        elif selected_tab == self.tab_segmentation:
-            task = 'segment'
-            data = self.segmentation_dataset_edit.text()
-            model = self.segmentation_model_combo.currentText()
-        else:
-            raise ValueError("Invalid tab selected.")
-
         # Extract values from dialog widgets
         params = {
-            'task': task,
+            'task': self.task,
             'project': self.project_edit.text(),
             'name': self.name_edit.text(),
-            'model': model,
-            'data': data,
+            'model': self.model_combo.currentText(),
+            'data': self.dataset_edit.text(),
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
@@ -539,6 +559,7 @@ class Base(QDialog):
         """
         # Get training parameters
         self.params = self.get_parameters()
+        
         # Create and start the worker thread
         self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
