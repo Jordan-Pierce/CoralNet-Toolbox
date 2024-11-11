@@ -18,9 +18,9 @@ from toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class BatchInferenceDialog(QDialog):
+class Base(QDialog):
     """
-    Dialog for performing batch inference on images for image classification, object detection, 
+    Base class for performing batch inference on images for image classification, object detection, 
     and instance segmentation.
     
     :param main_window: MainWindow object
@@ -288,37 +288,6 @@ class BatchInferenceDialog(QDialog):
         # Resume the cursor
         QApplication.restoreOverrideCursor()
 
-    def apply_classification(self):
-        """
-        Apply batch inference for image classification.
-        """
-        # Get the Review Annotations
-        if self.classification_review_checkbox.isChecked():
-            for image_path in self.get_selected_image_paths():
-                self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
-        else:
-            # Get all the annotations
-            for image_path in self.get_selected_image_paths():
-                self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
-
-        # Crop them, if not already cropped
-        self.preprocess_patch_annotations()
-        self.batch_inference('classify')
-
-    def apply_detection(self):
-        """
-        Apply batch inference for object detection.
-        """
-        self.image_paths = self.get_selected_image_paths()
-        self.batch_inference('detect')
-
-    def apply_segmentation(self):
-        """
-        Apply batch inference for instance segmentation.
-        """
-        self.image_paths = self.get_selected_image_paths()
-        self.batch_inference('segment')
-
     def get_selected_image_paths(self):
         """
         Get the selected image paths based on the current tab and options.
@@ -437,3 +406,17 @@ class BatchInferenceDialog(QDialog):
 
         progress_bar.stop_progress()
         progress_bar.close()
+
+    def create_child_class(self):
+        """
+        Dynamically create the appropriate child class based on the selected tab.
+        """
+        if self.tab_widget.currentIndex() == 0:  # Classification
+            from toolbox.MachineLearning.BatchInference.QtClassify import Classify
+            return Classify(self.main_window, self)
+        elif self.tab_widget.currentIndex() == 1:  # Detection
+            from toolbox.MachineLearning.BatchInference.QtDetect import Detect
+            return Detect(self.main_window, self)
+        elif self.tab_widget.currentIndex() == 2:  # Segmentation
+            from toolbox.MachineLearning.BatchInference.QtSegment import Segment
+            return Segment(self.main_window, self)
