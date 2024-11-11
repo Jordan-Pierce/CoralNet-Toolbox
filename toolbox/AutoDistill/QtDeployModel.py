@@ -56,6 +56,17 @@ class DeployModelDialog(QDialog):
         self.use_sam = False
 
         self.setup_ui()
+        
+    def showEvent(self, event):
+        """
+        Handle the show event to update label options and sync uncertainty threshold.
+
+        Args:
+            event: The event object.
+        """
+        super().showEvent(event)
+        self.update_label_options()
+        self.initialize_uncertainty_threshold()
 
     def setup_ui(self):
         """Setup the user interface components."""
@@ -148,7 +159,7 @@ class DeployModelDialog(QDialog):
         self.area_threshold_slider.setValue((int(self.area_thresh_min * 100), int(self.area_thresh_max * 100)))
         self.area_threshold_slider.rangeChanged.connect(self.update_area_label)
 
-        self.area_threshold_label = QLabel( f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
         self.form_layout.addRow("Area Threshold", self.area_threshold_slider)
         self.form_layout.addRow("", self.area_threshold_label)
 
@@ -158,12 +169,11 @@ class DeployModelDialog(QDialog):
         """
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
         self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.uncertainty_threshold_slider.setTickInterval(5)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
 
-        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
+        self.uncertainty_threshold_label = QLabel("")
         self.form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
         self.form_layout.addRow("", self.uncertainty_threshold_label)
 
@@ -182,16 +192,6 @@ class DeployModelDialog(QDialog):
         button_layout.addWidget(deactivate_button)
         
         self.main_layout.addLayout(button_layout)
-
-    def showEvent(self, event):
-        """
-        Handle the show event to update label options.
-
-        Args:
-            event: The event object.
-        """
-        super().showEvent(event)
-        self.update_label_options()
 
     def update_area_label(self, min_val, max_val):
         """
@@ -215,6 +215,13 @@ class DeployModelDialog(QDialog):
         self.main_window.update_uncertainty_thresh(value)
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
         self.uncertainty_thresh = self.uncertainty_threshold_slider.value() / 100.0
+        
+    def initialize_uncertainty_threshold(self):
+        """Initialize the uncertainty threshold slider with the current value from main window"""
+        current_value = self.main_window.get_uncertainty_thresh()
+        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
+        self.uncertainty_threshold_label.setText(f"{current_value:.2f}")
+        self.uncertainty_thresh = current_value
 
     def on_uncertainty_changed(self, value):
         """

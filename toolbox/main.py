@@ -1,6 +1,12 @@
 # TODO Later:
-#   - CoralNet tools
-#   - Resample polygon to be smoother, uniformly spaced
+# CoralNet tools
+# Resample polygon to be smoother, uniformly spaced
+# Move the following to folder structures: batch inference, deploy model, export dataset, train model
+# Create grouping, and form layout for all dialogs
+# Add to the RangeSlider to allow for one handle as well, add spin boxes to either side of the slider, connect
+# Create workarea class, add to eventFilters for deploying models
+# Add to Results processes to deal with thresholding area, confidence, iou (add to deploy dialogs)
+# Include Segment everything to eventFilters
 
 import traceback
 
