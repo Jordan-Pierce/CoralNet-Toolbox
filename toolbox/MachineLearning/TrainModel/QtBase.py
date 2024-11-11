@@ -138,7 +138,7 @@ class TrainModelWorker(QThread):
         empty_cache()
 
 
-class TrainModelDialog(QDialog):
+class Base(QDialog):
     """
     Dialog for training machine learning models for image classification, object detection, 
     and instance segmentation.
