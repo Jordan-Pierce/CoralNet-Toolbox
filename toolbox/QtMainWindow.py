@@ -260,8 +260,8 @@ class MainWindow(QMainWindow):
             lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         self.coralnet_menu.addAction(self.coralnet_model_api_action)
 
-        # Machine Learning menu
-        self.ml_menu = self.menu_bar.addMenu("Machine Learning")
+        # Ultralytics menu
+        self.ml_menu = self.menu_bar.addMenu("Ultralytics")
 
         self.ml_merge_datasets_action = QAction("Merge Datasets", self)
         self.ml_merge_datasets_action.triggered.connect(self.open_merge_datasets_dialog)

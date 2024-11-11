@@ -7,6 +7,7 @@
 # Create workarea class, add to eventFilters for deploying models
 # Add to Results processes to deal with thresholding area, confidence, iou (add to deploy dialogs)
 # Include Segment everything to eventFilters
+# Add other v8 models 
 
 import traceback
 
