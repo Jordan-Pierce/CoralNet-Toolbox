@@ -12,7 +12,8 @@ import numpy as np
 from PyQt5.QtGui import QColor, QShowEvent
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QVBoxLayout,
-                             QLabel, QDialog, QTextEdit, QPushButton, QGroupBox, QCheckBox)
+                             QLabel, QDialog, QTextEdit, QPushButton, QGroupBox, QCheckBox,
+                             QFormLayout, QComboBox)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -33,24 +34,28 @@ class Detect(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Detection Model")
         
-    def setup_generic_layout(self):
+        # Setup parameters layout
+        self.setup_parameters_layout()
+             
+    def setup_parameters_layout(self):
         """
-        Adopt the layout from the Base class
+        Set up the layout for parameters.
         """
-        super().setup_generic_layout()
+        group_box = QGroupBox("Parameters")
+        form_layout = QFormLayout()
         
-        # Add a new grouping 
-        parameters_group = QGroupBox("Parameters")
-        parameters_layout = QVBoxLayout()
+        # Add the SAM
+        use_sam_label = QLabel("Use SAM for creating Polygons")
+        use_sam_dropdown = QComboBox()
+        use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam = use_sam_dropdown
         
-        # Add the SAM checkbox       
-        use_sam_checkbox = QCheckBox("Use SAM for creating Polygons")
-        use_sam_checkbox.stateChanged.connect(self.is_sam_model_deployed)
-        parameters_layout.addWidget(use_sam_checkbox)
-        self.use_sam = use_sam_checkbox
+        # Add widgets to the form layout
+        form_layout.addRow(use_sam_label, use_sam_dropdown)
         
-        parameters_group.setLayout(parameters_layout)
-        self.layout.addWidget(parameters_group)
+        group_box.setLayout(form_layout)
+        self.layout.addWidget(group_box)
         
     def load_model(self):
         """

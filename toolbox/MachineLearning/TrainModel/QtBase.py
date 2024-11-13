@@ -14,7 +14,7 @@ import ultralytics.models.yolo.classify.train as train_build
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox)
+                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -149,7 +149,17 @@ class Base(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
+        
+        self.setWindowTitle("Train Model")
+        self.resize(600, 800)
 
+        # Set window settings
+        self.setWindowFlags(Qt.Window |
+                            Qt.WindowCloseButtonHint |
+                            Qt.WindowMinimizeButtonHint |
+                            Qt.WindowMaximizeButtonHint |
+                            Qt.WindowTitleHint)
+        
         # Task
         self.task = None
         # For holding parameters
@@ -160,19 +170,22 @@ class Base(QDialog):
         # Class mapping
         self.class_mapping = {}
 
-        self.setWindowTitle("Train Model")
+        # Create the layout
+        self.layout = QVBoxLayout(self)
 
-        # Set window settings
-        self.setWindowFlags(Qt.Window |
-                            Qt.WindowCloseButtonHint |
-                            Qt.WindowMinimizeButtonHint |
-                            Qt.WindowMaximizeButtonHint |
-                            Qt.WindowTitleHint)
-
-        self.resize(600, 800)
-
-        # Main layout
-        self.main_layout = QVBoxLayout()
+        # Create the info layout
+        self.setup_info_layout()
+        # Create and set up the generic layout
+        self.setup_parameters_layout()
+        # Create the buttons layout
+        self.setup_buttons_layout()
+        
+    def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
         
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Details on different hyperparameters can be found "
@@ -180,23 +193,12 @@ class Base(QDialog):
         
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
-        self.main_layout.addWidget(info_label)
-
-        # Create and set up the generic layout
-        self.setup_generic_layout()
-
-        # Wrap the main layout in a QScrollArea
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        scroll_widget.setLayout(self.main_layout)
-        scroll_area.setWidget(scroll_widget)
-
-        # Set the scroll area as the main layout of the dialog
-        self.setLayout(QVBoxLayout())
-        self.layout().addWidget(scroll_area)
+        layout.addWidget(info_label)
         
-    def setup_generic_layout(self):
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_parameters_layout(self):
         """
         Set up the layout and widgets for the generic layout.
         """ 
@@ -205,9 +207,20 @@ class Base(QDialog):
             combo = QComboBox()
             combo.addItems(["True", "False"])
             return combo
+        
+        # Create a widget to hold the form layout
+        form_widget = QWidget()
+        form_layout = QFormLayout(form_widget)
 
-        # Parameters Form
-        self.form_layout = QFormLayout()
+        # Create the scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(form_widget)
+
+        # Create parameters group box
+        group_box = QGroupBox("Parameters")
+        group_layout = QVBoxLayout(group_box)
+        group_layout.addWidget(scroll_area)
 
         if self.task == "classify":
             # Dataset Directory
@@ -218,7 +231,7 @@ class Base(QDialog):
             dataset_dir_layout = QHBoxLayout()
             dataset_dir_layout.addWidget(self.dataset_edit)
             dataset_dir_layout.addWidget(self.dataset_button)
-            self.form_layout.addRow("Dataset Directory:", dataset_dir_layout)
+            form_layout.addRow("Dataset Directory:", dataset_dir_layout)
             
         else:
             # Dataset YAML
@@ -229,7 +242,7 @@ class Base(QDialog):
             dataset_yaml_layout = QHBoxLayout()
             dataset_yaml_layout.addWidget(self.dataset_edit)
             dataset_yaml_layout.addWidget(self.dataset_button)
-            self.form_layout.addRow("Dataset YAML:", dataset_yaml_layout)
+            form_layout.addRow("Dataset YAML:", dataset_yaml_layout)
 
         # Class Mapping
         self.mapping_edit = QLineEdit()
@@ -239,12 +252,12 @@ class Base(QDialog):
         class_mapping_layout = QHBoxLayout()
         class_mapping_layout.addWidget(self.mapping_edit)
         class_mapping_layout.addWidget(self.mapping_button)
-        self.form_layout.addRow("Class Mapping:", class_mapping_layout)
+        form_layout.addRow("Class Mapping:", class_mapping_layout)
         
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
-        self.form_layout.addRow("Model:", self.model_combo)
+        form_layout.addRow("Model:", self.model_combo)
 
         # Project
         self.project_edit = QLineEdit()
@@ -253,11 +266,11 @@ class Base(QDialog):
         project_layout = QHBoxLayout()
         project_layout.addWidget(self.project_edit)
         project_layout.addWidget(self.project_button)
-        self.form_layout.addRow("Project:", project_layout)
+        form_layout.addRow("Project:", project_layout)
 
         # Name
         self.name_edit = QLineEdit()
-        self.form_layout.addRow("Name:", self.name_edit)
+        form_layout.addRow("Name:", self.name_edit)
 
         # Existing Model
         self.model_edit = QLineEdit()
@@ -266,78 +279,78 @@ class Base(QDialog):
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
-        self.form_layout.addRow("Existing Model:", model_layout)
+        form_layout.addRow("Existing Model:", model_layout)
 
         # Epochs
         self.epochs_spinbox = QSpinBox()
         self.epochs_spinbox.setMinimum(1)
         self.epochs_spinbox.setMaximum(1000)
         self.epochs_spinbox.setValue(100)
-        self.form_layout.addRow("Epochs:", self.epochs_spinbox)
+        form_layout.addRow("Epochs:", self.epochs_spinbox)
 
         # Patience
         self.patience_spinbox = QSpinBox()
         self.patience_spinbox.setMinimum(1)
         self.patience_spinbox.setMaximum(1000)
         self.patience_spinbox.setValue(30)
-        self.form_layout.addRow("Patience:", self.patience_spinbox)
+        form_layout.addRow("Patience:", self.patience_spinbox)
 
         # Imgsz
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(256)
-        self.form_layout.addRow("Image Size:", self.imgsz_spinbox)
+        form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Batch
         self.batch_spinbox = QSpinBox()
         self.batch_spinbox.setMinimum(1)
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(512)
-        self.form_layout.addRow("Batch Size:", self.batch_spinbox)
+        form_layout.addRow("Batch Size:", self.batch_spinbox)
 
         # Workers
         self.workers_spinbox = QSpinBox()
         self.workers_spinbox.setMinimum(1)
         self.workers_spinbox.setMaximum(64)
         self.workers_spinbox.setValue(8)
-        self.form_layout.addRow("Workers:", self.workers_spinbox)
+        form_layout.addRow("Workers:", self.workers_spinbox)
 
         # Save
         self.save_combo = create_bool_combo()
-        self.form_layout.addRow("Save:", self.save_combo)
+        form_layout.addRow("Save:", self.save_combo)
 
         # Save Period
         self.save_period_spinbox = QSpinBox()
         self.save_period_spinbox.setMinimum(-1)
         self.save_period_spinbox.setMaximum(1000)
         self.save_period_spinbox.setValue(-1)
-        self.form_layout.addRow("Save Period:", self.save_period_spinbox)
+        form_layout.addRow("Save Period:", self.save_period_spinbox)
 
         # Pretrained
         self.pretrained_combo = create_bool_combo()
-        self.form_layout.addRow("Pretrained:", self.pretrained_combo)
+        form_layout.addRow("Pretrained:", self.pretrained_combo)
 
         # Freeze
         self.freeze_edit = QLineEdit()
-        self.form_layout.addRow("Freeze Layers:", self.freeze_edit)
+        form_layout.addRow("Freeze Layers:", self.freeze_edit)
 
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
-        self.form_layout.addRow("Weighted:", self.weighted_combo)
+        form_layout.addRow("Weighted:", self.weighted_combo)
         
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
         self.dropout_spinbox.setMinimum(0.0)
         self.dropout_spinbox.setMaximum(1.0)
         self.dropout_spinbox.setValue(0.0)
-        self.form_layout.addRow("Dropout:", self.dropout_spinbox)
+        form_layout.addRow("Dropout:", self.dropout_spinbox)
 
         # Optimizer
         self.optimizer_combo = QComboBox()
         self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
         self.optimizer_combo.setCurrentText("auto")
-        self.form_layout.addRow("Optimizer:", self.optimizer_combo)
+        form_layout.addRow("Optimizer:", self.optimizer_combo)
 
         # Lr0
         self.lr0_spinbox = QDoubleSpinBox()
@@ -345,43 +358,47 @@ class Base(QDialog):
         self.lr0_spinbox.setMaximum(1.0000)
         self.lr0_spinbox.setSingleStep(0.0001)
         self.lr0_spinbox.setValue(0.0100)
-        self.form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
+        form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
 
         # Val
         self.val_combo = create_bool_combo()
-        self.form_layout.addRow("Validation:", self.val_combo)
+        form_layout.addRow("Validation:", self.val_combo)
 
         # Fraction
         self.fraction_spinbox = QDoubleSpinBox()
         self.fraction_spinbox.setMinimum(0.1)
         self.fraction_spinbox.setMaximum(1.0)
         self.fraction_spinbox.setValue(1.0)
-        self.form_layout.addRow("Fraction:", self.fraction_spinbox)
+        form_layout.addRow("Fraction:", self.fraction_spinbox)
 
         # Verbose
         self.verbose_combo = create_bool_combo()
-        self.form_layout.addRow("Verbose:", self.verbose_combo)
+        form_layout.addRow("Verbose:", self.verbose_combo)
 
         # Add custom parameters section
         self.custom_params_layout = QVBoxLayout()
-        self.form_layout.addRow("Additional Parameters:", self.custom_params_layout)
+        form_layout.addRow("Additional Parameters:", self.custom_params_layout)
 
         # Add button for new parameter pairs
         self.add_param_button = QPushButton("Add Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
-        self.form_layout.addRow("", self.add_param_button)
-
-        self.main_layout.addLayout(self.form_layout)
-
+        form_layout.addRow("", self.add_param_button)
+        
+        self.layout.addWidget(group_box)        
+        
+    def setup_buttons_layout(self):
+        """
+        
+        """
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
         self.buttons.clicked.connect(self.accept)
-        self.main_layout.addWidget(self.buttons)
+        self.layout.addWidget(self.buttons)
 
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
-        self.main_layout.addWidget(self.cancel_button)
-
+        self.layout.addWidget(self.cancel_button)
+    
     def add_parameter_pair(self):
         """
         Add a new pair of parameter name and value input fields.

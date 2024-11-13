@@ -28,40 +28,33 @@ class Classify(Base):
         self.deploy_model_dialog = main_window.classify_deploy_model_dialog
         self.loaded_model = self.deploy_model_dialog.loaded_model
         
-    def setup_generic_layout(self):
+    def setup_task_specific_layout(self):
         """
         Set up the layout with both generic and classification-specific options.
         """
-        # Call parent implementation first
-        super().setup_generic_layout()
-        
-        # Create a group box for annotation options
-        annotation_group_box = QGroupBox("Annotation Options")
-        annotation_layout = QVBoxLayout()
+        group_box = QGroupBox("Annotation Options")
+        layout = QVBoxLayout()
 
         # Create a button group for the annotation checkboxes
-        self.annotation_options_group = QButtonGroup(self)
-
-        self.review_checkbox = QCheckBox("Predict Review Annotation")
-        self.all_checkbox = QCheckBox("Predict All Annotations")
+        annotation_options_group = QButtonGroup(self)
 
         # Add the checkboxes to the button group
-        self.annotation_options_group.addButton(self.review_checkbox)
-        self.annotation_options_group.addButton(self.all_checkbox)
+        self.review_checkbox = QCheckBox("Predict Review Annotation")
+        self.all_checkbox = QCheckBox("Predict All Annotations")
+        annotation_options_group.addButton(self.review_checkbox)
+        annotation_options_group.addButton(self.all_checkbox)
 
         # Ensure only one checkbox can be checked at a time
-        self.annotation_options_group.setExclusive(True)
-
+        annotation_options_group.setExclusive(True)
         # Set the default checkbox
         self.review_checkbox.setChecked(True)
 
         # Build the annotation layout
-        annotation_layout.addWidget(self.review_checkbox)
-        annotation_layout.addWidget(self.all_checkbox)
-        annotation_group_box.setLayout(annotation_layout)
+        layout.addWidget(self.review_checkbox)
+        layout.addWidget(self.all_checkbox)
 
-        # Add to main layout
-        self.layout.addWidget(annotation_group_box)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def apply(self):
         """
@@ -69,7 +62,6 @@ class Classify(Base):
         """
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
         try:
         
             # Get the Review Annotations

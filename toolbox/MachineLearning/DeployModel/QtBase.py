@@ -36,45 +36,46 @@ class Base(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
+        
+        self.setWindowTitle("Deploy Model")
+        self.resize(400, 300)
 
         self.model_path = None
         self.loaded_model = None  
         self.class_mapping = None
         self.use_sam = None
 
-        self.setWindowTitle("Deploy Model")
-        self.resize(400, 300)
-
         self.layout = QVBoxLayout(self)
         
-        # Set up the common layout components
-        self.setup_generic_layout()
+        # Set up the labels layout
+        self.setup_labels_layout()
+        # Set up the model layout
+        self.setup_models_layout()
+        # Set up the status layout
+        self.setup_status_layout()
         
-        # Create a group box for the status bar
-        status_group = QGroupBox("Status")
-        status_layout = QVBoxLayout()
-        
-        # Status bar for model status
-        self.status_bar = QLabel("No model loaded")
-        status_layout.addWidget(self.status_bar)
-        
-        status_group.setLayout(status_layout)
-        self.layout.addWidget(status_group)
-
-        self.setLayout(self.layout)
-
-    def setup_generic_layout(self, title="Deploy Model"):
+    def setup_labels_layout(self):
         """
-        Set up the common layout elements for model deployment
+        
         """
+        group_box = QGroupBox("Labels")
+        layout = QVBoxLayout()
+        
         # Text area for displaying model info
-        self.text_area = QTextEdit()
-        self.text_area.setReadOnly(True)
-        self.layout.addWidget(self.text_area)
+        self.label_area = QTextEdit()
+        self.label_area.setReadOnly(True)
+        layout.addWidget(self.label_area)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
+    def setup_models_layout(self):
+        """
+        Set up the models layout
+        """
         # Model controls group
-        model_group = QGroupBox("Model Selection")
-        model_layout = QVBoxLayout()
+        group_box = QGroupBox("Model Selection")
+        layout = QVBoxLayout()
 
         # Model control buttons
         self.browse_button = QPushButton("Browse Model")
@@ -93,11 +94,24 @@ class Base(QDialog):
                        self.mapping_button, 
                        self.load_button, 
                        self.deactivate_button]:
-            model_layout.addWidget(button)
+            layout.addWidget(button)
 
-        model_group.setLayout(model_layout)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
         
-        self.layout.addWidget(model_group)
+    def setup_status_layout(self):
+        """
+        """
+        # Create a group box for the status bar
+        group_box = QGroupBox("Status")
+        layout = QVBoxLayout()
+        
+        # Status bar for model status
+        self.status_bar = QLabel("No model loaded")
+        layout.addWidget(self.status_bar)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
         
     def is_sam_model_deployed(self):
         """
@@ -108,8 +122,8 @@ class Base(QDialog):
         self.sam_dialog = self.main_window.sam_deploy_model_dialog
 
         if not self.sam_dialog.loaded_model:
-            # Ensure that the checkbox is not checked
-            self.sender().setChecked(False)
+            # Set the index of the dropdown to 0 (False)
+            self.use_sam.setCurrentIndex(0)
             QMessageBox.warning(self, "SAM Model", "SAM model not currently deployed")
             return False
 
@@ -131,7 +145,7 @@ class Base(QDialog):
                 file_path = os.path.dirname(file_path)
 
             self.model_path = file_path
-            self.text_area.setText("Model file selected")
+            self.label_area.setText("Model file selected")
 
             # Try to load the class mapping file if it exists
             parent_dir = os.path.dirname(os.path.dirname(file_path))
@@ -160,7 +174,7 @@ class Base(QDialog):
         try:
             with open(file_path, 'r') as f:
                 self.class_mapping = json.load(f)
-            self.text_area.append("Class mapping file selected")
+            self.label_area.append("Class mapping file selected")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load class mapping file: {str(e)}")
 
@@ -178,7 +192,7 @@ class Base(QDialog):
             return
             
         class_names = list(self.loaded_model.names.values())
-        class_names_str = "Class Names:\n"
+        class_names_str = ""
         missing_labels = []
 
         for class_name in class_names:
@@ -188,8 +202,8 @@ class Base(QDialog):
             else:
                 class_names_str += f"❌ {class_name}\n"
                 missing_labels.append(class_name)
-
-        self.text_area.setText(class_names_str)
+        
+        self.label_area.setText(class_names_str)
         
         if missing_labels:
             missing_labels_str = "\n".join(missing_labels)
@@ -269,4 +283,4 @@ class Base(QDialog):
         gc.collect()
         empty_cache()
         self.status_bar.setText("No model loaded")
-        self.text_area.setText("No model file selected")
+        self.label_area.setText("No model file selected")

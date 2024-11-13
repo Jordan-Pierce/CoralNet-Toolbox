@@ -32,14 +32,14 @@ from toolbox.utilities import pixmap_to_numpy
 
 class Classify(Base):
     def __init__(self, main_window, parent=None):
-        super().__init__(main_window, parent)
+        super().__init__(main_window, parent)        
         self.setWindowTitle("Deploy Classification Model")
         
-    def setup_generic_layout(self):
-        """
-        Adopt the layout from the Base class
-        """
-        super().setup_generic_layout()        
+        # Setup parameters layout
+        self.setup_parameters_layout()
+        
+    def setup_parameters_layout(self):
+        pass
         
     def load_model(self):
         """

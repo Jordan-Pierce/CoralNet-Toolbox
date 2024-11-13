@@ -42,7 +42,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("SAM Deploy Model") 
-        self.resize(300, 200)
+        self.resize(400, 250)
 
         # Initialize instance variables
         self.imgsz = 1024

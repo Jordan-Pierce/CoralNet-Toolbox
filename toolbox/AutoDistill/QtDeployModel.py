@@ -128,20 +128,20 @@ class DeployModelDialog(QDialog):
         Setup parameter control section in a group box.
         """
         group_box = QGroupBox("Parameters")
-        self.form_layout = QFormLayout()
+        form_layout = QFormLayout()
         
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
-        self.form_layout.addRow("Resize Image:", self.resize_image_dropdown)
+        form_layout.addRow("Resize Image:", self.resize_image_dropdown)
         
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 4096)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
-        self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
+        form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
         
         # Area threshold controls
         self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
@@ -155,8 +155,8 @@ class DeployModelDialog(QDialog):
         self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
         self.area_threshold_slider.valueChanged.connect(self.update_area_label)
         self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
-        self.form_layout.addRow("Area Threshold", self.area_threshold_slider)
-        self.form_layout.addRow("", self.area_threshold_label)
+        form_layout.addRow("Area Threshold", self.area_threshold_slider)
+        form_layout.addRow("", self.area_threshold_label)
 
         # Uncertainty threshold controls
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -166,8 +166,8 @@ class DeployModelDialog(QDialog):
         self.uncertainty_threshold_slider.setTickInterval(10)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
         self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
-        self.form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        self.form_layout.addRow("", self.uncertainty_threshold_label)
+        form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
+        form_layout.addRow("", self.uncertainty_threshold_label)
         
         # IoU threshold controls
         self.iou_threshold_slider = QSlider(Qt.Horizontal)
@@ -177,8 +177,8 @@ class DeployModelDialog(QDialog):
         self.iou_threshold_slider.setTickInterval(10)
         self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
         self.iou_threshold_label = QLabel(f"{self.main_window.get_iou_thresh():.2f}")
-        self.form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
-        self.form_layout.addRow("", self.iou_threshold_label)
+        form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
+        form_layout.addRow("", self.iou_threshold_label)
         
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
@@ -186,9 +186,9 @@ class DeployModelDialog(QDialog):
         self.use_sam_dropdown.setCurrentIndex(1)
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         self.use_sam = self.use_sam_dropdown
-        self.form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
+        form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
         
-        group_box.setLayout(self.form_layout)
+        group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
     
     def setup_buttons_layout(self):

@@ -32,42 +32,31 @@ class Base(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         
+        self.setWindowTitle("Batch Inference")
+        self.resize(400, 100)
+
         self.deploy_model_dialog = None
         self.loaded_model = None
-
         self.annotations = []
         self.prepared_patches = []
         self.image_paths = []
 
-        self.setWindowTitle("Batch Inference")
-        self.resize(400, 100)
-
         self.layout = QVBoxLayout(self)
 
-        # Set up the generic layout
-        self.setup_generic_layout()
-        # Set up the parameters layout
-        self.setup_parameters_layout()
-        
-        # Add the "Okay" and "Cancel" buttons
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.button_box.accepted.connect(self.apply)
-        self.button_box.rejected.connect(self.reject)
-        self.layout.addWidget(self.button_box)
+        # Set up the image options layout
+        self.setup_options_layout()
+        # Set up the task specific layout
+        self.setup_task_specific_layout()
+        # Set up the buttons layout
+        self.setup_buttons_layout()
 
-        # Set the layout
-        self.setLayout(self.layout)
-
-        # Connect to the shared data signal
-        self.main_window.uncertaintyChanged.connect(self.on_uncertainty_changed)
-
-    def setup_generic_layout(self):
+    def setup_options_layout(self):
         """
-        Set up a generic layout and widgets that are not specific to any task.
+        Set up the layout with image options.
         """
         # Create a group box for image options
-        image_group_box = QGroupBox("Image Options")
-        image_layout = QVBoxLayout()
+        group_box = QGroupBox("Image Options")
+        layout = QVBoxLayout()
 
         # Create a button group for the image checkboxes
         image_options_group = QButtonGroup(self)
@@ -89,39 +78,30 @@ class Base(QDialog):
         # Set the default checkbox
         self.apply_all_checkbox.setChecked(True)
 
-        image_layout.addWidget(self.apply_filtered_checkbox)
-        image_layout.addWidget(self.apply_prev_checkbox)
-        image_layout.addWidget(self.apply_next_checkbox)
-        image_layout.addWidget(self.apply_all_checkbox)
-        image_group_box.setLayout(image_layout)
+        layout.addWidget(self.apply_filtered_checkbox)
+        layout.addWidget(self.apply_prev_checkbox)
+        layout.addWidget(self.apply_next_checkbox)
+        layout.addWidget(self.apply_all_checkbox)
 
-        # Add to existing layout instead of creating new one
-        self.layout.addWidget(image_group_box)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
         
-    def setup_parameters_layout(self):
+    def setup_task_specific_layout(self):
         """
-        Set up the layout with parameters specific to the task.
+
         """
-        # Grouping box for parameters
-        parameters_group_box = QGroupBox("Parameters")
-        parameters_layout = QVBoxLayout()
+        raise NotImplementedError("Subclasses must implement this method.")
 
-        # Set the threshold slider for uncertainty
-        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
-        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
-        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
+    def setup_buttons_layout(self):
+        """
+        Set up the layout with buttons.
+        """
+        # Create a button box for the buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.apply)
+        button_box.rejected.connect(self.reject)
 
-        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
-        parameters_layout.addWidget(QLabel("Uncertainty Threshold"))
-        parameters_layout.addWidget(self.uncertainty_threshold_slider)
-        parameters_layout.addWidget(self.uncertainty_threshold_label)
-
-        # Add the parameters group box to the main layout
-        parameters_group_box.setLayout(parameters_layout)
-        self.layout.addWidget(parameters_group_box)
+        self.layout.addWidget(button_box)
     
     def update_uncertainty_label(self):
         """
