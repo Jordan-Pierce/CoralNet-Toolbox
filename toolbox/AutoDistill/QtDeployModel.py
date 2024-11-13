@@ -6,15 +6,16 @@ import gc
 
 import torch
 from autodistill.detection import CaptionOntology
+
+from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
                              QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QSlider, QSpinBox,
-                             QVBoxLayout)
+                             QVBoxLayout, QGroupBox)
 from torch.cuda import empty_cache
 
 from toolbox.QtProgressBar import ProgressBar
-from toolbox.QtRangeSlider import QRangeSlider
 from toolbox.ResultsProcessor import ResultsProcessor
 from toolbox.utilities import rasterio_to_numpy
 
@@ -41,10 +42,14 @@ class DeployModelDialog(QDialog):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
+        
+        self.setWindowTitle("AutoDistill Deploy Model")
+        self.resize(400, 250)
 
         # Initialize instance variables
         self.imgsz = 1024
-        self.uncertainty_thresh = 0.25
+        self.iou_thresh = 0.70
+        self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.01
         self.area_thresh_max = 0.75
         self.loaded_model = None
@@ -52,10 +57,21 @@ class DeployModelDialog(QDialog):
         self.ontology = None
         self.class_mapping = {}
         self.ontology_pairs = []
-        
         self.use_sam = False
 
-        self.setup_ui()
+        # Create the layout
+        self.layout = QVBoxLayout(self)
+        
+        # Setup the model layout
+        self.setup_models_layout()
+        # Setup the ontology layout
+        self.setup_ontology_layout()
+        # Setup the parameter layout
+        self.setup_parameters_layout()
+        # Setup the buttons layout
+        self.setup_buttons_layout()
+        # Setup the status layout
+        self.setup_status_layout()
         
     def showEvent(self, event):
         """
@@ -66,43 +82,31 @@ class DeployModelDialog(QDialog):
         """
         super().showEvent(event)
         self.update_label_options()
+        self.initialize_area_threshold
         self.initialize_uncertainty_threshold()
+        self.initialize_iou_threshold()
 
-    def setup_ui(self):
-        """Setup the user interface components."""
-        # Window configuration
-        self.setWindowTitle("AutoDistill Deploy Model")
-        self.resize(300, 250)
+    def setup_models_layout(self):
+        """
+        Setup model selection dropdown in a group box.
+        """
+        group_box = QGroupBox("Model Selection")
+        layout = QVBoxLayout()
         
-        # Create main layout
-        self.main_layout = QVBoxLayout(self)
-        # Setup model selection
-        self.setup_model_selection()
-        # Setup ontology mapping 
-        self.setup_ontology_section()
-        # Setup parameter controls
-        self.setup_parameter_controls()
-        # Setup action buttons
-        self.setup_action_buttons()
-        # Setup status bar
-        self.status_bar = QLabel("No model loaded")
-        self.main_layout.addWidget(self.status_bar)
-
-    def setup_model_selection(self):
-        """
-        Setup model selection dropdown.
-        """
         self.model_dropdown = QComboBox()
         self.model_dropdown.addItems(["GroundingDINO"])
-        self.main_layout.addWidget(self.model_dropdown)
-
-    def setup_ontology_section(self):
-        """
-        Setup ontology mapping section.
-        """
-        self.ontology_layout = QVBoxLayout()
+        layout.addWidget(self.model_dropdown)
         
-        # Add/Remove buttons layout
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_ontology_layout(self):
+        """
+        Setup ontology mapping section in a group box.
+        """
+        group_box = QGroupBox("Ontology Mapping")
+        layout = QVBoxLayout()
+        
         add_remove_layout = QHBoxLayout()
         
         self.remove_button = QPushButton("Remove")
@@ -113,13 +117,17 @@ class DeployModelDialog(QDialog):
         self.add_button.clicked.connect(self.add_ontology_pair)
         add_remove_layout.addWidget(self.add_button)
         
-        self.ontology_layout.addLayout(add_remove_layout)
-        self.main_layout.addLayout(self.ontology_layout)
+        layout.addLayout(add_remove_layout)
+        self.ontology_layout = layout
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
-    def setup_parameter_controls(self):
+    def setup_parameters_layout(self):
         """
-        Setup parameter control sliders and inputs.
+        Setup parameter control section in a group box.
         """
+        group_box = QGroupBox("Parameters")
         self.form_layout = QFormLayout()
         
         # Resize image dropdown
@@ -136,104 +144,136 @@ class DeployModelDialog(QDialog):
         self.form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
         
         # Area threshold controls
-        self.setup_area_threshold_controls() 
-            
-        # Uncertainty threshold controls
-        self.setup_uncertainty_threshold_controls()
-        
-        # Add the form to the layout
-        self.main_layout.addLayout(self.form_layout)
-        
-        # SAM checkbox
-        self.use_sam_checkbox = QCheckBox("Use SAM for creating Polygons")
-        self.use_sam_checkbox.stateChanged.connect(self.is_sam_model_deployed)
-        self.main_layout.addWidget(self.use_sam_checkbox)
-        self.use_sam = self.use_sam_checkbox
-
-    def setup_area_threshold_controls(self):
-        """
-        Setup area threshold slider and label.
-        """
-        self.area_threshold_slider = QRangeSlider()
-        self.area_threshold_slider.setRange(0, 100)
-        self.area_threshold_slider.setValue((int(self.area_thresh_min * 100), int(self.area_thresh_max * 100)))
-        self.area_threshold_slider.rangeChanged.connect(self.update_area_label)
-
-        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
+        self.area_threshold_slider.setMinimum(0)
+        self.area_threshold_slider.setMaximum(100)
+        self.area_threshold_slider.setSingleStep(1)
+        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_slider.setTickInterval(10)
+        min_val = self.area_thresh_min
+        max_val = self.area_thresh_max
+        self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
+        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
         self.form_layout.addRow("Area Threshold", self.area_threshold_slider)
         self.form_layout.addRow("", self.area_threshold_label)
 
-    def setup_uncertainty_threshold_controls(self):
-        """
-        Setup uncertainty threshold slider and label.
-        """
+        # Uncertainty threshold controls
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
+        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
         self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(5)
+        self.uncertainty_threshold_slider.setTickInterval(10)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-
-        self.uncertainty_threshold_label = QLabel("")
+        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
         self.form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
         self.form_layout.addRow("", self.uncertainty_threshold_label)
-
-    def setup_action_buttons(self):
+        
+        # IoU threshold controls
+        self.iou_threshold_slider = QSlider(Qt.Horizontal)
+        self.iou_threshold_slider.setRange(0, 100)
+        self.iou_threshold_slider.setValue(int(self.main_window.get_iou_thresh() * 100))
+        self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.iou_threshold_slider.setTickInterval(10)
+        self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
+        self.iou_threshold_label = QLabel(f"{self.main_window.get_iou_thresh():.2f}")
+        self.form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
+        self.form_layout.addRow("", self.iou_threshold_label)
+        
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["True", "False"])
+        self.use_sam_dropdown.setCurrentIndex(1)
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        self.use_sam = self.use_sam_dropdown
+        self.form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
+        
+        group_box.setLayout(self.form_layout)
+        self.layout.addWidget(group_box)
+    
+    def setup_buttons_layout(self):
         """
-        Setup load and deactivate buttons.
+        Setup action buttons in a group box.
         """
-        button_layout = QHBoxLayout()
+        group_box = QGroupBox("Actions")
+        layout = QHBoxLayout()
         
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
-        button_layout.addWidget(load_button)
+        layout.addWidget(load_button)
         
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
-        button_layout.addWidget(deactivate_button)
+        layout.addWidget(deactivate_button)
         
-        self.main_layout.addLayout(button_layout)
-
-    def update_area_label(self, min_val, max_val):
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_status_layout(self):
         """
-        Update the area threshold label based on slider values.
-
-        Args:
-            min_val: Minimum slider value.
-            max_val: Maximum slider value.
+        Setup status display in a group box.
         """
-        # Update the area threshold values
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.area_threshold_label.setText(f"Area Threshold: {self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-
-    def update_uncertainty_label(self):
-        """
-        Update the uncertainty threshold label based on slider value.
-        """
-        # Convert the slider value to a ratio (0-1)
-        value = self.uncertainty_threshold_slider.value() / 100.0
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
-        self.uncertainty_thresh = self.uncertainty_threshold_slider.value() / 100.0
+        group_box = QGroupBox("Status")
+        layout = QVBoxLayout()
+        
+        self.status_bar = QLabel("No model loaded")
+        layout.addWidget(self.status_bar)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def initialize_area_threshold(self):
+        """Initialize the area threshold range slider"""
+        min_val = int(self.area_thresh_min * 100)
+        max_val = int(self.area_thresh_max * 100)
+        self.area_threshold_slider.setLow(min_val)
+        self.area_threshold_slider.setHigh(max_val)
+        self.area_threshold_label.setText(f"Area Threshold: {min_val}% - {max_val}%")
         
     def initialize_uncertainty_threshold(self):
-        """Initialize the uncertainty threshold slider with the current value from main window"""
+        """Initialize the uncertainty threshold slider with the current value"""
         current_value = self.main_window.get_uncertainty_thresh()
         self.uncertainty_threshold_slider.setValue(int(current_value * 100))
-        self.uncertainty_threshold_label.setText(f"{current_value:.2f}")
         self.uncertainty_thresh = current_value
 
-    def on_uncertainty_changed(self, value):
-        """
-        Update the slider and label when the uncertainty threshold changes.
+    def initialize_iou_threshold(self):
+        """Initialize the IOU threshold slider with the current value"""
+        current_value = self.main_window.get_iou_thresh()
+        self.iou_threshold_slider.setValue(int(current_value * 100))
+        self.iou_thresh = current_value
+        
+    def update_area_label(self):
+        """Handle changes to area threshold range slider"""
+        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        self.area_thresh_min = min_val / 100.0
+        self.area_thresh_max = max_val / 100.0
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
 
-        Args:
-            value: New uncertainty threshold value.
-        """
-        # Update the slider and label when the shared data changes
-        self.uncertainty_threshold_slider.setValue(int(value * 100))
+    def update_uncertainty_label(self, value):
+        """Update uncertainty threshold and label"""
+        value = value / 100.0
+        self.uncertainty_thresh = value
+        self.main_window.update_uncertainty_thresh(value)
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
-        self.uncertainty_thresh = self.uncertainty_threshold_slider.value() / 100.0
+
+    def update_iou_label(self, value):
+        """Update IoU threshold and label"""
+        value = value / 100.0
+        self.iou_thresh = value 
+        self.main_window.update_iou_thresh(value)
+        self.iou_threshold_label.setText(f"{value:.2f}")
+    
+    def on_uncertainty_changed(self):
+        """Update the slider and label when the shared data changes"""
+        value = self.main_window.get_uncertainty_thresh()
+        self.uncertainty_threshold_slider.setValue(int(value * 100))
+        self.uncertainty_thresh = value
+        
+    def on_iou_changed(self):
+        """Update the slider and label when the shared data changes"""
+        value = self.main_window.get_iou_thresh()
+        self.iou_threshold_slider.setValue(int(value * 100))
+        self.iou_thresh = value        
 
     def update_label_options(self):
         """
@@ -417,14 +457,15 @@ class DeployModelDialog(QDialog):
             image = rasterio_to_numpy(image)
             # Predict the image
             results = self.loaded_model.predict(image)
-            # Perform NMS thresholding
-            results = results.with_nms(self.main_window.get_iou_thresh())
-            # Perform area thresholding
-            min_area_thresh, max_area_thresh = self.get_area_thresh(image)
-            results = results[results.area >= min_area_thresh]
-            results = results[results.area <= max_area_thresh]
+            
             # Create a results processor
-            results_processor = ResultsProcessor(self.main_window, self.class_mapping)
+            results_processor = ResultsProcessor(self.main_window, 
+                                                 self.class_mapping,
+                                                 uncertainty_thresh=self.uncertainty_thresh,
+                                                 iou_thresh=self.iou_thresh,
+                                                 min_area_thresh=self.area_thresh_min,
+                                                 max_area_thresh=self.area_thresh_max)
+            
             results = results_processor.from_supervision(results, image, image_path, self.class_mapping)
             
             # Update the progress bar

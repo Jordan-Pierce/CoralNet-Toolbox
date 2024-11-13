@@ -50,10 +50,17 @@ class Base(QDialog):
         # Set up the common layout components
         self.setup_generic_layout()
         
+        # Create a group box for the status bar
+        status_group = QGroupBox("Status")
+        status_layout = QVBoxLayout()
+        
         # Status bar for model status
         self.status_bar = QLabel("No model loaded")
-        self.layout.addWidget(self.status_bar)
+        status_layout.addWidget(self.status_bar)
         
+        status_group.setLayout(status_layout)
+        self.layout.addWidget(status_group)
+
         self.setLayout(self.layout)
 
     def setup_generic_layout(self, title="Deploy Model"):
@@ -66,7 +73,7 @@ class Base(QDialog):
         self.layout.addWidget(self.text_area)
 
         # Model controls group
-        model_group = QGroupBox("Model Controls")
+        model_group = QGroupBox("Model Selection")
         model_layout = QVBoxLayout()
 
         # Model control buttons
@@ -163,6 +170,36 @@ class Base(QDialog):
         """
         raise NotImplementedError("Subclasses must implement this method")
             
+    def check_and_display_class_names(self):
+        """
+        Check and display the class names
+        """
+        if not self.loaded_model:
+            return
+            
+        class_names = list(self.loaded_model.names.values())
+        class_names_str = "Class Names:\n"
+        missing_labels = []
+
+        for class_name in class_names:
+            label = self.label_window.get_label_by_short_code(class_name)
+            if label:
+                class_names_str += f"✅ {label.short_label_code}: {label.long_label_code}\n"
+            else:
+                class_names_str += f"❌ {class_name}\n"
+                missing_labels.append(class_name)
+
+        self.text_area.setText(class_names_str)
+        
+        if missing_labels:
+            missing_labels_str = "\n".join(missing_labels)
+            QMessageBox.warning(
+                self,
+                "Warning",
+                f"The following short labels are missing and cannot be predicted "
+                f"until added manually:\n{missing_labels_str}"
+            )
+            
     def handle_missing_class_mapping(self):
         """
         Handle the case when the class mapping file is missing.
@@ -203,49 +240,29 @@ class Base(QDialog):
                 QColor(r, g, b)
             )
 
-    def check_and_display_class_names(self):
-        """Check and display the class names"""
-        if not self.loaded_model:
-            return
-            
-        class_names = list(self.loaded_model.names.values())
-        class_names_str = "Class Names:\n"
-        missing_labels = []
-
-        for class_name in class_names:
-            label = self.label_window.get_label_by_short_code(class_name)
-            if label:
-                class_names_str += f"✅ {label.short_label_code}: {label.long_label_code}\n"
-            else:
-                class_names_str += f"❌ {class_name}\n"
-                missing_labels.append(class_name)
-
-        self.text_area.setText(class_names_str)
-        
-        if missing_labels:
-            missing_labels_str = "\n".join(missing_labels)
-            QMessageBox.warning(
-                self,
-                "Warning",
-                f"The following short labels are missing and cannot be predicted "
-                f"until added manually:\n{missing_labels_str}"
-            )
-
     def get_confidence_threshold(self):
-        """Get the confidence threshold for predictions"""
+        """
+        Get the confidence threshold for predictions
+        """
         threshold = self.main_window.get_uncertainty_thresh()
         return threshold if threshold < 0.10 else 0.10
     
     def get_iou_threshold(self):
-        """Get the IoU threshold for predictions"""
+        """
+        Get the IoU threshold for predictions
+        """
         return self.main_window.get_iou_thresh()
     
     def predict(self, inputs):
-        """Predict using deployed model"""
+        """
+        Predict using deployed model
+        """
         raise NotImplementedError("Subclasses must implement predict()")
     
     def deactivate_model(self):
-        """Deactivate the current model"""
+        """
+        Deactivate the current model
+        """
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = None

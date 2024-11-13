@@ -23,14 +23,10 @@ from toolbox.QtProgressBar import ProgressBar
 class Detect(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        self.setup_generic_layout("Detect Batch Inference")
-
-    def apply(self):
-        """
-        Apply batch inference for object detection.
-        """
-        self.image_paths = self.get_selected_image_paths()
-        self.batch_inference()
+        self.setWindowTitle("Detect Batch Inference")
+        
+        self.deploy_model_dialog = main_window.detect_deploy_model_dialog
+        self.loaded_model = self.deploy_model_dialog.loaded_model
         
     def batch_inference(self):
         """
@@ -41,7 +37,7 @@ class Detect(Base):
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
 
-        if self.loaded_models['detect'] is not None:
+        if self.loaded_model is not None:
             self.deploy_model_dialog.predict_detection(image_paths=self.image_paths)
 
         progress_bar.stop_progress()

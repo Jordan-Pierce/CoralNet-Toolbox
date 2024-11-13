@@ -31,15 +31,21 @@ class BatchInferenceDialog(QDialog):
         
         self.setWindowTitle("Batch Inference")
         self.resize(300, 200)  # Width, height
-        self.setup_ui()
+        
+        # Create the layout
+        self.layout = QVBoxLayout(self)
+        
+        # Setup the options layout
+        self.setup_options_layout()
+        # Setup buttons layout
+        self.setup_buttons_layout()
 
-    def setup_ui(self):
-        """Set up the user interface."""
-        layout = QVBoxLayout(self)
-
-        # Create image selection group
-        image_group = QGroupBox("Image Selection")
-        image_layout = QVBoxLayout()
+    def setup_options_layout(self):
+        """
+        Set up the user interface.
+        """
+        group_box = QGroupBox("Image Options")
+        layout = QVBoxLayout()
         
         # Create button group for image selection
         self.image_options_group = QButtonGroup(self)
@@ -49,54 +55,42 @@ class BatchInferenceDialog(QDialog):
         self.apply_prev = QCheckBox("Apply to previous images")
         self.apply_next = QCheckBox("Apply to next images") 
         self.apply_all = QCheckBox("Apply to all images")
-
         # Add options to button group
         self.image_options_group.addButton(self.apply_filtered)
         self.image_options_group.addButton(self.apply_prev)
         self.image_options_group.addButton(self.apply_next)
         self.image_options_group.addButton(self.apply_all)
-        
         # Make selections exclusive
         self.image_options_group.setExclusive(True)
-        
         # Default selection
         self.apply_all.setChecked(True)
 
         # Add widgets to layout
-        image_layout.addWidget(self.apply_filtered)
-        image_layout.addWidget(self.apply_prev)
-        image_layout.addWidget(self.apply_next)
-        image_layout.addWidget(self.apply_all)
-        image_group.setLayout(image_layout)
-        layout.addWidget(image_group)
+        layout.addWidget(self.apply_filtered)
+        layout.addWidget(self.apply_prev)
+        layout.addWidget(self.apply_next)
+        layout.addWidget(self.apply_all)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
-        # Add uncertainty threshold slider
-        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
-        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
-        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-
-        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
-        layout.addWidget(QLabel("Uncertainty Threshold"))
-        layout.addWidget(self.uncertainty_threshold_slider)
-        layout.addWidget(self.uncertainty_threshold_label)
-
-        # Add OK/Cancel buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    def setup_buttons_layout(self):
+        """
+        Setup the buttons layout.
+        """
+        okay_button = QDialogButtonBox.Ok
+        cancel_button = QDialogButtonBox.Cancel
+        button_box = QDialogButtonBox(okay_button | cancel_button)
         button_box.accepted.connect(self.apply)
         button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-    def update_uncertainty_label(self):
-        """Update uncertainty threshold label when slider changes."""
-        value = self.uncertainty_threshold_slider.value() / 100.0
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
-
+        
+        # Add buttons to layout
+        self.layout.addWidget(button_box)
+        
     def get_selected_image_paths(self):
-        """Get list of image paths based on selection."""
+        """
+        Get list of image paths based on selection.
+        """
         current_path = self.annotation_window.current_image_path
         current_index = self.image_window.image_paths.index(current_path)
         
@@ -110,7 +104,9 @@ class BatchInferenceDialog(QDialog):
             return self.image_window.image_paths
         
     def apply(self):
-        """Apply batch inference."""
+        """
+        Apply batch inference.
+        """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.deploy_model_dialog.predict(self.get_selected_image_paths())

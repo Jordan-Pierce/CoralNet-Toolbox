@@ -16,7 +16,13 @@ from toolbox.QtProgressBar import ProgressBar
 
 
 class ResultsProcessor:
-    def __init__(self, main_window, class_mapping, uncertainty_thresh, iou_thresh, min_area_thresh, max_area_thresh):
+    def __init__(self, 
+                 main_window, 
+                 class_mapping, 
+                 uncertainty_thresh=0.3, 
+                 iou_thresh=0.7, 
+                 min_area_thresh=0.01, 
+                 max_area_thresh=0.5):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window

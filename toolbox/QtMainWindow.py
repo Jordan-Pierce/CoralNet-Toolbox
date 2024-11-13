@@ -29,14 +29,23 @@ from toolbox.IO.QtExportCoralNetAnnotations import ExportCoralNetAnnotations
 from toolbox.IO.QtExportViscoreAnnotations import ExportViscoreAnnotations
 from toolbox.IO.QtExportTagLabAnnotations import ExportTagLabAnnotations
 
-from toolbox.MachineLearning.QtBatchInference import BatchInferenceDialog
+from toolbox.MachineLearning.TrainModel.QtClassify import Classify as ClassifyTrainModelDialog
+from toolbox.MachineLearning.TrainModel.QtDetect import Detect as DetectTrainModelDialog
+from toolbox.MachineLearning.TrainModel.QtSegment import Segment as SegmentTrainModelDialog
+
+from toolbox.MachineLearning.DeployModel.QtClassify import Classify as ClassifyDeployModelDialog
+from toolbox.MachineLearning.DeployModel.QtDetect import Detect as DetectDeployModelDialog
+from toolbox.MachineLearning.DeployModel.QtSegment import Segment as SegmentDeployModelDialog
+
+from toolbox.MachineLearning.BatchInference.QtClassify import Classify as ClassifyBatchInferenceDialog
+from toolbox.MachineLearning.BatchInference.QtDetect import Detect as DetectBatchInferenceDialog
+from toolbox.MachineLearning.BatchInference.QtSegment import Segment as SegmentBatchInferenceDialog
+
 from toolbox.MachineLearning.QtImportDataset import ImportDatasetDialog
 from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
-from toolbox.MachineLearning.QtDeployModel import DeployModelDialog
 from toolbox.MachineLearning.QtEvaluateModel import EvaluateModelDialog
 from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
 from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
-from toolbox.MachineLearning.QtTrainModel import TrainModelDialog
 
 from toolbox.SAM.QtDeployModel import DeployModelDialog as SAMDeployModelDialog
 
@@ -94,17 +103,35 @@ class MainWindow(QMainWindow):
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
 
+        # Patch Sampling
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
+        # Import Dataset
         self.import_dataset_dialog = ImportDatasetDialog(self)
+        # Export Dataset
         self.export_dataset_dialog = ExportDatasetDialog(self)
+        # Merge Datasets
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
-        self.train_model_dialog = TrainModelDialog(self)
+        # Train Models
+        self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
+        self.detect_train_model_dialog = DetectTrainModelDialog(self)
+        self.segment_train_model_dialog = SegmentTrainModelDialog(self)
+        # Evaluate Model
         self.evaluate_model_dialog = EvaluateModelDialog(self)
+        # Optimize Model
         self.optimize_model_dialog = OptimizeModelDialog(self)
-        self.deploy_model_dialog = DeployModelDialog(self)
-        self.batch_inference_dialog = BatchInferenceDialog(self)
+        # Deploy Model
+        self.classify_deploy_model_dialog = ClassifyDeployModelDialog(self)
+        self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
+        self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
+        # Batch Inference
+        self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
+        self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
+        self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
+        # SAM Deploy Model
         self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
+        # AutoDistill Deploy Model
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
+        # AutoDistill Batch Inference
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
 
         # Connect signals to update status bar
@@ -151,15 +178,15 @@ class MainWindow(QMainWindow):
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
 
-        self.import_ortho_action = QAction("Orthomosaic", self)
-        self.import_ortho_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.import_rasters_menu.addAction(self.import_ortho_action)
+        # self.import_ortho_action = QAction("Orthomosaic", self)
+        # self.import_ortho_action.triggered.connect(
+        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
+        # self.import_rasters_menu.addAction(self.import_ortho_action)
 
-        self.import_frames_action = QAction("Video Frames", self)
-        self.import_frames_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.import_rasters_menu.addAction(self.import_frames_action)
+        # self.import_frames_action = QAction("Video Frames", self)
+        # self.import_frames_action.triggered.connect(
+        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
+        # self.import_rasters_menu.addAction(self.import_frames_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -238,54 +265,90 @@ class MainWindow(QMainWindow):
         self.menu_bar.addAction(self.annotation_sampling_action)
 
         # CoralNet menu
-        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+        # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
 
-        self.coralnet_authenticate_action = QAction("Authenticate", self)
-        self.coralnet_authenticate_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
+        # self.coralnet_authenticate_action = QAction("Authenticate", self)
+        # self.coralnet_authenticate_action.triggered.connect(
+        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
+        # self.coralnet_menu.addAction(self.coralnet_authenticate_action)
 
-        self.coralnet_upload_action = QAction("Upload", self)
-        self.coralnet_upload_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.coralnet_menu.addAction(self.coralnet_upload_action)
+        # self.coralnet_upload_action = QAction("Upload", self)
+        # self.coralnet_upload_action.triggered.connect(
+        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
+        # self.coralnet_menu.addAction(self.coralnet_upload_action)
 
-        self.coralnet_download_action = QAction("Download", self)
-        self.coralnet_download_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.coralnet_menu.addAction(self.coralnet_download_action)
+        # self.coralnet_download_action = QAction("Download", self)
+        # self.coralnet_download_action.triggered.connect(
+        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
+        # self.coralnet_menu.addAction(self.coralnet_download_action)
 
-        self.coralnet_model_api_action = QAction("Model API", self)
-        self.coralnet_model_api_action.triggered.connect(
-            lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        self.coralnet_menu.addAction(self.coralnet_model_api_action)
+        # self.coralnet_model_api_action = QAction("Model API", self)
+        # self.coralnet_model_api_action.triggered.connect(
+        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
+        # self.coralnet_menu.addAction(self.coralnet_model_api_action)
 
         # Ultralytics menu
         self.ml_menu = self.menu_bar.addMenu("Ultralytics")
 
+        # Merge Datasets action
         self.ml_merge_datasets_action = QAction("Merge Datasets", self)
         self.ml_merge_datasets_action.triggered.connect(self.open_merge_datasets_dialog)
         self.ml_menu.addAction(self.ml_merge_datasets_action)
 
-        self.ml_train_model_action = QAction("Train Model", self)
-        self.ml_train_model_action.triggered.connect(self.open_train_model_dialog)
-        self.ml_menu.addAction(self.ml_train_model_action)
+        # Train Model submenu
+        self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
 
+        self.ml_classify_train_model_action = QAction("Classify", self)
+        self.ml_classify_train_model_action.triggered.connect(self.classify_train_model_dialog.exec_)
+        self.ml_train_model_menu.addAction(self.ml_classify_train_model_action)
+
+        self.ml_detect_train_model_action = QAction("Detect", self)
+        self.ml_detect_train_model_action.triggered.connect(self.detect_train_model_dialog.exec_)
+        self.ml_train_model_menu.addAction(self.ml_detect_train_model_action)
+
+        self.ml_segment_train_model_action = QAction("Segment", self)
+        self.ml_segment_train_model_action.triggered.connect(self.segment_train_model_dialog.exec_)
+        self.ml_train_model_menu.addAction(self.ml_segment_train_model_action)
+
+        # Evaluate Model action
         self.ml_evaluate_model_action = QAction("Evaluate Model", self)
         self.ml_evaluate_model_action.triggered.connect(self.open_evaluate_model_dialog)
         self.ml_menu.addAction(self.ml_evaluate_model_action)
 
+        # Optimize Model action
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
 
-        self.ml_deploy_model_action = QAction("Deploy Model", self)
-        self.ml_deploy_model_action.triggered.connect(self.open_deploy_model_dialog)
-        self.ml_menu.addAction(self.ml_deploy_model_action)
+        # Deploy Model submenu
+        self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
 
-        self.ml_batch_inference_action = QAction("Batch Inference", self)
-        self.ml_batch_inference_action.triggered.connect(self.open_batch_inference_dialog)
-        self.ml_menu.addAction(self.ml_batch_inference_action)
+        self.ml_classify_deploy_model_action = QAction("Classify", self)
+        self.ml_classify_deploy_model_action.triggered.connect(self.classify_deploy_model_dialog.exec_)
+        self.ml_deploy_model_menu.addAction(self.ml_classify_deploy_model_action)
+
+        self.ml_detect_deploy_model_action = QAction("Detect", self)
+        self.ml_detect_deploy_model_action.triggered.connect(self.detect_deploy_model_dialog.exec_)
+        self.ml_deploy_model_menu.addAction(self.ml_detect_deploy_model_action)
+
+        self.ml_segment_deploy_model_action = QAction("Segment", self)
+        self.ml_segment_deploy_model_action.triggered.connect(self.segment_deploy_model_dialog.exec_)
+        self.ml_deploy_model_menu.addAction(self.ml_segment_deploy_model_action)
+
+        # Batch Inference submenu
+        self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
+
+        self.ml_classify_batch_inference_action = QAction("Classify", self)
+        self.ml_classify_batch_inference_action.triggered.connect(self.classify_batch_inference_dialog.exec_)
+        self.ml_batch_inference_menu.addAction(self.ml_classify_batch_inference_action)
+
+        self.ml_detect_batch_inference_action = QAction("Detect", self)
+        self.ml_detect_batch_inference_action.triggered.connect(self.detect_batch_inference_dialog.exec_)
+        self.ml_batch_inference_menu.addAction(self.ml_detect_batch_inference_action)
+
+        self.ml_segment_batch_inference_action = QAction("Segment", self)
+        self.ml_segment_batch_inference_action.triggered.connect(self.segment_batch_inference_dialog.exec_)
+        self.ml_batch_inference_menu.addAction(self.ml_segment_batch_inference_action)
 
         # SAM menu
         self.sam_menu = self.menu_bar.addMenu("SAM")
@@ -312,10 +375,17 @@ class MainWindow(QMainWindow):
         self.toolbar.setMovable(False)  # Lock the toolbar in place
         self.addToolBar(Qt.LeftToolBarArea, self.toolbar)
 
-        # Add a spacer before the first tool with a fixed height
+        # Define spacer
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         spacer.setFixedHeight(10)  # Set a fixed height for the spacer
+        
+        # Define line separator
+        separator = QWidget()
+        separator.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        separator.setFixedHeight(1)  # Set a fixed height for the line separator
+        
+        # Add a spacer before the first tool with a fixed height
         self.toolbar.addWidget(spacer)
 
         # Define icon paths
@@ -334,7 +404,9 @@ class MainWindow(QMainWindow):
         self.select_tool_action.setCheckable(True)
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
-
+        
+        self.toolbar.addWidget(separator)
+        
         self.patch_tool_action = QAction(QIcon(self.patch_icon_path), "Patch", self)
         self.patch_tool_action.setCheckable(True)
         self.patch_tool_action.triggered.connect(self.toggle_tool)
@@ -349,7 +421,9 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setCheckable(True)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
-
+        
+        self.toolbar.addWidget(separator)
+        
         self.sam_tool_action = QAction(QIcon(self.sam_icon_path), "SAM", self)
         self.sam_tool_action.setCheckable(True)
         self.sam_tool_action.triggered.connect(self.toggle_tool)
@@ -687,7 +761,6 @@ class MainWindow(QMainWindow):
         else:
             self.label_window.set_label_transparency(self.transparency_slider.value())
 
-
     def get_uncertainty_thresh(self):
         return self.uncertainty_thresh
 
@@ -760,10 +833,24 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_train_model_dialog(self):
+    def open_classify_train_model_dialog(self):
         try:
             self.untoggle_all_tools()
-            self.train_model_dialog.exec_()
+            self.classify_train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_detect_train_model_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.detect_train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_segment_train_model_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.segment_train_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -781,19 +868,45 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_deploy_model_dialog(self):
+    def open_classify_deploy_model_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
-                                "Deploy Model",
+                                "Classify Deploy Model",
                                 "No images are present in the project.")
             return
 
         try:
             self.untoggle_all_tools()
-            self.deploy_model_dialog.exec_()
+            self.classify_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
+    def open_detect_deploy_model_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Detect Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.detect_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_segment_deploy_model_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Segment Deploy Model",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.segment_deploy_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
     def open_batch_inference_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
@@ -810,6 +923,63 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_classify_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.classify_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.classify_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_detect_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.detect_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.detect_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_segment_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.segment_deploy_model_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.segment_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

@@ -50,12 +50,24 @@ class Classify(Base):
             return
             
         try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
             self.loaded_model = YOLO(self.model_path, task='classify')
             self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
-            self.status_bar.setText("Model loaded successfully")
-            self.check_and_display_class_names()
+
+            if not self.class_mapping:
+                self.handle_missing_class_mapping()
+            else:
+                self.add_labels_to_label_window()
+                self.check_and_display_class_names()
+            
+            # Update the status bar
+            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
+            QMessageBox.information(self, "Model Loaded", "Model loaded successfully.")
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load model: {str(e)}")
+        finally:
+            QApplication.restoreOverrideCursor()
             
     def predict(self, inputs=None):
         """

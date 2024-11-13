@@ -386,7 +386,7 @@ class SAMTool(Tool):
         if not results:
             return None
 
-        if results.boxes.conf[0] < self.sam_dialog.conf:
+        if results.boxes.conf[0] < self.sam_dialog.uncertainty_thresh:
             return None
         
         # TODO use results processor

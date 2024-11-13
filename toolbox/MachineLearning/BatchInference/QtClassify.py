@@ -23,24 +23,10 @@ from toolbox.QtProgressBar import ProgressBar
 class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        self.setup_generic_layout("Classify Batch Inference")
-
-    def apply(self):
-        """
-        Apply batch inference for image classification.
-        """
-        # Get the Review Annotations
-        if self.review_checkbox.isChecked():
-            for image_path in self.get_selected_image_paths():
-                self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
-        else:
-            # Get all the annotations
-            for image_path in self.get_selected_image_paths():
-                self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
-
-        # Crop them, if not already cropped
-        self.preprocess_patch_annotations()
-        self.batch_inference()
+        self.setWindowTitle("Classify Batch Inference")
+        
+        self.deploy_model_dialog = main_window.classify_deploy_model_dialog
+        self.loaded_model = self.deploy_model_dialog.loaded_model
         
     def setup_generic_layout(self):
         """
@@ -76,9 +62,40 @@ class Classify(Base):
 
         # Add to main layout
         self.layout.addWidget(annotation_group_box)
+
+    def apply(self):
+        """
+        Apply batch inference for image classification.
+        """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Move button box to the bottom (it was added in parent class)
-        self.layout.addWidget(self.button_box)
+        try:
+        
+            # Get the Review Annotations
+            if self.review_checkbox.isChecked():
+                for image_path in self.get_selected_image_paths():
+                    self.annotations.extend(self.annotation_window.get_image_review_annotations(image_path))
+            else:
+                # Get all the annotations
+                for image_path in self.get_selected_image_paths():
+                    self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
+
+            # Crop them, if not already cropped
+            self.preprocess_patch_annotations()
+            self.batch_inference()
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            
+        finally:
+            # Restore the cursor
+            QApplication.restoreOverrideCursor()
+            self.annotations = []
+            self.prepared_patches = []
+            self.image_paths = []
+        
+        self.accept()
         
     def preprocess_patch_annotations(self):
         """
@@ -127,13 +144,13 @@ class Classify(Base):
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
 
-        if self.loaded_models['classify'] is not None:
+        if self.loaded_model is not None:
             # Group annotations by image path
             groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')), key=attrgetter('image_path'))
 
             # Make predictions on each image's annotations
             for path, patches in groups:
-                self.deploy_model_dialog.predict_classification(annotations=list(patches))
+                self.deploy_model_dialog.predict(annotations=list(patches))
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()

@@ -18,7 +18,11 @@ class GlobalEventFilter(QObject):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
-        self.deploy_model_dialog = main_window.deploy_model_dialog
+        
+        self.classify_deploy_model_dialog = main_window.classify_deploy_model_dialog
+        self.detect_deploy_model_dialog = main_window.detect_deploy_model_dialog
+        self.segment_deploy_model_dialog = main_window.segment_deploy_model_dialog
+        self.sam_deploy_model_dialog = None
         self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
 
     def eventFilter(self, obj, event):
@@ -32,17 +36,17 @@ class GlobalEventFilter(QObject):
 
                 # Handle hotkey for image classification prediction
                 if event.key() == Qt.Key_1:
-                    self.deploy_model_dialog.predict_classification()
+                    self.classify_deploy_model_dialog.predict()
                     return True
 
                 # Handle hotkey for object detection prediction
                 if event.key() == Qt.Key_2:
-                    self.deploy_model_dialog.predict_detection()
+                    self.detect_deploy_model_dialog.predict()
                     return True
 
                 # Handle hotkey for instance segmentation prediction
                 if event.key() == Qt.Key_3:
-                    self.deploy_model_dialog.predict_segmentation()
+                    self.segment_deploy_model_dialog.predict()
                     return True
                 
                 # Handle hotkey for segment everything prediction

@@ -196,20 +196,18 @@ class Base(QDialog):
         self.setLayout(QVBoxLayout())
         self.layout().addWidget(scroll_area)
         
-    def setup_generic_layout(self, title="Train Model"):
+    def setup_generic_layout(self):
         """
         Set up the layout and widgets for the generic layout.
-        """
-        ###
-        # Model layout
-        model_layout = QVBoxLayout()
-        
-        if "Classification" in title:
-            self.task = "classify"
-        elif "Detection" in title:
-            self.task = "detect"
-        else:
-            self.task = "segment"
+        """ 
+        # Create helper function for boolean dropdowns
+        def create_bool_combo():
+            combo = QComboBox()
+            combo.addItems(["True", "False"])
+            return combo
+
+        # Parameters Form
+        self.form_layout = QFormLayout()
 
         if self.task == "classify":
             # Dataset Directory
@@ -218,10 +216,9 @@ class Base(QDialog):
             self.dataset_button.clicked.connect(self.browse_dataset_dir)
 
             dataset_dir_layout = QHBoxLayout()
-            dataset_dir_layout.addWidget(QLabel("Dataset Directory:"))
             dataset_dir_layout.addWidget(self.dataset_edit)
             dataset_dir_layout.addWidget(self.dataset_button)
-            model_layout.addLayout(dataset_dir_layout)
+            self.form_layout.addRow("Dataset Directory:", dataset_dir_layout)
             
         else:
             # Dataset YAML
@@ -230,9 +227,9 @@ class Base(QDialog):
             self.dataset_button.clicked.connect(self.browse_dataset_yaml)
             
             dataset_yaml_layout = QHBoxLayout()
-            dataset_yaml_layout.addWidget(QLabel("Dataset YAML:"))
             dataset_yaml_layout.addWidget(self.dataset_edit)
             dataset_yaml_layout.addWidget(self.dataset_button)
+            self.form_layout.addRow("Dataset YAML:", dataset_yaml_layout)
 
         # Class Mapping
         self.mapping_edit = QLineEdit()
@@ -240,27 +237,14 @@ class Base(QDialog):
         self.mapping_button.clicked.connect(self.browse_class_mapping_file)
 
         class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(QLabel("Class Mapping:"))
         class_mapping_layout.addWidget(self.mapping_edit)
         class_mapping_layout.addWidget(self.mapping_button)
-        model_layout.addLayout(class_mapping_layout)
+        self.form_layout.addRow("Class Mapping:", class_mapping_layout)
         
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
-        
-        model_combo_layout = QHBoxLayout()
-        model_combo_layout.addWidget(QLabel("Model:"))
-        model_combo_layout.addWidget(self.model_combo)
-        model_layout.addLayout(model_combo_layout)
-        model_layout.addWidget(self.model_combo)
-        
-        # Add to main layout
-        self.main_layout.addLayout(model_layout)
-
-        ### 
-        # Parameters Form
-        self.form_layout = QFormLayout()
+        self.form_layout.addRow("Model:", self.model_combo)
 
         # Project
         self.project_edit = QLineEdit()
@@ -320,9 +304,8 @@ class Base(QDialog):
         self.form_layout.addRow("Workers:", self.workers_spinbox)
 
         # Save
-        self.save_checkbox = QCheckBox()
-        self.save_checkbox.setChecked(True)
-        self.form_layout.addRow("Save:", self.save_checkbox)
+        self.save_combo = create_bool_combo()
+        self.form_layout.addRow("Save:", self.save_combo)
 
         # Save Period
         self.save_period_spinbox = QSpinBox()
@@ -332,19 +315,17 @@ class Base(QDialog):
         self.form_layout.addRow("Save Period:", self.save_period_spinbox)
 
         # Pretrained
-        self.pretrained_checkbox = QCheckBox()
-        self.pretrained_checkbox.setChecked(True)
-        self.form_layout.addRow("Pretrained:", self.pretrained_checkbox)
+        self.pretrained_combo = create_bool_combo()
+        self.form_layout.addRow("Pretrained:", self.pretrained_combo)
 
         # Freeze
         self.freeze_edit = QLineEdit()
         self.form_layout.addRow("Freeze Layers:", self.freeze_edit)
 
         # Weighted Dataset
-        self.weighted_checkbox = QCheckBox()
-        self.weighted_checkbox.setChecked(False)
-        self.form_layout.addRow("Weighted:", self.weighted_checkbox)
-
+        self.weighted_combo = create_bool_combo()
+        self.form_layout.addRow("Weighted:", self.weighted_combo)
+        
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
         self.dropout_spinbox.setMinimum(0.0)
@@ -367,9 +348,8 @@ class Base(QDialog):
         self.form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
 
         # Val
-        self.val_checkbox = QCheckBox()
-        self.val_checkbox.setChecked(True)
-        self.form_layout.addRow("Validation:", self.val_checkbox)
+        self.val_combo = create_bool_combo()
+        self.form_layout.addRow("Validation:", self.val_combo)
 
         # Fraction
         self.fraction_spinbox = QDoubleSpinBox()
@@ -379,9 +359,8 @@ class Base(QDialog):
         self.form_layout.addRow("Fraction:", self.fraction_spinbox)
 
         # Verbose
-        self.verbose_checkbox = QCheckBox()
-        self.verbose_checkbox.setChecked(True)
-        self.form_layout.addRow("Verbose:", self.verbose_checkbox)
+        self.verbose_combo = create_bool_combo()
+        self.form_layout.addRow("Verbose:", self.verbose_combo)
 
         # Add custom parameters section
         self.custom_params_layout = QVBoxLayout()
@@ -507,20 +486,20 @@ class Base(QDialog):
             'data': self.dataset_edit.text(),
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),
-            'batch': self.batch_spinbox.value(),
+            'batch': self.batch_spinbox.value(), 
             'imgsz': self.imgsz_spinbox.value(),
-            'save': self.save_checkbox.isChecked(),
+            'save': self.save_combo.currentText() == "True",
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
-            'pretrained': self.pretrained_checkbox.isChecked(),
+            'pretrained': self.pretrained_combo.currentText() == "True", 
             'optimizer': self.optimizer_combo.currentText(),
-            'verbose': self.verbose_checkbox.isChecked(),
+            'verbose': self.verbose_combo.currentText() == "True",
             'fraction': self.fraction_spinbox.value(),
             'freeze': self.freeze_edit.text(),
             'lr0': self.lr0_spinbox.value(),
-            'weighted': self.weighted_checkbox.isChecked(),
+            'weighted': self.weighted_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
-            'val': self.val_checkbox.isChecked(),
+            'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
             'plots': True,
         }
