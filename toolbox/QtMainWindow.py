@@ -8,7 +8,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget, QCheckBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, QPushButton)
+                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, 
+                             QPushButton)
 
 from toolbox.QtAnnotationWindow import AnnotationWindow
 from toolbox.QtConfidenceWindow import ConfidenceWindow
@@ -41,7 +42,9 @@ from toolbox.MachineLearning.BatchInference.QtClassify import Classify as Classi
 from toolbox.MachineLearning.BatchInference.QtDetect import Detect as DetectBatchInferenceDialog
 from toolbox.MachineLearning.BatchInference.QtSegment import Segment as SegmentBatchInferenceDialog
 
-from toolbox.MachineLearning.QtImportDataset import ImportDatasetDialog
+from toolbox.MachineLearning.ImportDataset.QtDetect import Detect as DetectImportDatasetDialog
+from toolbox.MachineLearning.ImportDataset.QtSegment import Segment as SegmentImportDatasetDialog
+
 from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
 from toolbox.MachineLearning.QtEvaluateModel import EvaluateModelDialog
 from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
@@ -105,7 +108,8 @@ class MainWindow(QMainWindow):
 
         # Create dialogs
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
-        self.import_dataset_dialog = ImportDatasetDialog(self)
+        self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
+        self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
         self.export_dataset_dialog = ExportDatasetDialog(self)
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
@@ -205,11 +209,16 @@ class MainWindow(QMainWindow):
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
+        
+        # Import Detection Dataset submenu
+        self.import_detect_dataset_action = QAction("Detect", self)
+        self.import_detect_dataset_action.triggered.connect(self.detect_import_dataset_dialog.exec_)
+        self.import_dataset_menu.addAction(self.import_detect_dataset_action)
 
-        # Import YOLO Dataset menu
-        self.import_dataset_action = QAction("YOLO (TXT)", self)
-        self.import_dataset_action.triggered.connect(self.open_import_dataset_dialog)
-        self.import_dataset_menu.addAction(self.import_dataset_action)
+        # Import Segmentation Dataset submenu
+        self.import_segment_dataset_action = QAction("Segment", self)
+        self.import_segment_dataset_action.triggered.connect(self.segment_import_dataset_dialog.exec_)
+        self.import_dataset_menu.addAction(self.import_segment_dataset_action)
 
         # Export menu
         self.export_menu = self.menu_bar.addMenu("Export")

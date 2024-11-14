@@ -28,7 +28,7 @@ from toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class ImportDatasetDialog(QDialog):
+class Base(QDialog):
     """
     Dialog for importing datasets for object detection and instance segmentation.
 
@@ -36,84 +36,76 @@ class ImportDatasetDialog(QDialog):
     :param parent: Parent widget
     """
     def __init__(self, main_window, parent=None):
-        super(ImportDatasetDialog, self).__init__(parent)
+        super(Base, self).__init__(parent)
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("Import Dataset")
         self.resize(500, 300)
-
-        self.init_ui()
-
-    def init_ui(self):
+        
+        self.layout = QVBoxLayout(self)
+        
+        # Setup the YAML layout
+        self.setup_yaml_layout()
+        # Self the output layout
+        self.setup_output_layout()
+        # Setup the buttons layout
+        self.setup_buttons_layout()
+        
+    def setup_yaml_layout(self):
         """
-        Initialize the user interface for the ImportDatasetDialog.
+        Initialize the user interface for the ImportDatasetDialog using a form layout.
         """
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        group_box = QGroupBox("Data YAML File")
+        layout = QGridLayout()
 
-        # Radio buttons for Object Detection and Instance Segmentation
-        detection_type_group = QGroupBox("Detection Type")
-        detection_type_layout = QHBoxLayout()
-        self.object_detection_radio = QRadioButton("Object Detection")
-        self.instance_segmentation_radio = QRadioButton("Instance Segmentation")
-        self.detection_type_group = QButtonGroup()
-        self.detection_type_group.addButton(self.object_detection_radio)
-        self.detection_type_group.addButton(self.instance_segmentation_radio)
-        self.object_detection_radio.setChecked(True)  # Set default selection
-
-        detection_type_layout.addWidget(self.object_detection_radio)
-        detection_type_layout.addWidget(self.instance_segmentation_radio)
-        detection_type_group.setLayout(detection_type_layout)
-        main_layout.addWidget(detection_type_group)
-
-        # Group for data.yaml file selection
-        yaml_group = QGroupBox("Data YAML File")
-        yaml_layout = QGridLayout()
-        yaml_group.setLayout(yaml_layout)
-
+        # YAML file selection row
+        layout.addWidget(QLabel("File:"), 0, 0)
         self.yaml_path_label = QLineEdit()
         self.yaml_path_label.setReadOnly(True)
         self.yaml_path_label.setPlaceholderText("Select data.yaml file...")
+        layout.addWidget(self.yaml_path_label, 0, 1)
+        
         self.browse_yaml_button = QPushButton("Browse")
         self.browse_yaml_button.clicked.connect(self.browse_data_yaml)
+        layout.addWidget(self.browse_yaml_button, 0, 2)
 
-        yaml_layout.addWidget(QLabel("Path:"), 0, 0)
-        yaml_layout.addWidget(self.yaml_path_label, 0, 1)
-        yaml_layout.addWidget(self.browse_yaml_button, 0, 2)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
-        main_layout.addWidget(yaml_group)
-
+    def setup_output_layout(self):
+        """
+        """
         # Group for output directory selection
-        output_group = QGroupBox("Output Settings")
-        output_layout = QGridLayout()
-        output_group.setLayout(output_layout)
+        group_box = QGroupBox("Output Settings")
+        layout = QGridLayout()
 
+        # Directory selection row
+        layout.addWidget(QLabel("Directory:"), 0, 0)
         self.output_dir_label = QLineEdit()
         self.output_dir_label.setPlaceholderText("Select output directory...")
+        layout.addWidget(self.output_dir_label, 0, 1)
         self.browse_output_button = QPushButton("Browse")
         self.browse_output_button.clicked.connect(self.browse_output_dir)
+        layout.addWidget(self.browse_output_button, 0, 2)
 
+        # Folder name row
+        layout.addWidget(QLabel("Folder Name:"), 1, 0)
         self.output_folder_name = QLineEdit("")
         self.output_folder_name.setPlaceholderText("data")
+        layout.addWidget(self.output_folder_name, 1, 1, 1, 2)
 
-        output_layout.addWidget(QLabel("Directory:"), 0, 0)
-        output_layout.addWidget(self.output_dir_label, 0, 1)
-        output_layout.addWidget(self.browse_output_button, 0, 2)
-        output_layout.addWidget(QLabel("Folder Name:"), 1, 0)
-        output_layout.addWidget(self.output_folder_name, 1, 1, 1, 2)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
-        main_layout.addWidget(output_group)
-
-        # Accept and Cancel buttons
+    def setup_buttons_layout(self):
+        """
+        """
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
-        main_layout.addWidget(self.button_box)
-
-        self.setLayout(main_layout)
-
+        self.layout.addWidget(self.button_box)
+    
     def browse_data_yaml(self):
         """
         Browse and select a data.yaml file.
@@ -129,7 +121,6 @@ class ImportDatasetDialog(QDialog):
         """
         Browse and select an output directory.
         """
-        options = QFileDialog.Options()
         dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_path:
             self.output_dir_label.setText(dir_path)
