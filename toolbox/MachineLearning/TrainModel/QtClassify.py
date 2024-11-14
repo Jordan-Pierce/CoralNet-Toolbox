@@ -5,7 +5,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox)
+                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
 
 from toolbox.MachineLearning.TrainModel.QtBase import Base
 
@@ -17,15 +17,39 @@ from toolbox.MachineLearning.TrainModel.QtBase import Base
 
 class Classify(Base):
     def __init__(self, main_window, parent=None):
+        self.task = "classify"
+        
         super().__init__(main_window, parent)
         self.setWindowTitle("Train Classification Model")
+        
+    def setup_dataset_layout(self):
+        """Setup the dataset layout."""
+        
+        group_box = QGroupBox("Dataset")
+        layout = QFormLayout()
 
-    def setup_generic_layout(self):
-        """
-        Adopt the layout from the Base class but ensure task is set correctly
-        """
-        self.task = "classify"
-        super().setup_generic_layout()
+        # Dataset Directory
+        self.dataset_edit = QLineEdit()
+        self.dataset_button = QPushButton("Browse...")
+        self.dataset_button.clicked.connect(self.browse_dataset_dir)
+
+        dataset_dir_layout = QHBoxLayout()
+        dataset_dir_layout.addWidget(self.dataset_edit)
+        dataset_dir_layout.addWidget(self.dataset_button)
+        layout.addRow("Dataset Directory:", dataset_dir_layout)
+
+        # Class Mapping
+        self.mapping_edit = QLineEdit()
+        self.mapping_button = QPushButton("Browse...")
+        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.mapping_edit)
+        class_mapping_layout.addWidget(self.mapping_button)
+        layout.addRow("Class Mapping:", class_mapping_layout)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
         
     def load_model_combobox(self):
         """Load the model combobox with the available models."""

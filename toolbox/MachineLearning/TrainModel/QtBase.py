@@ -69,13 +69,22 @@ class TrainModelWorker(QThread):
 
             # Use the custom dataset class for weighted sampling
             if weighted and self.params['task'] == 'classify':
+                OriginalDataset = train_build.ClassificationDataset
                 train_build.ClassificationDataset = WeightedClassificationDataset
             elif weighted and self.params['task'] in ['detect', 'segment']:
+                OriginalDataset = build.YOLODataset
                 build.YOLODataset = WeightedInstanceDataset
 
             # Load the model, train, and save the best weights
             self.model = YOLO(model_path)
             self.model.train(**self.params, device=self.device)
+            
+            # Revert to the original dataset class without weighted sampling
+            if weighted and self.params['task'] == 'classify':
+                train_build.ClassificationDataset = OriginalDataset
+            elif weighted and self.params['task'] in ['detect', 'segment']:
+                build.YOLODataset = OriginalDataset
+                
             # Evaluate the model after training
             self.evaluate_model()
             # Emit signal to indicate training has completed
@@ -175,7 +184,9 @@ class Base(QDialog):
 
         # Create the info layout
         self.setup_info_layout()
-        # Create and set up the generic layout
+        # Create the dataset layout
+        self.setup_dataset_layout()
+        # Create and set up the parameters layout
         self.setup_parameters_layout()
         # Create the buttons layout
         self.setup_buttons_layout()
@@ -197,6 +208,9 @@ class Base(QDialog):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def setup_dataset_layout(self):
+        raise NotImplementedError("Subclasses must implement this method.")
         
     def setup_parameters_layout(self):
         """
@@ -221,38 +235,6 @@ class Base(QDialog):
         group_box = QGroupBox("Parameters")
         group_layout = QVBoxLayout(group_box)
         group_layout.addWidget(scroll_area)
-
-        if self.task == "classify":
-            # Dataset Directory
-            self.dataset_edit = QLineEdit()
-            self.dataset_button = QPushButton("Browse...")
-            self.dataset_button.clicked.connect(self.browse_dataset_dir)
-
-            dataset_dir_layout = QHBoxLayout()
-            dataset_dir_layout.addWidget(self.dataset_edit)
-            dataset_dir_layout.addWidget(self.dataset_button)
-            form_layout.addRow("Dataset Directory:", dataset_dir_layout)
-            
-        else:
-            # Dataset YAML
-            self.dataset_edit = QLineEdit()
-            self.dataset_button = QPushButton("Browse...")
-            self.dataset_button.clicked.connect(self.browse_dataset_yaml)
-            
-            dataset_yaml_layout = QHBoxLayout()
-            dataset_yaml_layout.addWidget(self.dataset_edit)
-            dataset_yaml_layout.addWidget(self.dataset_button)
-            form_layout.addRow("Dataset YAML:", dataset_yaml_layout)
-
-        # Class Mapping
-        self.mapping_edit = QLineEdit()
-        self.mapping_button = QPushButton("Browse...")
-        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
-
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.mapping_edit)
-        class_mapping_layout.addWidget(self.mapping_button)
-        form_layout.addRow("Class Mapping:", class_mapping_layout)
         
         # Model combo box
         self.model_combo = QComboBox()
