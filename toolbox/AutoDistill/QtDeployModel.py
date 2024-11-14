@@ -19,6 +19,7 @@ from toolbox.QtProgressBar import ProgressBar
 from toolbox.ResultsProcessor import ResultsProcessor
 from toolbox.utilities import rasterio_to_numpy
 
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -44,9 +45,9 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         
         self.setWindowTitle("AutoDistill Deploy Model")
-        self.resize(400, 250)
+        self.resize(400, 325)
 
-        # Initialize instance variables
+        # Initialize variables
         self.imgsz = 1024
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
@@ -57,7 +58,6 @@ class DeployModelDialog(QDialog):
         self.ontology = None
         self.class_mapping = {}
         self.ontology_pairs = []
-        self.use_sam = False
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -68,10 +68,10 @@ class DeployModelDialog(QDialog):
         self.setup_ontology_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
-        # Setup the buttons layout
-        self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
+        # Setup the buttons layout
+        self.setup_buttons_layout()
         
     def showEvent(self, event):
         """
@@ -182,15 +182,25 @@ class DeployModelDialog(QDialog):
         
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["True", "False"])
-        self.use_sam_dropdown.setCurrentIndex(1)
+        self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        self.use_sam = self.use_sam_dropdown
         form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
         
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
-    
+        
+    def setup_status_layout(self):
+        """
+        Setup status display in a group box.
+        """
+        group_box = QGroupBox("Status")
+        layout = QVBoxLayout()
+        
+        self.status_bar = QLabel("No model loaded")
+        layout.addWidget(self.status_bar)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
     def setup_buttons_layout(self):
         """
         Setup action buttons in a group box.
@@ -205,19 +215,6 @@ class DeployModelDialog(QDialog):
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
         layout.addWidget(deactivate_button)
-        
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-        
-    def setup_status_layout(self):
-        """
-        Setup status display in a group box.
-        """
-        group_box = QGroupBox("Status")
-        layout = QVBoxLayout()
-        
-        self.status_bar = QLabel("No model loaded")
-        layout.addWidget(self.status_bar)
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -321,15 +318,17 @@ class DeployModelDialog(QDialog):
         """
         Check if the SAM model is deployed and update the checkbox state accordingly.
         """
+        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
+            return False
+        
         self.sam_dialog = self.main_window.sam_deploy_model_dialog
 
         if not self.sam_dialog.loaded_model:
-            # Ensure that the checkbox is not checked
-            self.sender().setChecked(False)
-            QMessageBox.warning(self, "SAM Model", "SAM model not currently deployed")
+            self.use_sam_dropdown.setCurrentText("False")
+            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
 
-        return True
+        return True 
 
     def load_model(self):
         """
@@ -414,6 +413,15 @@ class DeployModelDialog(QDialog):
             return self.main_window.get_uncertainty_thresh()
         else:
             return 0.10  # Arbitrary value to prevent too many detections
+        
+    def get_iou_threshold(self):
+        """
+        Get the IoU threshold for predictions.
+
+        Returns:
+            IoU threshold value.
+        """
+        return self.main_window.get_iou_thresh()
 
     def load_new_model(self, model_name, uncertainty_thresh):
         """
@@ -461,8 +469,8 @@ class DeployModelDialog(QDialog):
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.uncertainty_thresh,
-                                                 iou_thresh=self.iou_thresh,
+                                                 uncertainty_thresh=self.get_uncertainty_thresh(),
+                                                 iou_thresh=self.get_iou_threshold(),
                                                  min_area_thresh=self.area_thresh_min,
                                                  max_area_thresh=self.area_thresh_max)
             
@@ -471,7 +479,7 @@ class DeployModelDialog(QDialog):
             # Update the progress bar
             progress_bar.update_progress()
 
-            if self.use_sam.isChecked():
+            if self.use_sam_dropdown.currentText() == "True":
                 # Apply SAM to the detection results
                 results = self.sam_dialog.predict_from_results(results, self.class_mapping)
                 # Process the segmentation results

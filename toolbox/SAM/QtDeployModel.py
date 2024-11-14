@@ -42,7 +42,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowTitle("SAM Deploy Model") 
-        self.resize(400, 250)
+        self.resize(400, 325)
 
         # Initialize instance variables
         self.imgsz = 1024
@@ -61,12 +61,12 @@ class DeployModelDialog(QDialog):
         
         # Setup the model layout
         self.setup_models_layout()
+        # Setup the status layout
+        self.setup_status_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
-        # Setup the status layout
-        self.setup_status_layout()
         
     def showEvent(self, event):
         """

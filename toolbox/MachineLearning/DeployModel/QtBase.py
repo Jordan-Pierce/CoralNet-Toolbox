@@ -38,12 +38,17 @@ class Base(QDialog):
         self.sam_dialog = None
         
         self.setWindowTitle("Deploy Model")
-        self.resize(400, 300)
+        self.resize(400, 325)
 
+        # Initialize variables
+        self.imgsz = 1024
+        self.iou_thresh = 0.70
+        self.uncertainty_thresh = 0.30
+        self.area_thresh_min = 0.01
+        self.area_thresh_max = 0.75
         self.model_path = None
         self.loaded_model = None  
         self.class_mapping = None
-        self.use_sam = None
 
         self.layout = QVBoxLayout(self)
         
@@ -101,6 +106,7 @@ class Base(QDialog):
         
     def setup_status_layout(self):
         """
+        
         """
         # Create a group box for the status bar
         group_box = QGroupBox("Status")
@@ -119,15 +125,17 @@ class Base(QDialog):
 
         :return: Boolean indicating whether the SAM model is deployed
         """
+        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
+            return False
+        
         self.sam_dialog = self.main_window.sam_deploy_model_dialog
 
         if not self.sam_dialog.loaded_model:
-            # Set the index of the dropdown to 0 (False)
-            self.use_sam.setCurrentIndex(0)
-            QMessageBox.warning(self, "SAM Model", "SAM model not currently deployed")
+            self.use_sam_dropdown.setCurrentText("False")
+            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
 
-        return True
+        return True 
               
     def browse_file(self):
         """Browse and select a model file"""
@@ -254,7 +262,7 @@ class Base(QDialog):
                 QColor(r, g, b)
             )
 
-    def get_confidence_threshold(self):
+    def get_uncertainty_thresh(self):
         """
         Get the confidence threshold for predictions
         """
@@ -271,7 +279,7 @@ class Base(QDialog):
         """
         Predict using deployed model
         """
-        raise NotImplementedError("Subclasses must implement predict()")
+        raise NotImplementedError("Subclasses must implement predict method")
     
     def deactivate_model(self):
         """

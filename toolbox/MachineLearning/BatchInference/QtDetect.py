@@ -28,6 +28,12 @@ class Detect(Base):
         self.deploy_model_dialog = main_window.detect_deploy_model_dialog
         self.loaded_model = self.deploy_model_dialog.loaded_model
         
+    def setup_task_specific_layout(self):
+        """
+        Set up the layout with both generic and classification-specific options.
+        """
+        pass
+        
     def batch_inference(self):
         """
         Perform batch inference on the selected images.

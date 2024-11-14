@@ -103,35 +103,24 @@ class MainWindow(QMainWindow):
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
 
-        # Patch Sampling
+        # Create dialogs
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
-        # Import Dataset
         self.import_dataset_dialog = ImportDatasetDialog(self)
-        # Export Dataset
         self.export_dataset_dialog = ExportDatasetDialog(self)
-        # Merge Datasets
         self.merge_datasets_dialog = MergeDatasetsDialog(self)
-        # Train Models
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
         self.segment_train_model_dialog = SegmentTrainModelDialog(self)
-        # Evaluate Model
         self.evaluate_model_dialog = EvaluateModelDialog(self)
-        # Optimize Model
         self.optimize_model_dialog = OptimizeModelDialog(self)
-        # Deploy Model
         self.classify_deploy_model_dialog = ClassifyDeployModelDialog(self)
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
         self.segment_deploy_model_dialog = SegmentDeployModelDialog(self)
-        # Batch Inference
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        # SAM Deploy Model
         self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
-        # AutoDistill Deploy Model
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
-        # AutoDistill Batch Inference
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
 
         # Connect signals to update status bar
@@ -299,15 +288,15 @@ class MainWindow(QMainWindow):
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
 
         self.ml_classify_train_model_action = QAction("Classify", self)
-        self.ml_classify_train_model_action.triggered.connect(self.classify_train_model_dialog.exec_)
+        self.ml_classify_train_model_action.triggered.connect(self.open_classify_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_classify_train_model_action)
 
         self.ml_detect_train_model_action = QAction("Detect", self)
-        self.ml_detect_train_model_action.triggered.connect(self.detect_train_model_dialog.exec_)
+        self.ml_detect_train_model_action.triggered.connect(self.open_detect_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_detect_train_model_action)
 
         self.ml_segment_train_model_action = QAction("Segment", self)
-        self.ml_segment_train_model_action.triggered.connect(self.segment_train_model_dialog.exec_)
+        self.ml_segment_train_model_action.triggered.connect(self.open_segment_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_segment_train_model_action)
 
         # Evaluate Model action
@@ -324,30 +313,30 @@ class MainWindow(QMainWindow):
         self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
 
         self.ml_classify_deploy_model_action = QAction("Classify", self)
-        self.ml_classify_deploy_model_action.triggered.connect(self.classify_deploy_model_dialog.exec_)
+        self.ml_classify_deploy_model_action.triggered.connect(self.open_classify_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_classify_deploy_model_action)
 
         self.ml_detect_deploy_model_action = QAction("Detect", self)
-        self.ml_detect_deploy_model_action.triggered.connect(self.detect_deploy_model_dialog.exec_)
+        self.ml_detect_deploy_model_action.triggered.connect(self.open_detect_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_detect_deploy_model_action)
 
         self.ml_segment_deploy_model_action = QAction("Segment", self)
-        self.ml_segment_deploy_model_action.triggered.connect(self.segment_deploy_model_dialog.exec_)
+        self.ml_segment_deploy_model_action.triggered.connect(self.open_segment_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_segment_deploy_model_action)
 
         # Batch Inference submenu
         self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
 
         self.ml_classify_batch_inference_action = QAction("Classify", self)
-        self.ml_classify_batch_inference_action.triggered.connect(self.classify_batch_inference_dialog.exec_)
+        self.ml_classify_batch_inference_action.triggered.connect(self.open_classify_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_classify_batch_inference_action)
 
         self.ml_detect_batch_inference_action = QAction("Detect", self)
-        self.ml_detect_batch_inference_action.triggered.connect(self.detect_batch_inference_dialog.exec_)
+        self.ml_detect_batch_inference_action.triggered.connect(self.open_detect_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_detect_batch_inference_action)
 
         self.ml_segment_batch_inference_action = QAction("Segment", self)
-        self.ml_segment_batch_inference_action.triggered.connect(self.segment_batch_inference_dialog.exec_)
+        self.ml_segment_batch_inference_action.triggered.connect(self.open_segment_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_segment_batch_inference_action)
 
         # SAM menu
@@ -607,7 +596,9 @@ class MainWindow(QMainWindow):
         elif action == self.sam_tool_action:
             if not self.sam_deploy_model_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
-                QMessageBox.warning(self, "SAM Deploy Model", "You must deploy a model before using the SAM tool.")
+                QMessageBox.warning(self, 
+                                    "SAM Deploy Model", 
+                                    "You must deploy a model before using the SAM tool.")
                 return
             if state:
                 self.select_tool_action.setChecked(False)
