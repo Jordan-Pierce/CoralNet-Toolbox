@@ -61,6 +61,8 @@ class EvaluateModelWorker(QThread):
             # Modify the save directory
             save_dir = self.params['save_dir']
             validator.get_save_dir = lambda x: save_dir
+            
+            
 
             # Evaluate the model
             results = self.model.val(

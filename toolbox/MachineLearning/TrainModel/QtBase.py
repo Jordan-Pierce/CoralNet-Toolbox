@@ -11,6 +11,9 @@ from pathlib import Path
 import ultralytics.data.build as build
 import ultralytics.models.yolo.classify.train as train_build
 
+from ultralytics.data.dataset import YOLODataset
+from ultralytics.models.yolo.classify.train.train_build import ClassificationDataset
+
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
@@ -69,10 +72,8 @@ class TrainModelWorker(QThread):
 
             # Use the custom dataset class for weighted sampling
             if weighted and self.params['task'] == 'classify':
-                OriginalDataset = train_build.ClassificationDataset
                 train_build.ClassificationDataset = WeightedClassificationDataset
             elif weighted and self.params['task'] in ['detect', 'segment']:
-                OriginalDataset = build.YOLODataset
                 build.YOLODataset = WeightedInstanceDataset
 
             # Load the model, train, and save the best weights
@@ -81,9 +82,9 @@ class TrainModelWorker(QThread):
             
             # Revert to the original dataset class without weighted sampling
             if weighted and self.params['task'] == 'classify':
-                train_build.ClassificationDataset = OriginalDataset
+                train_build.ClassificationDataset = ClassificationDataset
             elif weighted and self.params['task'] in ['detect', 'segment']:
-                build.YOLODataset = OriginalDataset
+                build.YOLODataset = YOLODataset
                 
             # Evaluate the model after training
             self.evaluate_model()
