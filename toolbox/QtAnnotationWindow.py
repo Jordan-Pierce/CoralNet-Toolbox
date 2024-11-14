@@ -110,6 +110,10 @@ class AnnotationWindow(QGraphicsView):
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
         self.hover_point.emit(scene_pos)
+
+        if not self.cursorInWindow(event.pos()):
+            self.toggle_cursor_annotation()
+
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -141,6 +145,12 @@ class AnnotationWindow(QGraphicsView):
             pos = self.mapToScene(pos)
 
         return image_rect.contains(pos)
+    
+    def cursorInViewport(self, pos):
+        if not pos:
+            return False
+
+        return self.viewport().rect().contains(pos)
 
     def set_selected_tool(self, tool):
         if self.selected_tool:
@@ -217,7 +227,7 @@ class AnnotationWindow(QGraphicsView):
             try:
                 self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
                 self.cursor_annotation.create_graphics_item(self.scene)
-            except Exception as e:
+            except:
                 pass
 
     def display_image_item(self, image_item):

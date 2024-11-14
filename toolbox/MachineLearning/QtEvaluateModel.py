@@ -337,9 +337,6 @@ class EvaluateModelDialog(QDialog):
             elif self.tab_widget.currentIndex() == 2:
                 self.model_edit_instance_segmentation.setText(file_path)
 
-            # Get the directory two above file path
-            dir_path = os.path.dirname(os.path.dirname(file_path))
-
     def browse_dataset_dir(self):
         """
         Browse and select a dataset directory.

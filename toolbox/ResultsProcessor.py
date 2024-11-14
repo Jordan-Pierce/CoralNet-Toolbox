@@ -16,12 +16,40 @@ from toolbox.QtProgressBar import ProgressBar
 
 
 class ResultsProcessor:
-    def __init__(self, main_window, class_mapping):
+    def __init__(self, 
+                 main_window, 
+                 class_mapping, 
+                 uncertainty_thresh=0.3, 
+                 iou_thresh=0.7, 
+                 min_area_thresh=0.01, 
+                 max_area_thresh=0.5):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
         self.class_mapping = class_mapping
+        
+        self.uncertainty_thresh = uncertainty_thresh
+        self.iou_thresh = iou_thresh
+        self.min_area_thresh = min_area_thresh
+        
+    def filter_by_uncertainty(self, results):
+        """
+        Filter the results based on the uncertainty threshold.
+        """
+        pass
+    
+    def filter_by_iou(self, results):
+        """
+        Filter the results based on the IoU threshold.
+        """
+        pass
+    
+    def filter_by_area(self, results):
+        """
+        Filter the results based on the area threshold.
+        """
+        pass
 
     def extract_classification_result(self, result):
         """

@@ -14,7 +14,7 @@ from ultralytics.data.dataset import ClassificationDataset
 
 
 class WeightedClassificationDataset(ClassificationDataset):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, mode="train", **kwargs):
         """
         Initialize the WeightedClassificationDataset.
 
@@ -91,7 +91,6 @@ class WeightedInstanceDataset(YOLODataset):
         Args:
             class_weights (list or numpy array): A list or array of weights corresponding to each class.
         """
-
         super(WeightedInstanceDataset, self).__init__(*args, **kwargs)
 
         self.train_mode = "train" in self.prefix
