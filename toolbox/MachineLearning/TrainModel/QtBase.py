@@ -12,7 +12,7 @@ import ultralytics.data.build as build
 import ultralytics.models.yolo.classify.train as train_build
 
 from ultralytics.data.dataset import YOLODataset
-from ultralytics.models.yolo.classify.train.train_build import ClassificationDataset
+from ultralytics.data.dataset import ClassificationDataset
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
