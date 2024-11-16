@@ -24,7 +24,8 @@ from ultralytics import YOLO
 
 from toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
-from toolbox.MachineLearning.QtEvaluateModel import EvaluateModelWorker
+
+from toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
 
 # ----------------------------------------------------------------------------------------------------------------------

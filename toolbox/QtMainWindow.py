@@ -45,8 +45,11 @@ from toolbox.MachineLearning.BatchInference.QtSegment import Segment as SegmentB
 from toolbox.MachineLearning.ImportDataset.QtDetect import Detect as DetectImportDatasetDialog
 from toolbox.MachineLearning.ImportDataset.QtSegment import Segment as SegmentImportDatasetDialog
 
+from toolbox.MachineLearning.EvaluateModel.QtClassify import Classify as ClassifyEvaluateModelDialog
+from toolbox.MachineLearning.EvaluateModel.QtDetect import Detect as DetectEvaluateModelDialog
+from toolbox.MachineLearning.EvaluateModel.QtSegment import Segment as SegmentEvaluateModelDialog
+
 from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
-from toolbox.MachineLearning.QtEvaluateModel import EvaluateModelDialog
 from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
 from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
 
@@ -115,7 +118,9 @@ class MainWindow(QMainWindow):
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
         self.segment_train_model_dialog = SegmentTrainModelDialog(self)
-        self.evaluate_model_dialog = EvaluateModelDialog(self)
+        self.classify_evaluate_model_dialog = ClassifyEvaluateModelDialog(self)
+        self.detect_evaluate_model_dialog = DetectEvaluateModelDialog(self)
+        self.segment_evaluate_model_dialog = SegmentEvaluateModelDialog(self)
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.classify_deploy_model_dialog = ClassifyDeployModelDialog(self)
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
@@ -308,11 +313,21 @@ class MainWindow(QMainWindow):
         self.ml_segment_train_model_action.triggered.connect(self.open_segment_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_segment_train_model_action)
 
-        # Evaluate Model action
-        self.ml_evaluate_model_action = QAction("Evaluate Model", self)
-        self.ml_evaluate_model_action.triggered.connect(self.open_evaluate_model_dialog)
-        self.ml_menu.addAction(self.ml_evaluate_model_action)
-
+        # Evaluate Model submenu 
+        self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
+        
+        self.ml_classify_evaluate_model_action = QAction("Classify", self)
+        self.ml_classify_evaluate_model_action.triggered.connect(self.open_classify_evaluate_model_dialog)
+        self.ml_evaluate_model_menu.addAction(self.ml_classify_evaluate_model_action)
+        
+        self.ml_detect_evaluate_model_action = QAction("Detect", self)
+        self.ml_detect_evaluate_model_action.triggered.connect(self.open_detect_evaluate_model_dialog)
+        self.ml_evaluate_model_menu.addAction(self.ml_detect_evaluate_model_action)
+        
+        self.ml_segment_evaluate_model_action = QAction("Segment", self)
+        self.ml_segment_evaluate_model_action.triggered.connect(self.open_segment_evaluate_model_dialog)
+        self.ml_evaluate_model_menu.addAction(self.ml_segment_evaluate_model_action)
+        
         # Optimize Model action
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
@@ -854,10 +869,24 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_evaluate_model_dialog(self):
+    def open_classify_evaluate_model_dialog(self):
         try:
             self.untoggle_all_tools()
-            self.evaluate_model_dialog.exec_()
+            self.classify_evaluate_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_detect_evaluate_model_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.detect_evaluate_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_segment_evaluate_model_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.segment_evaluate_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
