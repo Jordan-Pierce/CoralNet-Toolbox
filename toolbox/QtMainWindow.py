@@ -49,8 +49,9 @@ from toolbox.MachineLearning.EvaluateModel.QtClassify import Classify as Classif
 from toolbox.MachineLearning.EvaluateModel.QtDetect import Detect as DetectEvaluateModelDialog
 from toolbox.MachineLearning.EvaluateModel.QtSegment import Segment as SegmentEvaluateModelDialog
 
+from toolbox.MachineLearning.MergeDatasets.QtClassify import Classify as ClassifyMergeDatasetsDialog
+
 from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
-from toolbox.MachineLearning.QtMergeDatasets import MergeDatasetsDialog
 from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
 
 from toolbox.SAM.QtDeployModel import DeployModelDialog as SAMDeployModelDialog
@@ -114,7 +115,7 @@ class MainWindow(QMainWindow):
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
         self.export_dataset_dialog = ExportDatasetDialog(self)
-        self.merge_datasets_dialog = MergeDatasetsDialog(self)
+        self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
         self.segment_train_model_dialog = SegmentTrainModelDialog(self)
@@ -175,16 +176,6 @@ class MainWindow(QMainWindow):
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
-
-        # self.import_ortho_action = QAction("Orthomosaic", self)
-        # self.import_ortho_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.import_rasters_menu.addAction(self.import_ortho_action)
-
-        # self.import_frames_action = QAction("Video Frames", self)
-        # self.import_frames_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.import_rasters_menu.addAction(self.import_frames_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -293,10 +284,12 @@ class MainWindow(QMainWindow):
         # Ultralytics menu
         self.ml_menu = self.menu_bar.addMenu("Ultralytics")
 
-        # Merge Datasets action
-        self.ml_merge_datasets_action = QAction("Merge Datasets", self)
-        self.ml_merge_datasets_action.triggered.connect(self.open_merge_datasets_dialog)
-        self.ml_menu.addAction(self.ml_merge_datasets_action)
+        # Merge Datasets submenu
+        self.ml_merge_datasets_menu = self.ml_menu.addMenu("Merge Datasets")
+        
+        self.ml_classify_merge_datasets_action = QAction("Classify", self)
+        self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
+        self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
@@ -841,10 +834,10 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_merge_datasets_dialog(self):
+    def open_classify_merge_datasets_dialog(self):
         try:
             self.untoggle_all_tools()
-            self.merge_datasets_dialog.exec_()
+            self.classify_merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
