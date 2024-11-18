@@ -51,8 +51,9 @@ from toolbox.MachineLearning.EvaluateModel.QtSegment import Segment as SegmentEv
 
 from toolbox.MachineLearning.MergeDatasets.QtClassify import Classify as ClassifyMergeDatasetsDialog
 
+from toolbox.MachineLearning.OptimizeModel.QtBase import Base as OptimizeModelDialog
+
 from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
-from toolbox.MachineLearning.QtOptimizeModel import OptimizeModelDialog
 
 from toolbox.SAM.QtDeployModel import DeployModelDialog as SAMDeployModelDialog
 

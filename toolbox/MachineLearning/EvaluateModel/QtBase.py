@@ -89,7 +89,7 @@ class Base(QDialog):
         self.main_window = main_window
         
         self.setWindowTitle("Evaluate Model")
-        self.resize(400, 100)
+        self.resize(400, 325)
         
         self.setWindowFlags(Qt.Window |
                             Qt.WindowCloseButtonHint |
