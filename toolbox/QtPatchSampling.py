@@ -309,8 +309,10 @@ class PatchSamplingDialog(QDialog):
         progress_bar = ProgressBar(self, title="Sampling Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths) * num_annotations)
-
+        
         for image_path in image_paths:
+            sampled_annotations = []
+            
             # Load the rasterio representation
             rasterio_image = self.image_window.rasterio_open(image_path)
             height, width = rasterio_image.shape[0:2]
@@ -336,13 +338,14 @@ class PatchSamplingDialog(QDialog):
 
                 # Add annotation to the dict
                 self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
+                sampled_annotations.append(new_annotation)
                 progress_bar.update_progress()
 
             # Update the image window's image dict
             self.image_window.update_image_annotations(image_path)
 
         # Load the annotations for current image
-        self.annotation_window.load_annotations()
+        self.annotation_window.load_these_annotations(image_path=image_path, annotations=sampled_annotations)
 
         # Stop the progress bar
         progress_bar.stop_progress()

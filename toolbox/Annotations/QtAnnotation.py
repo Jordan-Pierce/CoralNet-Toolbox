@@ -29,7 +29,7 @@ class Annotation(QObject):
                  color: QColor,
                  image_path: str,
                  label_id: str,
-                 transparency: int = 64,
+                 transparency: int = 128,
                  show_msg=True):
         super().__init__()
         self.id = str(uuid.uuid4())
@@ -75,19 +75,23 @@ class Annotation(QObject):
 
     def delete(self):
         self.annotationDeleted.emit(self)
+        
+        # Remove the main graphics item
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
 
-        # Remove the center, bounding box, and brush graphics items
+        # Remove the center graphics item
         if self.center_graphics_item and self.center_graphics_item.scene():
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
             self.center_graphics_item = None
 
+        # Remove the bounding box graphics item
         if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
             self.bounding_box_graphics_item = None
 
+        # Remove the polygon graphics item
         if self.polygon_graphics_item and self.polygon_graphics_item.scene():
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
             self.polygon_graphics_item = None
@@ -171,8 +175,8 @@ class Annotation(QObject):
         return None
 
     def create_center_graphics_item(self, center_xy, scene):
-        if self.center_graphics_item:
-            scene.removeItem(self.center_graphics_item)
+        if self.center_graphics_item and self.center_graphics_item.scene():
+            self.center_graphics_item.scene().removeItem(self.center_graphics_item)
 
         color = QColor(self.label.color)
         if self.is_selected:
@@ -184,8 +188,8 @@ class Annotation(QObject):
         scene.addItem(self.center_graphics_item)
 
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene):
-        if self.bounding_box_graphics_item:
-            scene.removeItem(self.bounding_box_graphics_item)
+        if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
+            self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
 
         color = QColor(self.label.color)
         if self.is_selected:
@@ -200,8 +204,8 @@ class Annotation(QObject):
         scene.addItem(self.bounding_box_graphics_item)
 
     def create_polygon_graphics_item(self, points, scene):
-        if self.polygon_graphics_item:
-            scene.removeItem(self.polygon_graphics_item)
+        if self.polygon_graphics_item and self.polygon_graphics_item.scene():
+            self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
 
         color = QColor(self.label.color)
         if self.is_selected:

@@ -412,7 +412,7 @@ class MainWindow(QMainWindow):
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
         
-        self.toolbar.addWidget(separator)
+        self.toolbar.addSeparator()
         
         self.patch_tool_action = QAction(QIcon(self.patch_icon_path), "Patch", self)
         self.patch_tool_action.setCheckable(True)
@@ -429,12 +429,14 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
         
-        self.toolbar.addWidget(separator)
+        self.toolbar.addSeparator()
         
         self.sam_tool_action = QAction(QIcon(self.sam_icon_path), "SAM", self)
         self.sam_tool_action.setCheckable(True)
         self.sam_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.sam_tool_action)
+        
+        self.toolbar.addSeparator()
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()
@@ -484,11 +486,12 @@ class MainWindow(QMainWindow):
         # Transparency slider
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 128)
-        self.transparency_slider.setValue(64)  # Default transparency
+        self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # Add a checkbox labeled "All" next to the transparency slider
         self.all_labels_checkbox = QCheckBox("All")
+        self.all_labels_checkbox.setCheckState(Qt.Checked)
         self.all_labels_checkbox.stateChanged.connect(self.update_all_labels_transparency)
 
         # Spin box for IoU threshold control
