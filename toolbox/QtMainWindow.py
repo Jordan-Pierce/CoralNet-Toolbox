@@ -57,6 +57,7 @@ from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
 
 from toolbox.SAM.QtDeployPredictor import DeployPredictorDialog as SAMDeployPredictorDialog
 from toolbox.SAM.QtDeployGenerator import DeployGeneratorDialog as SAMDeployGeneratorDialog
+from toolbox.SAM.QtBatchInference import BatchInferenceDialog as SAMBatchInferenceDialog
 
 from toolbox.AutoDistill.QtDeployModel import DeployModelDialog as AutoDistillDeployModelDialog
 from toolbox.AutoDistill.QtBatchInference import BatchInferenceDialog as AutoDistillBatchInferenceDialog
@@ -133,6 +134,7 @@ class MainWindow(QMainWindow):
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
         self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)  # TODO
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
+        self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
 
@@ -372,6 +374,10 @@ class MainWindow(QMainWindow):
         self.sam_deploy_generator_action = QAction("Generator", self)
         self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_generator_action)
+        
+        self.sam_batch_inference_action = QAction("Batch Inference", self)
+        self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
+        self.sam_menu.addAction(self.sam_batch_inference_action)
 
         # Auto Distill menu
         self.auto_distill_menu = self.menu_bar.addMenu("AutoDistill")
@@ -1041,6 +1047,25 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_deploy_generator_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_sam_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Batch Inference",
+                                "No images are present in the project.")
+            return
+
+        if not self.sam_deploy_generator_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "SAM Batch Inference",
+                                "Please deploy a generator before running batch inference.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

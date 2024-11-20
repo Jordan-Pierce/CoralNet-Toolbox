@@ -119,19 +119,6 @@ class DeployGeneratorDialog(QDialog):
         group_box = QGroupBox("Parameters")
         form_layout = QFormLayout()
         
-        # Resize image dropdown
-        self.resize_image_dropdown = QComboBox()
-        self.resize_image_dropdown.addItems(["True", "False"])
-        self.resize_image_dropdown.setCurrentIndex(0)
-        form_layout.addRow("Resize Image:", self.resize_image_dropdown)
-        
-        # Image size control
-        self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 4096)
-        self.imgsz_spinbox.setSingleStep(1024)
-        self.imgsz_spinbox.setValue(self.imgsz)
-        form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
-        
         # Area threshold controls
         self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
         self.area_threshold_slider.setMinimum(0)
@@ -173,7 +160,7 @@ class DeployGeneratorDialog(QDialog):
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
+        form_layout.addRow("Use Predictor for creating Polygons:", self.use_sam_dropdown)
         
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
@@ -365,19 +352,22 @@ class DeployGeneratorDialog(QDialog):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
             
-        progress_bar = ProgressBar(self.annotation_window, title=f"Making FastSAM Predictions")
+        progress_bar = ProgressBar(self.annotation_window, title="Making FastSAM Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
 
-            # Predict the image
-            results = self.loaded_model(image_path, 
-                                        retina_masks=True, 
-                                        imgsz=self.imgsz, 
-                                        conf=self.get_uncertainty_threshold(), 
-                                        iou=self.get_iou_threshold(),
-                                        device=self.main_window.device)
+            with torch.no_grad():
+                # Predict the image
+                results = self.loaded_model(image_path, 
+                                            retina_masks=True, 
+                                            imgsz=self.imgsz, 
+                                            conf=self.get_uncertainty_threshold(), 
+                                            iou=self.get_iou_threshold(),
+                                            device=self.main_window.device)
+                gc.collect()
+                empty_cache()
             
             # Update the results names
             results[0].names = self.class_mapping
