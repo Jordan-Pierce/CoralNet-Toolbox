@@ -393,9 +393,7 @@ class AnnotationWindow(QGraphicsView):
             if progress_bar.wasCanceled():
                 break
             self.load_annotation(annotation)
-            # Update the progress bar
-            if idx % (len(annotations) // 10) == 0:
-                progress_bar.set_value(progress_bar.value + 10)
+            progress_bar.update_progress()
 
         progress_bar.stop_progress()
         progress_bar.close()

@@ -55,7 +55,8 @@ from toolbox.MachineLearning.OptimizeModel.QtBase import Base as OptimizeModelDi
 
 from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
 
-from toolbox.SAM.QtDeployModel import DeployModelDialog as SAMDeployModelDialog
+from toolbox.SAM.QtDeployPredictor import DeployPredictorDialog as SAMDeployPredictorDialog
+from toolbox.SAM.QtDeployGenerator import DeployGeneratorDialog as SAMDeployGeneratorDialog
 
 from toolbox.AutoDistill.QtDeployModel import DeployModelDialog as AutoDistillDeployModelDialog
 from toolbox.AutoDistill.QtBatchInference import BatchInferenceDialog as AutoDistillBatchInferenceDialog
@@ -130,7 +131,8 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        self.sam_deploy_model_dialog = SAMDeployModelDialog(self)
+        self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)  # TODO
+        self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
 
@@ -359,10 +361,17 @@ class MainWindow(QMainWindow):
 
         # SAM menu
         self.sam_menu = self.menu_bar.addMenu("SAM")
-
-        self.sam_deploy_model_action = QAction("Deploy Model", self)
+        
+        # Deploy Model submenu
+        self.sam_deploy_model_menu = self.sam_menu.addMenu("Deploy Model")
+        
+        self.sam_deploy_model_action = QAction("Predictor", self)
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
-        self.sam_menu.addAction(self.sam_deploy_model_action)
+        self.sam_deploy_model_menu.addAction(self.sam_deploy_model_action)
+        
+        self.sam_deploy_generator_action = QAction("Generator", self)
+        self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
+        self.sam_deploy_model_menu.addAction(self.sam_deploy_generator_action)
 
         # Auto Distill menu
         self.auto_distill_menu = self.menu_bar.addMenu("AutoDistill")
@@ -618,8 +627,8 @@ class MainWindow(QMainWindow):
             if not self.sam_deploy_model_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
                 QMessageBox.warning(self, 
-                                    "SAM Deploy Model", 
-                                    "You must deploy a model before using the SAM tool.")
+                                    "SAM Deploy Predictor", 
+                                    "You must deploy a Predictor before using the SAM tool.")
                 return
             if state:
                 self.select_tool_action.setChecked(False)
@@ -1009,16 +1018,29 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_sam_deploy_model_dialog(self):
+    def open_sam_deploy_model_dialog(self):  # TODO 
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
-                                "SAM Deploy Model",
+                                "SAM Deploy Predictor",
                                 "No images are present in the project.")
             return
 
         try:
             self.untoggle_all_tools()
-            self.sam_deploy_model_dialog.exec_()
+            self.sam_deploy_model_dialog.exec_()  
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_sam_deploy_generator_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "SAM Deploy Generator",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.sam_deploy_generator_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

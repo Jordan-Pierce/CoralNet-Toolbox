@@ -34,7 +34,7 @@ from toolbox.utilities import attempt_download_asset
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class DeployModelDialog(QDialog):
+class DeployPredictorDialog(QDialog):
     def __init__(self, main_window, parent=None):
         """Initialize the SAM Deploy Model dialog."""
         super().__init__(parent)

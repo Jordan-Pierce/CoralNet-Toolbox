@@ -22,7 +22,7 @@ class GlobalEventFilter(QObject):
         self.classify_deploy_model_dialog = main_window.classify_deploy_model_dialog
         self.detect_deploy_model_dialog = main_window.detect_deploy_model_dialog
         self.segment_deploy_model_dialog = main_window.segment_deploy_model_dialog
-        self.sam_deploy_model_dialog = None
+        self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
         self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
 
     def eventFilter(self, obj, event):
@@ -51,7 +51,8 @@ class GlobalEventFilter(QObject):
                 
                 # Handle hotkey for segment everything prediction
                 if event.key() == Qt.Key_4:
-                    pass
+                    self.sam_deploy_generator_dialog.predict()
+                    return True
 
                 # Handle hotkey for auto distill prediction
                 if event.key() == Qt.Key_5:

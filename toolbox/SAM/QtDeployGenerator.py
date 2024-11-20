@@ -4,8 +4,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import gc
 
+import numpy as np
+
 import torch
-from autodistill.detection import CaptionOntology
+from ultralytics import FastSAM
 
 from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt
@@ -13,11 +15,13 @@ from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
                              QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QSlider, QSpinBox,
                              QVBoxLayout, QGroupBox)
+
 from torch.cuda import empty_cache
 
 from toolbox.QtProgressBar import ProgressBar
 from toolbox.ResultsProcessor import ResultsProcessor
 from toolbox.utilities import rasterio_to_numpy
+from toolbox.utilities import attempt_download_asset
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -25,9 +29,9 @@ from toolbox.utilities import rasterio_to_numpy
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class DeployModelDialog(QDialog):
+class DeployGeneratorDialog(QDialog):
     """
-    Dialog for deploying and managing AutoDistill models.
+    Dialog for deploying FastSAM.
     Allows users to load, configure, and deactivate models, as well as make predictions on images.
     """
 
@@ -44,7 +48,7 @@ class DeployModelDialog(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         
-        self.setWindowTitle("AutoDistill Deploy Model")
+        self.setWindowTitle("FastSAM Generator")
         self.resize(400, 325)
 
         # Initialize variables
@@ -54,18 +58,14 @@ class DeployModelDialog(QDialog):
         self.area_thresh_min = 0.01
         self.area_thresh_max = 0.75
         self.loaded_model = None
-        self.model_name = None
-        self.ontology = None
-        self.class_mapping = {}
-        self.ontology_pairs = []
+        self.model_path = None
+        self.class_mapping = {0: 'Review'}
 
         # Create the layout
         self.layout = QVBoxLayout(self)
         
         # Setup the model layout
         self.setup_models_layout()
-        # Setup the ontology layout
-        self.setup_ontology_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
         # Setup the status layout
@@ -81,7 +81,6 @@ class DeployModelDialog(QDialog):
             event: The event object.
         """
         super().showEvent(event)
-        self.update_label_options()
         self.initialize_area_threshold
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
@@ -94,31 +93,8 @@ class DeployModelDialog(QDialog):
         layout = QVBoxLayout()
         
         self.model_dropdown = QComboBox()
-        self.model_dropdown.addItems(["GroundingDINO"])
+        self.model_dropdown.addItems(["FastSAM-s.pt", "FastSAM-x.pt"])
         layout.addWidget(self.model_dropdown)
-        
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_ontology_layout(self):
-        """
-        Setup ontology mapping section in a group box.
-        """
-        group_box = QGroupBox("Ontology Mapping")
-        layout = QVBoxLayout()
-        
-        add_remove_layout = QHBoxLayout()
-        
-        self.remove_button = QPushButton("Remove")
-        self.remove_button.clicked.connect(self.remove_ontology_pair)
-        add_remove_layout.addWidget(self.remove_button)
-        
-        self.add_button = QPushButton("Add")  
-        self.add_button.clicked.connect(self.add_ontology_pair)
-        add_remove_layout.addWidget(self.add_button)
-        
-        layout.addLayout(add_remove_layout)
-        self.ontology_layout = layout
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -179,12 +155,6 @@ class DeployModelDialog(QDialog):
         self.iou_threshold_label = QLabel(f"{self.main_window.get_iou_thresh():.2f}")
         form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
         form_layout.addRow("", self.iou_threshold_label)
-        
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
         
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
@@ -271,65 +241,7 @@ class DeployModelDialog(QDialog):
         """Update the slider and label when the shared data changes"""
         value = self.main_window.get_iou_thresh()
         self.iou_threshold_slider.setValue(int(value * 100))
-        self.iou_thresh = value        
-
-    def update_label_options(self):
-        """
-        Update the label options in ontology pairs based on available labels.
-        """
-        label_options = [label.short_label_code for label in self.label_window.labels]
-        for _, label_dropdown in self.ontology_pairs:
-            previous_label = label_dropdown.currentText()
-            label_dropdown.clear()
-            label_dropdown.addItems(label_options)
-            if previous_label in label_options:
-                label_dropdown.setCurrentText(previous_label)
-
-    def add_ontology_pair(self):
-        """
-        Add a new ontology pair input (text input and label dropdown).
-        """
-        pair_layout = QHBoxLayout()
-
-        text_input = QLineEdit()
-        text_input.setMaxLength(100)  # Cap the width at 100 characters
-        label_dropdown = QComboBox()
-        label_dropdown.addItems([label.short_label_code for label in self.label_window.labels])
-
-        pair_layout.addWidget(text_input)
-        pair_layout.addWidget(label_dropdown)
-
-        self.ontology_pairs.append((text_input, label_dropdown))
-        self.ontology_layout.insertLayout(self.ontology_layout.count() - 1, pair_layout)
-
-    def remove_ontology_pair(self):
-        """
-        Remove the last ontology pair input if more than one exists.
-        """
-        if len(self.ontology_pairs) > 1:
-            pair = self.ontology_pairs.pop()
-            pair[0].deleteLater()
-            pair[1].deleteLater()
-
-            # Remove the layout
-            item = self.ontology_layout.itemAt(self.ontology_layout.count() - 2)
-            item.layout().deleteLater()
-            
-    def is_sam_model_deployed(self):
-        """
-        Check if the SAM model is deployed and update the checkbox state accordingly.
-        """
-        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
-            return False
-        
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
-
-        if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
-            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
-            return False
-
-        return True 
+        self.iou_thresh = value       
 
     def load_model(self):
         """
@@ -341,27 +253,15 @@ class DeployModelDialog(QDialog):
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
         try:
-            # Get the ontology mapping
-            ontology_mapping = self.get_ontology_mapping()
+            # Get selected model path
+            self.model_path = self.model_dropdown.currentText()
 
-            # Set the ontology
-            self.ontology = CaptionOntology(ontology_mapping)
-            # Set the class mapping
-            self.class_mapping = {k: v for k, v in enumerate(self.ontology.classes())}
+            # Load the model
+            self.loaded_model = FastSAM(self.model_path)
+            # Run a blank through the model to initialize it
+            self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
 
-            # Threshold for confidence
-            uncertainty_thresh = self.get_uncertainty_threshold()
-
-            # Get the name of the model to load
-            model_name = self.model_dropdown.currentText()
-
-            if model_name != self.model_name:
-                self.load_new_model(model_name, uncertainty_thresh)
-            else:
-                # Update the model with the new ontology
-                self.loaded_model.ontology = self.ontology
-
-            self.status_bar.setText(f"Model loaded: {model_name}")
+            self.status_bar.setText(f"Model loaded: {self.model_path}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
@@ -374,19 +274,6 @@ class DeployModelDialog(QDialog):
         QApplication.restoreOverrideCursor()
         # Exit the dialog box
         self.accept()
-
-    def get_ontology_mapping(self):
-        """
-        Retrieve the ontology mapping from user inputs.
-
-        Returns:
-            Dictionary mapping texts to label codes.
-        """
-        ontology_mapping = {}
-        for text_input, label_dropdown in self.ontology_pairs:
-            if text_input.text() != "":
-                ontology_mapping[text_input.text()] = label_dropdown.currentText()
-        return ontology_mapping
     
     def get_area_thresh(self, image):
         """
@@ -424,21 +311,6 @@ class DeployModelDialog(QDialog):
         """
         return self.main_window.get_iou_thresh()
 
-    def load_new_model(self, model_name, uncertainty_thresh):
-        """
-        Load a new model based on the selected model name.
-
-        Args:
-            model_name: Name of the model to load.
-            uncertainty_thresh: Threshold for uncertainty.
-        """
-        if model_name == "GroundingDINO":
-            from autodistill_grounding_dino import GroundingDINO
-            self.model_name = model_name
-            self.loaded_model = GroundingDINO(ontology=self.ontology,
-                                              box_threshold=uncertainty_thresh,
-                                              text_threshold=uncertainty_thresh)
-
     def predict(self, image_paths=None):
         """
         Make predictions on the given image paths using the loaded model.
@@ -456,39 +328,37 @@ class DeployModelDialog(QDialog):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
             
-        progress_bar = ProgressBar(self.annotation_window, title=f"Making {self.model_name} Predictions")
+        progress_bar = ProgressBar(self.annotation_window, title=f"Making FastSAM Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
-            # Open the image
-            image = self.main_window.image_window.rasterio_open(image_path)
-            image = rasterio_to_numpy(image)
+
             # Predict the image
-            results = self.loaded_model.predict(image)
+            results = self.loaded_model(image_path, 
+                                        retina_masks=True, 
+                                        imgsz=self.imgsz, 
+                                        conf=self.get_uncertainty_threshold(), 
+                                        iou=self.get_iou_threshold(),
+                                        device=self.main_window.device)
+            
+            # Update the results names
+            results[0].names = self.class_mapping
             
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.get_uncertainty_thresh(),
+                                                 uncertainty_thresh=self.get_uncertainty_threshold(),
                                                  iou_thresh=self.get_iou_threshold(),
                                                  min_area_thresh=self.area_thresh_min,
                                                  max_area_thresh=self.area_thresh_max)
-            
-            results = results_processor.from_supervision(results, image, image_path, self.class_mapping)
-            
+                        
             # Update the progress bar
             progress_bar.update_progress()
 
-            if self.use_sam_dropdown.currentText() == "True":
-                # Apply SAM to the detection results
-                results = self.sam_dialog.predict_from_results(results, self.class_mapping)
-                # Process the segmentation results
-                results_processor.process_segmentation_results(results)
-            else:
-                # Process the detection results
-                results_processor.process_detection_results(results)
-                
+            # Process the results
+            results_processor.process_segmentation_results(results)
+                        
         # Stop the progress bar
         progress_bar.stop_progress()
         progress_bar.close()
@@ -503,7 +373,7 @@ class DeployModelDialog(QDialog):
         Deactivate the currently loaded model and clean up resources.
         """
         self.loaded_model = None
-        self.model_name = None
+        self.model_path = None
         gc.collect()
         torch.cuda.empty_cache()
         self.main_window.untoggle_all_tools()

@@ -117,6 +117,9 @@ class Annotation(QObject):
         self.update_graphics_item()
 
     def update_label(self, new_label: 'Label'):
+        if self.label is None:
+            self.label = new_label
+            self.update_graphics_item()
         if self.label.id != new_label.id:
             self.label = new_label
             self.update_graphics_item()
