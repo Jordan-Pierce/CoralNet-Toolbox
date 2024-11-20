@@ -47,6 +47,7 @@ class DeployGeneratorDialog(QDialog):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
+        self.sam_dialog = None
         
         self.setWindowTitle("FastSAM Generator")
         self.resize(400, 325)
@@ -89,12 +90,24 @@ class DeployGeneratorDialog(QDialog):
         """
         Setup model selection dropdown in a group box.
         """
-        group_box = QGroupBox("Model Selection")
+        group_box = QGroupBox("Models")
         layout = QVBoxLayout()
         
-        self.model_dropdown = QComboBox()
-        self.model_dropdown.addItems(["FastSAM-s.pt", "FastSAM-x.pt"])
-        layout.addWidget(self.model_dropdown)
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        
+        # Define available models
+        self.models = {
+            "FastSAM-s": "FastSAM-s.pt",
+            "FastSAM-x": "FastSAM-x.pt"
+        }
+
+        # Add all models to combo box
+        for model_name in self.models.keys():
+            self.model_combo.addItem(model_name)
+
+        layout.addWidget(QLabel("Select Model:"))
+        layout.addWidget(self.model_combo)
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -156,6 +169,12 @@ class DeployGeneratorDialog(QDialog):
         form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
         form_layout.addRow("", self.iou_threshold_label)
         
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
+        
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
         
@@ -189,6 +208,24 @@ class DeployGeneratorDialog(QDialog):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def is_sam_model_deployed(self):
+        """
+        Check if the SAM model is deployed and update the checkbox state accordingly.
+
+        :return: Boolean indicating whether the SAM model is deployed
+        """
+        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
+            return False
+        
+        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+
+        if not self.sam_dialog.loaded_model:
+            self.use_sam_dropdown.setCurrentText("False")
+            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
+            return False
+
+        return True 
         
     def initialize_area_threshold(self):
         """Initialize the area threshold range slider"""
@@ -254,7 +291,7 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.show()
         try:
             # Get selected model path
-            self.model_path = self.model_dropdown.currentText()
+            self.model_path = self.models[self.model_combo.currentText()]
 
             # Load the model
             self.loaded_model = FastSAM(self.model_path)
@@ -344,6 +381,11 @@ class DeployGeneratorDialog(QDialog):
             
             # Update the results names
             results[0].names = self.class_mapping
+            
+            # Check if SAM model is deployed
+            if self.use_sam_dropdown.currentText() == "True":
+                # Apply SAM to the detection results
+                results = self.sam_dialog.predict_from_results(results, self.class_mapping)
             
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
