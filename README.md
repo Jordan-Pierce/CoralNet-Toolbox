@@ -25,7 +25,7 @@ coralnet-toolbox
 ```
 
 <p align="center">
-  <img src="figures/CoralNet Toolbox - 0.0.1 - Demo 10 (Montage).gif" alt="CoralNet-Toolbox">
+  <img src="figures/CoralNet Toolbox - 0.0.1 - Demo 11 (SegmentEverything).gif" alt="CoralNet-Toolbox">
 </p>
 
 
