@@ -143,7 +143,8 @@ class ResultsProcessor:
 
         for results in results_generator:
             for result in results:
-                self.process_single_detection_result(result)
+                if result:
+                    self.process_single_detection_result(result)
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()
@@ -190,7 +191,8 @@ class ResultsProcessor:
 
         for results in results_generator:
             for result in results:
-                self.process_single_segmentation_result(result)
+                if result:
+                    self.process_single_segmentation_result(result)
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()
