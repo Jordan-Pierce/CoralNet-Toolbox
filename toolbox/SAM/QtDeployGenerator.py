@@ -8,6 +8,7 @@ import numpy as np
 
 import torch
 from ultralytics import FastSAM
+from ultralytics.models.fastsam import FastSAMPredictor
 
 from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt
@@ -118,6 +119,19 @@ class DeployGeneratorDialog(QDialog):
         """
         group_box = QGroupBox("Parameters")
         form_layout = QFormLayout()
+        
+        # Resize image dropdown
+        self.resize_image_dropdown = QComboBox()
+        self.resize_image_dropdown.addItems(["True", "False"])
+        self.resize_image_dropdown.setCurrentIndex(0)
+        form_layout.addRow("Resize Image:", self.resize_image_dropdown)
+        
+        # Image size control
+        self.imgsz_spinbox = QSpinBox()
+        self.imgsz_spinbox.setRange(512, 65536)
+        self.imgsz_spinbox.setSingleStep(1024)
+        self.imgsz_spinbox.setValue(self.imgsz)
+        form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
         
         # Area threshold controls
         self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
@@ -266,6 +280,14 @@ class DeployGeneratorDialog(QDialog):
         value = self.main_window.get_iou_thresh()
         self.iou_threshold_slider.setValue(int(value * 100))
         self.iou_thresh = value       
+        
+    def resize_image(self, image):
+        """
+        Resize the image to the specified size.
+        """
+        self.imgsz = self.imgsz_spinbox.value()
+        target_shape = self.get_target_shape(image, self.imgsz)
+        return ops.scale_image(image, target_shape)
 
     def load_model(self):
         """
@@ -280,11 +302,22 @@ class DeployGeneratorDialog(QDialog):
             # Get selected model path
             self.model_path = self.models[self.model_combo.currentText()]
 
+            # Set the parameters
+            overrides = dict(model=self.model_path, 
+                             task='segment', 
+                             mode='predict', 
+                             save=False, 
+                             imgsz=self.get_imgsz(),
+                             conf=self.get_uncertainty_threshold(), 
+                             iou=self.get_iou_threshold(), 
+                             device=self.main_window.device)
             # Load the model
-            self.loaded_model = FastSAM(self.model_path)
-            # Run a blank through the model to initialize it
-            self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
-
+            self.loaded_model = FastSAMPredictor(overrides=overrides)
+            
+            with torch.no_grad():
+                # Run a blank through the model to initialize it
+                self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
+            
             self.status_bar.setText(f"Model loaded: {self.model_path}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
@@ -298,6 +331,11 @@ class DeployGeneratorDialog(QDialog):
         QApplication.restoreOverrideCursor()
         # Exit the dialog box
         self.accept()
+        
+    def get_imgsz(self):
+        """Get the image size for the model."""
+        self.imgsz = self.imgsz_spinbox.value()
+        return self.imgsz
     
     def get_area_thresh(self, image):
         """
@@ -360,12 +398,8 @@ class DeployGeneratorDialog(QDialog):
 
             with torch.no_grad():
                 # Predict the image
-                results = self.loaded_model(image_path, 
-                                            retina_masks=True, 
-                                            imgsz=self.imgsz, 
-                                            conf=self.get_uncertainty_threshold(), 
-                                            iou=self.get_iou_threshold(),
-                                            device=self.main_window.device)
+                results = self.loaded_model(image_path)
+
                 gc.collect()
                 empty_cache()
             
