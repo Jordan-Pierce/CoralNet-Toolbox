@@ -124,6 +124,7 @@ class DeployGeneratorDialog(QDialog):
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
+        self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
         form_layout.addRow("Resize Image:", self.resize_image_dropdown)
         
         # Image size control
@@ -131,6 +132,7 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz_spinbox.setRange(512, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
+        self.imgsz_spinbox.setEnabled(False)  # Grey out the dropdown
         form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
         
         # Area threshold controls
@@ -307,6 +309,7 @@ class DeployGeneratorDialog(QDialog):
                              task='segment', 
                              mode='predict', 
                              save=False, 
+                             max_det=1000,
                              imgsz=self.get_imgsz(),
                              conf=self.get_uncertainty_threshold(), 
                              iou=self.get_iou_threshold(), 
