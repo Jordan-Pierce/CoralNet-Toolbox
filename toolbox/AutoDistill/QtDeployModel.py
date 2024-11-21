@@ -201,6 +201,7 @@ class DeployModelDialog(QDialog):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
     def setup_buttons_layout(self):
         """
         Setup action buttons in a group box.

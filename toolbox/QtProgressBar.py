@@ -1,5 +1,6 @@
 import warnings
 
+from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import QProgressBar, QVBoxLayout, QDialog, QPushButton, QApplication
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -11,6 +12,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class ProgressBar(QDialog):
+    progress_updated = pyqtSignal(int)
+    
     def __init__(self, parent=None, title="Progress"):
         super().__init__(parent)
 
@@ -30,6 +33,8 @@ class ProgressBar(QDialog):
         self.value = 0
         self.max_value = 100
         self.canceled = False
+        
+        self.progress_updated.connect(self.update_progress)
 
     def update_progress(self):
         if not self.canceled:
@@ -51,8 +56,8 @@ class ProgressBar(QDialog):
             self.progress_bar.setValue(self.value)
             if self.value >= self.max_value:
                 self.stop_progress()
-        else:
-            raise ValueError(f"Value must be between 0 and {self.max_value}")
+        elif value > self.max_value:
+            pass
 
     def stop_progress(self):
         self.value = self.max_value
@@ -61,6 +66,8 @@ class ProgressBar(QDialog):
     def cancel(self):
         self.canceled = True
         self.stop_progress()
+        # Make cursor not busy
+        QApplication.restoreOverrideCursor()
 
     def wasCanceled(self):
         return self.canceled

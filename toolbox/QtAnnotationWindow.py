@@ -1,5 +1,7 @@
 import warnings
-from concurrent.futures import ThreadPoolExecutor
+
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QMetaObject
 from PyQt5.QtGui import QMouseEvent, QPixmap
@@ -47,8 +49,8 @@ class AnnotationWindow(QGraphicsView):
 
         self.annotation_size = 224
         self.annotation_color = None
-        self.transparency = 64
-
+        self.transparency = 128
+        
         self.zoom_factor = 1.0
         self.pan_active = False
         self.pan_start = None
@@ -343,6 +345,7 @@ class AnnotationWindow(QGraphicsView):
                     annotation.create_cropped_image(self.rasterio_image)
 
                 # Display the selected annotation in confidence window
+                annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
                 self.main_window.confidence_window.display_cropped_image(annotation)
 
         if len(self.selected_annotations) > 1:
@@ -365,28 +368,54 @@ class AnnotationWindow(QGraphicsView):
         self.main_window.confidence_window.clear_display()
 
     def load_annotation(self, annotation):
+        # Remove the graphics item from its current scene if it exists
+        if annotation.graphics_item and annotation.graphics_item.scene():
+            annotation.graphics_item.scene().removeItem(annotation.graphics_item)
+
         # Create the graphics item (scene previously cleared)
         annotation.create_graphics_item(self.scene)
-        # Connect update signals
+        # Connect essential update signals
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
         self.viewport().update()
 
     def load_annotations(self):
-        # Crop all the annotations for current image (if not already cropped)
-        annotations = self.crop_image_annotations(return_annotations=True)
-
         # Initialize the progress bar
         progress_bar = ProgressBar(self, title="Loading Annotations")
-        progress_bar.start_progress(len(annotations))
         progress_bar.show()
+        
+        # Crop all the annotations for current image (if not already cropped)
+        annotations = self.crop_image_annotations(return_annotations=True)
+        progress_bar.start_progress(len(annotations))
+
+        # Connect update signals for all the annotations
+        for idx, annotation in enumerate(annotations):
+            if progress_bar.wasCanceled():
+                break
+            self.load_annotation(annotation)
+            progress_bar.update_progress()
+
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        QApplication.processEvents()
+        self.viewport().update()
+        
+    def load_these_annotations(self, image_path, annotations):
+        # Initialize the progress bar
+        progress_bar = ProgressBar(self, title="Loading Annotations")
+        progress_bar.show()
+        
+        # Crop all the annotations for current image (if not already cropped)
+        annotations = self.crop_these_image_annotations(image_path, annotations)
+        progress_bar.start_progress(len(annotations))
 
         # Connect update signals for all the annotations
         for annotation in annotations:
             if progress_bar.wasCanceled():
                 break
             self.load_annotation(annotation)
+            progress_bar.update_progress()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -432,13 +461,50 @@ class AnnotationWindow(QGraphicsView):
         self._crop_annotations_batch(image_path, annotations)
         return annotations
 
-    def _crop_annotations_batch(self, image_path, annotations):
+    def _crop_annotations_batch_linear(self, image_path, annotations):
+        # Create a progress bar
+        progress_bar = ProgressBar(self, title="Cropping Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(annotations))
+        
         # Get the rasterio representation
         rasterio_image = self.main_window.image_window.rasterio_open(image_path)
         # Loop through the annotations, crop the image if not already cropped
         for annotation in annotations:
             if not annotation.cropped_image:
                 annotation.create_cropped_image(rasterio_image)
+            progress_bar.update_progress()
+            
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+    def _crop_annotations_batch(self, image_path, annotations):
+        # Create a progress bar
+        progress_bar = ProgressBar(self, title="Cropping Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(annotations))
+        
+        # Create a lock for thread-safe access to the rasterio dataset
+        lock = threading.Lock()
+        
+        # Get the rasterio representation
+        rasterio_image = self.main_window.image_window.rasterio_open(image_path)
+        
+        def crop_annotation(annotation):
+            with lock:
+                if not annotation.cropped_image:
+                    annotation.create_cropped_image(rasterio_image)
+            return annotation
+
+        # Use ThreadPoolExecutor to crop images in parallel
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(crop_annotation, annotation) for annotation in annotations]
+            for future in as_completed(futures):
+                future.result()  # Ensure any exceptions are raised
+                progress_bar.update_progress()
+        
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def add_annotation(self, scene_pos: QPointF = None):
         if not self.selected_label:
@@ -520,8 +586,9 @@ class AnnotationWindow(QGraphicsView):
         # Clear the previous scene and delete its items
         if self.scene:
             for item in self.scene.items():
-                self.scene.removeItem(item)
-                del item
+                if item.scene() == self.scene:
+                    self.scene.removeItem(item)
+                    del item
             self.scene.deleteLater()
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
