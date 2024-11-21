@@ -120,6 +120,7 @@ class DeployPredictorDialog(QDialog):
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
+        self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
         form_layout.addRow("Resize Image:", self.resize_image_dropdown)
         
         # Image size control
