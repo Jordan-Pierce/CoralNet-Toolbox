@@ -260,7 +260,7 @@ class Base(QDialog):
                 QColor(r, g, b)
             )
             label = self.label_window.get_label_by_short_code(class_name)
-            self.class_mapping[class_name] = label
+            self.class_mapping[class_name] = label.to_dict()
 
     def get_uncertainty_threshold(self):
         """
