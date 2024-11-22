@@ -470,7 +470,7 @@ class DeployModelDialog(QDialog):
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.get_uncertainty_thresh(),
+                                                 uncertainty_thresh=self.get_uncertainty_threshold(),
                                                  iou_thresh=self.get_iou_threshold(),
                                                  min_area_thresh=self.area_thresh_min,
                                                  max_area_thresh=self.area_thresh_max)

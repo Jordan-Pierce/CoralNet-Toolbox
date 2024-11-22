@@ -32,24 +32,41 @@ class ResultsProcessor:
         self.uncertainty_thresh = uncertainty_thresh
         self.iou_thresh = iou_thresh
         self.min_area_thresh = min_area_thresh
+        self.max_area_thresh = max_area_thresh
         
-    def filter_by_uncertainty(self, results):
+    def filter_by_uncertainty(self, result):
         """
         Filter the results based on the uncertainty threshold.
         """
-        pass
+        # Get the confidence score
+        conf = float(result.boxes.conf.cpu().numpy()[0])
+        # Check if the confidence is within the threshold
+        if conf < self.uncertainty_thresh:
+            return False
+        return True
     
-    def filter_by_iou(self, results):
-        """
-        Filter the results based on the IoU threshold.
-        """
-        pass
-    
-    def filter_by_area(self, results):
+    def filter_by_area(self, result):
         """
         Filter the results based on the area threshold.
         """
-        pass
+        # Get the normalized bounding box coordinates
+        x_norm, y_norm, w_norm, h_norm = map(float, result.boxes.xywhn.cpu().numpy()[0])
+        # Calculate the normalized area
+        area_norm = w_norm * h_norm
+        # Check if the area is within the threshold
+        if area_norm < self.min_area_thresh:
+            return False
+        if area_norm > self.max_area_thresh:
+            return False
+        return True
+    
+    def passed_filters(self, result):
+        """Check if the results passed all filters."""
+        if not self.filter_by_uncertainty(result):
+            return False
+        if not self.filter_by_area(result):
+            return False
+        return True
 
     def extract_classification_result(self, result):
         """
@@ -121,6 +138,9 @@ class ResultsProcessor:
         """
         Process a single detection result.
         """
+        if not self.passed_filters(result):
+            return
+        
         # Get image path, class, class name, confidence, and bounding box coordinates
         image_path, cls, cls_name, conf, x_min, y_min, x_max, y_max = self.extract_detection_result(result)
         # Get the short label given the class name and confidence
@@ -169,6 +189,9 @@ class ResultsProcessor:
         """
         Process a single segmentation result.
         """
+        if not self.passed_filters(result):
+            return
+        
         # Get image path, class, class name, confidence, and polygon points
         image_path, cls, cls_name, conf, points = self.extract_segmentation_result(result)
         # Get the short label given the class name and confidence
@@ -206,7 +229,7 @@ class ResultsProcessor:
         :param conf: Confidence score
         :return: Short label as a string
         """
-        if conf <= self.main_window.get_uncertainty_thresh():
+        if conf <= self.uncertainty_thresh:
             return 'Review'
         return self.class_mapping.get(cls_name, {}).get('short_label_code', 'Review')
 
@@ -288,7 +311,7 @@ class ResultsProcessor:
         annotation.update_machine_confidence(predictions)
 
         # If the confidence is below the threshold, set the label to review
-        if conf < self.main_window.get_uncertainty_thresh():
+        if conf < self.uncertainty_thresh:
             review_label = self.label_window.get_label_by_id('-1')
             annotation.update_label(review_label)
 

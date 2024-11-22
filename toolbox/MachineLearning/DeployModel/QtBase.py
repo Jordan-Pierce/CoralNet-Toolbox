@@ -149,6 +149,9 @@ class Base(QDialog):
         )
         
         if file_path:
+            # Clear the class mapping
+            self.class_mapping = {}
+            
             if ".bin" in file_path:
                 # OpenVINO is a directory
                 file_path = os.path.dirname(file_path)
@@ -249,7 +252,7 @@ class Base(QDialog):
     def create_generic_labels(self):
         """
         Create generic labels for the given class names
-        """        
+        """  
         for class_name in self.class_names:
             r = random.randint(0, 255)
             g = random.randint(0, 255)

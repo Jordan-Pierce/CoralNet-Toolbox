@@ -398,6 +398,10 @@ class ImageWindow(QWidget):
 
     def delete_image(self, image_path):
         if image_path in self.image_paths:
+            # Get current index before removing
+            current_index = self.filtered_image_paths.index(image_path)
+            
+            # Remove the image from lists and dict
             self.image_paths.remove(image_path)
             del self.image_dict[image_path]
             if image_path in self.filtered_image_paths:
@@ -412,9 +416,13 @@ class ImageWindow(QWidget):
             # Update the image count label
             self.update_image_count_label()
 
-            # Select a new image if available
+            # Select next available image
             if self.filtered_image_paths:
-                new_image_path = self.filtered_image_paths[0]
+                # Try to keep same index, fallback to previous
+                if current_index < len(self.filtered_image_paths):
+                    new_image_path = self.filtered_image_paths[current_index]
+                else:
+                    new_image_path = self.filtered_image_paths[current_index - 1]
                 self.load_image_by_path(new_image_path)
             else:
                 self.selected_image_path = None
