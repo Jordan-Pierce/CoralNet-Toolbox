@@ -26,7 +26,6 @@ class Classify(Base):
         self.setWindowTitle("Classify Batch Inference")
         
         self.deploy_model_dialog = main_window.classify_deploy_model_dialog
-        self.loaded_model = self.deploy_model_dialog.loaded_model
         
     def setup_task_specific_layout(self):
         """
@@ -131,6 +130,8 @@ class Classify(Base):
         """
         Perform batch inference on the selected images and annotations.
         """
+        self.loaded_model = self.deploy_model_dialog.loaded_model
+        
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self, title="Batch Inference")
         progress_bar.show()
@@ -142,7 +143,7 @@ class Classify(Base):
 
             # Make predictions on each image's annotations
             for path, patches in groups:
-                self.deploy_model_dialog.predict(annotations=list(patches))
+                self.deploy_model_dialog.predict(inputs=list(patches))
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()

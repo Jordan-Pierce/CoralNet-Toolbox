@@ -7,6 +7,7 @@ import gc
 import numpy as np
 
 import torch
+import supervision as sv
 from ultralytics import FastSAM
 from ultralytics.models.fastsam import FastSAMPredictor
 
@@ -15,7 +16,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
                              QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QSlider, QSpinBox,
-                             QVBoxLayout, QGroupBox)
+                             QVBoxLayout, QGroupBox, QDoubleSpinBox)
 
 from torch.cuda import empty_cache
 
@@ -59,6 +60,7 @@ class DeployGeneratorDialog(QDialog):
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.01
         self.area_thresh_max = 0.75
+
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = {0: 'Review'}
@@ -282,14 +284,6 @@ class DeployGeneratorDialog(QDialog):
         value = self.main_window.get_iou_thresh()
         self.iou_threshold_slider.setValue(int(value * 100))
         self.iou_thresh = value       
-        
-    def resize_image(self, image):
-        """
-        Resize the image to the specified size.
-        """
-        self.imgsz = self.imgsz_spinbox.value()
-        target_shape = self.get_target_shape(image, self.imgsz)
-        return ops.scale_image(image, target_shape)
 
     def load_model(self):
         """
@@ -398,7 +392,7 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
-
+            
             with torch.no_grad():
                 # Predict the image
                 results = self.loaded_model(image_path)

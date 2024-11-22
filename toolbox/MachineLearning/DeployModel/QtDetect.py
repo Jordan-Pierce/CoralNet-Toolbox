@@ -181,6 +181,7 @@ class Detect(Base):
             QApplication.setOverrideCursor(Qt.WaitCursor)
             self.loaded_model = YOLO(self.model_path, task='detect')
             self.loaded_model(np.zeros((640, 640, 3), dtype=np.uint8))
+            self.class_names = list(self.loaded_model.names.values())
 
             if not self.class_mapping:
                 self.handle_missing_class_mapping()
@@ -216,7 +217,7 @@ class Detect(Base):
         # Predict the detection results
         results = self.loaded_model(inputs,
                                     agnostic_nms=True,
-                                    conf=self.get_uncertainty_thresh(),
+                                    conf=self.get_uncertainty_threshold(),
                                     iou=self.get_iou_threshold(),
                                     device=self.main_window.device,
                                     stream=True)
@@ -224,7 +225,7 @@ class Detect(Base):
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
-                                             uncertainty_thresh=self.get_uncertainty_thresh(),
+                                             uncertainty_thresh=self.get_uncertainty_threshold(),
                                              iou_thresh=self.get_iou_threshold(),
                                              min_area_thresh=self.area_thresh_min,
                                              max_area_thresh=self.area_thresh_max)

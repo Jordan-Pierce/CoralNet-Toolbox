@@ -48,7 +48,8 @@ class Base(QDialog):
         self.area_thresh_max = 0.75
         self.model_path = None
         self.loaded_model = None  
-        self.class_mapping = None
+        self.class_names = []
+        self.class_mapping = {}
 
         self.layout = QVBoxLayout(self)
         
@@ -199,11 +200,10 @@ class Base(QDialog):
         if not self.loaded_model:
             return
             
-        class_names = list(self.loaded_model.names.values())
         class_names_str = ""
         missing_labels = []
 
-        for class_name in class_names:
+        for class_name in self.class_names:
             label = self.label_window.get_label_by_short_code(class_name)
             if label:
                 class_names_str += f"✅ {label.short_label_code}: {label.long_label_code}\n"
@@ -246,13 +246,11 @@ class Base(QDialog):
                                                           label['long_label_code'],
                                                           QColor(*label['color']))
     
-    def create_generic_labels(self, class_names):
+    def create_generic_labels(self):
         """
         Create generic labels for the given class names
-        
-        :param class_names: List of class names
-        """
-        for class_name in class_names:
+        """        
+        for class_name in self.class_names:
             r = random.randint(0, 255)
             g = random.randint(0, 255)
             b = random.randint(0, 255)
@@ -261,8 +259,10 @@ class Base(QDialog):
                 class_name,
                 QColor(r, g, b)
             )
+            label = self.label_window.get_label_by_short_code(class_name)
+            self.class_mapping[class_name] = label
 
-    def get_uncertainty_thresh(self):
+    def get_uncertainty_threshold(self):
         """
         Get the confidence threshold for predictions
         """

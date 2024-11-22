@@ -26,7 +26,6 @@ class Segment(Base):
         self.setWindowTitle("Segment Batch Inference")
         
         self.deploy_model_dialog = main_window.segment_deploy_model_dialog
-        self.loaded_model = self.deploy_model_dialog.loaded_model
         
     def setup_task_specific_layout(self):
         """
@@ -38,13 +37,15 @@ class Segment(Base):
         """
         Perform batch inference on the selected images.
         """
+        self.loaded_model = self.deploy_model_dialog.loaded_model
+        
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self, title="Batch Inference")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
-            self.deploy_model_dialog.predict_segmentation(image_paths=self.image_paths)
+            self.deploy_model_dialog.predict(inputs=self.image_paths)
 
         progress_bar.stop_progress()
         progress_bar.close()

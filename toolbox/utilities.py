@@ -114,6 +114,16 @@ def preprocess_image(image):
     return image
 
 
+def open_image(image_path):
+    """
+    Open an image from the given path.
+
+    :param image_path:
+    :return:
+    """
+    return preprocess_image(qimage_to_numpy(QImage(image_path)))
+
+
 def rasterio_to_numpy(rasterio_src):
     """
     Convert a Rasterio dataset to a NumPy array.

@@ -416,6 +416,7 @@ class MainWindow(QMainWindow):
         self.rectangle_icon_path = get_icon_path("rectangle.png")
         self.polygon_icon_path = get_icon_path("polygon.png")
         self.sam_icon_path = get_icon_path("sam.png")
+        self.slicer_icon_path = get_icon_path("slicer.png")
         self.turtle_icon_path = get_icon_path("turtle.png")
         self.rabbit_icon_path = get_icon_path("rabbit.png")
         self.rocket_icon_path = get_icon_path("rocket.png")
@@ -450,6 +451,13 @@ class MainWindow(QMainWindow):
         self.sam_tool_action.setCheckable(True)
         self.sam_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.sam_tool_action)
+        
+        self.toolbar.addSeparator()
+        
+        self.slicer_tool_action = QAction(QIcon(self.slicer_icon_path), "Slicer", self)
+        self.slicer_tool_action.setCheckable(False)
+        self.slicer_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.slicer_tool_action)
         
         self.toolbar.addSeparator()
 

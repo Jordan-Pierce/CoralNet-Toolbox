@@ -511,6 +511,7 @@ class Base(QDialog):
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
+        params['pretrained'] = self.model_edit.text() if self.model_edit.text() else params['pretrained']
 
         # Add custom parameters (allows overriding the above parameters)
         for param_name, param_value in self.custom_params:

@@ -101,6 +101,7 @@ class Classify(Base):
             QApplication.setOverrideCursor(Qt.WaitCursor)
             self.loaded_model = YOLO(self.model_path, task='classify')
             self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
+            self.class_names = list(self.loaded_model.names.values())
 
             if not self.class_mapping:
                 self.handle_missing_class_mapping()
@@ -147,7 +148,7 @@ class Classify(Base):
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
-                                             uncertainty_thresh=self.get_uncertainty_thresh())
+                                             uncertainty_thresh=self.get_uncertainty_threshold())
 
         # Process the classification results
         results_processor.process_classification_results(results, inputs)
