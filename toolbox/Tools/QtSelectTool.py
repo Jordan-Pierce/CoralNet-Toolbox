@@ -72,7 +72,13 @@ class SelectTool(Tool):
         elif self.resizing:
             self.handle_resize(current_pos)
         elif self.moving:
-            self.handle_move(current_pos)
+            # Check if the selected annotation has a warning message
+            if len(self.annotation_window.selected_annotations):
+                selected_annotation = self.annotation_window.selected_annotations[0]
+                if not self.annotation_window.is_annotation_moveable(selected_annotation):
+                    self.moving = False
+                else:
+                    self.handle_move(current_pos)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events to stop moving, resizing, or finalize selection rectangle."""
@@ -198,6 +204,9 @@ class SelectTool(Tool):
 
     def handle_move(self, current_pos):
         """Handle moving the selected annotation."""
+        if not len(self.annotation_window.selected_annotations):
+            return  
+        
         selected_annotation = self.annotation_window.selected_annotations[0]
         delta = current_pos - self.move_start_pos
         new_center = selected_annotation.center_xy + delta
@@ -211,7 +220,13 @@ class SelectTool(Tool):
 
     def handle_resize(self, current_pos):
         """Handle resizing the selected annotation."""
+        if not len(self.annotation_window.selected_annotations):
+            return
+        
         selected_annotation = self.annotation_window.selected_annotations[0]
+        if not self.annotation_window.is_annotation_moveable(selected_annotation):
+            return
+        
         self.resize_annotation(selected_annotation, current_pos)
         self.display_resize_handles(selected_annotation)
 
@@ -275,6 +290,7 @@ class SelectTool(Tool):
                                            point.y() - handle_size // 2,
                                            handle_size,
                                            handle_size)
+            
             ellipse.setPen(QPen(annotation.label.color))
             ellipse.setBrush(QBrush(annotation.label.color))
             self.annotation_window.scene.addItem(ellipse)

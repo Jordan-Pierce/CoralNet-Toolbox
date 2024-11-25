@@ -135,10 +135,10 @@ class PatchSamplingDialog(QDialog):
             height = self.annotation_window.image_pixmap.height()
             # Set the margin spinboxes to the image dimensions
             annotation_size = self.annotation_size_spinbox.value()
-            self.margin_x_min_spinbox.setMaximum(width//2 - annotation_size)
-            self.margin_y_min_spinbox.setMaximum(height//2 - annotation_size)
-            self.margin_x_max_spinbox.setMaximum(width//2 - annotation_size)
-            self.margin_y_max_spinbox.setMaximum(height//2 - annotation_size)
+            self.margin_x_min_spinbox.setMaximum(width // 2 - annotation_size)
+            self.margin_y_min_spinbox.setMaximum(height // 2 - annotation_size)
+            self.margin_x_max_spinbox.setMaximum(width // 2 - annotation_size)
+            self.margin_y_max_spinbox.setMaximum(height // 2 - annotation_size)
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins

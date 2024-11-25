@@ -25,7 +25,7 @@ class RectangleAnnotation(Annotation):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg=True):
+                 show_msg=False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
@@ -181,12 +181,9 @@ class RectangleAnnotation(Annotation):
                 self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
-        if self.machine_confidence and self.show_message:
-            self.show_warning_message()
-            return
-
         # Clear the machine confidence
         self.update_user_confidence(self.label)
+        
         # Update the location, graphic
         delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2),
                         round(new_center_xy.y() - self.center_xy.y(), 2))
@@ -197,12 +194,9 @@ class RectangleAnnotation(Annotation):
         self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, scale_factor: float):
-        if self.machine_confidence and self.show_message:
-            self.show_warning_message()
-            return
-
         # Clear the machine confidence
         self.update_user_confidence(self.label)
+        
         # Update the size, graphic
         width = (self.bottom_right.x() - self.top_left.x()) * scale_factor
         height = (self.bottom_right.y() - self.top_left.y()) * scale_factor
@@ -212,10 +206,6 @@ class RectangleAnnotation(Annotation):
         self.annotationUpdated.emit(self)  # Notify update
 
     def resize(self, handle: str, new_pos: QPointF):
-        if self.machine_confidence and self.show_message:
-            self.show_warning_message()
-            return
-
         # Clear the machine confidence
         self.update_user_confidence(self.label)
 
@@ -279,7 +269,8 @@ class RectangleAnnotation(Annotation):
             label = label_window.get_label_by_short_code(short_label_code)
             if label:
                 machine_confidence[label] = confidence
-        annotation.machine_confidence = machine_confidence
+        
+        annotation.update_machine_confidence(machine_confidence)
 
         return annotation
 

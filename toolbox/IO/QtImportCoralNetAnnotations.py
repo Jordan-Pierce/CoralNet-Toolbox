@@ -144,8 +144,8 @@ class ImportCoralNetAnnotations:
                             suggested_label = self.label_window.get_label_by_short_code(suggestion)
                             machine_confidence[suggested_label] = confidence
 
-                    if machine_confidence:
-                        annotation.update_machine_confidence(machine_confidence)
+                    # Update the machine confidence
+                    annotation.update_machine_confidence(machine_confidence)
 
                     # Add annotation to the dict
                     self.annotation_window.annotations_dict[annotation.id] = annotation

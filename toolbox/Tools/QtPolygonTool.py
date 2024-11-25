@@ -89,8 +89,7 @@ class PolygonTool(Tool):
                                        self.annotation_window.selected_label.color,
                                        self.annotation_window.current_image_path,
                                        self.annotation_window.selected_label.id,
-                                       self.annotation_window.main_window.label_window.active_label.transparency,
-                                       show_msg=False)
+                                       self.annotation_window.main_window.label_window.active_label.transparency)
 
         if finished:
             # Reset the tool

@@ -406,8 +406,7 @@ class SAMTool(Tool):
                                        self.annotation_window.selected_label.color,
                                        self.annotation_window.current_image_path,
                                        self.annotation_window.selected_label.id,
-                                       transparency,
-                                       show_msg=False)
+                                       transparency)
 
         # Ensure the PolygonAnnotation is added to the scene after creation
         annotation.create_graphics_item(self.annotation_window.scene)

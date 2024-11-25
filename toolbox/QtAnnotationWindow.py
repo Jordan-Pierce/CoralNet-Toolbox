@@ -193,16 +193,18 @@ class AnnotationWindow(QGraphicsView):
         # Cursor or 1 annotation selected
         if len(self.selected_annotations) == 1:
             annotation = self.selected_annotations[0]
+            if not self.is_annotation_moveable(annotation):
+                return
             if isinstance(annotation, PatchAnnotation):
                 annotation.update_annotation_size(self.annotation_size)
                 if self.cursor_annotation:
                     self.cursor_annotation.update_annotation_size(self.annotation_size)
-            elif isinstance(annotation, PolygonAnnotation):
+            elif isinstance(annotation, RectangleAnnotation):
                 scale_factor = 1 + delta / 100.0
                 annotation.update_annotation_size(scale_factor)
                 if self.cursor_annotation:
                     self.cursor_annotation.update_annotation_size(scale_factor)
-            elif isinstance(annotation, RectangleAnnotation):
+            elif isinstance(annotation, PolygonAnnotation):
                 scale_factor = 1 + delta / 100.0
                 annotation.update_annotation_size(scale_factor)
                 if self.cursor_annotation:
@@ -215,7 +217,14 @@ class AnnotationWindow(QGraphicsView):
         if len(self.selected_annotations) <= 1:
             # Emit that the annotation size has changed
             self.annotationSizeChanged.emit(self.annotation_size)
-
+            
+    def is_annotation_moveable(self, annotation):
+        if annotation.show_message:
+            self.unselect_annotations()
+            annotation.show_warning_message()
+            return False
+        return True
+        
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
 
         if self.cursor_annotation:
@@ -356,15 +365,12 @@ class AnnotationWindow(QGraphicsView):
         if annotation in self.selected_annotations:
             annotation.deselect()
             self.selected_annotations.remove(annotation)
-
-        if len(self.selected_annotations) == 0:
             self.main_window.confidence_window.clear_display()
 
     def unselect_annotations(self):
         for annotation in self.selected_annotations:
             annotation.deselect()
         self.selected_annotations = []
-
         self.main_window.confidence_window.clear_display()
 
     def load_annotation(self, annotation):

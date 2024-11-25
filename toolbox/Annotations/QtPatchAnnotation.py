@@ -24,7 +24,7 @@ class PatchAnnotation(Annotation):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg=True):
+                 show_msg=False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
         self.center_xy = QPointF(round(center_xy.x(), 2), round(center_xy.y(), 2))
         self.annotation_size = annotation_size
@@ -156,26 +156,18 @@ class PatchAnnotation(Annotation):
                 self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
-        if self.machine_confidence and self.show_message:
-            self.deselect()
-            self.show_warning_message()
-            return
-
         # Clear the machine confidence
         self.update_user_confidence(self.label)
+        
         # Update the location, graphic
         self.center_xy = QPointF(round(new_center_xy.x(), 2), round(new_center_xy.y(), 2))
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, size):
-        if self.machine_confidence and self.show_message:
-            self.deselect()
-            self.show_warning_message()
-            return
-
         # Clear the machine confidence
         self.update_user_confidence(self.label)
+        
         # Update the size, graphic
         self.annotation_size = size
         self.update_graphics_item()
@@ -209,7 +201,8 @@ class PatchAnnotation(Annotation):
             label = label_window.get_label_by_short_code(short_label_code)
             if label:
                 machine_confidence[label] = confidence
-        annotation.machine_confidence = machine_confidence
+                
+        annotation.update_machine_confidence(machine_confidence)
 
         return annotation
 

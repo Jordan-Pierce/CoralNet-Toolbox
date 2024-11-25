@@ -255,8 +255,7 @@ class ResultsProcessor:
                                              label.color,
                                              image_path,
                                              label.id,
-                                             self.main_window.get_transparency_value(),
-                                             show_msg=True)
+                                             self.main_window.get_transparency_value())
         except Exception:
             annotation = None
             
@@ -279,8 +278,7 @@ class ResultsProcessor:
                                            label.color,
                                            image_path,
                                            label.id,
-                                           self.main_window.get_transparency_value(),
-                                           show_msg=True)
+                                           self.main_window.get_transparency_value())
         except Exception:
             annotation = None
             

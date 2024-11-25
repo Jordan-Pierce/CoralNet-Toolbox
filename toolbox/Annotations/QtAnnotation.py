@@ -30,7 +30,7 @@ class Annotation(QObject):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg=True):
+                 show_msg=False):
         super().__init__()
         self.id = str(uuid.uuid4())
         self.label = Label(short_label_code, long_label_code, color, label_id)
@@ -55,16 +55,12 @@ class Annotation(QObject):
         self.polygon_graphics_item = None
 
     def show_warning_message(self):
-        self.deselect()
         msg_box = QMessageBox()
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setWindowTitle("Warning")
         msg_box.setText("Altering an annotation with predictions will remove the machine suggestions.")
         msg_box.setStandardButtons(QMessageBox.Ok)
         msg_box.exec_()
-
-        # Only show once
-        self.show_message = False
 
     def select(self):
         self.is_selected = True
@@ -98,6 +94,8 @@ class Annotation(QObject):
             self.polygon_graphics_item = None
 
     def update_machine_confidence(self, prediction: dict):
+        if not prediction:
+            return
         # Set user confidence to None
         self.user_confidence = {}
         # Update machine confidence
@@ -106,6 +104,7 @@ class Annotation(QObject):
         self.label = max(prediction, key=prediction.get)
         # Create the graphic
         self.update_graphics_item()
+        self.show_message = True
 
     def update_user_confidence(self, new_label: 'Label'):
         # Set machine confidence to None
@@ -116,6 +115,7 @@ class Annotation(QObject):
         self.label = new_label
         # Create the graphic
         self.update_graphics_item()
+        self.show_message = False
 
     def update_label(self, new_label: 'Label'):
         if self.label is None:
@@ -337,7 +337,8 @@ class Annotation(QObject):
             label = label_window.get_label_by_short_code(short_label_code)
             if label:
                 machine_confidence[label] = confidence
-        annotation.machine_confidence = machine_confidence
+
+        annotation.update_machine_confidence(machine_confidence)
 
         return annotation
 
