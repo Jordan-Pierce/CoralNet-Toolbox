@@ -298,6 +298,7 @@ class PolygonAnnotation(Annotation):
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
+            self.deselect()
             self.show_warning_message()
             return
 
@@ -317,6 +318,7 @@ class PolygonAnnotation(Annotation):
 
     def update_annotation_size(self, delta: float):
         if self.machine_confidence and self.show_message:
+            self.deselect()
             self.show_warning_message()
             return
 
@@ -362,6 +364,7 @@ class PolygonAnnotation(Annotation):
 
     def resize(self, handle, new_pos):
         if self.machine_confidence and self.show_message:
+            self.deselect()
             self.show_warning_message()
             return
 

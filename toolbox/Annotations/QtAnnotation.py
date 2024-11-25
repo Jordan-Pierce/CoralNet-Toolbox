@@ -55,6 +55,7 @@ class Annotation(QObject):
         self.polygon_graphics_item = None
 
     def show_warning_message(self):
+        self.deselect()
         msg_box = QMessageBox()
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setWindowTitle("Warning")

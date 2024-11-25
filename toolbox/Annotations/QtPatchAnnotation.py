@@ -157,6 +157,7 @@ class PatchAnnotation(Annotation):
 
     def update_location(self, new_center_xy: QPointF):
         if self.machine_confidence and self.show_message:
+            self.deselect()
             self.show_warning_message()
             return
 
@@ -169,6 +170,7 @@ class PatchAnnotation(Annotation):
 
     def update_annotation_size(self, size):
         if self.machine_confidence and self.show_message:
+            self.deselect()
             self.show_warning_message()
             return
 
