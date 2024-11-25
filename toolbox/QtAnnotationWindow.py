@@ -350,21 +350,21 @@ class AnnotationWindow(QGraphicsView):
 
         if len(self.selected_annotations) > 1:
             self.main_window.label_window.deselect_active_label()
+            self.main_window.confidence_window.clear_display()
 
     def unselect_annotation(self, annotation):
         if annotation in self.selected_annotations:
             annotation.deselect()
             self.selected_annotations.remove(annotation)
 
-        # Clear the confidence window
-        self.main_window.confidence_window.clear_display()
+        if len(self.selected_annotations) == 0:
+            self.main_window.confidence_window.clear_display()
 
     def unselect_annotations(self):
         for annotation in self.selected_annotations:
             annotation.deselect()
         self.selected_annotations = []
 
-        # Clear the confidence window
         self.main_window.confidence_window.clear_display()
 
     def load_annotation(self, annotation):
