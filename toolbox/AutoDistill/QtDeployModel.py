@@ -51,8 +51,8 @@ class DeployModelDialog(QDialog):
         self.imgsz = 1024
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
-        self.area_thresh_min = 0.01
-        self.area_thresh_max = 0.75
+        self.area_thresh_min = 0.00
+        self.area_thresh_max = 0.40
         self.loaded_model = None
         self.model_name = None
         self.ontology = None

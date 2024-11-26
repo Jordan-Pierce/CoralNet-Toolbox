@@ -60,8 +60,8 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz = 1024
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
-        self.area_thresh_min = 0.01
-        self.area_thresh_max = 0.75
+        self.area_thresh_min = 0.00
+        self.area_thresh_max = 0.40
 
         self.loaded_model = None
         self.model_path = None
@@ -180,7 +180,9 @@ class DeployGeneratorDialog(QDialog):
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        form_layout.addRow("Use Predictor for creating Polygons:", self.use_sam_dropdown)
+        label = QLabel("Use Predictor for creating Polygons:")
+        label.setStyleSheet("color: red; font-weight: bold;")
+        form_layout.addRow(label, self.use_sam_dropdown)
         
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)

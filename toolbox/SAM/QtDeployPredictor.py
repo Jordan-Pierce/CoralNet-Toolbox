@@ -50,8 +50,8 @@ class DeployPredictorDialog(QDialog):
         self.imgsz = 1024
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
-        self.area_thresh_min = 0.01
-        self.area_thresh_max = 0.75
+        self.area_thresh_min = 0.00
+        self.area_thresh_max = 0.40
         self.model_path = None
         self.loaded_model = None
         self.image_path = None
@@ -94,6 +94,7 @@ class DeployPredictorDialog(QDialog):
         
         # Define available models
         self.models = {
+            "RepViT-SAM": "repvit.pt",
             "EdgeSAM": "edge_sam_3x.pt",
             "MobileSAM": "vit_t.pt",
             "SAM-Base": "vit_b.pt",
@@ -283,7 +284,9 @@ class DeployPredictorDialog(QDialog):
             self.download_model_weights(self.model_path)
 
             # Determine model type from filename
-            if "edge_" in self.model_path.lower():
+            if "repvit" in self.model_path.lower():
+                model_type = "repvit"
+            elif "edge_" in self.model_path.lower():
                 model_type = "edge_sam"
             elif "_t" in self.model_path.lower():
                 model_type = "vit_t"
