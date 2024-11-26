@@ -178,7 +178,7 @@ If used in project or publication, please attribute your use of this repository 
     
 ```
 @misc{CoralNet-Toolbox,
-  author = {Pierce, Jordan and Edwards, Clint and Vieham, Shay and Rojano, Sarah and Cook, Sophie and Costa, Bryan and Sweeney, Edward and Battista, Tim},
+  author = {Pierce, Jordan and Edwards, Clinton and Rojano, Sarah and Cook, Sophie and Sweeney, Edward and Costa, Bryan and Vieham, Shay and Battista, Tim},
   title = {CoralNet-Toolbox},
   year = {2023},
   howpublished = {\url{https://github.com/Jordan-Pierce/CoralNet-Toolbox}},
