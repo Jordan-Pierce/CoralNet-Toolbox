@@ -137,7 +137,8 @@ class SelectTool(Tool):
 
     def update_selection_rectangle(self, current_pos):
         """Update the selection rectangle while dragging."""
-        if self.selection_rectangle:
+        # Only update the rectangle if the cursor is within the window
+        if self.selection_rectangle and self.annotation_window.cursorInWindow(current_pos, mapped=True):
             rect = QRectF(self.selection_start_pos, current_pos).normalized()
             self.selection_rectangle.setRect(rect)
 

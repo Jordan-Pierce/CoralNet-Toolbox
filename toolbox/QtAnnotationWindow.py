@@ -132,6 +132,11 @@ class AnnotationWindow(QGraphicsView):
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
+        
+        # Handle the hot key for deleting 
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Delete:
+            if self.selected_annotations:
+                self.delete_selected_annotation()
 
     def keyReleaseEvent(self, event):
         if self.active_image and self.selected_tool:
