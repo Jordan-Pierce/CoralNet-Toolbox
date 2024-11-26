@@ -627,7 +627,6 @@ class Base(QDialog):
 
         # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Create the dataset
         self.create_dataset(output_dir_path)
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()

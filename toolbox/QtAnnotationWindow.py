@@ -470,9 +470,11 @@ class AnnotationWindow(QGraphicsView):
         if return_annotations:
             return annotations
 
-    def crop_these_image_annotations(self, image_path, annotations):
-        # Crop these annotations for this image
-        self._crop_annotations_batch(image_path, annotations)
+    def crop_these_image_annotations(self, image_path, annotations, linear=False):
+        if linear:
+            self._crop_annotations_batch_linear(image_path, annotations)
+        else:
+            self._crop_annotations_batch(image_path, annotations)
         return annotations
 
     def _crop_annotations_batch_linear(self, image_path, annotations):

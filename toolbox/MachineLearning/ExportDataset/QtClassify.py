@@ -38,7 +38,7 @@ class Classify(Base):
         super(Classify, self).__init__(parent)
         self.setWindowTitle("Export Classification Dataset")
         self.setWindowIcon(get_icon("coral"))
-
+        
     def update_annotation_type_checkboxes(self):
         """
         Update the state of annotation type checkboxes based on the selected dataset type.
@@ -70,9 +70,9 @@ class Classify(Base):
             with open(os.path.join(label_folder, 'NULL.jpg'), 'w') as f:
                 f.write("")
 
-        self.process_annotations(self.train_annotations, train_dir, "Training")
+        self.process_annotations(self.train_annotations, train_dir, "Train")
         self.process_annotations(self.val_annotations, val_dir, "Validation")
-        self.process_annotations(self.test_annotations, test_dir, "Testing")
+        self.process_annotations(self.test_annotations, test_dir, "Test")
 
         # Output the annotations as CoralNet CSV file
         df = []
@@ -81,16 +81,8 @@ class Classify(Base):
             df.append(annotation.to_coralnet())
 
         pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
-
+        
     def process_annotations(self, annotations, split_dir, split):
-        """
-        Process and save classification annotations.
-
-        Args:
-            annotations (list): List of annotations.
-            split_dir (str): Path to the split directory.
-            split (str): Split name (e.g., "Training", "Validation", "Testing").
-        """
         # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
@@ -101,11 +93,12 @@ class Classify(Base):
         progress_bar.start_progress(len(image_paths))
 
         # Group annotations by image path
-        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), 
+                                   key=attrgetter('image_path'))
 
         for image_path, group in grouped_annotations:
             try:
-                # Process annotations for current image
+                # Process image annotations
                 image_annotations = list(group)
                 image_annotations = self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
 
@@ -113,16 +106,16 @@ class Classify(Base):
                 for annotation in image_annotations:
                     label_code = annotation.label.short_label_code
                     output_path = os.path.join(split_dir, label_code)
+                    # Create a split / label directory if it does not exist
                     os.makedirs(output_path, exist_ok=True)
-                    
                     output_filename = f"{label_code}_{annotation.id}.jpg"
                     full_output_path = os.path.join(output_path, output_filename)
-                    
+
                     try:
                         annotation.cropped_image.save(full_output_path, "JPG", quality=100)
                     except Exception as e:
                         print(f"ERROR: Issue saving image {full_output_path}: {e}")
-                        # Fallback to PNG if JPG fails
+                        # Optionally, save as PNG if JPG fails
                         png_path = full_output_path.replace(".jpg", ".png")
                         annotation.cropped_image.save(png_path, "PNG")
 
