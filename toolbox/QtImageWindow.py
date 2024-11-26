@@ -122,8 +122,8 @@ class ImageWindow(QWidget):
         self.info_layout.addWidget(self.image_count_label)
 
         self.tableWidget = QTableWidget(self)
-        self.tableWidget.setColumnCount(1)
-        self.tableWidget.setHorizontalHeaderLabels(["Image Name"])
+        self.tableWidget.setColumnCount(3)
+        self.tableWidget.setHorizontalHeaderLabels(["Image Name", "Annotations", "Review Annotations"])
         self.tableWidget.horizontalHeader().setStretchLastSection(True)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
@@ -166,7 +166,9 @@ class ImageWindow(QWidget):
             self.image_dict[image_path] = {
                 'filename': filename,
                 'has_annotations': False,
-                'needs_review': False
+                'needs_review': False,
+                'annotation_count': 0,
+                'review_annotation_count': 0
             }
             self.update_table_widget()
             self.update_image_count_label()
@@ -183,6 +185,14 @@ class ImageWindow(QWidget):
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setToolTip(os.path.basename(path))  # Set the full path as a tooltip
             self.tableWidget.setItem(row_position, 0, item)
+
+            annotation_count_item = QTableWidgetItem(str(self.image_dict[path]['annotation_count']))
+            annotation_count_item.setFlags(annotation_count_item.flags() & ~Qt.ItemIsEditable)
+            self.tableWidget.setItem(row_position, 1, annotation_count_item)
+
+            review_annotation_count_item = QTableWidgetItem(str(self.image_dict[path]['review_annotation_count']))
+            review_annotation_count_item.setFlags(review_annotation_count_item.flags() & ~Qt.ItemIsEditable)
+            self.tableWidget.setItem(row_position, 2, review_annotation_count_item)
 
         self.update_table_selection()
 
@@ -211,6 +221,8 @@ class ImageWindow(QWidget):
             review_annotations = self.annotation_window.get_image_review_annotations(image_path)
             self.image_dict[image_path]['has_annotations'] = bool(annotations)
             self.image_dict[image_path]['needs_review'] = bool(review_annotations)
+            self.image_dict[image_path]['annotation_count'] = len(annotations)
+            self.image_dict[image_path]['review_annotation_count'] = len(review_annotations)
 
     def load_image(self, row, column):
         # Get the image path associated with the selected row, load
