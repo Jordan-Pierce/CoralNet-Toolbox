@@ -142,6 +142,7 @@ class ImageWindow(QWidget):
         self.image_dict = {}  # Dictionary to store all image information
         self.filtered_image_paths = []  # List to store filtered image paths
         self.selected_image_path = None
+        self.right_clicked_row = None  # Attribute to store the right-clicked row
 
         self.images = {}  # Dictionary to store image paths and their QImage representation
         self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
@@ -157,24 +158,6 @@ class ImageWindow(QWidget):
         self.image_load_queue = Queue()
         self.current_workers = []  # List to keep track of running workers
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
-
-    def show_context_menu(self, position):
-        context_menu = QMenu(self)
-        delete_annotations_action = context_menu.addAction("Delete Annotations")
-        delete_annotations_action.triggered.connect(self.delete_annotations)
-        delete_image_action = context_menu.addAction("Delete Image")
-        delete_image_action.triggered.connect(self.delete_selected_image)
-        context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
-
-    def delete_annotations(self):
-        reply = QMessageBox.question(self,
-                                     "Confirm Delete",
-                                     "Are you sure you want to delete annotations for this image?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            # Proceed with deleting annotations
-            self.annotation_window.delete_image_annotations(self.selected_image_path)
-            self.main_window.confidence_window.clear_display()
 
     def add_image(self, image_path):
         if image_path not in self.image_paths:
@@ -398,6 +381,27 @@ class ImageWindow(QWidget):
         # Close the image with Rasterio
         self.rasterio_images[image_path] = None
 
+    def show_context_menu(self, position):
+        self.right_clicked_row = self.tableWidget.rowAt(position.y())  # Set the right-clicked row
+        context_menu = QMenu(self)
+        delete_annotations_action = context_menu.addAction("Delete Annotations")
+        delete_annotations_action.triggered.connect(self.delete_annotations)
+        delete_image_action = context_menu.addAction("Delete Image")
+        delete_image_action.triggered.connect(self.delete_selected_image)
+        context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
+
+    def delete_annotations(self):
+        if self.right_clicked_row is not None:
+            image_path = self.filtered_image_paths[self.right_clicked_row]
+            reply = QMessageBox.question(self,
+                                         "Confirm Delete",
+                                         "Are you sure you want to delete annotations for this image?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                # Proceed with deleting annotations
+                self.annotation_window.delete_image_annotations(image_path)
+                self.main_window.confidence_window.clear_display()
+
     def delete_image(self, image_path):
         if image_path in self.image_paths:
             # Get current index before removing
@@ -434,9 +438,10 @@ class ImageWindow(QWidget):
             self.update_current_image_index_label()
 
     def delete_selected_image(self):
-        if self.selected_image_path:
+        if self.right_clicked_row is not None:
+            image_path = self.filtered_image_paths[self.right_clicked_row]
             if self._confirm_delete() == QMessageBox.Yes:
-                self.delete_image(self.selected_image_path)
+                self.delete_image(image_path)
 
     def _confirm_delete(self):
         msg_box = QMessageBox(self)
