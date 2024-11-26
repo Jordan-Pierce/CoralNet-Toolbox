@@ -162,6 +162,8 @@ class ImageWindow(QWidget):
         context_menu = QMenu(self)
         delete_annotations_action = context_menu.addAction("Delete Annotations")
         delete_annotations_action.triggered.connect(self.delete_annotations)
+        delete_image_action = context_menu.addAction("Delete Image")
+        delete_image_action.triggered.connect(self.delete_selected_image)
         context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
 
     def delete_annotations(self):
