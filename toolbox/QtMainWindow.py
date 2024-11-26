@@ -7,9 +7,9 @@ import re
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget, QCheckBox)
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, QMessageBox,
-                             QWidget, QVBoxLayout, QLabel, QHBoxLayout, QSpinBox, QSlider, QDialog, 
-                             QPushButton)
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, 
+                             QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout, 
+                             QSpinBox, QSlider, QDialog, QPushButton)
 
 from toolbox.QtAnnotationWindow import AnnotationWindow
 from toolbox.QtConfidenceWindow import ConfidenceWindow
@@ -33,27 +33,22 @@ from toolbox.IO.QtExportTagLabAnnotations import ExportTagLabAnnotations
 from toolbox.MachineLearning.TrainModel.QtClassify import Classify as ClassifyTrainModelDialog
 from toolbox.MachineLearning.TrainModel.QtDetect import Detect as DetectTrainModelDialog
 from toolbox.MachineLearning.TrainModel.QtSegment import Segment as SegmentTrainModelDialog
-
 from toolbox.MachineLearning.DeployModel.QtClassify import Classify as ClassifyDeployModelDialog
 from toolbox.MachineLearning.DeployModel.QtDetect import Detect as DetectDeployModelDialog
 from toolbox.MachineLearning.DeployModel.QtSegment import Segment as SegmentDeployModelDialog
-
 from toolbox.MachineLearning.BatchInference.QtClassify import Classify as ClassifyBatchInferenceDialog
 from toolbox.MachineLearning.BatchInference.QtDetect import Detect as DetectBatchInferenceDialog
 from toolbox.MachineLearning.BatchInference.QtSegment import Segment as SegmentBatchInferenceDialog
-
 from toolbox.MachineLearning.ImportDataset.QtDetect import Detect as DetectImportDatasetDialog
 from toolbox.MachineLearning.ImportDataset.QtSegment import Segment as SegmentImportDatasetDialog
-
+from toolbox.MachineLearning.ExportDataset.QtClassify import Classify as ClassifyExportDatasetDialog
+from toolbox.MachineLearning.ExportDataset.QtDetect import Detect as DetectExportDatasetDialog
+from toolbox.MachineLearning.ExportDataset.QtSegment import Segment as SegmentExportDatasetDialog
 from toolbox.MachineLearning.EvaluateModel.QtClassify import Classify as ClassifyEvaluateModelDialog
 from toolbox.MachineLearning.EvaluateModel.QtDetect import Detect as DetectEvaluateModelDialog
 from toolbox.MachineLearning.EvaluateModel.QtSegment import Segment as SegmentEvaluateModelDialog
-
 from toolbox.MachineLearning.MergeDatasets.QtClassify import Classify as ClassifyMergeDatasetsDialog
-
 from toolbox.MachineLearning.OptimizeModel.QtBase import Base as OptimizeModelDialog
-
-from toolbox.MachineLearning.QtExportDataset import ExportDatasetDialog
 
 from toolbox.SAM.QtDeployPredictor import DeployPredictorDialog as SAMDeployPredictorDialog
 from toolbox.SAM.QtDeployGenerator import DeployGeneratorDialog as SAMDeployGeneratorDialog
@@ -121,7 +116,7 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
 
-        # Set the default uncertainty threshold for Deploy Model and Batch Inference
+        # Set the default uncertainty threshold and IoU threshold
         self.iou_thresh = 0.70
         self.uncertainty_thresh = 0.30
 
@@ -129,7 +124,9 @@ class MainWindow(QMainWindow):
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
-        self.export_dataset_dialog = ExportDatasetDialog(self)
+        self.classify_export_dataset_dialog = ClassifyExportDatasetDialog(self)
+        self.detect_export_dataset_dialog = DetectExportDatasetDialog(self)
+        self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
         self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
@@ -174,14 +171,16 @@ class MainWindow(QMainWindow):
         # Connect the imageChanged signal from ImageWindow to cancel SAM working area
         self.image_window.imageChanged.connect(self.handle_image_changed)
 
+        # Layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QHBoxLayout(self.central_widget)
-
         self.left_layout = QVBoxLayout()
         self.right_layout = QVBoxLayout()
 
-        # Menu bar
+        # ----------------------------------------
+        # Create the menu bar
+        # ----------------------------------------
         self.menu_bar = self.menuBar()
 
         # Import menu
@@ -190,6 +189,7 @@ class MainWindow(QMainWindow):
         # Raster submenu
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
 
+        # Import Images
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
@@ -197,6 +197,7 @@ class MainWindow(QMainWindow):
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
 
+        # Import Labels
         self.import_labels_action = QAction("Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
@@ -204,18 +205,22 @@ class MainWindow(QMainWindow):
         # Annotations submenu
         self.import_annotations_menu = self.import_menu.addMenu("Annotations")
 
+        # Import Annotations
         self.import_annotations_action = QAction("Annotations (JSON)", self)
         self.import_annotations_action.triggered.connect(self.import_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_annotations_action)
 
+        # Import CoralNet Annotations
         self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_annotations_action.triggered.connect(self.import_coralnet_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
 
+        # Import Viscore Annotations
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.import_viscore_annotations_action.triggered.connect(self.import_viscore_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
 
+        # Import TagLab Annotations
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
@@ -239,6 +244,7 @@ class MainWindow(QMainWindow):
         # Labels submenu
         self.export_labels_menu = self.export_menu.addMenu("Labels")
 
+        # Export Labels
         self.export_labels_action = QAction("Labels (JSON)", self)
         self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
@@ -246,29 +252,43 @@ class MainWindow(QMainWindow):
         # Annotations submenu
         self.export_annotations_menu = self.export_menu.addMenu("Annotations")
 
+        # Export Annotations
         self.export_annotations_action = QAction("Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.export_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_annotations_action)
 
+        # Export CoralNet Annotations
         self.export_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.export_coralnet_annotations_action.triggered.connect(self.export_coralnet_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
+        # Export Viscore Annotations 
         self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.export_viscore_annotations_action.triggered.connect(self.export_viscore_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
 
+        # Export TagLab Annotations
         self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.export_taglab_annotations_action.triggered.connect(self.export_taglab_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
 
         # Dataset submenu
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
-
-        # Export YOLO Dataset menu
-        self.export_dataset_action = QAction("YOLO (TXT)", self)
-        self.export_dataset_action.triggered.connect(self.open_export_dataset_dialog)
-        self.export_dataset_menu.addAction(self.export_dataset_action)
+        
+        # Export Classification Dataset 
+        self.export_classify_dataset_action = QAction("Classify", self)
+        self.export_classify_dataset_action.triggered.connect(self.open_classify_export_dataset_dialog)
+        self.export_dataset_menu.addAction(self.export_classify_dataset_action)
+        
+        # Export Detection Dataset 
+        self.export_detect_dataset_action = QAction("Detect", self)
+        self.export_detect_dataset_action.triggered.connect(self.open_detect_export_dataset_dialog)
+        self.export_dataset_menu.addAction(self.export_detect_dataset_action)
+        
+        # Export Segmentation Dataset 
+        self.export_segment_dataset_action = QAction("Segment", self)
+        self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
+        self.export_dataset_menu.addAction(self.export_segment_dataset_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
@@ -304,6 +324,7 @@ class MainWindow(QMainWindow):
         # Merge Datasets submenu
         self.ml_merge_datasets_menu = self.ml_menu.addMenu("Merge Datasets")
         
+        # Merge Classification Datasets
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
@@ -311,14 +332,17 @@ class MainWindow(QMainWindow):
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
 
+        # Train Classification Model
         self.ml_classify_train_model_action = QAction("Classify", self)
         self.ml_classify_train_model_action.triggered.connect(self.open_classify_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_classify_train_model_action)
 
+        # Train Detection Model
         self.ml_detect_train_model_action = QAction("Detect", self)
         self.ml_detect_train_model_action.triggered.connect(self.open_detect_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_detect_train_model_action)
 
+        # Train Segmentation Model
         self.ml_segment_train_model_action = QAction("Segment", self)
         self.ml_segment_train_model_action.triggered.connect(self.open_segment_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_segment_train_model_action)
@@ -326,19 +350,22 @@ class MainWindow(QMainWindow):
         # Evaluate Model submenu 
         self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
         
+        # Evaluate Classification Model
         self.ml_classify_evaluate_model_action = QAction("Classify", self)
         self.ml_classify_evaluate_model_action.triggered.connect(self.open_classify_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_classify_evaluate_model_action)
         
+        # Evaluate Detection Model
         self.ml_detect_evaluate_model_action = QAction("Detect", self)
         self.ml_detect_evaluate_model_action.triggered.connect(self.open_detect_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_detect_evaluate_model_action)
         
+        # Evaluate Segmentation Model
         self.ml_segment_evaluate_model_action = QAction("Segment", self)
         self.ml_segment_evaluate_model_action.triggered.connect(self.open_segment_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_segment_evaluate_model_action)
         
-        # Optimize Model action
+        # Optimize Model 
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
@@ -346,14 +373,17 @@ class MainWindow(QMainWindow):
         # Deploy Model submenu
         self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
 
+        # Deploy Classification Model
         self.ml_classify_deploy_model_action = QAction("Classify", self)
         self.ml_classify_deploy_model_action.triggered.connect(self.open_classify_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_classify_deploy_model_action)
 
+        # Deploy Detection Model
         self.ml_detect_deploy_model_action = QAction("Detect", self)
         self.ml_detect_deploy_model_action.triggered.connect(self.open_detect_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_detect_deploy_model_action)
 
+        # Deploy Segmentation Model
         self.ml_segment_deploy_model_action = QAction("Segment", self)
         self.ml_segment_deploy_model_action.triggered.connect(self.open_segment_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_segment_deploy_model_action)
@@ -361,14 +391,17 @@ class MainWindow(QMainWindow):
         # Batch Inference submenu
         self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
 
+        # Batch Inference Classification
         self.ml_classify_batch_inference_action = QAction("Classify", self)
         self.ml_classify_batch_inference_action.triggered.connect(self.open_classify_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_classify_batch_inference_action)
 
+        # Batch Inference Detection
         self.ml_detect_batch_inference_action = QAction("Detect", self)
         self.ml_detect_batch_inference_action.triggered.connect(self.open_detect_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_detect_batch_inference_action)
 
+        # Batch Inference Segmentation
         self.ml_segment_batch_inference_action = QAction("Segment", self)
         self.ml_segment_batch_inference_action.triggered.connect(self.open_segment_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_segment_batch_inference_action)
@@ -379,14 +412,17 @@ class MainWindow(QMainWindow):
         # Deploy Model submenu
         self.sam_deploy_model_menu = self.sam_menu.addMenu("Deploy Model")
         
+        # Deploy Predictor
         self.sam_deploy_model_action = QAction("Predictor", self)
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_model_action)
         
+        # Deploy Generator
         self.sam_deploy_generator_action = QAction("Generator", self)
         self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_generator_action)
         
+        # Batch Inference
         self.sam_batch_inference_action = QAction("Batch Inference", self)
         self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
         self.sam_menu.addAction(self.sam_batch_inference_action)
@@ -394,15 +430,19 @@ class MainWindow(QMainWindow):
         # Auto Distill menu
         self.auto_distill_menu = self.menu_bar.addMenu("AutoDistill")
 
+        # Deploy Model
         self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
         self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
         
+        # Batch Inference
         self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
         self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
 
+        # ----------------------------------------
         # Create and add the toolbar
+        # ----------------------------------------
         self.toolbar = QToolBar("Tools", self)
         self.toolbar.setOrientation(Qt.Vertical)
         self.toolbar.setFixedWidth(40)
@@ -839,8 +879,8 @@ class MainWindow(QMainWindow):
             self.import_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def open_export_dataset_dialog(self):
+            
+    def open_classify_export_dataset_dialog(self):
         # Check if there are loaded images
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
@@ -857,7 +897,49 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.export_dataset_dialog.exec_()
+            self.classify_export_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_detect_export_dataset_dialog(self):
+        # Check if there are loaded images
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.detect_export_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_segment_export_dataset_dialog(self):
+        # Check if there are loaded images
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No images are present in the project.")
+            return
+
+        # Check if there are annotations
+        if not len(self.annotation_window.annotations_dict):
+            QMessageBox.warning(self,
+                                "Export Dataset",
+                                "No annotations are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.segment_export_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
