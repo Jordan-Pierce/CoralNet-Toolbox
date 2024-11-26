@@ -24,6 +24,7 @@ from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -53,6 +54,7 @@ class ExportDatasetDialog(QDialog):
         # Flag to prevent recursive calls
         self.updating_summary_statistics = False
 
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Create Dataset")
         self.layout = QVBoxLayout(self)
 

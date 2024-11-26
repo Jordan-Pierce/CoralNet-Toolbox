@@ -62,8 +62,9 @@ from toolbox.SAM.QtBatchInference import BatchInferenceDialog as SAMBatchInferen
 from toolbox.AutoDistill.QtDeployModel import DeployModelDialog as AutoDistillDeployModelDialog
 from toolbox.AutoDistill.QtBatchInference import BatchInferenceDialog as AutoDistillBatchInferenceDialog
 
+from toolbox.Icons import get_icon
+
 from toolbox.utilities import get_available_device
-from toolbox.utilities import get_icon_path
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -78,12 +79,23 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        
+        # Define icons
+        self.coral_icon = get_icon("coral.png")
+        self.select_icon = get_icon("select.png")  
+        self.patch_icon = get_icon("patch.png")
+        self.rectangle_icon = get_icon("rectangle.png")
+        self.polygon_icon = get_icon("polygon.png")
+        self.sam_icon = get_icon("sam.png")
+        self.slicer_icon = get_icon("slicer.png")
+        self.turtle_icon = get_icon("turtle.png")
+        self.rabbit_icon = get_icon("rabbit.png")
+        self.rocket_icon = get_icon("rocket.png")
+        self.apple_icon = get_icon("apple.png")
 
-        # Define the icon path
+        # Set the title and icon for the main window
         self.setWindowTitle("CoralNet-Toolbox")
-        # Set the window icon
-        main_window_icon_path = get_icon_path("coral.png")
-        self.setWindowIcon(QIcon(main_window_icon_path))
+        self.setWindowIcon(self.coral_icon)
 
         # Set window flags for resizing, minimize, maximize, and customizing
         self.setWindowFlags(Qt.Window |
@@ -410,51 +422,39 @@ class MainWindow(QMainWindow):
         # Add a spacer before the first tool with a fixed height
         self.toolbar.addWidget(spacer)
 
-        # Define icon paths
-        self.select_icon_path = get_icon_path("select.png")
-        self.patch_icon_path = get_icon_path("patch.png")
-        self.rectangle_icon_path = get_icon_path("rectangle.png")
-        self.polygon_icon_path = get_icon_path("polygon.png")
-        self.sam_icon_path = get_icon_path("sam.png")
-        self.slicer_icon_path = get_icon_path("slicer.png")
-        self.turtle_icon_path = get_icon_path("turtle.png")
-        self.rabbit_icon_path = get_icon_path("rabbit.png")
-        self.rocket_icon_path = get_icon_path("rocket.png")
-        self.apple_icon_path = get_icon_path("apple.png")
-
         # Add tools here with icons
-        self.select_tool_action = QAction(QIcon(self.select_icon_path), "Select", self)
+        self.select_tool_action = QAction(self.select_icon, "Select", self)
         self.select_tool_action.setCheckable(True)
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
         
         self.toolbar.addSeparator()
         
-        self.patch_tool_action = QAction(QIcon(self.patch_icon_path), "Patch", self)
+        self.patch_tool_action = QAction(self.patch_icon, "Patch", self)
         self.patch_tool_action.setCheckable(True)
         self.patch_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.patch_tool_action)
 
-        self.rectangle_tool_action = QAction(QIcon(self.rectangle_icon_path), "Rectangle", self)
+        self.rectangle_tool_action = QAction(self.rectangle_icon, "Rectangle", self)
         self.rectangle_tool_action.setCheckable(True)
         self.rectangle_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.rectangle_tool_action)
 
-        self.polygon_tool_action = QAction(QIcon(self.polygon_icon_path), "Polygon", self)
+        self.polygon_tool_action = QAction(self.polygon_icon, "Polygon", self)
         self.polygon_tool_action.setCheckable(True)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
         
         self.toolbar.addSeparator()
         
-        self.sam_tool_action = QAction(QIcon(self.sam_icon_path), "SAM", self)
+        self.sam_tool_action = QAction(self.sam_icon, "SAM", self)
         self.sam_tool_action.setCheckable(True)
         self.sam_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.sam_tool_action)
         
         self.toolbar.addSeparator()
         
-        self.slicer_tool_action = QAction(QIcon(self.slicer_icon_path), "Slicer", self)
+        self.slicer_tool_action = QAction(self.slicer_icon, "Slicer", self)
         self.slicer_tool_action.setCheckable(False)
         self.slicer_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.slicer_tool_action)
@@ -473,15 +473,15 @@ class MainWindow(QMainWindow):
 
         if self.device.startswith('cuda'):
             if len(self.devices) == 1:
-                device_icon = QIcon(self.rabbit_icon_path)
+                device_icon = self.rabbit_icon
             else:
-                device_icon = QIcon(self.rocket_icon_path)
+                device_icon = self.rocket_icon
             device_tooltip = self.device
         elif self.device == 'mps':
-            device_icon = QIcon(self.apple_icon_path)
+            device_icon = self.apple_icon
             device_tooltip = 'mps'
         else:
-            device_icon = QIcon(self.turtle_icon_path)
+            device_icon = self.turtle_icon
             device_tooltip = 'cpu'
 
         # Create the device action with the appropriate icon
@@ -719,21 +719,21 @@ class MainWindow(QMainWindow):
             if self.device.startswith('cuda'):
                 if len(self.selected_devices) == 1:
                     if self.device == 'cuda:0':
-                        device_icon = QIcon(self.rabbit_icon_path)
+                        device_icon = self.rabbit_icon
                     else:
                         # Use a different icon for other CUDA devices
-                        device_icon = QIcon(self.rocket_icon_path)
+                        device_icon = self.rabbit_icon
                     device_tooltip = self.device
                 else:
                     # Use a different icon for multiple devices
-                    device_icon = QIcon(self.rocket_icon_path)
+                    device_icon = self.rocket_icon
                     device_tooltip = f"Multiple CUDA Devices: {self.selected_devices}"
 
             elif self.device == 'mps':
-                device_icon = QIcon(self.apple_icon_path)
+                device_icon = self.apple_icon
                 device_tooltip = 'mps'
             else:
-                device_icon = QIcon(self.turtle_icon_path)
+                device_icon = self.turtle_icon
                 device_tooltip = 'cpu'
 
             self.device_tool_action.setIcon(device_icon)

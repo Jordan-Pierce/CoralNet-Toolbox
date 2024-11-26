@@ -21,6 +21,7 @@ from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -40,6 +41,7 @@ class Base(QDialog):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Import Dataset")
         self.resize(500, 300)
         

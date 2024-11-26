@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QCheck
 
 from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -28,6 +29,7 @@ class PatchSamplingDialog(QDialog):
         self.image_window = main_window.image_window
 
         self.setWindowTitle("Sample Annotations")
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowState(Qt.WindowMaximized)  # Ensure the dialog is maximized
 
         self.layout = QVBoxLayout(self)

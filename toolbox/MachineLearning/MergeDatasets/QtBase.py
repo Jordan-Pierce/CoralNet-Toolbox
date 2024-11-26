@@ -15,6 +15,8 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QV
 
 from toolbox.QtProgressBar import ProgressBar
 
+from toolbox.Icons import get_icon
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -34,6 +36,8 @@ class Base(QDialog):
         :param parent: Parent widget, default is None.
         """
         super().__init__(parent)
+        
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Merge Datasets")
         self.resize(500, 500)
 

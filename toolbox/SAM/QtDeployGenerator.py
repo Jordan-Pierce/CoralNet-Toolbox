@@ -20,8 +20,9 @@ from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
 
 from torch.cuda import empty_cache
 
-from toolbox.QtProgressBar import ProgressBar
 from toolbox.ResultsProcessor import ResultsProcessor
+from toolbox.QtProgressBar import ProgressBar
+from toolbox.Icons import get_icon
 from toolbox.utilities import rasterio_to_numpy
 from toolbox.utilities import attempt_download_asset
 
@@ -51,6 +52,7 @@ class DeployGeneratorDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
         
+        self.setWindowIcon(get_icon("sam.png"))
         self.setWindowTitle("FastSAM Generator")
         self.resize(400, 325)
 

@@ -20,6 +20,8 @@ from ultralytics import YOLO
 
 from toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
 
+from toolbox.Icons import get_icon
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -88,6 +90,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
         
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Evaluate Model")
         self.resize(400, 325)
         

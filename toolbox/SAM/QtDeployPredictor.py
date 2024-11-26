@@ -22,8 +22,9 @@ from x_segment_anything import sam_model_urls
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
 
-from toolbox.QtProgressBar import ProgressBar
 from toolbox.ResultsProcessor import ResultsProcessor
+from toolbox.QtProgressBar import ProgressBar
+from toolbox.Icons import get_icon
 from toolbox.utilities import preprocess_image
 from toolbox.utilities import rasterio_to_numpy
 from toolbox.utilities import attempt_download_asset
@@ -41,6 +42,7 @@ class DeployPredictorDialog(QDialog):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
+        self.setWindowIcon(get_icon("sam.png"))
         self.setWindowTitle("SAM Deploy Model") 
         self.resize(400, 325)
 

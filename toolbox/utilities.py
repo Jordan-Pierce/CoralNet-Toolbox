@@ -4,7 +4,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
 import requests
-import pkg_resources
 
 import torch
 import numpy as np
@@ -18,15 +17,6 @@ from toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
 # ----------------------------------------------------------------------------------------------------------------------
-
-
-def get_icon_path(icon_name):
-    """
-
-    :param icon_name:
-    :return:
-    """
-    return pkg_resources.resource_filename('toolbox', f'icons/{icon_name}')
 
 
 def get_available_device():

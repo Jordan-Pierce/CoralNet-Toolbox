@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox, QSlider, QButtonGroup)
 
 from toolbox.QtProgressBar import ProgressBar
+from toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -31,6 +32,7 @@ class BatchInferenceDialog(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         
+        self.setWindowIcon(get_icon("sam.png"))
         self.setWindowTitle("Batch Inference")
         self.resize(400, 100)
 

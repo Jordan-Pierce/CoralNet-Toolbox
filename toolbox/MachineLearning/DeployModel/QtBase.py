@@ -17,6 +17,8 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QV
 from torch.cuda import empty_cache
 from ultralytics import YOLO
 
+from toolbox.Icons import get_icon
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -37,6 +39,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
         
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Deploy Model")
         self.resize(400, 325)
 
