@@ -18,7 +18,7 @@ Running the following command will install the `coralnet-toolbox`, which you can
 # cmd
 
 # Install
-pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
+pip install coralnet-toolbox
 
 # Run 
 coralnet-toolbox
@@ -34,9 +34,6 @@ For further instructions, see [How to Install](); for information on how to use,
 ## Tools
 
 Enhance your CoralNet experience with these tools:  
-- 🔍 API: Get predictions from any CoralNet source model  
-- 📥 Download: Retrieve source data from CoralNet 
-- 📤 Upload: Add images and annotations to CoralNet
 - ✏️ Annotate: Create annotations freely
 - 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
 - 🔬 Sample: Sample patches using various methods (Uniform, Random, Stratified)  
@@ -53,6 +50,12 @@ Enhance your CoralNet experience with these tools:
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 📦 Toolshed: Access tools from the old repository
+
+### TODO
+- 🔍 API: Get predictions from any CoralNet source model  
+- 📥 Download: Retrieve source data from CoralNet 
+- 📤 Upload: Add images and annotations to CoralNet
+
 
 <details open>
   <summary><h2><b>Watch the Video Demos</b></h2></summary>

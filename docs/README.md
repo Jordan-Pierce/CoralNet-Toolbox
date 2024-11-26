@@ -1,7 +1,7 @@
 # CoralNet Toolbox Instructions
 
 ## Overview
-The CoralNet Toolbox is a Python application built using PyQt5 for image annotation and analysis. 
+The CoralNet Toolbox is a Python application built using PyQt5 for image annotation. 
 This guide provides instructions on how to use the application, including key functionalities and hotkeys.
 
 ## Annotations
@@ -53,7 +53,7 @@ The main window consists of several components:
   - **Model API**: Access CoralNet model API.
 
 - **Machine Learning**:
-  - **Merge Datasets**: Merge multiple datasets.
+  - **Merge Datasets**: Merge multiple Classification datasets.
   - **Train Model**: Train a machine learning model.
   - **Evaluate Model**: Evaluate a trained model.
   - **Optimize Model**: Convert model format.
@@ -61,7 +61,15 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferences.
 
 - **SAM**:
-  - **Deploy Model**: Deploy EdgeSAM, MobileSAM, or SAM to use interactively (points, box)
+  - **Deploy Predictor**: Deploy EdgeSAM, MobileSAM, or SAM to use interactively (points, box); Segment Anything
+  - **Deploy Generator**: Deploy FastSAM to automatically segment the image; Segment Everything
+    - Recommendation: Use the "Use Predictor to create Polygons", as the results are significantly better
+  - **Batch Inference**: Perform batch inferences.
+
+- **AutoDistill**:
+  - **Deploy Model**: Deploy a foundational model
+    - Models Available: GroundingDino,
+  - **Batch Inference**: Perform batch inferences.
 
 ## Tool Bar
 - **Select Tool**: Select multiple annotations; move and change the size of annotations.
@@ -99,7 +107,7 @@ The main window consists of several components:
 - **Prediction Selection**: Select a prediction from the list to change the label.
 
 ### Hotkeys
-- **Ctrl + Delete**: Delete the selected annotation, or image.
+- **Ctrl + Delete**: Delete the selected annotations.
 - **Ctrl + W/A/S/D**: Navigate through labels.
 - **Ctrl + Mouse Wheel**: Adjust annotation size.
 - **Ctrl + Left/Right**: Cycle through annotations.
@@ -108,11 +116,11 @@ The main window consists of several components:
 - **Home**: Untoggle all tools.
 - **Escape**: Exit the program.
 
-- **Machine Learning and AutoDistill**: After a model is loaded
+- **Machine Learning, SAM, and AutoDistill**: After a model is loaded
   - **Ctrl + 1**: Make prediction on selected Patch annotation, else all in the image with Review label.
   - **Ctrl + 2**: Make predictions using Object Detection model.
   - **Ctrl + 3**: Make predictions using Instance Segmentation model.
-  - **Ctrl + 4**: Converted selected annotations to polygons using SAM **in progress**.
+  - **Ctrl + 4**: Make predictions using FastSAM model.
   - **Ctrl + 5**: Make predictions using AutoDistill model.
 
 - **SAM**: After a model is loaded
