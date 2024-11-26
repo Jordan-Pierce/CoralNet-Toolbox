@@ -270,8 +270,11 @@ class AnnotationWindow(QGraphicsView):
         self.current_image_path = image_path
         self.active_image = True
 
+        self.tools["zoom"].reset_zoom()
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        self.tools["zoom"].calculate_min_zoom()
+        
         self.toggle_cursor_annotation()
 
         # Set the image dimensions, and current view in status bar

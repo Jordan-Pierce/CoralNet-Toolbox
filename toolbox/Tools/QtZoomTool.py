@@ -17,6 +17,35 @@ class ZoomTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.cursor = Qt.ArrowCursor
+        self.min_zoom_factor = 1.0
+        self.initial_zoom = 1.0
+
+    def calculate_min_zoom(self):
+        """Calculate minimum zoom factor to fit image in view"""
+        scene = self.annotation_window.scene
+        if not scene:
+            return 1.0
+            
+        view_rect = self.annotation_window.viewport().rect()
+        scene_rect = scene.sceneRect()
+        
+        # Calculate ratios to fit width and height
+        width_ratio = view_rect.width() / scene_rect.width() if scene_rect.width() else 1.0
+        height_ratio = view_rect.height() / scene_rect.height() if scene_rect.height() else 1.0
+        
+        # Store initial zoom when first calculated
+        min_zoom = max(min(width_ratio, height_ratio), 0.1)
+        if self.initial_zoom == 1.0:
+            self.initial_zoom = min_zoom
+            self.annotation_window.zoom_factor = min_zoom
+            
+        return min_zoom
+
+    def reset_zoom(self):
+        """Reset zoom state"""
+        self.initial_zoom = 1.0
+        self.min_zoom_factor = 1.0
+        self.annotation_window.zoom_factor = 1.0
 
     def wheelEvent(self, event: QMouseEvent):
         if event.angleDelta().y() > 0:
@@ -24,12 +53,12 @@ class ZoomTool(Tool):
         else:
             factor = 0.9
 
-        self.annotation_window.zoom_factor *= factor
-        self.annotation_window.scale(factor, factor)
+        new_zoom = self.annotation_window.zoom_factor * factor
+        min_zoom = self.calculate_min_zoom()
+        
+        # Prevent zooming out beyond minimum
+        if new_zoom < min_zoom and factor < 1:
+            return
 
-        if self.annotation_window.selected_tool in ["select", "patch", "rectangle", "polygon", "sam"]:
-            # Update the cursor for the given tool
-            self.annotation_window.setCursor(self.annotation_window.tools[self.annotation_window.selected_tool].cursor)
-        else:
-            # Use the default cursor
-            self.annotation_window.setCursor(Qt.ArrowCursor)
+        self.annotation_window.zoom_factor = new_zoom
+        self.annotation_window.scale(factor, factor)
