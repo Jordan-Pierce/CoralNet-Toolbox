@@ -58,12 +58,12 @@ Enhance your CoralNet experience with these tools:
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
-- 📦 Toolshed: Access tools from the old repository
 
 ### TODO
 - 🔍 API: Get predictions from any CoralNet source model  
 - 📥 Download: Retrieve source data from CoralNet 
 - 📤 Upload: Add images and annotations to CoralNet
+- 📦 Toolshed: Access tools from the old repository
 
 
 <details open>
