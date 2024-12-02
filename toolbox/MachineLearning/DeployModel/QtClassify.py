@@ -36,9 +36,6 @@ class Classify(Base):
         super().__init__(main_window, parent)        
         self.setWindowTitle("Deploy Classification Model")
         
-        # Setup parameters layout
-        self.setup_parameters_layout()
-        
     def showEvent(self, event):
         """
         Handle the show event to update label options and sync uncertainty threshold.
@@ -54,40 +51,22 @@ class Classify(Base):
         Setup parameter control section in a group box.
         """
         group_box = QGroupBox("Parameters")
-        form_layout = QFormLayout()
+        layout = QFormLayout()
 
         # Uncertainty threshold controls
+        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
         self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
         self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.uncertainty_threshold_slider.setTickInterval(10)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
-        form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        form_layout.addRow("", self.uncertainty_threshold_label)
+        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
+        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
+        layout.addRow("", self.uncertainty_threshold_label)
         
-        group_box.setLayout(form_layout)
+        group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
-    def initialize_uncertainty_threshold(self):
-        """Initialize the uncertainty threshold slider with the current value"""
-        current_value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
-        self.uncertainty_thresh = current_value
-
-    def update_uncertainty_label(self, value):
-        """Update uncertainty threshold and label"""
-        value = value / 100.0
-        self.uncertainty_thresh = value
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
-    
-    def on_uncertainty_changed(self):
-        """Update the slider and label when the shared data changes"""
-        value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(value * 100))
-        self.uncertainty_thresh = value
         
     def load_model(self):
         """

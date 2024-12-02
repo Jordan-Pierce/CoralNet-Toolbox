@@ -34,9 +34,6 @@ class Segment(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Deploy Segmentation Model")
-        
-        # Setup parameters layout
-        self.setup_parameters_layout()
              
     def showEvent(self, event):
         """
@@ -46,115 +43,63 @@ class Segment(Base):
             event: The event object.
         """
         super().showEvent(event)
-        self.initialize_area_threshold
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
+        self.initialize_area_threshold()
              
     def setup_parameters_layout(self):
         """
         Setup parameter control section in a group box.
         """
         group_box = QGroupBox("Parameters")
-        form_layout = QFormLayout()
-        
-        # Area threshold controls
-        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
-        self.area_threshold_slider.setMinimum(0)
-        self.area_threshold_slider.setMaximum(100)
-        self.area_threshold_slider.setSingleStep(1)
-        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_slider.setTickInterval(10)
-        min_val = self.area_thresh_min
-        max_val = self.area_thresh_max
-        self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
-        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
-        form_layout.addRow("Area Threshold", self.area_threshold_slider)
-        form_layout.addRow("", self.area_threshold_label)
+        layout = QFormLayout()
 
         # Uncertainty threshold controls
+        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
         self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
         self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.uncertainty_threshold_slider.setTickInterval(10)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
-        form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        form_layout.addRow("", self.uncertainty_threshold_label)
+        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
+        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
+        layout.addRow("", self.uncertainty_threshold_label)
         
         # IoU threshold controls
+        self.iou_thresh = self.main_window.get_iou_thresh()
         self.iou_threshold_slider = QSlider(Qt.Horizontal)
         self.iou_threshold_slider.setRange(0, 100)
-        self.iou_threshold_slider.setValue(int(self.main_window.get_iou_thresh() * 100))
+        self.iou_threshold_slider.setValue(int(self.iou_thresh * 100))
         self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.iou_threshold_slider.setTickInterval(10)
         self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
-        self.iou_threshold_label = QLabel(f"{self.main_window.get_iou_thresh():.2f}")
-        form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
-        form_layout.addRow("", self.iou_threshold_label)
+        self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
+        layout.addRow("IoU Threshold", self.iou_threshold_slider)
+        layout.addRow("", self.iou_threshold_label)
+        
+        # Area threshold controls
+        min_val, max_val = self.main_window.get_area_thresh()
+        self.area_thresh_min = int(min_val * 100)
+        self.area_thresh_max = int(max_val * 100)
+        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
+        self.area_threshold_slider.setRange(0, 100)
+        self.area_threshold_slider.setValue((self.area_thresh_min, self.area_thresh_max))
+        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_slider.setTickInterval(10)
+        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        layout.addRow("Area Threshold", self.area_threshold_slider)
+        layout.addRow("", self.area_threshold_label)
         
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        form_layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
+        layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
         
-        group_box.setLayout(form_layout)
+        group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
-    def initialize_area_threshold(self):
-        """Initialize the area threshold range slider"""
-        min_val = int(self.area_thresh_min * 100)
-        max_val = int(self.area_thresh_max * 100)
-        self.area_threshold_slider.setLow(min_val)
-        self.area_threshold_slider.setHigh(max_val)
-        self.area_threshold_label.setText(f"Area Threshold: {min_val}% - {max_val}%")
-        
-    def initialize_uncertainty_threshold(self):
-        """Initialize the uncertainty threshold slider with the current value"""
-        current_value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
-        self.uncertainty_thresh = current_value
-
-    def initialize_iou_threshold(self):
-        """Initialize the IOU threshold slider with the current value"""
-        current_value = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider.setValue(int(current_value * 100))
-        self.iou_thresh = current_value
-        
-    def update_area_label(self):
-        """Handle changes to area threshold range slider"""
-        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-
-    def update_uncertainty_label(self, value):
-        """Update uncertainty threshold and label"""
-        value = value / 100.0
-        self.uncertainty_thresh = value
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
-
-    def update_iou_label(self, value):
-        """Update IoU threshold and label"""
-        value = value / 100.0
-        self.iou_thresh = value 
-        self.main_window.update_iou_thresh(value)
-        self.iou_threshold_label.setText(f"{value:.2f}")
-    
-    def on_uncertainty_changed(self):
-        """Update the slider and label when the shared data changes"""
-        value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(value * 100))
-        self.uncertainty_thresh = value
-        
-    def on_iou_changed(self):
-        """Update the slider and label when the shared data changes"""
-        value = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider.setValue(int(value * 100))
-        self.iou_thresh = value 
         
     def load_model(self):
         """
@@ -205,7 +150,7 @@ class Segment(Base):
         results = self.loaded_model(inputs,
                                     agnostic_nms=True,
                                     conf=self.get_uncertainty_threshold(),
-                                    iou=self.get_iou_threshold(),
+                                    iou=self.iou_thresh,
                                     device=self.main_window.device,
                                     stream=True)
 
@@ -213,7 +158,7 @@ class Segment(Base):
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
                                              uncertainty_thresh=self.get_uncertainty_threshold(),
-                                             iou_thresh=self.get_iou_threshold(),
+                                             iou_thresh=self.iou_thresh,
                                              min_area_thresh=self.area_thresh_min,
                                              max_area_thresh=self.area_thresh_max)
         # Check if SAM model is deployed

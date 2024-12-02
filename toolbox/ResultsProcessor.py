@@ -94,12 +94,12 @@ class ResultsProcessor:
 
         return image_path, top1cls, top1conf, predictions
 
-    def process_single_classification_result(self, results, annotation):
+    def process_single_classification_result(self, result, annotation):
         """
         Process a single classification result.
         """
         # Extract relevant information from the classification result
-        image_path, cls_name, conf, predictions = self.extract_classification_result(results)
+        image_path, cls_name, conf, predictions = self.extract_classification_result(result)
         # Store and display the annotation
         self.store_and_display_annotation(annotation, image_path, cls_name, conf, predictions)
 
@@ -111,8 +111,9 @@ class ResultsProcessor:
         progress_bar.show()
         progress_bar.start_progress(len(annotations))
 
-        for results, annotation in zip(results_generator, annotations):
-            self.process_single_classification_result(results, annotation)
+        for result, annotation in zip(results_generator, annotations):
+            if result:
+                self.process_single_classification_result(result, annotation)
             progress_bar.update_progress()
 
         progress_bar.stop_progress()

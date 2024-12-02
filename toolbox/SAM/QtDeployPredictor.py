@@ -65,12 +65,12 @@ class DeployPredictorDialog(QDialog):
         self.setup_info_layout()
         # Setup the model layout
         self.setup_models_layout()
-        # Setup the status layout
-        self.setup_status_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
+        # Setup the status layout
+        self.setup_status_layout()
         
     def showEvent(self, event):
         """
@@ -80,9 +80,9 @@ class DeployPredictorDialog(QDialog):
             event: The event object.
         """
         super().showEvent(event)
-        self.initialize_area_threshold
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
+        self.initialize_area_threshold()
         
     def setup_info_layout(self):
         """
@@ -136,60 +136,61 @@ class DeployPredictorDialog(QDialog):
         Setup parameter control section in a group box.
         """
         group_box = QGroupBox("Parameters")
-        form_layout = QFormLayout()
+        layout = QFormLayout()
         
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
-        form_layout.addRow("Resize Image:", self.resize_image_dropdown)
+        layout.addRow("Resize Image:", self.resize_image_dropdown)
         
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
-        form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
-        
-        # Area threshold controls
-        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
-        self.area_threshold_slider.setMinimum(0)
-        self.area_threshold_slider.setMaximum(100)
-        self.area_threshold_slider.setSingleStep(1)
-        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_slider.setTickInterval(10)
-        min_val = self.area_thresh_min
-        max_val = self.area_thresh_max
-        self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
-        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
-        form_layout.addRow("Area Threshold", self.area_threshold_slider)
-        form_layout.addRow("", self.area_threshold_label)
+        layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         # Uncertainty threshold controls
+        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
         self.uncertainty_threshold_slider.setRange(0, 100)
         self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
         self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.uncertainty_threshold_slider.setTickInterval(10)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
-        form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        form_layout.addRow("", self.uncertainty_threshold_label)
+        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
+        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
+        layout.addRow("", self.uncertainty_threshold_label)
         
         # IoU threshold controls
+        self.iou_thresh = self.main_window.get_iou_thresh()
         self.iou_threshold_slider = QSlider(Qt.Horizontal)
         self.iou_threshold_slider.setRange(0, 100)
-        self.iou_threshold_slider.setValue(int(self.main_window.get_iou_thresh() * 100))
+        self.iou_threshold_slider.setValue(int(self.iou_thresh * 100))
         self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
         self.iou_threshold_slider.setTickInterval(10)
         self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
-        self.iou_threshold_label = QLabel(f"{self.main_window.get_iou_thresh():.2f}")
-        form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
-        form_layout.addRow("", self.iou_threshold_label)
+        self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
+        layout.addRow("IoU Threshold", self.iou_threshold_slider)
+        layout.addRow("", self.iou_threshold_label)
         
-        group_box.setLayout(form_layout)
+        # Area threshold controls
+        min_val, max_val = self.main_window.get_area_thresh()
+        self.area_thresh_min = int(min_val * 100)
+        self.area_thresh_max = int(max_val * 100)
+        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
+        self.area_threshold_slider.setRange(0, 100)
+        self.area_threshold_slider.setValue((self.area_thresh_min, self.area_thresh_max))
+        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_slider.setTickInterval(10)
+        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        layout.addRow("Area Threshold", self.area_threshold_slider)
+        layout.addRow("", self.area_threshold_label)
+        
+        group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
     def setup_buttons_layout(self):
@@ -223,14 +224,6 @@ class DeployPredictorDialog(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
-    def initialize_area_threshold(self):
-        """Initialize the area threshold range slider"""
-        min_val = int(self.area_thresh_min * 100)
-        max_val = int(self.area_thresh_max * 100)
-        self.area_threshold_slider.setLow(min_val)
-        self.area_threshold_slider.setHigh(max_val)
-        self.area_threshold_label.setText(f"Area Threshold: {min_val}% - {max_val}%")
-        
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
         current_value = self.main_window.get_uncertainty_thresh()
@@ -243,12 +236,12 @@ class DeployPredictorDialog(QDialog):
         self.iou_threshold_slider.setValue(int(current_value * 100))
         self.iou_thresh = current_value
         
-    def update_area_label(self):
-        """Handle changes to area threshold range slider"""
-        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+    def initialize_area_threshold(self):
+        """Initialize the area threshold range slider"""
+        current_min, current_max = self.main_window.get_area_thresh()
+        self.area_threshold_slider.setValue((int(current_min * 100), int(current_max * 100)))
+        self.area_thresh_min = current_min
+        self.area_thresh_max = current_max
 
     def update_uncertainty_label(self, value):
         """Update uncertainty threshold and label"""
@@ -263,18 +256,14 @@ class DeployPredictorDialog(QDialog):
         self.iou_thresh = value 
         self.main_window.update_iou_thresh(value)
         self.iou_threshold_label.setText(f"{value:.2f}")
-    
-    def on_uncertainty_changed(self):
-        """Update the slider and label when the shared data changes"""
-        value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(value * 100))
-        self.uncertainty_thresh = value
-        
-    def on_iou_changed(self):
-        """Update the slider and label when the shared data changes"""
-        value = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider.setValue(int(value * 100))
-        self.iou_thresh = value           
+
+    def update_area_label(self):
+        """Handle changes to area threshold range slider"""
+        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        self.area_thresh_min = min_val / 100.0
+        self.area_thresh_max = max_val / 100.0
+        self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
         
     def download_model_weights(self, model_path):
         """

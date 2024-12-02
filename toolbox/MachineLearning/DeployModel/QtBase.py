@@ -12,7 +12,7 @@ import numpy as np
 from PyQt5.QtGui import QColor, QShowEvent
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QVBoxLayout,
-                             QLabel, QDialog, QTextEdit, QPushButton, QGroupBox)
+                             QLabel, QDialog, QTextEdit, QPushButton, QGroupBox, QHBoxLayout)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO
@@ -60,8 +60,10 @@ class Base(QDialog):
         self.setup_info_layout()
         # Setup the labels layout
         self.setup_labels_layout()
-        # Setup the model layout
-        self.setup_models_layout()
+        # Setup parameters layout
+        self.setup_parameters_layout()
+        # Setup the button layout
+        self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
         
@@ -73,7 +75,7 @@ class Base(QDialog):
         layout = QVBoxLayout()
         
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Deploy a Classification, Detection, or Segmentation model to use.")
+        info_label = QLabel("Deploy an Ultralytics model to use.")
         
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -96,14 +98,21 @@ class Base(QDialog):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def setup_parameters_layout(self):
+        raise NotImplementedError("Subclasses must implement this method")
 
-    def setup_models_layout(self):
+    def setup_buttons_layout(self):
         """
-        Set up the models layout
+        Set up the buttons layout in a 2x2 grid
         """
         # Model controls group
-        group_box = QGroupBox("Model Selection")
-        layout = QVBoxLayout()
+        group_box = QGroupBox("Actions")
+        layout = QVBoxLayout()  # Main vertical layout
+
+        # Create two horizontal layouts for each row
+        top_row = QHBoxLayout()
+        bottom_row = QHBoxLayout()
 
         # Model control buttons
         self.browse_button = QPushButton("Browse Model")
@@ -118,11 +127,15 @@ class Base(QDialog):
         self.deactivate_button = QPushButton("Deactivate Model")
         self.deactivate_button.clicked.connect(self.deactivate_model)
 
-        for button in [self.browse_button, 
-                       self.mapping_button, 
-                       self.load_button, 
-                       self.deactivate_button]:
-            layout.addWidget(button)
+        # Add buttons to rows
+        top_row.addWidget(self.browse_button)
+        top_row.addWidget(self.mapping_button)
+        bottom_row.addWidget(self.load_button)
+        bottom_row.addWidget(self.deactivate_button)
+
+        # Add rows to main layout
+        layout.addLayout(top_row)
+        layout.addLayout(bottom_row)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -141,6 +154,47 @@ class Base(QDialog):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def initialize_uncertainty_threshold(self):
+        """Initialize the uncertainty threshold slider with the current value"""
+        current_value = self.main_window.get_uncertainty_thresh()
+        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
+        self.uncertainty_thresh = current_value
+
+    def initialize_iou_threshold(self):
+        """Initialize the IOU threshold slider with the current value"""
+        current_value = self.main_window.get_iou_thresh()
+        self.iou_threshold_slider.setValue(int(current_value * 100))
+        self.iou_thresh = current_value
+        
+    def initialize_area_threshold(self):
+        """Initialize the area threshold range slider"""
+        current_min, current_max = self.main_window.get_area_thresh()
+        self.area_threshold_slider.setValue((int(current_min * 100), int(current_max * 100)))
+        self.area_thresh_min = current_min
+        self.area_thresh_max = current_max
+
+    def update_uncertainty_label(self, value):
+        """Update uncertainty threshold and label"""
+        value = value / 100.0
+        self.uncertainty_thresh = value
+        self.main_window.update_uncertainty_thresh(value)
+        self.uncertainty_threshold_label.setText(f"{value:.2f}")
+
+    def update_iou_label(self, value):
+        """Update IoU threshold and label"""
+        value = value / 100.0
+        self.iou_thresh = value 
+        self.main_window.update_iou_thresh(value)
+        self.iou_threshold_label.setText(f"{value:.2f}")
+
+    def update_area_label(self):
+        """Handle changes to area threshold range slider"""
+        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        self.area_thresh_min = min_val / 100.0
+        self.area_thresh_max = max_val / 100.0
+        self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")      
         
     def is_sam_model_deployed(self):
         """
@@ -293,12 +347,6 @@ class Base(QDialog):
         """
         threshold = self.main_window.get_uncertainty_thresh()
         return threshold if threshold < 0.10 else 0.10
-    
-    def get_iou_threshold(self):
-        """
-        Get the IoU threshold for predictions
-        """
-        return self.main_window.get_iou_thresh()
     
     def predict(self, inputs):
         """

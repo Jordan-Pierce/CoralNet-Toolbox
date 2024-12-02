@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
     toolChanged = pyqtSignal(str)  # Signal to emit the current tool state
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
+    areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
 
     def __init__(self):
         super().__init__()
@@ -919,7 +920,7 @@ class MainWindow(QMainWindow):
         """Update the uncertainty threshold value"""
         if self.uncertainty_thresh != value:
             self.uncertainty_thresh = value
-            self.uncertainty_thresh_spinbox.setValue(value)
+            self.uncertainty_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
             self.uncertaintyChanged.emit(value)
             
     def update_uncertainty_label(self, value):
@@ -935,7 +936,7 @@ class MainWindow(QMainWindow):
         """Update the IoU threshold value"""
         if self.iou_thresh != value:
             self.iou_thresh = value
-            self.iou_thresh_spinbox.setValue(value)
+            self.iou_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
             self.iouChanged.emit(value)
             
     def update_iou_label(self, value):
