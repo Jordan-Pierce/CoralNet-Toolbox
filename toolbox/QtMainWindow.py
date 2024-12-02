@@ -13,50 +13,59 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
 
 from toolbox.QtAnnotationWindow import AnnotationWindow
 from toolbox.QtConfidenceWindow import ConfidenceWindow
-from toolbox.QtEventFilter import GlobalEventFilter
 from toolbox.QtImageWindow import ImageWindow
 from toolbox.QtLabelWindow import LabelWindow
 from toolbox.QtPatchSampling import PatchSamplingDialog
+from toolbox.QtEventFilter import GlobalEventFilter
 
-from toolbox.IO.QtImportImages import ImportImages
-from toolbox.IO.QtImportLabels import ImportLabels
-from toolbox.IO.QtImportAnnotations import ImportAnnotations
-from toolbox.IO.QtImportCoralNetAnnotations import ImportCoralNetAnnotations
-from toolbox.IO.QtImportViscoreAnnotations import ImportViscoreAnnotations
-from toolbox.IO.QtImportTagLabAnnotations import ImportTagLabAnnotations
-from toolbox.IO.QtExportLabels import ExportLabels
-from toolbox.IO.QtExportAnnotations import ExportAnnotations
-from toolbox.IO.QtExportCoralNetAnnotations import ExportCoralNetAnnotations
-from toolbox.IO.QtExportViscoreAnnotations import ExportViscoreAnnotations
-from toolbox.IO.QtExportTagLabAnnotations import ExportTagLabAnnotations
+from toolbox.IO import (
+    ImportImages,
+    ImportLabels, 
+    ImportAnnotations,
+    ImportCoralNetAnnotations,
+    ImportViscoreAnnotations,
+    ImportTagLabAnnotations,
+    ExportLabels,
+    ExportAnnotations, 
+    ExportCoralNetAnnotations,
+    ExportViscoreAnnotations,
+    ExportTagLabAnnotations
+)
 
-from toolbox.MachineLearning.TrainModel.QtClassify import Classify as ClassifyTrainModelDialog
-from toolbox.MachineLearning.TrainModel.QtDetect import Detect as DetectTrainModelDialog
-from toolbox.MachineLearning.TrainModel.QtSegment import Segment as SegmentTrainModelDialog
-from toolbox.MachineLearning.DeployModel.QtClassify import Classify as ClassifyDeployModelDialog
-from toolbox.MachineLearning.DeployModel.QtDetect import Detect as DetectDeployModelDialog
-from toolbox.MachineLearning.DeployModel.QtSegment import Segment as SegmentDeployModelDialog
-from toolbox.MachineLearning.BatchInference.QtClassify import Classify as ClassifyBatchInferenceDialog
-from toolbox.MachineLearning.BatchInference.QtDetect import Detect as DetectBatchInferenceDialog
-from toolbox.MachineLearning.BatchInference.QtSegment import Segment as SegmentBatchInferenceDialog
-from toolbox.MachineLearning.ImportDataset.QtDetect import Detect as DetectImportDatasetDialog
-from toolbox.MachineLearning.ImportDataset.QtSegment import Segment as SegmentImportDatasetDialog
-from toolbox.MachineLearning.ExportDataset.QtClassify import Classify as ClassifyExportDatasetDialog
-from toolbox.MachineLearning.ExportDataset.QtDetect import Detect as DetectExportDatasetDialog
-from toolbox.MachineLearning.ExportDataset.QtSegment import Segment as SegmentExportDatasetDialog
-from toolbox.MachineLearning.EvaluateModel.QtClassify import Classify as ClassifyEvaluateModelDialog
-from toolbox.MachineLearning.EvaluateModel.QtDetect import Detect as DetectEvaluateModelDialog
-from toolbox.MachineLearning.EvaluateModel.QtSegment import Segment as SegmentEvaluateModelDialog
-from toolbox.MachineLearning.MergeDatasets.QtClassify import Classify as ClassifyMergeDatasetsDialog
-from toolbox.MachineLearning.OptimizeModel.QtBase import Base as OptimizeModelDialog
+from toolbox.MachineLearning import (
+    TrainClassify as ClassifyTrainModelDialog,
+    TrainDetect as DetectTrainModelDialog,  
+    TrainSegment as SegmentTrainModelDialog,
+    DeployClassify as ClassifyDeployModelDialog,
+    DeployDetect as DetectDeployModelDialog,
+    DeploySegment as SegmentDeployModelDialog,
+    BatchClassify as ClassifyBatchInferenceDialog,
+    BatchDetect as DetectBatchInferenceDialog,
+    BatchSegment as SegmentBatchInferenceDialog,
+    ImportDetect as DetectImportDatasetDialog,
+    ImportSegment as SegmentImportDatasetDialog,
+    ExportClassify as ClassifyExportDatasetDialog,
+    ExportDetect as DetectExportDatasetDialog,
+    ExportSegment as SegmentExportDatasetDialog,
+    EvalClassify as ClassifyEvaluateModelDialog,
+    EvalDetect as DetectEvaluateModelDialog,
+    EvalSegment as SegmentEvaluateModelDialog,
+    MergeClassify as ClassifyMergeDatasetsDialog,
+    Optimize as OptimizeModelDialog
+)
 
-from toolbox.SAM.QtDeployPredictor import DeployPredictorDialog as SAMDeployPredictorDialog
-from toolbox.SAM.QtDeployGenerator import DeployGeneratorDialog as SAMDeployGeneratorDialog
-from toolbox.SAM.QtBatchInference import BatchInferenceDialog as SAMBatchInferenceDialog
+from toolbox.SAM import (
+    DeployPredictorDialog as SAMDeployPredictorDialog,
+    DeployGeneratorDialog as SAMDeployGeneratorDialog,
+    BatchInferenceDialog as SAMBatchInferenceDialog
+)
 
-from toolbox.AutoDistill.QtDeployModel import DeployModelDialog as AutoDistillDeployModelDialog
-from toolbox.AutoDistill.QtBatchInference import BatchInferenceDialog as AutoDistillBatchInferenceDialog
+from toolbox.AutoDistill import (
+    DeployModelDialog as AutoDistillDeployModelDialog,
+    BatchInferenceDialog as AutoDistillBatchInferenceDialog
+)
 
+from toolbox.QtProgressBar import ProgressBar
 from toolbox.Icons import get_icon
 
 from toolbox.utilities import get_available_device

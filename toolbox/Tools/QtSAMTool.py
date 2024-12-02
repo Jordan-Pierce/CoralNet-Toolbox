@@ -1,5 +1,7 @@
 import warnings
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
@@ -11,7 +13,6 @@ from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from toolbox.utilities import pixmap_to_numpy
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -410,7 +411,6 @@ class SAMTool(Tool):
 
         # Ensure the PolygonAnnotation is added to the scene after creation
         annotation.create_graphics_item(self.annotation_window.scene)
-        self.annotation_window.scene.addItem(annotation.graphics_item)
 
         if self.rectangle_graphics:
             self.annotation_window.scene.removeItem(self.rectangle_graphics)

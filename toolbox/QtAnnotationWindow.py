@@ -1,5 +1,7 @@
 import warnings
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -7,21 +9,23 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QMetaObject
 from PyQt5.QtGui import QMouseEvent, QPixmap
 from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QMessageBox, QGraphicsPixmapItem)
 
-from toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
-from toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
-from toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from toolbox.Annotations import (
+    PatchAnnotation,
+    PolygonAnnotation,
+    RectangleAnnotation
+)
 
-from toolbox.Tools.QtPanTool import PanTool
-from toolbox.Tools.QtPatchTool import PatchTool
-from toolbox.Tools.QtRectangleTool import RectangleTool
-from toolbox.Tools.QtPolygonTool import PolygonTool
-from toolbox.Tools.QtSAMTool import SAMTool
-from toolbox.Tools.QtSelectTool import SelectTool
-from toolbox.Tools.QtZoomTool import ZoomTool
+from toolbox.Tools import (
+    PanTool,
+    PatchTool, 
+    PolygonTool,
+    RectangleTool,
+    SAMTool,
+    SelectTool,
+    ZoomTool
+)
 
 from toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
