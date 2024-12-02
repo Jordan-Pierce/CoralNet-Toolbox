@@ -45,9 +45,11 @@ class BatchInferenceDialog(QDialog):
 
         self.layout = QVBoxLayout(self)
 
-        # Set up the image options layout
+        # Setup the info layout
+        self.setup_info_layout()
+        # Setup the image options layout
         self.setup_options_layout()
-        # Set up the buttons layout
+        # Setup the buttons layout
         self.setup_buttons_layout()
         
     def showEvent(self, event):
@@ -59,6 +61,23 @@ class BatchInferenceDialog(QDialog):
         super().showEvent(event)
         self.deploy_generator_dialog = self.main_window.sam_deploy_generator_dialog
         self.loaded_model = self.deploy_generator_dialog.loaded_model
+        
+    def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Perform batch inferencing on the selected images.")
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_options_layout(self):
         """

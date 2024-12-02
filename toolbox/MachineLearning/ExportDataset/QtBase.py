@@ -64,6 +64,7 @@ class Base(QDialog):
         self.layout = QVBoxLayout(self)
 
         # Setup the layout
+        self.setup_info_layout()
         self.setup_output_layout()
         self.setup_ratio_layout()
         self.setup_annotation_layout()
@@ -83,6 +84,24 @@ class Base(QDialog):
         self.update_annotation_type_checkboxes()
         self.populate_class_filter_list()
         self.update_summary_statistics()
+        
+    def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Export Patches, Rectangles, and Polygons to create a YOLO-formatted \
+                             Classification, Detection or Segmentation dataset.")
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_layout(self):
         """

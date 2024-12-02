@@ -63,6 +63,7 @@ class DeployGeneratorDialog(QDialog):
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
 
+        self.task = 'detect'
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = {0: 'Review'}
@@ -70,6 +71,8 @@ class DeployGeneratorDialog(QDialog):
         # Create the layout
         self.layout = QVBoxLayout(self)
         
+        # Setup the info layout
+        self.setup_info_layout()
         # Setup the model layout
         self.setup_models_layout()
         # Setup the parameter layout
@@ -90,6 +93,23 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_area_threshold
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
+        
+    def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Choose a Generator to deploy and use.")
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_models_layout(self):
         """
@@ -122,14 +142,14 @@ class DeployGeneratorDialog(QDialog):
         Setup parameter control section in a group box.
         """
         group_box = QGroupBox("Parameters")
-        form_layout = QFormLayout()
+        layout = QFormLayout()
         
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
-        form_layout.addRow("Resize Image:", self.resize_image_dropdown)
+        layout.addRow("Resize Image:", self.resize_image_dropdown)
         
         # Image size control
         self.imgsz_spinbox = QSpinBox()
@@ -137,7 +157,7 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.imgsz_spinbox.setEnabled(False)  # Grey out the dropdown
-        form_layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
+        layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
         
         # Area threshold controls
         self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
@@ -151,8 +171,8 @@ class DeployGeneratorDialog(QDialog):
         self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
         self.area_threshold_slider.valueChanged.connect(self.update_area_label)
         self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
-        form_layout.addRow("Area Threshold", self.area_threshold_slider)
-        form_layout.addRow("", self.area_threshold_label)
+        layout.addRow("Area Threshold", self.area_threshold_slider)
+        layout.addRow("", self.area_threshold_label)
 
         # Uncertainty threshold controls
         self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
@@ -162,8 +182,8 @@ class DeployGeneratorDialog(QDialog):
         self.uncertainty_threshold_slider.setTickInterval(10)
         self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
         self.uncertainty_threshold_label = QLabel(f"{self.main_window.get_uncertainty_thresh():.2f}")
-        form_layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        form_layout.addRow("", self.uncertainty_threshold_label)
+        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
+        layout.addRow("", self.uncertainty_threshold_label)
         
         # IoU threshold controls
         self.iou_threshold_slider = QSlider(Qt.Horizontal)
@@ -173,18 +193,24 @@ class DeployGeneratorDialog(QDialog):
         self.iou_threshold_slider.setTickInterval(10)
         self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
         self.iou_threshold_label = QLabel(f"{self.main_window.get_iou_thresh():.2f}")
-        form_layout.addRow("IoU Threshold", self.iou_threshold_slider)
-        form_layout.addRow("", self.iou_threshold_label)
+        layout.addRow("IoU Threshold", self.iou_threshold_slider)
+        layout.addRow("", self.iou_threshold_label)
+        
+        # Task dropdown
+        self.use_task_dropdown = QComboBox()
+        self.use_task_dropdown.addItems(["Detect", "Segment"])
+        label = QLabel("Choose a task to perform")
+        layout.addRow(label, self.use_task_dropdown)
         
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         label = QLabel("Use Predictor for creating Polygons:")
-        label.setStyleSheet("color: red; font-weight: bold;")
-        form_layout.addRow(label, self.use_sam_dropdown)
+        label.setStyleSheet("font-weight: bold;")
+        layout.addRow(label, self.use_sam_dropdown)
         
-        group_box.setLayout(form_layout)
+        group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
     def setup_status_layout(self):
@@ -301,10 +327,11 @@ class DeployGeneratorDialog(QDialog):
         try:
             # Get selected model path
             self.model_path = self.models[self.model_combo.currentText()]
+            self.task = self.use_task_dropdown.currentText().lower()
 
             # Set the parameters
             overrides = dict(model=self.model_path, 
-                             task='segment', 
+                             task=self.task, 
                              mode='predict', 
                              save=False, 
                              max_det=1000,
@@ -406,7 +433,7 @@ class DeployGeneratorDialog(QDialog):
             
             # Update the results names
             results[0].names = self.class_mapping
-            
+                        
             # Check if SAM model is deployed
             if self.use_sam_dropdown.currentText() == "True":
                 # Apply SAM to the detection results
@@ -422,9 +449,11 @@ class DeployGeneratorDialog(QDialog):
                         
             # Update the progress bar
             progress_bar.update_progress()
-
-            # Process the results
-            results_processor.process_segmentation_results(results)
+            
+            if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
+                results_processor.process_segmentation_results(results)
+            else:
+                results_processor.process_detection_results(results)
                         
         # Stop the progress bar
         progress_bar.stop_progress()

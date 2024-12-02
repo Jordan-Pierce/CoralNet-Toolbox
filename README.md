@@ -95,7 +95,7 @@ Once this has finished, install the `toolbox`:
 # cmd
 
 # Install
-pip install "git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git"
+pip install coralnet-toolbox
 ```
 
 ### CUDA

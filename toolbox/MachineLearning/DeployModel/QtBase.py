@@ -56,12 +56,31 @@ class Base(QDialog):
 
         self.layout = QVBoxLayout(self)
         
-        # Set up the labels layout
+        # Setup the info layout
+        self.setup_info_layout()
+        # Setup the labels layout
         self.setup_labels_layout()
-        # Set up the model layout
+        # Setup the model layout
         self.setup_models_layout()
-        # Set up the status layout
+        # Setup the status layout
         self.setup_status_layout()
+        
+    def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Deploy a Classification, Detection, or Segmentation model to use.")
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
         
     def setup_labels_layout(self):
         """

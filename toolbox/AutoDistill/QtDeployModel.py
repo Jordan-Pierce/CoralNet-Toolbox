@@ -62,6 +62,8 @@ class DeployModelDialog(QDialog):
         # Create the layout
         self.layout = QVBoxLayout(self)
         
+        # Setup the info layout
+        self.setup_info_layout()
         # Setup the model layout
         self.setup_models_layout()
         # Setup the ontology layout
@@ -85,6 +87,23 @@ class DeployModelDialog(QDialog):
         self.initialize_area_threshold
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
+
+    def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Choose a model to deploy and use.")
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_models_layout(self):
         """
