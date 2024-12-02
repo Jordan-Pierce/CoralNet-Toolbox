@@ -4,12 +4,14 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import re
 
-from PyQt5.QtCore import Qt, pyqtSignal, QEvent
+from qtrangeslider import QRangeSlider
+from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget, QCheckBox)
+from PyQt5.QtWidgets import (QDoubleSpinBox, QListWidget, QCheckBox, QFrame,)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, 
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout, 
-                             QSpinBox, QSlider, QDialog, QPushButton)
+                             QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
+                             QGroupBox)
 
 from toolbox.QtAnnotationWindow import AnnotationWindow
 from toolbox.QtConfidenceWindow import ConfidenceWindow
@@ -96,6 +98,9 @@ class MainWindow(QMainWindow):
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
         self.apple_icon = get_icon("apple.png")
+        self.transparent_icon = get_icon("transparent.png")
+        self.opaque_icon = get_icon("opaque.png")
+        self.parameters_icon = get_icon("parameters.png")
 
         # Set the title and icon for the main window
         self.setWindowTitle("CoralNet-Toolbox")
@@ -126,8 +131,10 @@ class MainWindow(QMainWindow):
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
 
         # Set the default uncertainty threshold and IoU threshold
-        self.iou_thresh = 0.70
+        self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
+        self.area_thresh_min = 0.00
+        self.area_thresh_max = 0.40
 
         # Create dialogs
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
@@ -541,8 +548,10 @@ class MainWindow(QMainWindow):
         self.device_tool_action.setToolTip(device_tooltip)
         self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
-
-        # Create status bar layout
+        
+        # ----------------------------------------
+        # Create and add the status bar
+        # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
         # Labels for image dimensions and mouse position
@@ -555,54 +564,111 @@ class MainWindow(QMainWindow):
         self.mouse_position_label.setFixedWidth(150)
         self.view_dimensions_label.setFixedWidth(150)  # Set fixed width for view dimensions label
 
-        # Transparency slider
+        # Transparency slider with icons
+        transparency_layout = QHBoxLayout()
+        transparent_icon = QLabel()
+        transparent_icon.setPixmap(get_icon("transparent.png").pixmap(QSize(16, 16)))
+        transparent_icon.setToolTip("Transparent")
+        
+        # Slider
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 128)
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
-
+        
+        # Right icon (opaque)
+        opaque_icon = QLabel()
+        opaque_icon.setPixmap(get_icon("opaque.png").pixmap(QSize(16, 16)))
+        opaque_icon.setToolTip("Opaque")
+        
         # Add a checkbox labeled "All" next to the transparency slider
-        self.all_labels_checkbox = QCheckBox("All")
+        self.all_labels_checkbox = QCheckBox("")
         self.all_labels_checkbox.setCheckState(Qt.Checked)
         self.all_labels_checkbox.stateChanged.connect(self.update_all_labels_transparency)
-
-        # Spin box for IoU threshold control
-        self.iou_thresh_spinbox = QDoubleSpinBox()
-        self.iou_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
-        self.iou_thresh_spinbox.setSingleStep(0.05)  # Step size for the spinbox
-        self.iou_thresh_spinbox.setValue(self.iou_thresh)
-        self.iou_thresh_spinbox.valueChanged.connect(self.update_iou_thresh)
-
-        # Spin box for Uncertainty threshold control
-        self.uncertainty_thresh_spinbox = QDoubleSpinBox()
-        self.uncertainty_thresh_spinbox.setRange(0.0, 1.0)  # Range is 0.0 to 1.0
-        self.uncertainty_thresh_spinbox.setSingleStep(0.05)  # Step size for the spinbox
-        self.uncertainty_thresh_spinbox.setValue(self.uncertainty_thresh)
-        self.uncertainty_thresh_spinbox.valueChanged.connect(self.update_uncertainty_thresh)
-
-        # Spin box for annotation size control
+        
+        # Add widgets to the transparency layout
+        transparency_layout.addWidget(transparent_icon)
+        transparency_layout.addWidget(self.transparency_slider)
+        transparency_layout.addWidget(opaque_icon)
+        transparency_layout.addWidget(self.all_labels_checkbox)
+        
+        # Create widget to hold the layout
+        self.transparency_widget = QWidget()
+        self.transparency_widget.setLayout(transparency_layout)
+        
+        # --------------------------------------------------
+        # Create collapsible Parameters section
+        # --------------------------------------------------
+        self.parameters_section = CollapsibleSection("Parameters")
+        
+        # Patch Annotation Size
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
         self.annotation_size_spinbox.setMaximum(5000)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
+        annotation_size_layout = QHBoxLayout()
+        annotation_size_layout.addWidget(self.annotation_size_spinbox)
+        annotation_size_widget = QWidget()
+        annotation_size_widget.setLayout(annotation_size_layout)
+        self.parameters_section.add_widget(annotation_size_widget, "Patch Size")
+        
+        # Uncertainty threshold
+        self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
+        self.uncertainty_thresh_slider.setRange(0, 100)
+        self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
+        self.uncertainty_thresh_slider.setTickPosition(QSlider.TicksBelow)
+        self.uncertainty_thresh_slider.setTickInterval(10)
+        self.uncertainty_value_label = QLabel(f"{self.uncertainty_thresh:.2f}")
+        self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
+        uncertainty_layout = QHBoxLayout()
+        uncertainty_layout.addWidget(self.uncertainty_thresh_slider)
+        uncertainty_layout.addWidget(self.uncertainty_value_label)
+        uncertainty_widget = QWidget()
+        uncertainty_widget.setLayout(uncertainty_layout)
+        self.parameters_section.add_widget(uncertainty_widget, "Uncertainty Threshold")
 
+        # IoU threshold
+        self.iou_thresh_slider = QSlider(Qt.Horizontal)
+        self.iou_thresh_slider.setRange(0, 100)
+        self.iou_thresh_slider.setValue(int(self.iou_thresh * 100))
+        self.iou_thresh_slider.setTickPosition(QSlider.TicksBelow)
+        self.iou_thresh_slider.setTickInterval(10)
+        self.iou_value_label = QLabel(f"{self.iou_thresh:.2f}")
+        self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
+        iou_layout = QHBoxLayout()
+        iou_layout.addWidget(self.iou_thresh_slider)
+        iou_layout.addWidget(self.iou_value_label)
+        iou_widget = QWidget()
+        iou_widget.setLayout(iou_layout)
+        self.parameters_section.add_widget(iou_widget, "IoU Threshold")
+        
+        # Area threshold controls  
+        min_val = self.area_thresh_min
+        max_val = self.area_thresh_max
+        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
+        self.area_threshold_slider.setMinimum(0)
+        self.area_threshold_slider.setMaximum(100)
+        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_slider.setTickInterval(10)
+        self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
+        self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
+        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
+        area_thresh_layout = QVBoxLayout()
+        area_thresh_layout.addWidget(self.area_threshold_slider) 
+        area_thresh_layout.addWidget(self.area_threshold_label)
+        area_thresh_widget = QWidget()
+        area_thresh_widget.setLayout(area_thresh_layout)
+        self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
+        
         # Add widgets to status bar layout
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
+        self.status_bar_layout.addWidget(self.transparency_widget)
         self.status_bar_layout.addStretch()
-        self.status_bar_layout.addWidget(QLabel("Transparency:"))
-        self.status_bar_layout.addWidget(self.transparency_slider)
-        self.status_bar_layout.addWidget(self.all_labels_checkbox)
-        self.status_bar_layout.addStretch()
-        self.status_bar_layout.addWidget(QLabel("IoU Threshold:"))
-        self.status_bar_layout.addWidget(self.iou_thresh_spinbox)
-        self.status_bar_layout.addWidget(QLabel("Uncertainty Threshold:"))
-        self.status_bar_layout.addWidget(self.uncertainty_thresh_spinbox)
-        self.status_bar_layout.addWidget(QLabel("Annotation Size:"))
-        self.status_bar_layout.addWidget(self.annotation_size_spinbox)
+        self.status_bar_layout.addWidget(self.parameters_section)
 
         # --------------------------------------------------
         # Create the main layout
@@ -829,15 +895,15 @@ class MainWindow(QMainWindow):
     def get_transparency_value(self):
         return self.transparency_slider.value()
 
+    def update_transparency_slider(self, transparency):
+        self.transparency_slider.setValue(transparency)
+        
     def update_label_transparency(self, value):
         if self.all_labels_checkbox.isChecked():
             self.label_window.set_all_labels_transparency(value)
         else:
             self.label_window.set_label_transparency(value)
         self.update_transparency_slider(value)
-
-    def update_transparency_slider(self, transparency):
-        self.transparency_slider.setValue(transparency)
 
     def update_all_labels_transparency(self, state):
         if state == Qt.Checked:
@@ -846,22 +912,55 @@ class MainWindow(QMainWindow):
             self.label_window.set_label_transparency(self.transparency_slider.value())
 
     def get_uncertainty_thresh(self):
+        """Get the current uncertainty threshold value"""
         return self.uncertainty_thresh
 
     def update_uncertainty_thresh(self, value):
+        """Update the uncertainty threshold value"""
         if self.uncertainty_thresh != value:
             self.uncertainty_thresh = value
             self.uncertainty_thresh_spinbox.setValue(value)
             self.uncertaintyChanged.emit(value)
+            
+    def update_uncertainty_label(self, value):
+        """Update uncertainty threshold label when slider value changes"""
+        self.uncertainty_thresh = value / 100.0  # Convert from 0-100 to 0-1
+        self.uncertainty_value_label.setText(f"{self.uncertainty_thresh:.2f}")
 
     def get_iou_thresh(self):
+        """Get the current IoU threshold value"""
         return self.iou_thresh
 
     def update_iou_thresh(self, value):
+        """Update the IoU threshold value"""
         if self.iou_thresh != value:
             self.iou_thresh = value
             self.iou_thresh_spinbox.setValue(value)
             self.iouChanged.emit(value)
+            
+    def update_iou_label(self, value):
+        """Update IoU threshold label when slider value changes"""
+        self.iou_thresh = value / 100.0  # Convert from 0-100 to 0-1
+        self.iou_value_label.setText(f"{self.iou_thresh:.2f}")
+        
+    def get_area_thresh(self):
+        """Get the current area threshold values"""
+        return self.area_thresh_min, self.area_thresh_max
+    
+    def update_area_thresh(self, min_val, max_val):
+        """Update the area threshold values"""
+        if self.area_thresh_min != min_val or self.area_thresh_max != max_val:
+            self.area_thresh_min = min_val
+            self.area_thresh_max = max_val
+            self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
+            self.areaChanged.emit(min_val, max_val)
+            
+    def update_area_label(self, value):
+        """Handle changes to area threshold range slider"""
+        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        self.area_thresh_min = min_val / 100.0
+        self.area_thresh_max = max_val / 100.0
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
 
     def open_patch_annotation_sampling_dialog(self):
 
@@ -1200,6 +1299,59 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
+
+class CollapsibleSection(QWidget):
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.setLayout(QVBoxLayout())
+        self.layout().setContentsMargins(0, 0, 0, 0)
+        self.layout().setSpacing(0)
+
+        # Create the action
+        self.toggle_action = QAction(QIcon(get_icon('parameters.png')), title, self)
+        self.toggle_action.setCheckable(True)
+        self.toggle_action.triggered.connect(self.toggle_content)
+
+        # Header button using the action
+        self.toggle_button = QToolButton()
+        self.toggle_button.setDefaultAction(self.toggle_action)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setAutoRaise(True)  # Gives a flat appearance until clicked
+
+        # Popup frame
+        self.popup = QFrame(self.window())
+        self.popup.setWindowFlags(Qt.Popup)
+        self.popup.setFrameStyle(QFrame.Panel | QFrame.Raised)
+        self.popup.setLayout(QVBoxLayout())
+        self.popup.layout().setContentsMargins(5, 5, 5, 5)
+        self.popup.hide()
+
+        # Add button to layout
+        self.layout().addWidget(self.toggle_button)
+
+    def toggle_content(self, checked):
+        if checked:
+            # Position popup below and to the left of the button
+            pos = self.toggle_button.mapToGlobal(QPoint(0, 0))
+            popup_width = self.popup.sizeHint().width()
+            self.popup.move(pos.x() - popup_width + self.toggle_button.width(), 
+                            pos.y() + self.toggle_button.height())
+            self.popup.show()
+        else:
+            self.popup.hide()
+
+    def add_widget(self, widget, title=None):
+        group_box = QGroupBox()
+        group_box.setTitle(title)
+        group_box.setLayout(QVBoxLayout())
+        group_box.layout().addWidget(widget)
+        self.popup.layout().addWidget(group_box)
+
+    def hideEvent(self, event):
+        self.popup.hide()
+        self.toggle_action.setChecked(False)
+        super().hideEvent(event)
+        
 
 class DeviceSelectionDialog(QDialog):
     def __init__(self, devices, parent=None):
