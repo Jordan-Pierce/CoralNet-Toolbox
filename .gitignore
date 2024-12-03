@@ -20,4 +20,4 @@ build
 dist
 
 Data/
-toolbox/QtClustering.py
+coralnet_toolbox/QtClustering.py
