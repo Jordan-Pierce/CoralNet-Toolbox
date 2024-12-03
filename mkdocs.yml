@@ -71,15 +71,5 @@ markdown_extensions:
 #         property: UA-XXXXXXXXX-X
 
 nav:
-    - Home: docs/index.md
-    - Installation: docs/installation.md
-    - Usage: docs/usage.md
-    - Contributing: docs/contributing.md
-    - FAQ: docs/faq.md
-    - Changelog: docs/changelog.md
+    - Home: README.md
     - Report Issues: https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues
-    - Examples:
-        - docs/examples/intro.ipynb
-    - API Reference:
-          - coralnet_toolbox module: docs/coralnet_toolbox.md
-          - common module: docs/common.md
