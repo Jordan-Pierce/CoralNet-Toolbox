@@ -75,6 +75,4 @@ nav:
     - Home: index.md
     - Installation: installation.md
     - Usage: usage.md
-    - Contributing: contributing.md
-    - Changelog: changelog.md
     - Report Issues: https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues
