@@ -1,7 +1,7 @@
-# CoralNet Toolbox Instructions
+# Usage
 
 ## Overview
-The CoralNet Toolbox is a Python application built using PyQt5 for image annotation. 
+The CoralNet Toolbox is a Python application built using PyQt5 for image annotation.
 This guide provides instructions on how to use the application, including key functionalities and hotkeys.
 
 ## Annotations
@@ -82,7 +82,7 @@ The main window consists of several components:
 - **Zoom**: Use the mouse wheel to zoom in and out.
 - **Pan**: Hold Ctrl + Right-click the mouse button to pan the image.
 - **Add Annotation**: Click with the Left mouse button while using one of the annotation tools.
-- **Select Annotations**: 
+- **Select Annotations**:
   - Ctrl + Left-Click on multiple annotations while using the select tool.
   - Ctrl + Left-Click and drag to select multiple annotations while using the select tool.
     - **Move Annotation**: Drag a selected annotation.

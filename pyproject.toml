@@ -1,0 +1,78 @@
+[project]
+name = "coralnet-toolbox"
+version = "0.0.1"
+dynamic = [
+    "dependencies",
+]
+description = "Tools for annotating and developing ML models for benthic imagery"
+readme = "README.md"
+requires-python = ">=3.10, <3.11"
+keywords = [
+    "CoralNet-Toolbox",
+]
+license = {text = "MIT License"}
+authors = [
+  {name = "Jordan Pierce", email = "jordan.pierce@noaa.gov"},
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.10",
+]
+
+[project.scripts]
+coralnet-toolbox = "coralnet_toolbox.main:run"
+
+[project.optional-dependencies]
+all = [
+    "coralnet-toolbox[extra]",
+]
+
+extra = [
+    "pandas",
+]
+
+
+[tool]
+[tool.setuptools.packages.find]
+include = ["coralnet_toolbox*"]
+exclude = ["docs*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+
+[tool.distutils.bdist_wheel]
+universal = true
+
+
+[tool.bumpversion]
+current_version = "0.0.1"
+commit = true
+tag = true
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "coralnet_toolbox/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
+
+
+[tool.flake8]
+exclude = [
+    "docs",
+]
+max-line-length = 120
+
+
+[project.urls]
+Homepage = "https://github.com/Jordan-Pierce/CoralNet-Toolbox"
+
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
