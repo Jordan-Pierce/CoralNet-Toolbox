@@ -72,6 +72,3 @@ markdown_extensions:
 
 nav:
     - Home: docs/README.md
-    - Installation: docs/installation.md
-    - Contributing: docs/contributing.md
-    - Report Issues: https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues
