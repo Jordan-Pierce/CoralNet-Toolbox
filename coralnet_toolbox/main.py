@@ -1,8 +1,3 @@
-# TODO Later:
-# CoralNet tools
-# Resample polygon to be smoother, uniformly spaced
-# Create workarea class, add to eventFilters for deploying models
-
 import traceback
 
 from PyQt5.QtWidgets import QApplication
