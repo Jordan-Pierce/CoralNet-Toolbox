@@ -71,5 +71,7 @@ markdown_extensions:
 #         property: UA-XXXXXXXXX-X
 
 nav:
-    - Home: README.md
+    - Home: docs/README.md
+    - Installation: docs/installation.md
+    - Contributing: docs/contributing.md
     - Report Issues: https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues

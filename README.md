@@ -41,7 +41,7 @@ coralnet-toolbox
 </p>
 
 
-For further instructions, see [How to Install](); for information on how to use, check out the [docs](./docs).
+For further instructions, see [How to Install](); for information on how to use, check out the [docs](https://jordan-pierce.github.io/CoralNet-Toolbox/).
 
 ## Tools
 
