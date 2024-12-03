@@ -43,6 +43,7 @@ plugins:
     - git-revision-date-localized:
           enable_creation_date: true
           type: timeago
+    # - pdf-export
     - mkdocs-jupyter:
           include_source: True
           ignore_h1_titles: True
@@ -71,4 +72,9 @@ markdown_extensions:
 #         property: UA-XXXXXXXXX-X
 
 nav:
-    - Home: docs/README.md
+    - Home: index.md
+    - Installation: installation.md
+    - Usage: usage.md
+    - Contributing: contributing.md
+    - Changelog: changelog.md
+    - Report Issues: https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues

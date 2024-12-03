@@ -1,7 +1,7 @@
 # CoralNet-Toolbox
 
 <p align="center">
-  <img src="figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
+  <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
 [![image](https://img.shields.io/pypi/v/CoralNet-Toolbox.svg)](https://pypi.python.org/pypi/CoralNet-Toolbox)
@@ -37,11 +37,12 @@ coralnet-toolbox
 ```
 
 <p align="center">
-  <img src="figures/SegmentEverything.gif" alt="CoralNet-Toolbox">
+  <img src="https://github.com/Jordan-Pierce/CoralNet-Toolbox/blob/main/figures/SegmentEverything.gif?raw=true" alt="CoralNet-Toolbox">
 </p>
 
 
-For further instructions, see [How to Install](); for information on how to use, check out the [docs](https://jordan-pierce.github.io/CoralNet-Toolbox/).
+For further instructions, see [How to Install](https://github.com/Jordan-Pierce/CoralNet-Toolbox?tab=readme-ov-file#how-to-install); 
+for information on how to use, check out the [Documentation](https://jordan-pierce.github.io/CoralNet-Toolbox/).
 
 ## Tools
 
