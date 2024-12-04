@@ -1145,25 +1145,6 @@ class MainWindow(QMainWindow):
             self.segment_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "No images are present in the project.")
-            return
-
-        if not any(list(self.deploy_model_dialog.loaded_models.values())):
-            QMessageBox.warning(self,
-                                "Batch Inference",
-                                "Please deploy a model before running batch inference.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            self.batch_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_batch_inference_dialog(self):
         if not self.image_window.image_paths:
@@ -1176,6 +1157,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self,
                                 "Batch Inference",
                                 "Please deploy a model before running batch inference.")
+            return
+        
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Batch Inference",
+                                "No annotations are present in the project.")
             return
 
         try:

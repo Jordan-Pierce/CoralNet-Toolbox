@@ -143,7 +143,7 @@ class Segment(Base):
         # Predict the segmentation results
         results = self.loaded_model(inputs,
                                     agnostic_nms=True,
-                                    conf=self.get_uncertainty_threshold(),
+                                    conf=self.uncertainty_thresh,
                                     iou=self.iou_thresh,
                                     device=self.main_window.device,
                                     stream=True)
@@ -151,7 +151,7 @@ class Segment(Base):
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
-                                             uncertainty_thresh=self.get_uncertainty_threshold(),
+                                             uncertainty_thresh=self.uncertainty_thresh,
                                              iou_thresh=self.iou_thresh,
                                              min_area_thresh=self.area_thresh_min,
                                              max_area_thresh=self.area_thresh_max)
