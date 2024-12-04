@@ -71,7 +71,7 @@ class ResultsProcessor:
                 results = results[0]
             x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
             area_norm = w_norm * h_norm
-            results = results[(area_norm > self.min_area_thresh) & (area_norm < self.max_area_thresh)]
+            results = results[(area_norm >= self.min_area_thresh) & (area_norm <= self.max_area_thresh)]
         except Exception as e:
             print(f"Warning: Failed to filter results by area\n{e}")
             

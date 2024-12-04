@@ -59,6 +59,7 @@ class DeployGeneratorDialog(QDialog):
         self.area_thresh_max = 0.40
 
         self.task = 'detect'
+        self.max_detect = 300
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = {0: 'Review'}
@@ -192,6 +193,13 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("Area Threshold", self.area_threshold_slider)
         layout.addRow("", self.area_threshold_label)
         
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detect)
+        label = QLabel("Max Detections")
+        layout.addRow(label, self.max_detections_spinbox)
+                
         # Task dropdown
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["Detect", "Segment"])
@@ -311,6 +319,7 @@ class DeployGeneratorDialog(QDialog):
         try:
             # Get selected model path
             self.model_path = self.models[self.model_combo.currentText()]
+            self.max_detect = self.max_detections_spinbox.value()
             self.task = self.use_task_dropdown.currentText().lower()
 
             # Set the parameters
@@ -318,10 +327,10 @@ class DeployGeneratorDialog(QDialog):
                              task=self.task, 
                              mode='predict', 
                              save=False, 
-                             max_det=500,
+                             max_det=self.max_detect,
                              imgsz=self.get_imgsz(),
-                             conf=0.05, 
-                             iou=1.0, 
+                             conf=0.00, 
+                             iou=1.00, 
                              device=self.main_window.device)
             
             # Load the model
