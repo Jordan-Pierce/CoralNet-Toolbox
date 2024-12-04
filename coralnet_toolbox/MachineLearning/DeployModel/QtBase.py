@@ -339,10 +339,10 @@ class Base(QDialog):
 
     def get_uncertainty_threshold(self):
         """
-        Get the confidence threshold for predictions
+        Get the confidence threshold for classification predictions
         """
         threshold = self.main_window.get_uncertainty_thresh()
-        return threshold if threshold < 0.10 else 0.10
+        return threshold if threshold > 0.10 else 0.10
     
     def predict(self, inputs):
         """

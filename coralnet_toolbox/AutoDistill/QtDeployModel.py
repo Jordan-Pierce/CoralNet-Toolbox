@@ -382,18 +382,6 @@ class DeployModelDialog(QDialog):
                 ontology_mapping[text_input.text()] = label_dropdown.currentText()
         return ontology_mapping
 
-    def get_uncertainty_threshold(self):
-        """
-        Get the uncertainty threshold, limiting it to a maximum of 0.10.
-
-        Returns:
-            Adjusted uncertainty threshold value.
-        """
-        if self.main_window.get_uncertainty_thresh() < 0.10:
-            return self.main_window.get_uncertainty_thresh()
-        else:
-            return 0.10  # Arbitrary value to prevent too many detections
-
     def load_new_model(self, model_name, uncertainty_thresh):
         """
         Load a new model based on the selected model name.
@@ -406,8 +394,8 @@ class DeployModelDialog(QDialog):
             from autodistill_grounding_dino import GroundingDINO
             self.model_name = model_name
             self.loaded_model = GroundingDINO(ontology=self.ontology,
-                                              box_threshold=uncertainty_thresh,
-                                              text_threshold=uncertainty_thresh)
+                                              box_threshold=0.025,
+                                              text_threshold=0.025)
 
     def predict(self, image_paths=None):
         """
@@ -417,7 +405,6 @@ class DeployModelDialog(QDialog):
             image_paths: List of image paths to process. If None, uses the current image.
         """
         if not self.loaded_model:
-            QMessageBox.critical(self, "Error", "No model loaded")
             return
    
         if not image_paths:
@@ -440,7 +427,7 @@ class DeployModelDialog(QDialog):
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.get_uncertainty_threshold(),
+                                                 uncertainty_thresh=self.uncertainty_thresh,
                                                  iou_thresh=self.iou_thresh,
                                                  min_area_thresh=self.area_thresh_min,
                                                  max_area_thresh=self.area_thresh_max)

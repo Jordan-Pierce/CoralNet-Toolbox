@@ -318,11 +318,12 @@ class DeployGeneratorDialog(QDialog):
                              task=self.task, 
                              mode='predict', 
                              save=False, 
-                             max_det=1000,
+                             max_det=500,
                              imgsz=self.get_imgsz(),
-                             conf=self.get_uncertainty_threshold(), 
-                             iou=self.iou_thresh, 
+                             conf=0.05, 
+                             iou=1.0, 
                              device=self.main_window.device)
+            
             # Load the model
             self.loaded_model = FastSAMPredictor(overrides=overrides)
             
@@ -348,18 +349,6 @@ class DeployGeneratorDialog(QDialog):
         """Get the image size for the model."""
         self.imgsz = self.imgsz_spinbox.value()
         return self.imgsz
-
-    def get_uncertainty_threshold(self):
-        """
-        Get the uncertainty threshold, limiting it to a maximum of 0.10.
-
-        Returns:
-            Adjusted uncertainty threshold value.
-        """
-        if self.main_window.get_uncertainty_thresh() < 0.10:
-            return self.main_window.get_uncertainty_thresh()
-        else:
-            return 0.10  # Arbitrary value to prevent too many detections
 
     def predict(self, image_paths=None):
         """
@@ -402,7 +391,7 @@ class DeployGeneratorDialog(QDialog):
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.get_uncertainty_threshold(),
+                                                 uncertainty_thresh=self.uncertainty_thresh,
                                                  iou_thresh=self.iou_thresh,
                                                  min_area_thresh=self.area_thresh_min,
                                                  max_area_thresh=self.area_thresh_max)
@@ -410,7 +399,7 @@ class DeployGeneratorDialog(QDialog):
             # Update the progress bar
             progress_bar.update_progress()
             
-            if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
+            if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
                 results_processor.process_segmentation_results(results)
             else:
                 results_processor.process_detection_results(results)

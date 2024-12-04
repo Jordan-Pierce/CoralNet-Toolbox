@@ -101,27 +101,21 @@ class Classify(Base):
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
 
-        def crop(image_path, image_annotations):
-            # Crop the image based on the annotations
-            return self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
-
         # Group annotations by image path
-        groups = groupby(sorted(self.annotations, key=attrgetter('image_path')), key=attrgetter('image_path'))
+        grouped_annotations = groupby(sorted(self.annotations, key=attrgetter('image_path')), 
+                                   key=attrgetter('image_path'))
 
-        with ThreadPoolExecutor() as executor:
-            future_to_image = {}
-            for path, group in groups:
-                future = executor.submit(crop, path, list(group))
-                future_to_image[future] = path
+        for image_path, group in grouped_annotations:
+            try:
+                # Process image annotations
+                image_annotations = list(group)
+                image_annotations = self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
+                self.prepared_patches.extend(image_annotations)
 
-            for future in as_completed(future_to_image):
-                image_path = future_to_image[future]
-                try:
-                    self.prepared_patches.extend(future.result())
-                except Exception as exc:
-                    print(f'{image_path} generated an exception: {exc}')
-                finally:
-                    progress_bar.update_progress()
+            except Exception as exc:
+                print(f'{image_path} generated an exception: {exc}')
+            finally:
+                progress_bar.update_progress()
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -148,3 +142,7 @@ class Classify(Base):
 
         progress_bar.stop_progress()
         progress_bar.close()
+        
+        # Clear the list of annotations
+        self.annotations = []
+        self.prepared_patches = []

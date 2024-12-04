@@ -3,6 +3,7 @@ import torch
 
 from PyQt5.QtCore import QPointF
 
+from torchvision.ops import nms
 from ultralytics.engine.results import Results
 from ultralytics.models.sam.amg import batched_mask_to_box
 from ultralytics.utils import ops
@@ -23,9 +24,9 @@ class ResultsProcessor:
                  main_window, 
                  class_mapping, 
                  uncertainty_thresh=0.3, 
-                 iou_thresh=0.7, 
-                 min_area_thresh=0.01, 
-                 max_area_thresh=0.5):
+                 iou_thresh=0.2, 
+                 min_area_thresh=0.00, 
+                 max_area_thresh=0.40):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
@@ -37,39 +38,30 @@ class ResultsProcessor:
         self.min_area_thresh = min_area_thresh
         self.max_area_thresh = max_area_thresh
         
-    def filter_by_uncertainty(self, result):
+    def filter_by_uncertainty(self, results):
         """
         Filter the results based on the uncertainty threshold.
         """
-        # Get the confidence score
-        conf = float(result.boxes.conf.cpu().numpy()[0])
-        # Check if the confidence is within the threshold
-        if conf < self.uncertainty_thresh:
-            return False
-        return True
+        return results[results.boxes.conf > self.uncertainty_thresh]
     
-    def filter_by_area(self, result):
+    def filter_by_iou(self, results):
+        """Filter the results based on the IoU threshold."""
+        return results[nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh)]
+    
+    def filter_by_area(self, results):
         """
         Filter the results based on the area threshold.
         """
-        # Get the normalized bounding box coordinates
-        x_norm, y_norm, w_norm, h_norm = map(float, result.boxes.xywhn.cpu().numpy()[0])
-        # Calculate the normalized area
+        x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
         area_norm = w_norm * h_norm
-        # Check if the area is within the threshold
-        if area_norm < self.min_area_thresh:
-            return False
-        if area_norm > self.max_area_thresh:
-            return False
-        return True
+        return results[(area_norm > self.min_area_thresh) & (area_norm < self.max_area_thresh)]
     
-    def passed_filters(self, result):
+    def apply_filters(self, results):
         """Check if the results passed all filters."""
-        if not self.filter_by_uncertainty(result):
-            return False
-        if not self.filter_by_area(result):
-            return False
-        return True
+        results = self.filter_by_uncertainty(results)
+        results = self.filter_by_iou(results)
+        results = self.filter_by_area(results)
+        return results
 
     def extract_classification_result(self, result):
         """
@@ -141,10 +133,7 @@ class ResultsProcessor:
     def process_single_detection_result(self, result):
         """
         Process a single detection result.
-        """
-        if not self.passed_filters(result):
-            return
-        
+        """       
         # Get image path, class, class name, confidence, and bounding box coordinates
         image_path, cls, cls_name, conf, x_min, y_min, x_max, y_max = self.extract_detection_result(result)
         # Get the short label given the class name and confidence
@@ -166,6 +155,8 @@ class ResultsProcessor:
         progress_bar.show()
 
         for results in results_generator:
+            # Apply filtering to the results
+            results = self.apply_filters(results)
             for result in results:
                 if result:
                     self.process_single_detection_result(result)
@@ -193,9 +184,6 @@ class ResultsProcessor:
         """
         Process a single segmentation result.
         """
-        if not self.passed_filters(result):
-            return
-        
         # Get image path, class, class name, confidence, and polygon points
         image_path, cls, cls_name, conf, points = self.extract_segmentation_result(result)
         # Get the short label given the class name and confidence
@@ -217,6 +205,8 @@ class ResultsProcessor:
         progress_bar.show()
 
         for results in results_generator:
+            # Apply filtering to the results
+            results = self.apply_filters(results)
             for result in results:
                 if result:
                     self.process_single_segmentation_result(result)
