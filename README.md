@@ -100,8 +100,8 @@ It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 # cmd
 
 # Create and activate an environment
-conda create --name coralnet-toolbox python=3.10 -y
-conda activate coralnet-toolbox
+conda create --name coralnet10 python=3.10 -y
+conda activate coralnet10
 ```
 
 ### Install
