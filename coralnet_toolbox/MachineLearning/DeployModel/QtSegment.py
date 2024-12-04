@@ -143,18 +143,19 @@ class Segment(Base):
         # Predict the segmentation results
         results = self.loaded_model(inputs,
                                     agnostic_nms=True,
-                                    conf=self.uncertainty_thresh,
-                                    iou=self.iou_thresh,
+                                    conf=self.main_window.get_uncertainty_thresh(),
+                                    iou=self.main_window.get_iou_thresh(),
                                     device=self.main_window.device,
                                     stream=True)
 
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
-                                             uncertainty_thresh=self.uncertainty_thresh,
-                                             iou_thresh=self.iou_thresh,
-                                             min_area_thresh=self.area_thresh_min,
-                                             max_area_thresh=self.area_thresh_max)
+                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                             iou_thresh=self.main_window.get_iou_thresh(),
+                                             min_area_thresh=self.main_window.get_area_thresh_min(),
+                                             max_area_thresh=self.main_window.get_area_thresh_max())
+        
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() == "True":
             # Apply SAM to the segmentation results

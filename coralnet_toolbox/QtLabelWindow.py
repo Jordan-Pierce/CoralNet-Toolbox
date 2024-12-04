@@ -309,7 +309,6 @@ class LabelWindow(QWidget):
             # Update the active label's transparency
             self.active_label.update_transparency(transparency)
             # Update the transparency of all annotations with the active label
-            scene = self.annotation_window.scene
             for annotation in self.annotation_window.annotations_dict.values():
                 if annotation.label.id == self.active_label.id:
                     annotation.update_transparency(transparency)

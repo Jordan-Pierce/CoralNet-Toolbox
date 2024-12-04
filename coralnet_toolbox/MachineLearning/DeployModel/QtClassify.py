@@ -120,13 +120,13 @@ class Classify(Base):
 
         # Predict the classification results
         results = self.loaded_model(images_np,
-                                    conf=self.uncertainty_thresh,
+                                    conf=self.main_window.get_uncertainty_thresh(),
                                     device=self.main_window.device,
                                     stream=True)
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
-                                             uncertainty_thresh=self.uncertainty_thresh)
+                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh())
 
         # Process the classification results
         results_processor.process_classification_results(results, inputs)

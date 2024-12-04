@@ -947,6 +947,14 @@ class MainWindow(QMainWindow):
         """Get the current area threshold values"""
         return self.area_thresh_min, self.area_thresh_max
     
+    def get_area_thresh_min(self):
+        """Get the current minimum area threshold value"""
+        return self.area_thresh_min
+    
+    def get_area_thresh_max(self):
+        """Get the current maximum area threshold value"""
+        return self.area_thresh_max
+    
     def update_area_thresh(self, min_val, max_val):
         """Update the area threshold values"""
         if self.area_thresh_min != min_val or self.area_thresh_max != max_val:

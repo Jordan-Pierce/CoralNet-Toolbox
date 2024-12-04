@@ -12,6 +12,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog,
                              QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QSlider, QVBoxLayout, QGroupBox)
+
 from torch.cuda import empty_cache
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -112,7 +113,7 @@ class DeployModelDialog(QDialog):
         layout = QVBoxLayout()
         
         self.model_dropdown = QComboBox()
-        self.model_dropdown.addItems(["GroundingDINO"])
+        self.model_dropdown.addItems(["GroundingDINO-SwinT", "GroundingDINO-SwinB"])
         layout.addWidget(self.model_dropdown)
         
         group_box.setLayout(layout)
@@ -343,14 +344,11 @@ class DeployModelDialog(QDialog):
             # Set the class mapping
             self.class_mapping = {k: v for k, v in enumerate(self.ontology.classes())}
 
-            # Threshold for confidence
-            uncertainty_thresh = self.get_uncertainty_threshold()
-
             # Get the name of the model to load
             model_name = self.model_dropdown.currentText()
 
             if model_name != self.model_name:
-                self.load_new_model(model_name, uncertainty_thresh)
+                self.load_new_model(model_name)
             else:
                 # Update the model with the new ontology
                 self.loaded_model.ontology = self.ontology
@@ -382,7 +380,7 @@ class DeployModelDialog(QDialog):
                 ontology_mapping[text_input.text()] = label_dropdown.currentText()
         return ontology_mapping
 
-    def load_new_model(self, model_name, uncertainty_thresh):
+    def load_new_model(self, model_name):
         """
         Load a new model based on the selected model name.
 
@@ -390,12 +388,15 @@ class DeployModelDialog(QDialog):
             model_name: Name of the model to load.
             uncertainty_thresh: Threshold for uncertainty.
         """
-        if model_name == "GroundingDINO":
-            from autodistill_grounding_dino import GroundingDINO
+        if "GroundingDINO" in model_name:
+            from coralnet_toolbox.AutoDistill.Models.GroundingDINOModel import GroundingDINO
+
+            model = model_name.split("-")[1].strip()
             self.model_name = model_name
             self.loaded_model = GroundingDINO(ontology=self.ontology,
                                               box_threshold=0.025,
-                                              text_threshold=0.025)
+                                              text_threshold=0.025,
+                                              model=model)
 
     def predict(self, image_paths=None):
         """
@@ -427,10 +428,10 @@ class DeployModelDialog(QDialog):
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.uncertainty_thresh,
-                                                 iou_thresh=self.iou_thresh,
-                                                 min_area_thresh=self.area_thresh_min,
-                                                 max_area_thresh=self.area_thresh_max)
+                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                                 iou_thresh=self.main_window.get_iou_thresh(),
+                                                 min_area_thresh=self.main_window.get_area_thresh_min(),
+                                                 max_area_thresh=self.main_window.get_area_thresh_max())
             
             results = results_processor.from_supervision(results, image, image_path, self.class_mapping)
             
