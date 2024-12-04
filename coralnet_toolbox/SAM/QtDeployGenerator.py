@@ -297,7 +297,7 @@ class DeployGeneratorDialog(QDialog):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")     
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")  
 
     def load_model(self):
         """
@@ -358,7 +358,6 @@ class DeployGeneratorDialog(QDialog):
             image_paths: List of image paths to process. If None, uses the current image.
         """
         if not self.loaded_model:
-            QMessageBox.critical(self, "Error", "No model loaded")
             return
    
         if not image_paths:
@@ -387,17 +386,17 @@ class DeployGeneratorDialog(QDialog):
             if self.use_sam_dropdown.currentText() == "True":
                 # Apply SAM to the detection results
                 results = self.sam_dialog.predict_from_results(results, self.class_mapping)
+                        
+            # Update the progress bar
+            progress_bar.update_progress()
             
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  self.class_mapping,
-                                                 uncertainty_thresh=self.uncertainty_thresh,
-                                                 iou_thresh=self.iou_thresh,
-                                                 min_area_thresh=self.area_thresh_min,
-                                                 max_area_thresh=self.area_thresh_max)
-                        
-            # Update the progress bar
-            progress_bar.update_progress()
+                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                                 iou_thresh=self.main_window.get_iou_thresh(),
+                                                 min_area_thresh=self.main_window.get_area_thresh_min(),
+                                                 max_area_thresh=self.main_window.get_area_thresh_max())
             
             if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
                 results_processor.process_segmentation_results(results)

@@ -336,13 +336,6 @@ class Base(QDialog):
             )
             label = self.label_window.get_label_by_short_code(class_name)
             self.class_mapping[class_name] = label.to_dict()
-
-    def get_uncertainty_threshold(self):
-        """
-        Get the confidence threshold for classification predictions
-        """
-        threshold = self.main_window.get_uncertainty_thresh()
-        return threshold if threshold > 0.10 else 0.10
     
     def predict(self, inputs):
         """

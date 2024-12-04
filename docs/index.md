@@ -43,13 +43,13 @@ computer vision and deep learning built in `PyTorch`. For more information on th
 [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE).
 
 The `toolbox` also uses the following to create rectangle and polygon annotations:
-- [`Fast-SAM`]()
-- [`RepViT-SAM`]()
+- [`Fast-SAM`](https://github.com/CASIA-IVA-Lab/FastSAM)
+- [`RepViT-SAM`](https://github.com/THU-MIG/RepViT)
 - [`EdgeSAM`](https://github.com/chongzhou96/EdgeSAM)
 - [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM)
 - [`SAM`](https://github.com/facebookresearch/segment-anything)
 - [`AutoDistill`](https://github.com/autodistill)
-  - [`GroundingDino`]()
+  - [`GroundingDino`](https://github.com/IDEA-Research/GroundingDINO)
 
 
 ## Tools
@@ -61,8 +61,8 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
-- 🦾 SAM: Use [`FastSAM`](), [`RepViT-SAM`](), [`EdgeSAM`](), [`MobileSAM`](), and [`SAM`]() to create polygons
-- 🧪 AutoDistill: Use [`AutoDistill`](https://github.com/autodistill) to access `GroundingDINO` for creating rectangles
+- 🦾 SAM: Use `FastSAM`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
+- 🧪 AutoDistill: Use `AutoDistill` to access `GroundingDINO` for creating rectangles
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance

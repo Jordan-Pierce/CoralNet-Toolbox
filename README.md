@@ -4,7 +4,9 @@
   <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
 </p>
 
-[![image](https://img.shields.io/pypi/v/CoralNet-Toolbox.svg)](https://pypi.python.org/pypi/CoralNet-Toolbox)
+[![version](https://img.shields.io/pypi/v/CoralNet-Toolbox.svg)](https://pypi.python.org/pypi/CoralNet-Toolbox)
+[![python-version](https://img.shields.io/pypi/pyversions/CoralNet-Toolbox.svg)](https://pypi.org/project/CoralNet-Toolbox)
+
 
 
 ## Quick Start
@@ -43,13 +45,13 @@ computer vision and deep learning built in `PyTorch`. For more information on th
 [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE).
 
 The `toolbox` also uses the following to create rectangle and polygon annotations:
-- [`Fast-SAM`]()
-- [`RepViT-SAM`]()
+- [`Fast-SAM`](https://github.com/CASIA-IVA-Lab/FastSAM)
+- [`RepViT-SAM`](https://github.com/THU-MIG/RepViT)
 - [`EdgeSAM`](https://github.com/chongzhou96/EdgeSAM)
 - [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM)
 - [`SAM`](https://github.com/facebookresearch/segment-anything)
 - [`AutoDistill`](https://github.com/autodistill)
-  - [`GroundingDino`]()
+  - [`GroundingDino`](https://github.com/IDEA-Research/GroundingDINO)
 
 
 ## Tools
@@ -61,8 +63,8 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
-- 🦾 SAM: Use [`FastSAM`](), [`RepViT-SAM`](), [`EdgeSAM`](), [`MobileSAM`](), and [`SAM`]() to create polygons
-- 🧪 AutoDistill: Use [`AutoDistill`](https://github.com/autodistill) to access `GroundingDINO` for creating rectangles
+- 🦾 SAM: Use `FastSAM`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
+- 🧪 AutoDistill: Use `AutoDistill` to access `GroundingDINO` for creating rectangles
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
@@ -121,9 +123,11 @@ If `CUDA` is installed on your computer, and `torch` was built with it properly,
 `toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon,
 and if you're using a Mac with `Metal`, you should see an `🍎` icon (click on the icon to see the device information).
 
-See here for more details on [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc),
-[`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit), and [`torch`](https://pytorch.org/get-started/locally/)
-versions.
+See here for more details on versions for the following:
+- [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc)
+- [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit)
+- [`torch`](https://pytorch.org/get-started/locally/)
+
 
 ### Run
 Finally, you can run the `toolbox` from the command line:

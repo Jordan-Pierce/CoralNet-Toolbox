@@ -41,9 +41,10 @@ If `CUDA` is installed on your computer, and `torch` was built with it properly,
 `toolbox` instead of a `🐢`; if you have multiple `CUDA` devices available, you should see a `🚀` icon,
 and if you're using a Mac with `Metal`, you should see an `🍎` icon (click on the icon to see the device information).
 
-See here for more details on [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc),
-[`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit), and [`torch`](https://pytorch.org/get-started/locally/)
-versions.
+See here for more details on versions for the following:
+- [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc)
+- [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit)
+- [`torch`](https://pytorch.org/get-started/locally/)
 
 ### Run
 Finally, you can run the `toolbox` from the command line:

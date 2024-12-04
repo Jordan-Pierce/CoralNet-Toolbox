@@ -42,19 +42,40 @@ class ResultsProcessor:
         """
         Filter the results based on the uncertainty threshold.
         """
-        return results[results.boxes.conf > self.uncertainty_thresh]
+        try:
+            if isinstance(results, list):
+                results = results[0]
+            results = results[results.boxes.conf > self.uncertainty_thresh]
+        except Exception as e:
+            print(f"Warning: Failed to filter results by uncertainty\n{e}")
+            
+        return results
     
     def filter_by_iou(self, results):
         """Filter the results based on the IoU threshold."""
-        return results[nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh)]
+        try:
+            if isinstance(results, list):
+                results = results[0]
+            results = results[nms(results.boxes.xyxy, results.boxes.conf, self.iou_thresh)]
+        except Exception as e:  
+            print(f"Warning: Failed to filter results by IoU\n{e}")
+            
+        return results
     
     def filter_by_area(self, results):
         """
         Filter the results based on the area threshold.
         """
-        x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
-        area_norm = w_norm * h_norm
-        return results[(area_norm > self.min_area_thresh) & (area_norm < self.max_area_thresh)]
+        try:
+            if isinstance(results, list):
+                results = results[0]
+            x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
+            area_norm = w_norm * h_norm
+            results = results[(area_norm > self.min_area_thresh) & (area_norm < self.max_area_thresh)]
+        except Exception as e:
+            print(f"Warning: Failed to filter results by area\n{e}")
+            
+        return results
     
     def apply_filters(self, results):
         """Check if the results passed all filters."""

@@ -516,10 +516,10 @@ class DeployPredictorDialog(QDialog):
             # Create a results processor
             results_processor = ResultsProcessor(self.main_window, 
                                                  class_mapping=None,
-                                                 uncertainty_thresh=self.uncertainty_thresh,
-                                                 iou_thresh=self.iou_thresh,
-                                                 min_area_thresh=self.area_thresh_min,
-                                                 max_area_thresh=self.area_thresh_max)
+                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                                 iou_thresh=self.main_window.get_iou_thresh(),
+                                                 min_area_thresh=self.main_window.get_area_thresh_min(),
+                                                 max_area_thresh=self.main_window.get_area_thresh_max())
 
             # Post-process the results
             results = results_processor.from_sam(masks, scores, self.original_image, self.image_path)
@@ -540,23 +540,25 @@ class DeployPredictorDialog(QDialog):
         # Create a result processor
         result_processor = ResultsProcessor(self.main_window, 
                                             class_mapping=class_mapping,
-                                            uncertainty_thresh=self.uncertainty_thresh,
-                                            iou_thresh=self.iou_thresh,
-                                            min_area_thresh=self.area_thresh_min,
-                                            max_area_thresh=self.area_thresh_max)
+                                            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                            iou_thresh=self.main_window.get_iou_thresh(),
+                                            min_area_thresh=self.main_window.get_area_thresh_min(),
+                                            max_area_thresh=self.main_window.get_area_thresh_max())
 
         results_dict = {}
 
         for results in results_generator:
+            results = result_processor.apply_filters(results)
             for result in results:
-                # Extract the results
-                image_path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
+                if result:
+                    # Extract the results
+                    image_path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
 
-                if image_path not in results_dict:
-                    results_dict[image_path] = []
+                    if image_path not in results_dict:
+                        results_dict[image_path] = []
 
-                # Add the results to the dictionary
-                results_dict[image_path].append(np.array(bbox))
+                    # Add the results to the dictionary
+                    results_dict[image_path].append(np.array(bbox))
 
         # Loop through each unique image path
         for image_path in results_dict:
