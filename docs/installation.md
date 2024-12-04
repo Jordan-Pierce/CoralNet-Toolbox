@@ -7,8 +7,8 @@ It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 # cmd
 
 # Create and activate an environment
-conda create --name coralnet-toolbox python=3.10 -y
-conda activate coralnet-toolbox
+conda create --name coralnet10 python=3.10 -y
+conda activate coralnet10
 ```
 
 ### Install
@@ -63,8 +63,8 @@ If you prefer to clone the repository and run the `toolbox` from the source code
 # cmd
 
 # Create and activate an environment
-conda create --name coralnet-toolbox python=3.10 -y
-conda activate coralnet-toolbox
+conda create --name coralnet10 python=3.10 -y
+conda activate coralnet10
 
 # Clone and enter the repository
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git

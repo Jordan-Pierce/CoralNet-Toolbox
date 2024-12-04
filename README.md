@@ -1,12 +1,23 @@
 # CoralNet-Toolbox
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
-</p>
+<div align="center">
+  <p>
+    <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
+  </p>
+</div>
 
-[![version](https://img.shields.io/pypi/v/CoralNet-Toolbox.svg)](https://pypi.python.org/pypi/CoralNet-Toolbox)
+
+<div align="center">
+
 [![python-version](https://img.shields.io/pypi/pyversions/CoralNet-Toolbox.svg)](https://pypi.org/project/CoralNet-Toolbox)
+[![version](https://img.shields.io/pypi/v/CoralNet-Toolbox.svg)](https://pypi.python.org/pypi/CoralNet-Toolbox)
+[![pypi-passing](https://github.com/Jordan-Pierce/CoralNet-Toolbox/actions/workflows/pypi.yml/badge.svg)](https://pypi.org/project/CoralNet-Toolbox)
+[![windows](https://github.com/Jordan-Pierce/CoralNet-Toolbox/actions/workflows/windows.yml/badge.svg)](https://pypi.org/project/CoralNet-Toolbox)
+[![macos](https://github.com/Jordan-Pierce/CoralNet-Toolbox/actions/workflows/macos.yml/badge.svg)](https://pypi.org/project/CoralNet-Toolbox)
+[![ubuntu](https://github.com/Jordan-Pierce/CoralNet-Toolbox/actions/workflows/ubuntu.yml/badge.svg)](https://pypi.org/project/CoralNet-Toolbox)
+[![downloads](https://static.pepy.tech/badge/coralnet-toolbox)](https://pepy.tech/projects/coralnet-toolbox)
 
+</div>
 
 
 ## Quick Start
@@ -30,7 +41,7 @@ For further instructions please see the following:
   <summary><h2><b>Watch the Video Demos</b></h2></summary>
   <p align="center">
     <a href="https://youtube.com/playlist?list=PLG5z9IbwhS5NQT3B2jrg3hxQgilDeZak9&feature=shared">
-      <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="50%">
+      <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="75%">
     </a>
   </p>
 </details>
@@ -89,8 +100,8 @@ It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 # cmd
 
 # Create and activate an environment
-conda create --name coralnet-toolbox python=3.10 -y
-conda activate coralnet-toolbox
+conda create --name coralnet10 python=3.10 -y
+conda activate coralnet10
 ```
 
 ### Install
