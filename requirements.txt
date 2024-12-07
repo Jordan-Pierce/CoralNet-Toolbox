@@ -2,11 +2,12 @@ PyQt5>=5.15.11
 QtRangeSlider>=0.1.5
 ultralytics==8.3.0
 supervision>=0.24.0
+scikit-learn
 pycocotools
 timm==0.9.2
 autodistill
 autodistill-grounding-dino
 x-segment-anything>=0.0.6
-rasterio>=1.4.0
+rasterio
 requests
 dill
