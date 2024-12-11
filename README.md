@@ -60,6 +60,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 - [`RepViT-SAM`](https://github.com/THU-MIG/RepViT)
 - [`EdgeSAM`](https://github.com/chongzhou96/EdgeSAM)
 - [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM)
+- [`CoralSCOP`](https://github.com/zhengziqiang/CoralSCOP)
 - [`SAM`](https://github.com/facebookresearch/segment-anything)
 - [`AutoDistill`](https://github.com/autodistill)
   - [`GroundingDino`](https://github.com/IDEA-Research/GroundingDINO)
@@ -74,7 +75,7 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
-- 🦾 SAM: Use `FastSAM`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
+- 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
 - 🧪 AutoDistill: Use `AutoDistill` to access `GroundingDINO` for creating rectangles
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
