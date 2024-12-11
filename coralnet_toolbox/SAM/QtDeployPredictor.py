@@ -115,6 +115,7 @@ class DeployPredictorDialog(QDialog):
             "RepViT-SAM": "repvit.pt",
             "EdgeSAM": "edge_sam_3x.pt",
             "MobileSAM": "vit_t.pt",
+            "CoralSCOP": "vit_b_coralscop.pt",
             "SAM-Base": "vit_b.pt",
             "SAM-Large": "vit_l.pt",
             "SAM-Huge": "vit_h.pt"
@@ -295,6 +296,8 @@ class DeployPredictorDialog(QDialog):
                 model_type = "repvit"
             elif "edge_" in self.model_path.lower():
                 model_type = "edge_sam"
+            elif "_coralscop" in self.model_path.lower():
+                model_type = "vit_b_coralscop"
             elif "_t" in self.model_path.lower():
                 model_type = "vit_t"
             elif "_b" in self.model_path.lower():
