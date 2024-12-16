@@ -513,7 +513,7 @@ class MainWindow(QMainWindow):
         self.slicer_tool_action = QAction(self.slicer_icon, "Slicer", self)
         self.slicer_tool_action.setCheckable(False)
         self.slicer_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.slicer_tool_action)
+        # self.toolbar.addAction(self.slicer_tool_action)  TODO
         
         self.toolbar.addSeparator()
 
