@@ -85,8 +85,7 @@ class Base(QDialog):
         layout = QVBoxLayout()
         
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Export Patches, Rectangles, and Polygons to create a YOLO-formatted \
-                             Classification, Detection or Segmentation dataset.")
+        info_label = QLabel("Export Patches, Rectangles, and Polygons to create a YOLO-formatted Classification, Detection or Segmentation dataset.")
         
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)

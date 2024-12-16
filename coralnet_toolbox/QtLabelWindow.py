@@ -405,7 +405,10 @@ class LabelWindow(QWidget):
 
         self.update_labels_per_row()
         self.reorganize_labels()
-
+        
+        # Refresh the scene with the new label
+        self.annotation_window.set_image(self.annotation_window.current_image_path)
+        
     def delete_label(self, label):
         if (label.short_label_code == "Review" and
                 label.long_label_code == "Review" and
