@@ -94,9 +94,7 @@ class Classify(Base):
             
     def predict(self, inputs=None):
         """
-        Predict the classification results for the given annotations.
-
-        :param inputs: List of annotations (optional)
+        Predict the classification results for the given inputs.
         """
         if self.loaded_model is None:
             return

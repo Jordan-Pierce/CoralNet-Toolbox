@@ -81,18 +81,7 @@ class Base(QDialog):
         """
         Set up the layout and widgets for the info layout.
         """
-        group_box = QGroupBox("Information")
-        layout = QVBoxLayout()
-        
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Export Patches, Rectangles, and Polygons to create a YOLO-formatted Classification, Detection or Segmentation dataset.")
-        
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def setup_layout(self):
         """

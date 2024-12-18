@@ -7,6 +7,8 @@ import os
 import yaml
 import shutil
 
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel)
+
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
@@ -21,6 +23,22 @@ class Detect(Base):
         super(Detect, self).__init__(parent)
         self.setWindowTitle("Export Detection Dataset")
         self.setWindowIcon(get_icon("coral"))
+        
+    def setup_info_layout(self):
+        """Setup the info layout"""
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_text = "Export Rectangles and Polygons to create a YOLO-formatted Detection dataset."
+        info_label = QLabel(info_text)
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
         
     def update_annotation_type_checkboxes(self):
         """

@@ -400,10 +400,7 @@ class DeployModelDialog(QDialog):
 
     def predict(self, image_paths=None):
         """
-        Make predictions on the given image paths using the loaded model.
-
-        Args:
-            image_paths: List of image paths to process. If None, uses the current image.
+        Make Autodistill predictions on the given inputs
         """
         if not self.loaded_model:
             return
