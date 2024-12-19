@@ -1,4 +1,5 @@
-from PyQt5.QtWidgets import QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QPushButton
+from PyQt5.QtWidgets import (QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QPushButton,
+                             QLabel, QVBoxLayout)
 
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import Base
 
@@ -13,6 +14,21 @@ class Classify(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Evaluate Classification Model")
         self.task = 'classify'
+        
+    def setup_info_layout(self):
+        """Set up the layout and widgets for the info layout."""
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        
+        # Create a QLabel with explanatory text and hyperlink
+        info_label = QLabel("Evaluate a Classification model on a dataset, and the split you want to evaluate on.")
+        
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
         
     def setup_dataset_layout(self):
         """Setup the dataset layout."""

@@ -115,22 +115,8 @@ class Base(QDialog):
         self.setup_buttons_layout()
         
     def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
-        group_box = QGroupBox("Information")
-        layout = QVBoxLayout()
-        
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Evaluate a Classification, Detection, or Segmentation model. \
-                            Choose the model, dataset, and split you want to evaluate on.")
-        
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        """Setup the info layout"""
+        raise NotImplementedError("Subclasses must implement this method.")
         
     def setup_dataset_layout(self):
         """Setup the dataset layout."""

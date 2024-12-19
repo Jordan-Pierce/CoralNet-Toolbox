@@ -126,9 +126,7 @@ class Segment(Base):
             
     def predict(self, inputs=None):
         """
-        Predict the segmentation results for the given image paths.
-
-        :param inputs: List of image paths (optional)
+        Predict the segmentation results for the given inputs.
         """
         if self.loaded_model is None:
             return

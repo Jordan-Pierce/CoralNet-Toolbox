@@ -126,9 +126,7 @@ class Detect(Base):
             
     def predict(self, inputs=None):
         """
-        Predict the detection results for the given image paths.
-
-        :param image_paths: List of image paths (optional)
+        Predict the detection results for the given inputs.
         """
         if self.loaded_model is None:
             return
