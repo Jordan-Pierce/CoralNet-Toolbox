@@ -211,7 +211,7 @@ class ImageWindow(QWidget):
             self.tableWidget.clearSelection()
 
     def update_image_count_label(self):
-        total_images = len(self.filtered_image_paths)
+        total_images = len(set(self.filtered_image_paths))
         self.image_count_label.setText(f"Total Images: {total_images}")
 
     def update_current_image_index_label(self):
@@ -230,7 +230,14 @@ class ImageWindow(QWidget):
             self.image_dict[image_path]['labels'] = {annotation.label.short_label_code for annotation in annotations}
 
     def load_image(self, row, column):
-        # Get the image path associated with the selected row, load
+        # Add safety checks
+        if not self.filtered_image_paths:
+            return
+
+        if row < 0 or row >= len(self.filtered_image_paths):
+            return
+
+        # Get the image path associated with the selected row
         image_path = self.filtered_image_paths[row]
         self.load_image_by_path(image_path)
 
@@ -401,7 +408,11 @@ class ImageWindow(QWidget):
         self.rasterio_images[image_path] = None
 
     def show_context_menu(self, position):
-        self.right_clicked_row = self.tableWidget.rowAt(position.y())  # Set the right-clicked row
+        row = self.tableWidget.rowAt(position.y())
+        if row < 0 or row >= len(self.filtered_image_paths):
+            return
+
+        self.right_clicked_row = row
         context_menu = QMenu(self)
         delete_annotations_action = context_menu.addAction("Delete Annotations")
         delete_annotations_action.triggered.connect(self.delete_annotations)
@@ -505,7 +516,7 @@ class ImageWindow(QWidget):
         self.load_image_by_path(self.filtered_image_paths[new_index])
 
     def debounce_search(self):
-        self.search_timer.start(1000)
+        self.search_timer.start(5000)
 
     def filter_images(self):
         search_text_images = self.search_bar_images.currentText()
@@ -592,6 +603,11 @@ class ImageWindow(QWidget):
             self.load_image_by_path(self.filtered_image_paths[0])
 
     def update_search_bars(self):
+        # Store current search texts
+        current_image_search = self.search_bar_images.currentText()
+        current_label_search = self.search_bar_labels.currentText()
+
+        # Clear and update items
         self.search_bar_images.clear()
         self.search_bar_labels.clear()
 
@@ -600,5 +616,19 @@ class ImageWindow(QWidget):
         for path in self.image_paths:
             label_names.update(self.image_dict[path]['labels'])
 
-        self.search_bar_images.addItems(sorted(image_names))
-        self.search_bar_labels.addItems(sorted(label_names))
+        # Only add items if there are any to add
+        if image_names:
+            self.search_bar_images.addItems(sorted(image_names))
+        if label_names:
+            self.search_bar_labels.addItems(sorted(label_names))
+
+        # Restore search texts only if they're not empty
+        if current_image_search:
+            self.search_bar_images.setEditText(current_image_search)
+        else:
+            self.search_bar_images.setPlaceholderText("Search images...")
+
+        if current_label_search:
+            self.search_bar_labels.setEditText(current_label_search)
+        else:
+            self.search_bar_labels.setPlaceholderText("Search labels...")
