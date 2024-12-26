@@ -92,27 +92,44 @@ class ImageWindow(QWidget):
         self.checkbox_layout.addWidget(self.no_annotations_checkbox)
         self.checkbox_group.addButton(self.no_annotations_checkbox)
 
-        # Create a horizontal layout for the search bar
+        # Create a vertical layout for the search bars
         self.search_layout = QVBoxLayout()
         self.layout.addLayout(self.search_layout)
+        fixed_width = 250
 
-        # Add a search bar for images
+        # Create a horizontal layout for images search
+        self.image_search_layout = QHBoxLayout()
+        self.search_layout.addLayout(self.image_search_layout)
+
+        # Add label and search bar for images
+        self.image_search_label = QLabel("Search Images:", self)
+        self.image_search_layout.addWidget(self.image_search_label)
+
         self.search_bar_images = QComboBox(self)
         self.search_bar_images.setEditable(True)
-        self.search_bar_images.setPlaceholderText("Search images...")
+        self.search_bar_images.setPlaceholderText("Type to search images")
         self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_bar_images.lineEdit().textChanged.connect(self.filter_images)
-        self.search_layout.addWidget(self.search_bar_images)
+        self.search_bar_images.setFixedWidth(fixed_width)
+        self.image_search_layout.addWidget(self.search_bar_images)
 
-        # Add a search bar for labels
+        # Create a horizontal layout for labels search
+        self.label_search_layout = QHBoxLayout()
+        self.search_layout.addLayout(self.label_search_layout)
+
+        # Add label and search bar for labels
+        self.label_search_label = QLabel("Search Labels:", self)
+        self.label_search_layout.addWidget(self.label_search_label)
+
         self.search_bar_labels = QComboBox(self)
         self.search_bar_labels.setEditable(True)
-        self.search_bar_labels.setPlaceholderText("Search labels...")
+        self.search_bar_labels.setPlaceholderText("Type to search labels")
         self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_bar_labels.lineEdit().textChanged.connect(self.filter_images)
-        self.search_layout.addWidget(self.search_bar_labels)
+        self.search_bar_labels.setFixedWidth(fixed_width)
+        self.label_search_layout.addWidget(self.search_bar_labels)
 
         # Create a horizontal layout for the labels
         self.info_layout = QHBoxLayout()
@@ -122,6 +139,7 @@ class ImageWindow(QWidget):
         self.current_image_index_label = QLabel("Current Image: None", self)
         self.current_image_index_label.setAlignment(Qt.AlignCenter)
         self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         # Set the desired height (to align with AnnotationWindow)
         self.current_image_index_label.setFixedHeight(24)
         self.info_layout.addWidget(self.current_image_index_label)
@@ -130,6 +148,7 @@ class ImageWindow(QWidget):
         self.image_count_label = QLabel("Total Images: 0", self)
         self.image_count_label.setAlignment(Qt.AlignCenter)
         self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         # Set the desired height (to align with AnnotationWindow)
         self.image_count_label.setFixedHeight(24)
         self.info_layout.addWidget(self.image_count_label)
@@ -634,9 +653,8 @@ class ImageWindow(QWidget):
         if current_image_search:
             self.search_bar_images.setEditText(current_image_search)
         else:
-            self.search_bar_images.setPlaceholderText("Search images...")
-
+            self.search_bar_images.setPlaceholderText("Type to search images")
         if current_label_search:
             self.search_bar_labels.setEditText(current_label_search)
         else:
-            self.search_bar_labels.setPlaceholderText("Search labels...")
+            self.search_bar_labels.setPlaceholderText("Type to search labels")
