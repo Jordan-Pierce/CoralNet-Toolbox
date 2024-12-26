@@ -11,7 +11,7 @@ import rasterio
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer, QDateTime
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QLabel, QLineEdit, QHBoxLayout, QTableWidget, QTableWidgetItem,
+                             QLabel, QComboBox, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView)
 
 from rasterio.windows import Window
@@ -93,14 +93,26 @@ class ImageWindow(QWidget):
         self.checkbox_group.addButton(self.no_annotations_checkbox)
 
         # Create a horizontal layout for the search bar
-        self.search_layout = QHBoxLayout()
+        self.search_layout = QVBoxLayout()
         self.layout.addLayout(self.search_layout)
 
-        # Add a search bar
-        self.search_bar = QLineEdit(self)
-        self.search_bar.setPlaceholderText("Search images...")
-        self.search_bar.textChanged.connect(self.filter_images)
-        self.search_layout.addWidget(self.search_bar)
+        # Add a search bar for images
+        self.search_bar_images = QComboBox(self)
+        self.search_bar_images.setEditable(True)
+        self.search_bar_images.setPlaceholderText("Search images...")
+        self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
+        self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.search_bar_images.lineEdit().textChanged.connect(self.filter_images)
+        self.search_layout.addWidget(self.search_bar_images)
+
+        # Add a search bar for labels
+        self.search_bar_labels = QComboBox(self)
+        self.search_bar_labels.setEditable(True)
+        self.search_bar_labels.setPlaceholderText("Search labels...")
+        self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
+        self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.search_bar_labels.lineEdit().textChanged.connect(self.filter_images)
+        self.search_layout.addWidget(self.search_bar_labels)
 
         # Create a horizontal layout for the labels
         self.info_layout = QHBoxLayout()
@@ -154,7 +166,8 @@ class ImageWindow(QWidget):
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.filter_images)
-        self.search_bar.textChanged.connect(self.debounce_search)
+        self.search_bar_images.lineEdit().textChanged.connect(self.debounce_search)
+        self.search_bar_labels.lineEdit().textChanged.connect(self.debounce_search)
 
         self.image_load_queue = Queue()
         self.current_workers = []  # List to keep track of running workers
@@ -172,6 +185,7 @@ class ImageWindow(QWidget):
             }
             self.update_table_widget()
             self.update_image_count_label()
+            self.update_search_bars()
             QApplication.processEvents()
 
     def update_table_widget(self):
@@ -492,13 +506,14 @@ class ImageWindow(QWidget):
         self.search_timer.start(1000)
 
     def filter_images(self):
-        search_text = self.search_bar.text().lower()
+        search_text_images = self.search_bar_images.currentText().lower()
+        search_text_labels = self.search_bar_labels.currentText().lower()
         has_annotations = self.has_annotations_checkbox.isChecked()
         needs_review = self.needs_review_checkbox.isChecked()
         no_annotations = self.no_annotations_checkbox.isChecked()
 
         # Return early if none of the search bar or checkboxes are being used
-        if not search_text and not (has_annotations or needs_review or no_annotations):
+        if not (search_text_images or search_text_labels) and not (has_annotations or needs_review or no_annotations):
             self.filtered_image_paths = self.image_paths.copy()
             self.update_table_widget()
             self.update_current_image_index_label()
@@ -518,7 +533,8 @@ class ImageWindow(QWidget):
                 future = executor.submit(
                     self.filter_image,
                     path,
-                    search_text,
+                    search_text_images,
+                    search_text_labels,
                     has_annotations,
                     needs_review,
                     no_annotations,
@@ -549,13 +565,16 @@ class ImageWindow(QWidget):
         # Stop the progress bar
         progress_dialog.stop_progress()
 
-    def filter_image(self, path, search_text, has_annotations, needs_review, no_annotations, progress_dialog):
+    def filter_image(self, path, search_text_images, search_text_labels, has_annotations, needs_review, no_annotations, progress_dialog):
         filename = os.path.basename(path).lower()
         annotations = self.annotation_window.get_image_annotations(path)
         review_annotations = self.annotation_window.get_image_review_annotations(path)
         labels = self.image_dict[path]['labels']
 
-        if search_text and search_text not in filename and search_text not in labels:
+        if search_text_images and search_text_images not in filename:
+            return None
+
+        if search_text_labels and search_text_labels not in labels:
             return None
 
         if has_annotations and not annotations:
@@ -571,3 +590,15 @@ class ImageWindow(QWidget):
         if self.filtered_image_paths:
             self.annotation_window.clear_scene()
             self.load_image_by_path(self.filtered_image_paths[0])
+
+    def update_search_bars(self):
+        self.search_bar_images.clear()
+        self.search_bar_labels.clear()
+
+        image_names = [self.image_dict[path]['filename'] for path in self.image_paths]
+        label_names = set()
+        for path in self.image_paths:
+            label_names.update(self.image_dict[path]['labels'])
+
+        self.search_bar_images.addItems(sorted(image_names))
+        self.search_bar_labels.addItems(sorted(label_names))
