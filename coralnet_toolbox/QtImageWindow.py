@@ -167,7 +167,8 @@ class ImageWindow(QWidget):
             self.image_dict[image_path] = {
                 'filename': filename,
                 'has_annotations': False,
-                'needs_review': False
+                'needs_review': False,
+                'labels': set()  # Initialize an empty set for labels
             }
             self.update_table_widget()
             self.update_image_count_label()
@@ -212,6 +213,7 @@ class ImageWindow(QWidget):
             review_annotations = self.annotation_window.get_image_review_annotations(image_path)
             self.image_dict[image_path]['has_annotations'] = bool(annotations)
             self.image_dict[image_path]['needs_review'] = bool(review_annotations)
+            self.image_dict[image_path]['labels'] = {annotation.label.short_label_code for annotation in annotations}
 
     def load_image(self, row, column):
         # Get the image path associated with the selected row, load
@@ -551,8 +553,9 @@ class ImageWindow(QWidget):
         filename = os.path.basename(path).lower()
         annotations = self.annotation_window.get_image_annotations(path)
         review_annotations = self.annotation_window.get_image_review_annotations(path)
+        labels = self.image_dict[path]['labels']
 
-        if search_text and search_text not in filename:
+        if search_text and search_text not in filename and search_text not in labels:
             return None
 
         if has_annotations and not annotations:
