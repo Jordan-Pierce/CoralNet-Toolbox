@@ -256,6 +256,8 @@ class ImageWindow(QWidget):
         # Start processing the queue if we're under the thread limit
         self._process_image_queue()
         self.imageChanged.emit()  # Emit the signal when a new image is chosen
+        # Update the search bars
+        self.update_search_bars()
 
     def _process_image_queue(self):
         if self.image_load_queue.empty():
@@ -506,8 +508,8 @@ class ImageWindow(QWidget):
         self.search_timer.start(1000)
 
     def filter_images(self):
-        search_text_images = self.search_bar_images.currentText().lower()
-        search_text_labels = self.search_bar_labels.currentText().lower()
+        search_text_images = self.search_bar_images.currentText()
+        search_text_labels = self.search_bar_labels.currentText()
         has_annotations = self.has_annotations_checkbox.isChecked()
         needs_review = self.needs_review_checkbox.isChecked()
         no_annotations = self.no_annotations_checkbox.isChecked()
@@ -546,7 +548,7 @@ class ImageWindow(QWidget):
                     self.filtered_image_paths.append(future.result())
                 progress_dialog.update_progress()
 
-        # Sort the filtered image paths
+        # Sort the filtered image paths to be displaying in ImageWindow
         self.filtered_image_paths.sort()
         # Update the table widget
         self.update_table_widget()
@@ -566,17 +568,15 @@ class ImageWindow(QWidget):
         progress_dialog.stop_progress()
 
     def filter_image(self, path, search_text_images, search_text_labels, has_annotations, needs_review, no_annotations):
-        filename = os.path.basename(path).lower()
+        filename = os.path.basename(path)
         annotations = self.annotation_window.get_image_annotations(path)
         review_annotations = self.annotation_window.get_image_review_annotations(path)
         labels = self.image_dict[path]['labels']
 
         if search_text_images and search_text_images not in filename:
             return None
-
         if search_text_labels and search_text_labels not in labels:
             return None
-
         if has_annotations and not annotations:
             return None
         if needs_review and not review_annotations:
