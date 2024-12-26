@@ -154,8 +154,8 @@ class ImageWindow(QWidget):
         self.info_layout.addWidget(self.image_count_label)
 
         self.tableWidget = QTableWidget(self)
-        self.tableWidget.setColumnCount(1)
-        self.tableWidget.setHorizontalHeaderLabels(["Image Name"])
+        self.tableWidget.setColumnCount(2)
+        self.tableWidget.setHorizontalHeaderLabels(["Image Name", "Annotations"])
         self.tableWidget.horizontalHeader().setStretchLastSection(True)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
@@ -200,7 +200,8 @@ class ImageWindow(QWidget):
                 'filename': filename,
                 'has_annotations': False,
                 'needs_review': False,
-                'labels': set()  # Initialize an empty set for labels
+                'labels': set(),  # Initialize an empty set for labels
+                'annotation_count': 0  # Initialize annotation count
             }
             self.update_table_widget()
             self.update_image_count_label()
@@ -218,6 +219,12 @@ class ImageWindow(QWidget):
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setToolTip(os.path.basename(path))  # Set the full path as a tooltip
             self.tableWidget.setItem(row_position, 0, item)
+
+            # Add annotation count to the second column
+            annotation_count = self.image_dict[path]['annotation_count']
+            annotation_item = QTableWidgetItem(str(annotation_count))
+            annotation_item.setFlags(annotation_item.flags() & ~Qt.ItemIsEditable)
+            self.tableWidget.setItem(row_position, 1, annotation_item)
 
         self.update_table_selection()
 
@@ -247,6 +254,8 @@ class ImageWindow(QWidget):
             self.image_dict[image_path]['has_annotations'] = bool(annotations)
             self.image_dict[image_path]['needs_review'] = bool(review_annotations)
             self.image_dict[image_path]['labels'] = {annotation.label.short_label_code for annotation in annotations}
+            self.image_dict[image_path]['annotation_count'] = len(annotations)  # Update annotation count
+            self.update_table_widget()  # Refresh the table to show updated counts
 
     def load_image(self, row, column):
         # Add safety checks
@@ -593,7 +602,7 @@ class ImageWindow(QWidget):
             if current_selected_path and current_selected_path in self.filtered_image_paths:
                 self.load_image_by_path(current_selected_path)
             else:
-                self.load_image_by_path(self.filtered_image_paths[0])
+                self.load_first_filtered_image()
         else:
             self.selected_image_path = None
             self.annotation_window.clear_scene()
