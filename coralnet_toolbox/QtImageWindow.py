@@ -423,7 +423,7 @@ class ImageWindow(QWidget):
         if image_path in self.image_paths:
             # Get current index before removing
             current_index = self.filtered_image_paths.index(image_path)
-            
+
             # Remove the image from lists and dict
             self.image_paths.remove(image_path)
             del self.image_dict[image_path]
@@ -538,7 +538,6 @@ class ImageWindow(QWidget):
                     has_annotations,
                     needs_review,
                     no_annotations,
-                    progress_dialog
                 )
                 futures.append(future)
 
@@ -549,7 +548,7 @@ class ImageWindow(QWidget):
 
         # Sort the filtered image paths
         self.filtered_image_paths.sort()
-
+        # Update the table widget
         self.update_table_widget()
 
         # Load the first filtered image if available, otherwise clear the scene
@@ -559,13 +558,14 @@ class ImageWindow(QWidget):
             self.selected_image_path = None
             self.annotation_window.clear_scene()
 
+        # Update the current image index label and image count label
         self.update_current_image_index_label()
         self.update_image_count_label()
 
         # Stop the progress bar
         progress_dialog.stop_progress()
 
-    def filter_image(self, path, search_text_images, search_text_labels, has_annotations, needs_review, no_annotations, progress_dialog):
+    def filter_image(self, path, search_text_images, search_text_labels, has_annotations, needs_review, no_annotations):
         filename = os.path.basename(path).lower()
         annotations = self.annotation_window.get_image_annotations(path)
         review_annotations = self.annotation_window.get_image_review_annotations(path)
