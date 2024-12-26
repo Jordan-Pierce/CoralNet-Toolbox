@@ -519,6 +519,9 @@ class ImageWindow(QWidget):
         self.search_timer.start(5000)
 
     def filter_images(self):
+        # Store the currently selected image path before filtering
+        current_selected_path = self.selected_image_path
+
         search_text_images = self.search_bar_images.currentText()
         search_text_labels = self.search_bar_labels.currentText()
         has_annotations = self.has_annotations_checkbox.isChecked()
@@ -561,12 +564,17 @@ class ImageWindow(QWidget):
 
         # Sort the filtered image paths to be displaying in ImageWindow
         self.filtered_image_paths.sort()
+
         # Update the table widget
         self.update_table_widget()
 
-        # Load the first filtered image if available, otherwise clear the scene
+        # After filtering, either restore the previously selected image if it's still in the filtered list,
+        # or load the first image if nothing was selected or the previous selection is no longer visible
         if self.filtered_image_paths:
-            self.load_image_by_path(self.filtered_image_paths[0])
+            if current_selected_path and current_selected_path in self.filtered_image_paths:
+                self.load_image_by_path(current_selected_path)
+            else:
+                self.load_image_by_path(self.filtered_image_paths[0])
         else:
             self.selected_image_path = None
             self.annotation_window.clear_scene()
