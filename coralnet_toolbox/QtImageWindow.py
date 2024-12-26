@@ -12,7 +12,8 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer, QDateTime
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView)
+                             QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
+                             QGroupBox)
 
 from rasterio.windows import Window
 
@@ -68,9 +69,15 @@ class ImageWindow(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
+        # Create a QGroupBox
+        # Create a QGroupBox
+        self.filter_group = QGroupBox("Search and Filters")
+        self.filter_layout = QVBoxLayout()
+        self.filter_group.setLayout(self.filter_layout)
+
         # Create a horizontal layout for the checkboxes
         self.checkbox_layout = QHBoxLayout()
-        self.layout.addLayout(self.checkbox_layout)
+        self.filter_layout.addLayout(self.checkbox_layout)
 
         # Add a QButtonGroup for the checkboxes
         self.checkbox_group = QButtonGroup(self)
@@ -94,7 +101,8 @@ class ImageWindow(QWidget):
 
         # Create a vertical layout for the search bars
         self.search_layout = QVBoxLayout()
-        self.layout.addLayout(self.search_layout)
+        self.filter_layout.addLayout(self.search_layout)
+
         fixed_width = 250
 
         # Create a horizontal layout for images search
@@ -104,7 +112,6 @@ class ImageWindow(QWidget):
         # Add label and search bar for images
         self.image_search_label = QLabel("Search Images:", self)
         self.image_search_layout.addWidget(self.image_search_label)
-
         self.search_bar_images = QComboBox(self)
         self.search_bar_images.setEditable(True)
         self.search_bar_images.setPlaceholderText("Type to search images")
@@ -121,7 +128,6 @@ class ImageWindow(QWidget):
         # Add label and search bar for labels
         self.label_search_label = QLabel("Search Labels:", self)
         self.label_search_layout.addWidget(self.label_search_label)
-
         self.search_bar_labels = QComboBox(self)
         self.search_bar_labels.setEditable(True)
         self.search_bar_labels.setPlaceholderText("Type to search labels")
@@ -130,6 +136,9 @@ class ImageWindow(QWidget):
         self.search_bar_labels.lineEdit().textChanged.connect(self.filter_images)
         self.search_bar_labels.setFixedWidth(fixed_width)
         self.label_search_layout.addWidget(self.search_bar_labels)
+
+        # Add the group box to the main layout
+        self.layout.addWidget(self.filter_group)
 
         # Create a horizontal layout for the labels
         self.info_layout = QHBoxLayout()
@@ -164,6 +173,17 @@ class ImageWindow(QWidget):
         self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
         self.tableWidget.cellClicked.connect(self.load_image)
         self.tableWidget.keyPressEvent = self.tableWidget_keyPressEvent
+
+        # Set the stylesheet for the header
+        self.tableWidget.horizontalHeader().setStyleSheet("""
+            QHeaderView::section {
+                background-color: #E0E0E0;
+                padding: 4px;
+                border: 1px solid #D0D0D0;
+            }
+        """)
+
+        # Add the table widget to the layout
         self.layout.addWidget(self.tableWidget)
 
         # Set the maximum width for the column to truncate text
@@ -210,20 +230,26 @@ class ImageWindow(QWidget):
 
     def update_table_widget(self):
         self.tableWidget.setRowCount(0)  # Clear the table
+
+        # Center align the column headers
+        self.tableWidget.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
+
         for path in self.filtered_image_paths:
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
+
             item_text = f"{self.image_dict[path]['filename']}"
             item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
             item = QTableWidgetItem(item_text)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            item.setToolTip(os.path.basename(path))  # Set the full path as a tooltip
+            item.setToolTip(os.path.basename(path))
+            item.setTextAlignment(Qt.AlignCenter)  # Center align the text
             self.tableWidget.setItem(row_position, 0, item)
 
-            # Add annotation count to the second column
             annotation_count = self.image_dict[path]['annotation_count']
             annotation_item = QTableWidgetItem(str(annotation_count))
             annotation_item.setFlags(annotation_item.flags() & ~Qt.ItemIsEditable)
+            annotation_item.setTextAlignment(Qt.AlignCenter)  # Center align the text
             self.tableWidget.setItem(row_position, 1, annotation_item)
 
         self.update_table_selection()
