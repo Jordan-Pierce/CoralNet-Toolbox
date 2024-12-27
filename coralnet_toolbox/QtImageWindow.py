@@ -211,6 +211,11 @@ class ImageWindow(QWidget):
         self.current_workers = []  # List to keep track of running workers
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
 
+        # TODO add a dict mapping tableWidget row to image path, faster
+        # Connect annotationCreated, annotationDeleted signals to update annotation count
+        self.annotation_window.annotationCreated.connect(self.update_annotation_count)
+        self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+
     def add_image(self, image_path):
         if image_path not in self.image_paths:
             self.image_paths.append(image_path)
@@ -276,8 +281,18 @@ class ImageWindow(QWidget):
             annotations = self.annotation_window.get_image_annotations(image_path)
             self.image_dict[image_path]['has_annotations'] = bool(annotations)
             self.image_dict[image_path]['labels'] = {annotation.label.short_label_code for annotation in annotations}
-            self.image_dict[image_path]['annotation_count'] = len(annotations)  # Update annotation count
+            self.image_dict[image_path]['annotation_count'] = len(annotations)
             self.update_table_widget()  # Refresh the table to show updated counts
+
+    def update_annotation_count(self, annotation_id):
+        if annotation_id in self.annotation_window.annotations_dict:
+            # Get the image path associated with the annotation
+            image_path = self.annotation_window.annotations_dict[annotation_id].image_path
+        else:
+            # It's already been deleted, so get the current image path
+            image_path = self.annotation_window.current_image_path
+        # Update the image annotation count in table widget
+        self.update_image_annotations(image_path)
 
     def load_image(self, row, column):
         # Add safety checks
@@ -312,7 +327,8 @@ class ImageWindow(QWidget):
 
         # Start processing the queue if we're under the thread limit
         self._process_image_queue()
-        self.imageChanged.emit()  # Emit the signal when a new image is chosen
+        # Emit the signal when a new image is chosen
+        self.imageChanged.emit()
         # Update the search bars
         self.update_search_bars()
 
@@ -336,6 +352,7 @@ class ImageWindow(QWidget):
             self.update_table_selection()
             self.update_current_image_index_label()
 
+            # Set the cursor to the wait cursor
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
             # Load and display scaled-down version
