@@ -212,7 +212,7 @@ class ImageWindow(QWidget):
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
 
         # TODO add a dict mapping tableWidget row to image path, faster
-        # Connect annotationCreated signal to update_image_annotations slot
+        # Connect annotationCreated, annotationDeleted signals to update annotation count
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
 
@@ -285,9 +285,13 @@ class ImageWindow(QWidget):
             self.update_table_widget()  # Refresh the table to show updated counts
 
     def update_annotation_count(self, annotation_id):
-        # Get the image path associated with the annotation
-        image_path = self.annotation_window.annotations_dict[annotation_id].image_path
-        # Update the annotation count for the image
+        if annotation_id in self.annotation_window.annotations_dict:
+            # Get the image path associated with the annotation
+            image_path = self.annotation_window.annotations_dict[annotation_id].image_path
+        else:
+            # It's already been deleted, so get the current image path
+            image_path = self.annotation_window.current_image_path
+        # Update the image annotation count in table widget
         self.update_image_annotations(image_path)
 
     def load_image(self, row, column):
