@@ -42,6 +42,7 @@ class AnnotationWindow(QGraphicsView):
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
+    annotationCreated = pyqtSignal(str)  # Signal to emit when annotation is created
     hover_point = pyqtSignal(QPointF)  # Signal to emit when mouse hovers over a point
 
     def __init__(self, main_window, parent=None):
@@ -559,6 +560,7 @@ class AnnotationWindow(QGraphicsView):
         self.annotations_dict[annotation.id] = annotation
 
         self.main_window.confidence_window.display_cropped_image(annotation)
+        self.annotationCreated.emit(annotation.id)
 
     def delete_annotation(self, annotation_id):
         if annotation_id in self.annotations_dict:

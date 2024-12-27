@@ -211,6 +211,10 @@ class ImageWindow(QWidget):
         self.current_workers = []  # List to keep track of running workers
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
 
+        # Connect annotationCreated signal to update_image_annotations slot
+        self.annotation_window.annotationCreated.connect(self.update_image_annotations)
+        self.annotation_window.annotationDeleted.connect(self.update_image_annotations)
+
     def add_image(self, image_path):
         if image_path not in self.image_paths:
             self.image_paths.append(image_path)
