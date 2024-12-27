@@ -182,7 +182,7 @@ class ImageWindow(QWidget):
 
         self.tableWidget.setColumnWidth(0, 200)
         self.tableWidget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        
+
         # Add table widget to the info table group layout
         info_table_layout.addWidget(self.tableWidget)
 
@@ -566,7 +566,7 @@ class ImageWindow(QWidget):
         self.load_image_by_path(self.filtered_image_paths[new_index])
 
     def debounce_search(self):
-        self.search_timer.start(5000)
+        self.search_timer.start(10000)
 
     def filter_images(self):
         # Store the currently selected image path before filtering
