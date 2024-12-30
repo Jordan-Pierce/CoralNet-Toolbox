@@ -84,15 +84,20 @@ class ImageWindow(QWidget):
         self.checkbox_group.setExclusive(False)
 
         # Add checkboxes for filtering images based on annotations
+        self.no_annotations_checkbox = QCheckBox("No Annotations", self)
+        self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_layout.addWidget(self.no_annotations_checkbox)
+        self.checkbox_group.addButton(self.no_annotations_checkbox)
+
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
         self.has_annotations_checkbox.stateChanged.connect(self.filter_images)
         self.checkbox_layout.addWidget(self.has_annotations_checkbox)
         self.checkbox_group.addButton(self.has_annotations_checkbox)
 
-        self.no_annotations_checkbox = QCheckBox("No Annotations", self)
-        self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.no_annotations_checkbox)
-        self.checkbox_group.addButton(self.no_annotations_checkbox)
+        self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
+        self.has_predictions_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_layout.addWidget(self.has_predictions_checkbox)
+        self.checkbox_group.addButton(self.has_predictions_checkbox)
 
         # Create a vertical layout for the search bars
         self.search_layout = QVBoxLayout()
@@ -212,7 +217,7 @@ class ImageWindow(QWidget):
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
 
         # TODO add a dict mapping tableWidget row to image path, faster
-        # Connect annotationCreated, annotationDeleted signals to update annotation count
+        # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
 
@@ -223,6 +228,7 @@ class ImageWindow(QWidget):
             self.image_dict[image_path] = {
                 'filename': filename,
                 'has_annotations': False,
+                'has_predictions': False,
                 'labels': set(),  # Initialize an empty set for labels
                 'annotation_count': 0  # Initialize annotation count
             }
@@ -278,11 +284,17 @@ class ImageWindow(QWidget):
 
     def update_image_annotations(self, image_path):
         if image_path in self.image_dict:
+            # Check for any annotations
             annotations = self.annotation_window.get_image_annotations(image_path)
+            # Check for any predictions
+            predictions = [a.machine_confidence for a in annotations if a.machine_confidence != {}]
+            # Check for any labels
+            labels = {annotation.label.short_label_code for annotation in annotations}
             self.image_dict[image_path]['has_annotations'] = bool(annotations)
-            self.image_dict[image_path]['labels'] = {annotation.label.short_label_code for annotation in annotations}
+            self.image_dict[image_path]['has_predictions'] = len(predictions)
+            self.image_dict[image_path]['labels'] = labels
             self.image_dict[image_path]['annotation_count'] = len(annotations)
-            self.update_table_widget()  # Refresh the table to show updated counts
+            self.update_table_widget()
 
     def update_annotation_count(self, annotation_id):
         if annotation_id in self.annotation_window.annotations_dict:
@@ -411,7 +423,8 @@ class ImageWindow(QWidget):
 
                 if num_bands == 1:
                     # Read a single band
-                    downsampled_image = src.read(window=window, out_shape=(scaled_height, scaled_width))
+                    downsampled_image = src.read(window=window,
+                                                 out_shape=(scaled_height, scaled_width))
 
                     # Grayscale image
                     qimage = QImage(downsampled_image.data.tobytes(),
@@ -421,7 +434,9 @@ class ImageWindow(QWidget):
 
                 elif num_bands == 3 or num_bands == 4:
                     # Read bands in the correct order (RGB)
-                    downsampled_image = src.read([1, 2, 3], window=window, out_shape=(scaled_height, scaled_width))
+                    downsampled_image = src.read([1, 2, 3],
+                                                 window=window,
+                                                 out_shape=(scaled_height, scaled_width))
 
                     # Convert to uint8 if it's not already
                     rgb_image = downsampled_image.astype(np.uint8)
@@ -591,11 +606,13 @@ class ImageWindow(QWidget):
 
         search_text_images = self.search_bar_images.currentText()
         search_text_labels = self.search_bar_labels.currentText()
-        has_annotations = self.has_annotations_checkbox.isChecked()
         no_annotations = self.no_annotations_checkbox.isChecked()
+        has_annotations = self.has_annotations_checkbox.isChecked()
+        has_predictions = self.has_predictions_checkbox.isChecked()
 
         # Return early if none of the search bar or checkboxes are being used
-        if not (search_text_images or search_text_labels) and not (has_annotations or no_annotations):
+        if (not (search_text_images or search_text_labels) and
+            not (no_annotations or has_annotations or has_predictions)):
             self.filtered_image_paths = self.image_paths.copy()
             self.update_table_widget()
             self.update_current_image_index_label()
@@ -617,8 +634,9 @@ class ImageWindow(QWidget):
                     path,
                     search_text_images,
                     search_text_labels,
-                    has_annotations,
                     no_annotations,
+                    has_annotations,
+                    has_predictions,
                 )
                 futures.append(future)
 
@@ -651,18 +669,49 @@ class ImageWindow(QWidget):
         # Stop the progress bar
         progress_dialog.stop_progress()
 
-    def filter_image(self, path, search_text_images, search_text_labels, has_annotations, no_annotations):
+    def filter_image(self,
+                     path,
+                     search_text_images,
+                     search_text_labels,
+                     no_annotations,
+                     has_annotations,
+                     has_predictions):
+        """
+        Filter images based on search text and checkboxes
+
+        Args:
+            path (str): Path to the image
+            search_text_images (str): Search text for image names
+            search_text_labels (str): Search text for labels
+            no_annotations (bool): Filter images with no annotations
+            has_annotations (bool): Filter images with annotations
+            has_predictions (bool): Filter images with predictions
+
+            Returns:
+                str: Path to the image if it passes the filters, None otherwise
+        """
         filename = os.path.basename(path)
+        # Check for annotations for the provided path
         annotations = self.annotation_window.get_image_annotations(path)
+        # Check for predictions for the provided path
+        predictions = self.image_dict[path]['has_predictions']
+        # Check the labels for the provided path
         labels = self.image_dict[path]['labels']
 
+        # Filter images based on search text and checkboxes
         if search_text_images and search_text_images not in filename:
             return None
+        # Filter images based on search text and checkboxes
         if search_text_labels and search_text_labels not in labels:
             return None
+        # Filter images based on checkboxes, and if the image has annotations
+        if no_annotations and annotations:
+            return None
+        # Filter images based on checkboxes, and if the image has no annotations
         if has_annotations and not annotations:
             return None
-        if no_annotations and annotations:
+        # Filter images based on checkboxes, and if the image has predictions
+        if has_predictions and not predictions:
             return None
 
         return path
