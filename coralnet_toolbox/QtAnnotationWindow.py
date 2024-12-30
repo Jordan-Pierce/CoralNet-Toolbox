@@ -325,18 +325,48 @@ class AnnotationWindow(QGraphicsView):
         self.centerOn(annotation_center)
 
     def cycle_annotations(self, direction):
+        # Get the annotations for the current image
+        annotations = self.get_image_annotations()
+        if not annotations:
+            return
+
         if self.selected_tool == "select" and self.active_image:
-            annotations = self.get_image_annotations()
-            if annotations:
-                if self.selected_annotations:
-                    current_index = annotations.index(self.selected_annotations[0])
-                    new_index = (current_index + direction) % len(annotations)
+
+            if self.main_window.label_window.label_locked and self.selected_annotations:
+                current_index = annotations.index(self.selected_annotations[0])
+                locked_label = self.main_window.label_window.locked_label
+                indices = [i for i, a in enumerate(annotations) if a.label.id == locked_label.id]
+
+                if not indices:
+                    return
+
+                if current_index in indices:
+                    # Find position in indices list and cycle within that
+                    current_pos = indices.index(current_index)
+                    new_pos = (current_pos + direction) % len(indices)
+                    new_index = indices[new_pos]  # Get the actual annotation index
                 else:
-                    new_index = 0
-                # Select the new annotation
-                self.select_annotation(annotations[new_index])
-                # Center the view on the new annotation
-                self.center_on_annotation(annotations[new_index])
+                    # Find next valid index based on direction
+                    if direction > 0:
+                        next_indices = [i for i in indices if i > current_index]
+                        new_index = next_indices[0] if next_indices else indices[0]
+                    else:
+                        prev_indices = [i for i in indices if i < current_index]
+                        new_index = prev_indices[-1] if prev_indices else indices[-1]
+
+            elif self.selected_annotations:
+                # Cycle through all the annotations
+                current_index = annotations.index(self.selected_annotations[0])
+                new_index = (current_index + direction) % len(annotations)
+
+            else:
+                # Select the first annotation
+                new_index = 0
+
+            # Select the new annotation
+            self.select_annotation(annotations[new_index])
+            # Center the view on the new annotation
+            self.center_on_annotation(annotations[new_index])
 
     def select_annotation(self, annotation, ctrl_pressed=False):
         if not ctrl_pressed:
@@ -372,6 +402,7 @@ class AnnotationWindow(QGraphicsView):
                 self.main_window.confidence_window.display_cropped_image(annotation)
 
         if len(self.selected_annotations) > 1:
+            self.main_window.label_window.unlock_label_lock()
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
 
@@ -530,7 +561,9 @@ class AnnotationWindow(QGraphicsView):
 
     def add_annotation(self, scene_pos: QPointF = None):
         if not self.selected_label:
-            QMessageBox.warning(self, "No Label Selected", "A label must be selected before adding an annotation.")
+            QMessageBox.warning(self,
+                                "No Label Selected",
+                                "A label must be selected before adding an annotation.")
             return
 
         # Return if the isn't an active image

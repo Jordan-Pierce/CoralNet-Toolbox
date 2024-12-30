@@ -89,13 +89,14 @@ class ImportCoralNetAnnotations:
                     continue
 
                 for index, row in group.iterrows():
+                    # Read from the row
                     row_coord = row['Row']
                     col_coord = row['Column']
                     label_code = row['Label']
-
+                    # Get the label codes
                     short_label_code = label_code
                     long_label_code = row['Long Label'] if 'Long Label' in row else label_code
-
+                    # Get the existing label (if it exists)
                     existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
 
                     if existing_label:

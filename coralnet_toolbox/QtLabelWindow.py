@@ -2,11 +2,11 @@ import random
 import uuid
 import warnings
 
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
 from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication, QGroupBox)
+                             QPushButton, QApplication, QGroupBox, QAction)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -160,6 +160,9 @@ class LabelWindow(QWidget):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
+        self.label_locked = False
+        self.locked_label = None
+
         self.label_height = 30
         self.label_width = 100
         self.labels_per_row = 1  # Initial value, will be updated
@@ -191,6 +194,15 @@ class LabelWindow(QWidget):
         self.top_bar.addWidget(self.delete_label_button)
 
         self.top_bar.addStretch()  # Add stretch to the right side
+
+        # Lock button
+        self.label_lock_button = QPushButton()
+        self.label_lock_button.setIcon(self.main_window.unlock_icon)
+        self.label_lock_button.setToolTip("Label Unlocked")
+        self.label_lock_button.setCheckable(True)
+        self.label_lock_button.toggled.connect(self.toggle_label_lock)
+        self.label_lock_button.setFixedSize(self.label_height, self.label_height)
+        self.top_bar.addWidget(self.label_lock_button)
 
         # Scroll area for labels
         self.scroll_area = QScrollArea()
@@ -297,12 +309,17 @@ class LabelWindow(QWidget):
         return label
 
     def set_active_label(self, selected_label):
+
         if self.active_label and self.active_label != selected_label:
+            # Deselect the active label
             self.deselect_active_label()
 
+        # Make the selected label active
         self.active_label = selected_label
         self.active_label.select()
         self.labelSelected.emit(selected_label)
+
+        # Update the transparency slider with the new label's transparency
         self.transparencyChanged.emit(self.active_label.transparency)
 
         # Enable or disable the Edit Label and Delete Label buttons based on whether a label is selected
@@ -311,7 +328,6 @@ class LabelWindow(QWidget):
 
         # Update annotations with the new label
         self.update_annotations_with_label(selected_label)
-        # self.adjust_scrollbar_for_active_label()
         self.scroll_area.ensureWidgetVisible(self.active_label)
 
     def set_label_transparency(self, transparency):
@@ -349,12 +365,23 @@ class LabelWindow(QWidget):
     def update_annotations_with_label(self, label):
         for annotation in self.annotation_window.annotations_dict.values():
             if annotation.label.id == label.id:
+                # Update the annotation label
                 annotation.update_label(label)
+                # Get the transparency of the label
+                transparency = self.get_label_transparency(label.id)
+                # Update the annotation transparency
+                annotation.update_transparency(transparency)
 
-    def get_label_color(self, short_label_code, long_label_code):
+    def get_label_color(self, label_id):
         for label in self.labels:
-            if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
+            if label.id == label_id:
                 return label.color
+        return None
+
+    def get_label_transparency(self, label_id):
+        for label in self.labels:
+            if label.id == label_id:
+                return label.transparency
         return None
 
     def get_label_by_id(self, label_id):
@@ -466,7 +493,7 @@ class LabelWindow(QWidget):
         self.reorganize_labels()
 
     def handle_wasd_key(self, key):
-        if not self.active_label:
+        if not self.active_label or self.label_locked:
             return
 
         try:
@@ -489,6 +516,26 @@ class LabelWindow(QWidget):
 
         if 0 <= new_index < len(self.labels):
             self.set_active_label(self.labels[new_index])
+
+    def toggle_label_lock(self, checked):
+        """Toggle between lock and unlock states"""
+        # Check if any
+        if checked:
+            self.label_lock_button.setIcon(self.main_window.lock_icon)
+            self.label_lock_button.setToolTip("Label Unlocked")
+            # Disable editing functionality
+            self.locked_label = self.active_label
+        else:
+            self.label_lock_button.setIcon(self.main_window.unlock_icon)
+            self.label_lock_button.setToolTip("Label Locked")
+            # Enable editing functionality
+            self.locked_label = None
+
+        # Update the label lock status
+        self.label_locked = checked
+
+    def unlock_label_lock(self):
+        self.label_lock_button.setChecked(False)
 
 
 class AddLabelDialog(QDialog):
