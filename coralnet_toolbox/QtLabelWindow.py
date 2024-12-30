@@ -2,13 +2,15 @@ import random
 import uuid
 import warnings
 
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
 from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication, QGroupBox, QAction)
+                             QPushButton, QApplication, QGroupBox)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -543,6 +545,7 @@ class AddLabelDialog(QDialog):
         super().__init__(parent)
         self.label_window = label_window
 
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Add Label")
         self.setObjectName("AddLabelDialog")
 
@@ -611,7 +614,9 @@ class EditLabelDialog(QDialog):
         self.label_window = label_window
         self.label = label
 
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Edit Label")
+        self.setObjectName("EditLabelDialog")
 
         self.layout = QVBoxLayout(self)
 
