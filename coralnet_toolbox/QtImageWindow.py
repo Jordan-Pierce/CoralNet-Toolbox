@@ -69,8 +69,8 @@ class ImageWindow(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
-        # Create a QGroupBox
-        # Create a QGroupBox
+        # -------------------------------------------
+        # Create a QGroupBox for search and filters
         self.filter_group = QGroupBox("Search and Filters")
         self.filter_layout = QVBoxLayout()
         self.filter_group.setLayout(self.filter_layout)
@@ -84,20 +84,20 @@ class ImageWindow(QWidget):
         self.checkbox_group.setExclusive(False)
 
         # Add checkboxes for filtering images based on annotations
+        self.no_annotations_checkbox = QCheckBox("No Annotations", self)
+        self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_layout.addWidget(self.no_annotations_checkbox)
+        self.checkbox_group.addButton(self.no_annotations_checkbox)
+
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
         self.has_annotations_checkbox.stateChanged.connect(self.filter_images)
         self.checkbox_layout.addWidget(self.has_annotations_checkbox)
         self.checkbox_group.addButton(self.has_annotations_checkbox)
 
-        self.needs_review_checkbox = QCheckBox("Needs Review", self)
-        self.needs_review_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.needs_review_checkbox)
-        self.checkbox_group.addButton(self.needs_review_checkbox)
-
-        self.no_annotations_checkbox = QCheckBox("No Annotations", self)
-        self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.no_annotations_checkbox)
-        self.checkbox_group.addButton(self.no_annotations_checkbox)
+        self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
+        self.has_predictions_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_layout.addWidget(self.has_predictions_checkbox)
+        self.checkbox_group.addButton(self.has_predictions_checkbox)
 
         # Create a vertical layout for the search bars
         self.search_layout = QVBoxLayout()
@@ -140,16 +140,20 @@ class ImageWindow(QWidget):
         # Add the group box to the main layout
         self.layout.addWidget(self.filter_group)
 
+        # -------------------------------------------
+        # Create a QGroupBox for Image Window
+        self.info_table_group = QGroupBox("Image Window", self)
+        info_table_layout = QVBoxLayout()
+        self.info_table_group.setLayout(info_table_layout)
+
         # Create a horizontal layout for the labels
         self.info_layout = QHBoxLayout()
-        self.layout.addLayout(self.info_layout)
+        info_table_layout.addLayout(self.info_layout)
 
         # Add a label to display the index of the currently selected image
         self.current_image_index_label = QLabel("Current Image: None", self)
         self.current_image_index_label.setAlignment(Qt.AlignCenter)
         self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        # Set the desired height (to align with AnnotationWindow)
         self.current_image_index_label.setFixedHeight(24)
         self.info_layout.addWidget(self.current_image_index_label)
 
@@ -157,11 +161,10 @@ class ImageWindow(QWidget):
         self.image_count_label = QLabel("Total Images: 0", self)
         self.image_count_label.setAlignment(Qt.AlignCenter)
         self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        # Set the desired height (to align with AnnotationWindow)
         self.image_count_label.setFixedHeight(24)
         self.info_layout.addWidget(self.image_count_label)
 
+        # Create and setup table widget
         self.tableWidget = QTableWidget(self)
         self.tableWidget.setColumnCount(2)
         self.tableWidget.setHorizontalHeaderLabels(["Image Name", "Annotations"])
@@ -174,21 +177,22 @@ class ImageWindow(QWidget):
         self.tableWidget.cellClicked.connect(self.load_image)
         self.tableWidget.keyPressEvent = self.tableWidget_keyPressEvent
 
-        # Set the stylesheet for the header
         self.tableWidget.horizontalHeader().setStyleSheet("""
             QHeaderView::section {
-                background-color: #E0E0E0;
-                padding: 4px;
-                border: 1px solid #D0D0D0;
+            background-color: #E0E0E0;
+            padding: 4px;
+            border: 1px solid #D0D0D0;
             }
         """)
 
-        # Add the table widget to the layout
-        self.layout.addWidget(self.tableWidget)
-
-        # Set the maximum width for the column to truncate text
         self.tableWidget.setColumnWidth(0, 200)
         self.tableWidget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+
+        # Add table widget to the info table group layout
+        info_table_layout.addWidget(self.tableWidget)
+
+        # Add the group box to the main layout
+        self.layout.addWidget(self.info_table_group)
 
         self.image_paths = []  # Store all image paths
         self.image_dict = {}  # Dictionary to store all image information
@@ -212,6 +216,11 @@ class ImageWindow(QWidget):
         self.current_workers = []  # List to keep track of running workers
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
 
+        # TODO add a dict mapping tableWidget row to image path, faster
+        # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
+        self.annotation_window.annotationCreated.connect(self.update_annotation_count)
+        self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+
     def add_image(self, image_path):
         if image_path not in self.image_paths:
             self.image_paths.append(image_path)
@@ -219,7 +228,7 @@ class ImageWindow(QWidget):
             self.image_dict[image_path] = {
                 'filename': filename,
                 'has_annotations': False,
-                'needs_review': False,
+                'has_predictions': False,
                 'labels': set(),  # Initialize an empty set for labels
                 'annotation_count': 0  # Initialize annotation count
             }
@@ -275,13 +284,27 @@ class ImageWindow(QWidget):
 
     def update_image_annotations(self, image_path):
         if image_path in self.image_dict:
+            # Check for any annotations
             annotations = self.annotation_window.get_image_annotations(image_path)
-            review_annotations = self.annotation_window.get_image_review_annotations(image_path)
+            # Check for any predictions
+            predictions = [a.machine_confidence for a in annotations if a.machine_confidence != {}]
+            # Check for any labels
+            labels = {annotation.label.short_label_code for annotation in annotations}
             self.image_dict[image_path]['has_annotations'] = bool(annotations)
-            self.image_dict[image_path]['needs_review'] = bool(review_annotations)
-            self.image_dict[image_path]['labels'] = {annotation.label.short_label_code for annotation in annotations}
-            self.image_dict[image_path]['annotation_count'] = len(annotations)  # Update annotation count
-            self.update_table_widget()  # Refresh the table to show updated counts
+            self.image_dict[image_path]['has_predictions'] = len(predictions)
+            self.image_dict[image_path]['labels'] = labels
+            self.image_dict[image_path]['annotation_count'] = len(annotations)
+            self.update_table_widget()
+
+    def update_annotation_count(self, annotation_id):
+        if annotation_id in self.annotation_window.annotations_dict:
+            # Get the image path associated with the annotation
+            image_path = self.annotation_window.annotations_dict[annotation_id].image_path
+        else:
+            # It's already been deleted, so get the current image path
+            image_path = self.annotation_window.current_image_path
+        # Update the image annotation count in table widget
+        self.update_image_annotations(image_path)
 
     def load_image(self, row, column):
         # Add safety checks
@@ -316,7 +339,8 @@ class ImageWindow(QWidget):
 
         # Start processing the queue if we're under the thread limit
         self._process_image_queue()
-        self.imageChanged.emit()  # Emit the signal when a new image is chosen
+        # Emit the signal when a new image is chosen
+        self.imageChanged.emit()
         # Update the search bars
         self.update_search_bars()
 
@@ -340,6 +364,7 @@ class ImageWindow(QWidget):
             self.update_table_selection()
             self.update_current_image_index_label()
 
+            # Set the cursor to the wait cursor
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
             # Load and display scaled-down version
@@ -398,7 +423,8 @@ class ImageWindow(QWidget):
 
                 if num_bands == 1:
                     # Read a single band
-                    downsampled_image = src.read(window=window, out_shape=(scaled_height, scaled_width))
+                    downsampled_image = src.read(window=window,
+                                                 out_shape=(scaled_height, scaled_width))
 
                     # Grayscale image
                     qimage = QImage(downsampled_image.data.tobytes(),
@@ -408,7 +434,9 @@ class ImageWindow(QWidget):
 
                 elif num_bands == 3 or num_bands == 4:
                     # Read bands in the correct order (RGB)
-                    downsampled_image = src.read([1, 2, 3], window=window, out_shape=(scaled_height, scaled_width))
+                    downsampled_image = src.read([1, 2, 3],
+                                                 window=window,
+                                                 out_shape=(scaled_height, scaled_width))
 
                     # Convert to uint8 if it's not already
                     rgb_image = downsampled_image.astype(np.uint8)
@@ -570,7 +598,7 @@ class ImageWindow(QWidget):
         self.load_image_by_path(self.filtered_image_paths[new_index])
 
     def debounce_search(self):
-        self.search_timer.start(5000)
+        self.search_timer.start(10000)
 
     def filter_images(self):
         # Store the currently selected image path before filtering
@@ -578,12 +606,13 @@ class ImageWindow(QWidget):
 
         search_text_images = self.search_bar_images.currentText()
         search_text_labels = self.search_bar_labels.currentText()
-        has_annotations = self.has_annotations_checkbox.isChecked()
-        needs_review = self.needs_review_checkbox.isChecked()
         no_annotations = self.no_annotations_checkbox.isChecked()
+        has_annotations = self.has_annotations_checkbox.isChecked()
+        has_predictions = self.has_predictions_checkbox.isChecked()
 
         # Return early if none of the search bar or checkboxes are being used
-        if not (search_text_images or search_text_labels) and not (has_annotations or needs_review or no_annotations):
+        if (not (search_text_images or search_text_labels) and
+            not (no_annotations or has_annotations or has_predictions)):
             self.filtered_image_paths = self.image_paths.copy()
             self.update_table_widget()
             self.update_current_image_index_label()
@@ -605,9 +634,9 @@ class ImageWindow(QWidget):
                     path,
                     search_text_images,
                     search_text_labels,
-                    has_annotations,
-                    needs_review,
                     no_annotations,
+                    has_annotations,
+                    has_predictions,
                 )
                 futures.append(future)
 
@@ -640,21 +669,49 @@ class ImageWindow(QWidget):
         # Stop the progress bar
         progress_dialog.stop_progress()
 
-    def filter_image(self, path, search_text_images, search_text_labels, has_annotations, needs_review, no_annotations):
+    def filter_image(self,
+                     path,
+                     search_text_images,
+                     search_text_labels,
+                     no_annotations,
+                     has_annotations,
+                     has_predictions):
+        """
+        Filter images based on search text and checkboxes
+
+        Args:
+            path (str): Path to the image
+            search_text_images (str): Search text for image names
+            search_text_labels (str): Search text for labels
+            no_annotations (bool): Filter images with no annotations
+            has_annotations (bool): Filter images with annotations
+            has_predictions (bool): Filter images with predictions
+
+            Returns:
+                str: Path to the image if it passes the filters, None otherwise
+        """
         filename = os.path.basename(path)
+        # Check for annotations for the provided path
         annotations = self.annotation_window.get_image_annotations(path)
-        review_annotations = self.annotation_window.get_image_review_annotations(path)
+        # Check for predictions for the provided path
+        predictions = self.image_dict[path]['has_predictions']
+        # Check the labels for the provided path
         labels = self.image_dict[path]['labels']
 
+        # Filter images based on search text and checkboxes
         if search_text_images and search_text_images not in filename:
             return None
+        # Filter images based on search text and checkboxes
         if search_text_labels and search_text_labels not in labels:
             return None
+        # Filter images based on checkboxes, and if the image has annotations
+        if no_annotations and annotations:
+            return None
+        # Filter images based on checkboxes, and if the image has no annotations
         if has_annotations and not annotations:
             return None
-        if needs_review and not review_annotations:
-            return None
-        if no_annotations and annotations:
+        # Filter images based on checkboxes, and if the image has predictions
+        if has_predictions and not predictions:
             return None
 
         return path

@@ -17,7 +17,7 @@ from coralnet_toolbox.Annotations import (
 
 from coralnet_toolbox.Tools import (
     PanTool,
-    PatchTool, 
+    PatchTool,
     PolygonTool,
     RectangleTool,
     SAMTool,
@@ -42,6 +42,7 @@ class AnnotationWindow(QGraphicsView):
     annotationSizeChanged = pyqtSignal(int)  # Signal to emit when annotation size changes
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
+    annotationCreated = pyqtSignal(str)  # Signal to emit when annotation is created
     hover_point = pyqtSignal(QPointF)  # Signal to emit when mouse hovers over a point
 
     def __init__(self, main_window, parent=None):
@@ -54,7 +55,7 @@ class AnnotationWindow(QGraphicsView):
         self.annotation_size = 224
         self.annotation_color = None
         self.transparency = 128
-        
+
         self.zoom_factor = 1.0
         self.pan_active = False
         self.pan_start = None
@@ -136,7 +137,7 @@ class AnnotationWindow(QGraphicsView):
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
-        
+
         # Handle the hot key for deleting (backspace or delete) selected annotations
         if event.modifiers() & Qt.ControlModifier:
             if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
@@ -157,7 +158,7 @@ class AnnotationWindow(QGraphicsView):
             pos = self.mapToScene(pos)
 
         return image_rect.contains(pos)
-    
+
     def cursorInViewport(self, pos):
         if not pos:
             return False
@@ -227,14 +228,14 @@ class AnnotationWindow(QGraphicsView):
         if len(self.selected_annotations) <= 1:
             # Emit that the annotation size has changed
             self.annotationSizeChanged.emit(self.annotation_size)
-            
+
     def is_annotation_moveable(self, annotation):
         if annotation.show_message:
             self.unselect_annotations()
             annotation.show_warning_message()
             return False
         return True
-        
+
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
 
         if self.cursor_annotation:
@@ -284,7 +285,7 @@ class AnnotationWindow(QGraphicsView):
         self.scene.addItem(QGraphicsPixmapItem(self.image_pixmap))
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         self.tools["zoom"].calculate_min_zoom()
-        
+
         self.toggle_cursor_annotation()
 
         # Set the image dimensions, and current view in status bar
@@ -402,7 +403,7 @@ class AnnotationWindow(QGraphicsView):
         # Initialize the progress bar
         progress_bar = ProgressBar(self, title="Loading Annotations")
         progress_bar.show()
-        
+
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_image_annotations(return_annotations=True)
         progress_bar.start_progress(len(annotations))
@@ -419,12 +420,12 @@ class AnnotationWindow(QGraphicsView):
 
         QApplication.processEvents()
         self.viewport().update()
-        
+
     def load_these_annotations(self, image_path, annotations):
         # Initialize the progress bar
         progress_bar = ProgressBar(self, title="Loading Annotations")
         progress_bar.show()
-        
+
         # Crop all the annotations for current image (if not already cropped)
         annotations = self.crop_these_image_annotations(image_path, annotations)
         progress_bar.start_progress(len(annotations))
@@ -487,7 +488,7 @@ class AnnotationWindow(QGraphicsView):
         progress_bar = ProgressBar(self, title="Cropping Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(annotations))
-        
+
         # Get the rasterio representation
         rasterio_image = self.main_window.image_window.rasterio_open(image_path)
         # Loop through the annotations, crop the image if not already cropped
@@ -495,7 +496,7 @@ class AnnotationWindow(QGraphicsView):
             if not annotation.cropped_image:
                 annotation.create_cropped_image(rasterio_image)
             progress_bar.update_progress()
-            
+
         progress_bar.stop_progress()
         progress_bar.close()
 
@@ -504,13 +505,13 @@ class AnnotationWindow(QGraphicsView):
         progress_bar = ProgressBar(self, title="Cropping Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(annotations))
-        
+
         # Create a lock for thread-safe access to the rasterio dataset
         lock = threading.Lock()
-        
+
         # Get the rasterio representation
         rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-        
+
         def crop_annotation(annotation):
             with lock:
                 if not annotation.cropped_image:
@@ -523,7 +524,7 @@ class AnnotationWindow(QGraphicsView):
             for future in as_completed(futures):
                 future.result()  # Ensure any exceptions are raised
                 progress_bar.update_progress()
-        
+
         progress_bar.stop_progress()
         progress_bar.close()
 
@@ -557,16 +558,17 @@ class AnnotationWindow(QGraphicsView):
         annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
         self.annotations_dict[annotation.id] = annotation
-
         self.main_window.confidence_window.display_cropped_image(annotation)
+        self.annotationCreated.emit(annotation.id)
 
     def delete_annotation(self, annotation_id):
         if annotation_id in self.annotations_dict:
-            # Get the annotation from dict, delete it
+            # Get the annotation from dict
             annotation = self.annotations_dict[annotation_id]
+            # Delete the annotation
             annotation.delete()
-            self.annotationDeleted.emit(annotation.id)
             del self.annotations_dict[annotation_id]
+            self.annotationDeleted.emit(annotation_id)
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
 

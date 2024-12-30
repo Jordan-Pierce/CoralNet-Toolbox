@@ -1,12 +1,12 @@
-import json
 import random
 import uuid
 import warnings
 
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
-from PyQt5.QtWidgets import (QFileDialog, QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QColorDialog, QLineEdit, QDialog, QHBoxLayout, QPushButton, QApplication, QSizePolicy)
+from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget,
+                             QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
+                             QPushButton, QApplication, QGroupBox)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -152,8 +152,8 @@ class Label(QWidget):
 
 
 class LabelWindow(QWidget):
-    labelSelected = pyqtSignal(object)  # Signal to emit the entire Label object
-    transparencyChanged = pyqtSignal(int)  # Signal to emit the transparency value
+    labelSelected = pyqtSignal(object)
+    transparencyChanged = pyqtSignal(int)
 
     def __init__(self, main_window):
         super().__init__()
@@ -167,6 +167,12 @@ class LabelWindow(QWidget):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
+
+        # Create a groupbox and set its title and style sheet
+        self.groupBox = QGroupBox("Label Window")
+
+        self.groupBoxLayout = QVBoxLayout()
+        self.groupBox.setLayout(self.groupBoxLayout)
 
         # Top bar with Add Label, Edit Label, and Delete Label buttons
         self.top_bar = QHBoxLayout()
@@ -186,8 +192,6 @@ class LabelWindow(QWidget):
 
         self.top_bar.addStretch()  # Add stretch to the right side
 
-        self.main_layout.addLayout(self.top_bar)
-
         # Scroll area for labels
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -197,11 +201,20 @@ class LabelWindow(QWidget):
         self.grid_layout.setSpacing(0)
         self.grid_layout.setContentsMargins(0, 0, 0, 0)
         self.scroll_area.setWidget(self.scroll_content)
-        self.main_layout.addWidget(self.scroll_area)
 
+        # Add layouts to the groupbox layout
+        self.groupBoxLayout.addLayout(self.top_bar)
+        self.groupBoxLayout.addWidget(self.scroll_area)
+
+        # Add the groupbox to the main layout
+        self.main_layout.addWidget(self.groupBox)
+
+        # Connections
         self.add_label_button.clicked.connect(self.open_add_label_dialog)
         self.edit_label_button.clicked.connect(self.open_edit_label_dialog)
         self.delete_label_button.clicked.connect(self.delete_active_label)
+
+        # Initialize labels
         self.labels = []
         self.active_label = None
 
@@ -405,10 +418,10 @@ class LabelWindow(QWidget):
 
         self.update_labels_per_row()
         self.reorganize_labels()
-        
+
         # Refresh the scene with the new label
         self.annotation_window.set_image(self.annotation_window.current_image_path)
-        
+
     def delete_label(self, label):
         if (label.short_label_code == "Review" and
                 label.long_label_code == "Review" and

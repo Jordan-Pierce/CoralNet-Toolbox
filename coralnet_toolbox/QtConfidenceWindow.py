@@ -3,7 +3,7 @@ import warnings
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout,
-                             QLabel, QHBoxLayout, QFrame)
+                             QLabel, QHBoxLayout, QFrame, QGroupBox)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -72,6 +72,11 @@ class ConfidenceWindow(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
+        # Create a groupbox and set its title
+        self.groupBox = QGroupBox("Confidence Window")
+        self.groupBoxLayout = QVBoxLayout()
+        self.groupBox.setLayout(self.groupBoxLayout)
+
         self.graphics_view = None
         self.scene = None
         self.downscale_factor = 1.0
@@ -91,7 +96,10 @@ class ConfidenceWindow(QWidget):
         # Add QLabel for dimensions
         self.dimensions_label = QLabel(self)
         self.dimensions_label.setAlignment(Qt.AlignCenter)
-        self.layout.addWidget(self.dimensions_label)
+        self.groupBoxLayout.addWidget(self.dimensions_label)
+
+        # Add the groupbox to the main layout
+        self.layout.addWidget(self.groupBox)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -102,7 +110,7 @@ class ConfidenceWindow(QWidget):
         self.graphics_view = QGraphicsView(self)
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
-        self.layout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
+        self.groupBoxLayout.addWidget(self.graphics_view, 2)  # 2 for stretch factor
         self.update_blank_pixmap()
 
     def init_bar_chart_widget(self):
@@ -110,7 +118,7 @@ class ConfidenceWindow(QWidget):
         self.bar_chart_layout = QVBoxLayout(self.bar_chart_widget)
         self.bar_chart_layout.setContentsMargins(0, 0, 0, 0)
         self.bar_chart_layout.setSpacing(2)  # Set spacing to make bars closer
-        self.layout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
+        self.groupBoxLayout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
 
     def update_blank_pixmap(self):
         view_size = self.graphics_view.size()
