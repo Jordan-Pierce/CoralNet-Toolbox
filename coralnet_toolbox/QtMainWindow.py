@@ -724,6 +724,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
@@ -733,6 +734,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
@@ -742,6 +744,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
@@ -751,6 +754,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
@@ -766,6 +770,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("sam")
             else:
                 self.toolChanged.emit(None)
@@ -773,12 +778,14 @@ class MainWindow(QMainWindow):
     def untoggle_all_tools(self):
         # Unlock the label lock
         self.label_window.unlock_label_lock()
+
         # Untoggle all tools
         self.select_tool_action.setChecked(False)
         self.patch_tool_action.setChecked(False)
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
+
         # Emit to reset the tool
         self.toolChanged.emit(None)
 
@@ -789,36 +796,42 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
+            self.label_window.unlock_label_lock()
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)

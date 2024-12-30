@@ -521,22 +521,30 @@ class LabelWindow(QWidget):
 
     def toggle_label_lock(self, checked):
         """Toggle between lock and unlock states"""
-        # Check if any
         if checked:
             self.label_lock_button.setIcon(self.main_window.lock_icon)
-            self.label_lock_button.setToolTip("Label Unlocked")
-            # Disable editing functionality
+            self.label_lock_button.setToolTip("Label Locked")  # Changed
+            # Set add, edit, and delete label to disabled
+            self.add_label_button.setEnabled(False)
+            self.edit_label_button.setEnabled(False)
+            self.delete_label_button.setEnabled(False)
+            # Set the active label to locked
             self.locked_label = self.active_label
         else:
             self.label_lock_button.setIcon(self.main_window.unlock_icon)
-            self.label_lock_button.setToolTip("Label Locked")
-            # Enable editing functionality
+            self.label_lock_button.setToolTip("Label Unlocked")  # Changed
+            # Set add, edit, and delete label to enabled
+            self.add_label_button.setEnabled(True)
+            self.edit_label_button.setEnabled(True)
+            self.delete_label_button.setEnabled(True)
+            # Reset the locked label
             self.locked_label = None
 
-        # Update the label lock status
+        # Set the label_locked attribute
         self.label_locked = checked
 
     def unlock_label_lock(self):
+        # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
 
 
