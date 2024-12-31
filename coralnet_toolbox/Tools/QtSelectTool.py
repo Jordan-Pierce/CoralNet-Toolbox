@@ -107,6 +107,10 @@ class SelectTool(Tool):
         if not event.modifiers() & Qt.ShiftModifier:
             self.remove_resize_handles()
 
+    def get_locked_label(self):
+        """Get the locked label if it exists."""
+        return self.annotation_window.main_window.label_window.locked_label
+
     def get_clickable_items(self, position):
         """Get items that can be clicked in the scene."""
         items = self.annotation_window.scene.items(position)
@@ -114,6 +118,9 @@ class SelectTool(Tool):
 
     def select_annotation(self, position, items, modifiers):
         """Select an annotation based on the click position."""
+        # Get the locked label if it exists
+        locked_label = self.get_locked_label()
+
         center_proximity_items = []
         for item in items:
             if self.is_annotation_clickable(item, position):
@@ -122,11 +129,19 @@ class SelectTool(Tool):
         # Sort by proximity to the center
         center_proximity_items.sort(key=lambda x: x[1])
 
+        # Select the closest annotation
         for item, _ in center_proximity_items:
+            # Get the annotation object from the item
             annotation_id = item.data(0)
             selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
 
             if selected_annotation:
+                # Check if a label is locked
+                if locked_label:
+                    # If locked_label is set, select only annotations with this label
+                    if selected_annotation.label.id != locked_label.id:
+                        continue  # Skip annotations with a different label
+
                 ctrl_pressed = modifiers & Qt.ControlModifier
                 if selected_annotation in self.annotation_window.selected_annotations and ctrl_pressed:
                     # Unselect the annotation if Ctrl is pressed and it is already selected
@@ -146,12 +161,17 @@ class SelectTool(Tool):
 
     def finalize_selection_rectangle(self):
         """Finalize the selection rectangle and select annotations within it."""
+        locked_label = self.get_locked_label()
+
         if self.selection_rectangle:
             rect = self.selection_rectangle.rect()
             # Don't clear previous selection when using rectangle selection
             for annotation in self.annotation_window.get_image_annotations():
                 if rect.contains(annotation.center_xy):
-                    # Always add to selection when using rectangle
+                    # Check if a label is locked, and only select annotations with this label
+                    if locked_label and annotation.label.id != locked_label.id:
+                        continue
+                    # Always *add* to selection when using rectangle
                     self.annotation_window.select_annotation(annotation, True)
 
     def get_item_center(self, item):
@@ -172,8 +192,10 @@ class SelectTool(Tool):
 
     def handle_selection(self, selected_annotation, modifiers):
         """Handle annotation selection logic."""
+        locked_label = self.get_locked_label()
         ctrl_pressed = modifiers & Qt.ControlModifier
 
+        # TODO this keeping the rectangle selection from *adding* all
         if selected_annotation in self.annotation_window.selected_annotations:
             if ctrl_pressed:
                 # Toggle selection when Ctrl is pressed
@@ -189,8 +211,14 @@ class SelectTool(Tool):
             if not ctrl_pressed:
                 # Clear selection if Ctrl is not pressed
                 self.annotation_window.unselect_annotations()
+
+            # Check if a label is locked
+            if locked_label and selected_annotation.label.id != locked_label.id:
+                return None
+
             # Add to selection
             self.annotation_window.select_annotation(selected_annotation, True)
+
             return selected_annotation
 
     def init_drag_or_resize(self, selected_annotation, position, modifiers):
@@ -208,8 +236,8 @@ class SelectTool(Tool):
     def handle_move(self, current_pos):
         """Handle moving the selected annotation."""
         if not len(self.annotation_window.selected_annotations):
-            return  
-        
+            return
+
         selected_annotation = self.annotation_window.selected_annotations[0]
         delta = current_pos - self.move_start_pos
         new_center = selected_annotation.center_xy + delta
@@ -225,11 +253,11 @@ class SelectTool(Tool):
         """Handle resizing the selected annotation."""
         if not len(self.annotation_window.selected_annotations):
             return
-        
+
         selected_annotation = self.annotation_window.selected_annotations[0]
         if not self.annotation_window.is_annotation_moveable(selected_annotation):
             return
-        
+
         self.resize_annotation(selected_annotation, current_pos)
         self.display_resize_handles(selected_annotation)
 
@@ -293,7 +321,7 @@ class SelectTool(Tool):
                                            point.y() - handle_size // 2,
                                            handle_size,
                                            handle_size)
-            
+
             ellipse.setPen(QPen(annotation.label.color))
             ellipse.setBrush(QBrush(annotation.label.color))
             self.annotation_window.scene.addItem(ellipse)
