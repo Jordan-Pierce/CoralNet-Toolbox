@@ -161,12 +161,17 @@ class SelectTool(Tool):
 
     def finalize_selection_rectangle(self):
         """Finalize the selection rectangle and select annotations within it."""
+        locked_label = self.get_locked_label()
+
         if self.selection_rectangle:
             rect = self.selection_rectangle.rect()
             # Don't clear previous selection when using rectangle selection
             for annotation in self.annotation_window.get_image_annotations():
                 if rect.contains(annotation.center_xy):
-                    # Always add to selection when using rectangle
+                    # Check if a label is locked, and only select annotations with this label
+                    if locked_label and annotation.label.id != locked_label.id:
+                        continue
+                    # Always *add* to selection when using rectangle
                     self.annotation_window.select_annotation(annotation, True)
 
     def get_item_center(self, item):
@@ -187,8 +192,10 @@ class SelectTool(Tool):
 
     def handle_selection(self, selected_annotation, modifiers):
         """Handle annotation selection logic."""
+        locked_label = self.get_locked_label()
         ctrl_pressed = modifiers & Qt.ControlModifier
-    
+
+        # TODO this keeping the rectangle selection from *adding* all
         if selected_annotation in self.annotation_window.selected_annotations:
             if ctrl_pressed:
                 # Toggle selection when Ctrl is pressed
@@ -204,8 +211,14 @@ class SelectTool(Tool):
             if not ctrl_pressed:
                 # Clear selection if Ctrl is not pressed
                 self.annotation_window.unselect_annotations()
+
+            # Check if a label is locked
+            if locked_label and selected_annotation.label.id != locked_label.id:
+                return None
+
             # Add to selection
             self.annotation_window.select_annotation(selected_annotation, True)
+
             return selected_annotation
 
     def init_drag_or_resize(self, selected_annotation, position, modifiers):
