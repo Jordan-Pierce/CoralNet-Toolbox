@@ -8,8 +8,8 @@ from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame)
-from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy, 
-                             QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout, 
+from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
+                             QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
                              QGroupBox)
 
@@ -22,13 +22,13 @@ from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 
 from coralnet_toolbox.IO import (
     ImportImages,
-    ImportLabels, 
+    ImportLabels,
     ImportAnnotations,
     ImportCoralNetAnnotations,
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
     ExportLabels,
-    ExportAnnotations, 
+    ExportAnnotations,
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations
@@ -36,7 +36,7 @@ from coralnet_toolbox.IO import (
 
 from coralnet_toolbox.MachineLearning import (
     TrainClassify as ClassifyTrainModelDialog,
-    TrainDetect as DetectTrainModelDialog,  
+    TrainDetect as DetectTrainModelDialog,
     TrainSegment as SegmentTrainModelDialog,
     DeployClassify as ClassifyDeployModelDialog,
     DeployDetect as DetectDeployModelDialog,
@@ -85,10 +85,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        
+
         # Define icons
         self.coral_icon = get_icon("coral.png")
-        self.select_icon = get_icon("select.png")  
+        self.select_icon = get_icon("select.png")
         self.patch_icon = get_icon("patch.png")
         self.rectangle_icon = get_icon("rectangle.png")
         self.polygon_icon = get_icon("polygon.png")
@@ -101,6 +101,8 @@ class MainWindow(QMainWindow):
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
         self.parameters_icon = get_icon("parameters.png")
+        self.lock_icon = get_icon("lock.png")
+        self.unlock_icon = get_icon("unlock.png")
 
         # Set the title and icon for the main window
         self.setWindowTitle("CoralNet-Toolbox")
@@ -243,7 +245,7 @@ class MainWindow(QMainWindow):
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
-        
+
         # Import Detection Dataset submenu
         self.import_detect_dataset_action = QAction("Detect", self)
         self.import_detect_dataset_action.triggered.connect(self.detect_import_dataset_dialog.exec_)
@@ -278,7 +280,7 @@ class MainWindow(QMainWindow):
         self.export_coralnet_annotations_action.triggered.connect(self.export_coralnet_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
-        # Export Viscore Annotations 
+        # Export Viscore Annotations
         self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.export_viscore_annotations_action.triggered.connect(self.export_viscore_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
@@ -290,18 +292,18 @@ class MainWindow(QMainWindow):
 
         # Dataset submenu
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
-        
-        # Export Classification Dataset 
+
+        # Export Classification Dataset
         self.export_classify_dataset_action = QAction("Classify", self)
         self.export_classify_dataset_action.triggered.connect(self.open_classify_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_classify_dataset_action)
-        
-        # Export Detection Dataset 
+
+        # Export Detection Dataset
         self.export_detect_dataset_action = QAction("Detect", self)
         self.export_detect_dataset_action.triggered.connect(self.open_detect_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_detect_dataset_action)
-        
-        # Export Segmentation Dataset 
+
+        # Export Segmentation Dataset
         self.export_segment_dataset_action = QAction("Segment", self)
         self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_segment_dataset_action)
@@ -339,7 +341,7 @@ class MainWindow(QMainWindow):
 
         # Merge Datasets submenu
         self.ml_merge_datasets_menu = self.ml_menu.addMenu("Merge Datasets")
-        
+
         # Merge Classification Datasets
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
@@ -363,25 +365,25 @@ class MainWindow(QMainWindow):
         self.ml_segment_train_model_action.triggered.connect(self.open_segment_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_segment_train_model_action)
 
-        # Evaluate Model submenu 
+        # Evaluate Model submenu
         self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
-        
+
         # Evaluate Classification Model
         self.ml_classify_evaluate_model_action = QAction("Classify", self)
         self.ml_classify_evaluate_model_action.triggered.connect(self.open_classify_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_classify_evaluate_model_action)
-        
+
         # Evaluate Detection Model
         self.ml_detect_evaluate_model_action = QAction("Detect", self)
         self.ml_detect_evaluate_model_action.triggered.connect(self.open_detect_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_detect_evaluate_model_action)
-        
+
         # Evaluate Segmentation Model
         self.ml_segment_evaluate_model_action = QAction("Segment", self)
         self.ml_segment_evaluate_model_action.triggered.connect(self.open_segment_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_segment_evaluate_model_action)
-        
-        # Optimize Model 
+
+        # Optimize Model
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
@@ -424,20 +426,20 @@ class MainWindow(QMainWindow):
 
         # SAM menu
         self.sam_menu = self.menu_bar.addMenu("SAM")
-        
+
         # Deploy Model submenu
         self.sam_deploy_model_menu = self.sam_menu.addMenu("Deploy Model")
-        
+
         # Deploy Predictor
         self.sam_deploy_model_action = QAction("Predictor", self)
         self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_model_action)
-        
+
         # Deploy Generator
         self.sam_deploy_generator_action = QAction("Generator", self)
         self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_generator_action)
-        
+
         # Batch Inference
         self.sam_batch_inference_action = QAction("Batch Inference", self)
         self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
@@ -450,7 +452,7 @@ class MainWindow(QMainWindow):
         self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
         self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
-        
+
         # Batch Inference
         self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
         self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
@@ -469,12 +471,12 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         spacer.setFixedHeight(10)  # Set a fixed height for the spacer
-        
+
         # Define line separator
         separator = QWidget()
         separator.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         separator.setFixedHeight(1)  # Set a fixed height for the line separator
-        
+
         # Add a spacer before the first tool with a fixed height
         self.toolbar.addWidget(spacer)
 
@@ -483,9 +485,9 @@ class MainWindow(QMainWindow):
         self.select_tool_action.setCheckable(True)
         self.select_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.select_tool_action)
-        
+
         self.toolbar.addSeparator()
-        
+
         self.patch_tool_action = QAction(self.patch_icon, "Patch", self)
         self.patch_tool_action.setCheckable(True)
         self.patch_tool_action.triggered.connect(self.toggle_tool)
@@ -500,21 +502,21 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setCheckable(True)
         self.polygon_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.polygon_tool_action)
-        
+
         self.toolbar.addSeparator()
-        
+
         self.sam_tool_action = QAction(self.sam_icon, "SAM", self)
         self.sam_tool_action.setCheckable(True)
         self.sam_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.sam_tool_action)
-        
+
         self.toolbar.addSeparator()
-        
+
         self.slicer_tool_action = QAction(self.slicer_icon, "Slicer", self)
         self.slicer_tool_action.setCheckable(False)
         self.slicer_tool_action.triggered.connect(self.toggle_tool)
         # self.toolbar.addAction(self.slicer_tool_action)  TODO
-        
+
         self.toolbar.addSeparator()
 
         # Add a spacer to push the device label to the bottom
@@ -548,7 +550,7 @@ class MainWindow(QMainWindow):
         self.device_tool_action.setToolTip(device_tooltip)
         self.device_tool_action.triggered.connect(self.toggle_device)
         self.toolbar.addAction(self.device_tool_action)
-        
+
         # ----------------------------------------
         # Create and add the status bar
         # ----------------------------------------
@@ -569,38 +571,38 @@ class MainWindow(QMainWindow):
         transparent_icon = QLabel()
         transparent_icon.setPixmap(get_icon("transparent.png").pixmap(QSize(16, 16)))
         transparent_icon.setToolTip("Transparent")
-        
+
         # Slider
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 128)
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
-        
+
         # Right icon (opaque)
         opaque_icon = QLabel()
         opaque_icon.setPixmap(get_icon("opaque.png").pixmap(QSize(16, 16)))
         opaque_icon.setToolTip("Opaque")
-        
+
         # Add a checkbox labeled "All" next to the transparency slider
         self.all_labels_checkbox = QCheckBox("")
         self.all_labels_checkbox.setCheckState(Qt.Checked)
         self.all_labels_checkbox.stateChanged.connect(self.update_all_labels_transparency)
-        
+
         # Add widgets to the transparency layout
         transparency_layout.addWidget(transparent_icon)
         transparency_layout.addWidget(self.transparency_slider)
         transparency_layout.addWidget(opaque_icon)
         transparency_layout.addWidget(self.all_labels_checkbox)
-        
+
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
-        
+
         # --------------------------------------------------
         # Create collapsible Parameters section
         # --------------------------------------------------
         self.parameters_section = CollapsibleSection("Parameters")
-        
+
         # Patch Annotation Size
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
@@ -613,7 +615,7 @@ class MainWindow(QMainWindow):
         annotation_size_widget = QWidget()
         annotation_size_widget.setLayout(annotation_size_layout)
         self.parameters_section.add_widget(annotation_size_widget, "Patch Size")
-        
+
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
@@ -643,8 +645,8 @@ class MainWindow(QMainWindow):
         iou_widget = QWidget()
         iou_widget.setLayout(iou_layout)
         self.parameters_section.add_widget(iou_widget, "IoU Threshold")
-        
-        # Area threshold controls  
+
+        # Area threshold controls
         min_val = self.area_thresh_min
         max_val = self.area_thresh_max
         self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
@@ -656,12 +658,12 @@ class MainWindow(QMainWindow):
         self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
         self.area_threshold_slider.valueChanged.connect(self.update_area_label)
         area_thresh_layout = QVBoxLayout()
-        area_thresh_layout.addWidget(self.area_threshold_slider) 
+        area_thresh_layout.addWidget(self.area_threshold_slider)
         area_thresh_layout.addWidget(self.area_threshold_label)
         area_thresh_widget = QWidget()
         area_thresh_widget.setLayout(area_thresh_layout)
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
-        
+
         # Add widgets to status bar layout
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
@@ -722,6 +724,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
@@ -731,6 +734,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
@@ -740,6 +744,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
@@ -749,14 +754,15 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
         elif action == self.sam_tool_action:
             if not self.sam_deploy_model_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
-                QMessageBox.warning(self, 
-                                    "SAM Deploy Predictor", 
+                QMessageBox.warning(self,
+                                    "SAM Deploy Predictor",
                                     "You must deploy a Predictor before using the SAM tool.")
                 return
             if state:
@@ -764,16 +770,23 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("sam")
             else:
                 self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
+        # Unlock the label lock
+        self.label_window.unlock_label_lock()
+
+        # Untoggle all tools
         self.select_tool_action.setChecked(False)
         self.patch_tool_action.setChecked(False)
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
+
+        # Emit to reset the tool
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
@@ -783,36 +796,42 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
+            self.label_window.unlock_label_lock()
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.label_window.unlock_label_lock()
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
@@ -897,7 +916,7 @@ class MainWindow(QMainWindow):
 
     def update_transparency_slider(self, transparency):
         self.transparency_slider.setValue(transparency)
-        
+
     def update_label_transparency(self, value):
         if self.all_labels_checkbox.isChecked():
             self.label_window.set_all_labels_transparency(value)
@@ -921,7 +940,7 @@ class MainWindow(QMainWindow):
             self.uncertainty_thresh = value
             self.uncertainty_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
             self.uncertaintyChanged.emit(value)
-            
+
     def update_uncertainty_label(self, value):
         """Update uncertainty threshold label when slider value changes"""
         self.uncertainty_thresh = value / 100.0  # Convert from 0-100 to 0-1
@@ -937,24 +956,24 @@ class MainWindow(QMainWindow):
             self.iou_thresh = value
             self.iou_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
             self.iouChanged.emit(value)
-            
+
     def update_iou_label(self, value):
         """Update IoU threshold label when slider value changes"""
         self.iou_thresh = value / 100.0  # Convert from 0-100 to 0-1
         self.iou_value_label.setText(f"{self.iou_thresh:.2f}")
-        
+
     def get_area_thresh(self):
         """Get the current area threshold values"""
         return self.area_thresh_min, self.area_thresh_max
-    
+
     def get_area_thresh_min(self):
         """Get the current minimum area threshold value"""
         return self.area_thresh_min
-    
+
     def get_area_thresh_max(self):
         """Get the current maximum area threshold value"""
         return self.area_thresh_max
-    
+
     def update_area_thresh(self, min_val, max_val):
         """Update the area threshold values"""
         if self.area_thresh_min != min_val or self.area_thresh_max != max_val:
@@ -962,7 +981,7 @@ class MainWindow(QMainWindow):
             self.area_thresh_max = max_val
             self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
             self.areaChanged.emit(min_val, max_val)
-            
+
     def update_area_label(self, value):
         """Handle changes to area threshold range slider"""
         min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
@@ -995,7 +1014,7 @@ class MainWindow(QMainWindow):
             self.import_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_classify_export_dataset_dialog(self):
         # Check if there are loaded images
         if not self.image_window.image_paths:
@@ -1016,7 +1035,7 @@ class MainWindow(QMainWindow):
             self.classify_export_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_detect_export_dataset_dialog(self):
         # Check if there are loaded images
         if not self.image_window.image_paths:
@@ -1037,7 +1056,7 @@ class MainWindow(QMainWindow):
             self.detect_export_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_segment_export_dataset_dialog(self):
         # Check if there are loaded images
         if not self.image_window.image_paths:
@@ -1093,14 +1112,14 @@ class MainWindow(QMainWindow):
             self.classify_evaluate_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_detect_evaluate_model_dialog(self):
         try:
             self.untoggle_all_tools()
             self.detect_evaluate_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_segment_evaluate_model_dialog(self):
         try:
             self.untoggle_all_tools()
@@ -1166,7 +1185,7 @@ class MainWindow(QMainWindow):
                                 "Batch Inference",
                                 "Please deploy a model before running batch inference.")
             return
-        
+
         if not self.annotation_window.annotations_dict:
             QMessageBox.warning(self,
                                 "Batch Inference",
@@ -1217,7 +1236,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_sam_deploy_model_dialog(self):  # TODO 
+    def open_sam_deploy_model_dialog(self):  # TODO
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Predictor",
@@ -1226,10 +1245,10 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.sam_deploy_model_dialog.exec_()  
+            self.sam_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_sam_deploy_generator_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
@@ -1242,7 +1261,7 @@ class MainWindow(QMainWindow):
             self.sam_deploy_generator_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_sam_batch_inference_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
@@ -1274,7 +1293,7 @@ class MainWindow(QMainWindow):
             self.auto_distill_deploy_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_auto_distill_batch_inference_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
@@ -1329,7 +1348,7 @@ class CollapsibleSection(QWidget):
             # Position popup below and to the left of the button
             pos = self.toggle_button.mapToGlobal(QPoint(0, 0))
             popup_width = self.popup.sizeHint().width()
-            self.popup.move(pos.x() - popup_width + self.toggle_button.width(), 
+            self.popup.move(pos.x() - popup_width + self.toggle_button.width(),
                             pos.y() + self.toggle_button.height())
             self.popup.show()
         else:
@@ -1346,7 +1365,7 @@ class CollapsibleSection(QWidget):
         self.popup.hide()
         self.toggle_action.setChecked(False)
         super().hideEvent(event)
-        
+
 
 class DeviceSelectionDialog(QDialog):
     def __init__(self, devices, parent=None):

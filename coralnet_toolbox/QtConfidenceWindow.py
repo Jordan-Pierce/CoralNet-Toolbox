@@ -141,7 +141,7 @@ class ConfidenceWindow(QWidget):
             self.update_annotation(annotation)
             if self.cropped_image:  # Ensure cropped_image is not None
                 cropped_image = annotation.get_cropped_image(self.downscale_factor)
-                cropped_image_graphic = annotation.get_cropped_image_graphic()
+                cropped_image_graphic = annotation.get_cropped_image_graphic() # TODO Fix top-left for patch
                 # Add the image
                 self.scene.addPixmap(cropped_image)
                 # Add the annotation graphic

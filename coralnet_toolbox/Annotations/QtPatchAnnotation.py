@@ -87,14 +87,10 @@ class PatchAnnotation(Annotation):
         if self.cropped_image is None:
             return None
 
-        half_size = self.annotation_size / 2
-        cropped_rect = QRectF(self.center_xy.x() - half_size,
-                              self.center_xy.y() - half_size,
-                              self.annotation_size,
-                              self.annotation_size)
+        # For patch, just create a square at (0,0) of annotation_size
+        cropped_rect = QRectF(0, 0, self.annotation_size, self.annotation_size)
 
         cropped_image_graphic = QGraphicsRectItem(cropped_rect)
-
         color = QColor(self.label.color)
         color.setAlpha(64)
         brush = QBrush(color)

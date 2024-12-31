@@ -72,7 +72,7 @@ class Annotation(QObject):
 
     def delete(self):
         self.annotationDeleted.emit(self)
-        
+
         # Remove the main graphics item
         if self.graphics_item and self.graphics_item.scene():
             self.graphics_item.scene().removeItem(self.graphics_item)
@@ -121,13 +121,14 @@ class Annotation(QObject):
         # Initializing
         if self.label is None:
             self.label = new_label
+
         # Updating
         elif self.label.id != new_label.id or self.label.color != new_label.color:
             # Update the label in user_confidence if it exists
             if self.user_confidence:
                 old_confidence = next(iter(self.user_confidence.values()))
                 self.user_confidence = {new_label: old_confidence}
-            
+
             # Update the label in machine_confidence if it exists
             if self.machine_confidence:
                 new_machine_confidence = {}
@@ -136,7 +137,9 @@ class Annotation(QObject):
                         new_machine_confidence[new_label] = confidence
                     else:
                         new_machine_confidence[label] = confidence
+                # Update the machine confidence
                 self.machine_confidence = new_machine_confidence
+
             # Update the label
             self.label = new_label
 
