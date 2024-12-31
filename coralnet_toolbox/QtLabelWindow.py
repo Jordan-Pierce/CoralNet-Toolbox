@@ -324,9 +324,10 @@ class LabelWindow(QWidget):
         # Update the transparency slider with the new label's transparency
         self.transparencyChanged.emit(self.active_label.transparency)
 
-        # Enable or disable the Edit Label and Delete Label buttons based on whether a label is selected
-        self.edit_label_button.setEnabled(self.active_label is not None)
-        self.delete_label_button.setEnabled(self.active_label is not None)
+        # Only enable edit/delete buttons if not locked
+        if not self.label_locked:
+            self.edit_label_button.setEnabled(self.active_label is not None)
+            self.delete_label_button.setEnabled(self.active_label is not None)
 
         # Update annotations with the new label
         self.update_annotations_with_label(selected_label)
