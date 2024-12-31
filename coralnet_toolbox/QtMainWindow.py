@@ -724,37 +724,39 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
         elif action == self.patch_tool_action:
             if state:
+                self.label_window.unlock_label_lock()
+
                 self.select_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
         elif action == self.rectangle_tool_action:
             if state:
+                self.label_window.unlock_label_lock()
+
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
         elif action == self.polygon_tool_action:
             if state:
+                self.label_window.unlock_label_lock()
+
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
@@ -766,13 +768,16 @@ class MainWindow(QMainWindow):
                                     "You must deploy a Predictor before using the SAM tool.")
                 return
             if state:
+                self.label_window.unlock_label_lock()
+
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
-                self.label_window.unlock_label_lock()
                 self.toolChanged.emit("sam")
             else:
+                self.label_window.unlock_label_lock()
+
                 self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
@@ -796,13 +801,13 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-            self.label_window.unlock_label_lock()
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+
             self.label_window.unlock_label_lock()
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
@@ -810,6 +815,7 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+
             self.label_window.unlock_label_lock()
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
@@ -817,6 +823,7 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
+
             self.label_window.unlock_label_lock()
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
@@ -824,6 +831,7 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
+
             self.label_window.unlock_label_lock()
         else:
             self.select_tool_action.setChecked(False)
@@ -831,6 +839,7 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+
             self.label_window.unlock_label_lock()
 
     def toggle_device(self):

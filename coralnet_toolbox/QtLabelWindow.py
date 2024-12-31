@@ -522,6 +522,11 @@ class LabelWindow(QWidget):
 
     def toggle_label_lock(self, checked):
         """Toggle between lock and unlock states"""
+        # Check if select tool is active, if not, revert the button state and return
+        if self.main_window.annotation_window.selected_tool != "select":
+            self.label_lock_button.setChecked(False)  # Revert the toggle
+            return
+        
         if checked:
             self.label_lock_button.setIcon(self.main_window.lock_icon)
             self.label_lock_button.setToolTip("Label Locked")  # Changed
