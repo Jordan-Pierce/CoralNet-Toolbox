@@ -406,7 +406,6 @@ class AnnotationWindow(QGraphicsView):
                 self.main_window.confidence_window.display_cropped_image(annotation)
 
         if len(self.selected_annotations) > 1:
-            self.main_window.label_window.unlock_label_lock()
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
 

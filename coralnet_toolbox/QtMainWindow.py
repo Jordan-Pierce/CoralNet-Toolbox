@@ -726,6 +726,8 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.toolChanged.emit("select")
             else:
+                self.label_window.unlock_label_lock()
+
                 self.toolChanged.emit(None)
         elif action == self.patch_tool_action:
             if state:
