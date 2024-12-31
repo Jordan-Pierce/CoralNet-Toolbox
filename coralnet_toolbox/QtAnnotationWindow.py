@@ -332,13 +332,17 @@ class AnnotationWindow(QGraphicsView):
 
         if self.selected_tool == "select" and self.active_image:
 
-            if self.main_window.label_window.label_locked and self.selected_annotations:
-                current_index = annotations.index(self.selected_annotations[0])
+            if self.main_window.label_window.label_locked:
                 locked_label = self.main_window.label_window.locked_label
                 indices = [i for i, a in enumerate(annotations) if a.label.id == locked_label.id]
 
                 if not indices:
                     return
+
+                if self.selected_annotations:
+                    current_index = annotations.index(self.selected_annotations[0])
+                else:
+                    current_index = indices[0]
 
                 if current_index in indices:
                     # Find position in indices list and cycle within that
