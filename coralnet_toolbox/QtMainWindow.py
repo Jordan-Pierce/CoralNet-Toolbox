@@ -100,7 +100,11 @@ class MainWindow(QMainWindow):
         self.apple_icon = get_icon("apple.png")
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
+        self.all_icon = get_icon("all.png")
         self.parameters_icon = get_icon("parameters.png")
+        self.add_icon = get_icon("add.png")
+        self.remove_icon = get_icon("remove.png")
+        self.edit_icon = get_icon("edit.png")
         self.lock_icon = get_icon("lock.png")
         self.unlock_icon = get_icon("unlock.png")
 
@@ -114,12 +118,20 @@ class MainWindow(QMainWindow):
                             Qt.WindowMinimizeButtonHint |
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
+        
+        # Set the default uncertainty threshold and IoU threshold
+        self.iou_thresh = 0.20
+        self.uncertainty_thresh = 0.30
+        self.area_thresh_min = 0.00
+        self.area_thresh_max = 0.40
 
+        # Create windows
         self.annotation_window = AnnotationWindow(self)
         self.label_window = LabelWindow(self)
         self.image_window = ImageWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
+        # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
         self.import_annotations = ImportAnnotations(self)
@@ -131,14 +143,8 @@ class MainWindow(QMainWindow):
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
-
-        # Set the default uncertainty threshold and IoU threshold
-        self.iou_thresh = 0.20
-        self.uncertainty_thresh = 0.30
-        self.area_thresh_min = 0.00
-        self.area_thresh_max = 0.40
-
-        # Create dialogs
+        
+        # Create dialogs (Machine Learning)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
@@ -159,7 +165,7 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)  # TODO
+        self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
         self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
