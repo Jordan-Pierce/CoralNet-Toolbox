@@ -295,6 +295,10 @@ class ImageWindow(QWidget):
             self.image_dict[image_path]['labels'] = labels
             self.image_dict[image_path]['annotation_count'] = len(annotations)
             self.update_table_widget()
+            
+    def update_current_image_annotations(self):
+        if self.selected_image_path:
+            self.update_image_annotations(self.selected_image_path)
 
     def update_annotation_count(self, annotation_id):
         if annotation_id in self.annotation_window.annotations_dict:

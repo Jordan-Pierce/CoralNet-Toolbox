@@ -218,6 +218,8 @@ class ConfidenceWindow(QWidget):
         self.annotation.update_user_confidence(label)
         # Update the label to whichever bar was selected
         self.annotation.update_label(label)
-        # Update everything (essentially)
+        # Update the search bars
+        self.main_window.image_window.update_search_bars()
+        # Update everything else (essentially)
         self.main_window.annotation_window.unselect_annotation(self.annotation)
         self.main_window.annotation_window.select_annotation(self.annotation)

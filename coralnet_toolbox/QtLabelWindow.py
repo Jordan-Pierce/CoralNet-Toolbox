@@ -181,19 +181,25 @@ class LabelWindow(QWidget):
 
         # Top bar with Add Label, Edit Label, and Delete Label buttons
         self.top_bar = QHBoxLayout()
-        self.add_label_button = QPushButton("Add Label")
+        self.add_label_button = QPushButton()
+        self.add_label_button.setIcon(self.main_window.add_icon)
+        self.add_label_button.setToolTip("Add Label")
         self.add_label_button.setFixedSize(self.label_width, self.label_height)
         self.top_bar.addWidget(self.add_label_button)
 
-        self.edit_label_button = QPushButton("Edit Label")
-        self.edit_label_button.setFixedSize(self.label_width, self.label_height)
-        self.edit_label_button.setEnabled(False)  # Initially disabled
-        self.top_bar.addWidget(self.edit_label_button)
-
-        self.delete_label_button = QPushButton("Delete Label")
+        self.delete_label_button = QPushButton()
+        self.delete_label_button.setIcon(self.main_window.remove_icon)
+        self.delete_label_button.setToolTip("Delete Label")
         self.delete_label_button.setFixedSize(self.label_width, self.label_height)
         self.delete_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.delete_label_button)
+
+        self.edit_label_button = QPushButton()
+        self.edit_label_button.setIcon(self.main_window.edit_icon)
+        self.edit_label_button.setToolTip("Edit Label")
+        self.edit_label_button.setFixedSize(self.label_width, self.label_height)
+        self.edit_label_button.setEnabled(False)  # Initially disabled
+        self.top_bar.addWidget(self.edit_label_button)
 
         self.top_bar.addStretch()  # Add stretch to the right side
 
@@ -306,6 +312,8 @@ class LabelWindow(QWidget):
         self.update_labels_per_row()
         self.reorganize_labels()
         self.set_active_label(label)
+        # Update search bars
+        self.main_window.image_window.update_search_bars()
         QApplication.processEvents()
 
         return label
@@ -326,8 +334,8 @@ class LabelWindow(QWidget):
 
         # Only enable edit/delete buttons if not locked
         if not self.label_locked:
-            self.edit_label_button.setEnabled(self.active_label is not None)
             self.delete_label_button.setEnabled(self.active_label is not None)
+            self.edit_label_button.setEnabled(self.active_label is not None)
 
         # Update annotations with the new label
         self.update_annotations_with_label(selected_label)
@@ -526,14 +534,14 @@ class LabelWindow(QWidget):
         if self.main_window.annotation_window.selected_tool != "select":
             self.label_lock_button.setChecked(False)  # Revert the toggle
             return
-        
+
         if checked:
             self.label_lock_button.setIcon(self.main_window.lock_icon)
             self.label_lock_button.setToolTip("Label Locked")  # Changed
             # Set add, edit, and delete label to disabled
             self.add_label_button.setEnabled(False)
-            self.edit_label_button.setEnabled(False)
             self.delete_label_button.setEnabled(False)
+            self.edit_label_button.setEnabled(False)
             # Set the active label to locked
             self.locked_label = self.active_label
         else:
@@ -541,8 +549,8 @@ class LabelWindow(QWidget):
             self.label_lock_button.setToolTip("Label Unlocked")  # Changed
             # Set add, edit, and delete label to enabled
             self.add_label_button.setEnabled(True)
-            self.edit_label_button.setEnabled(True)
             self.delete_label_button.setEnabled(True)
+            self.edit_label_button.setEnabled(True)
             # Reset the locked label
             self.locked_label = None
 
