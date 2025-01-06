@@ -18,7 +18,7 @@ class GlobalEventFilter(QObject):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
-        
+
         self.classify_deploy_model_dialog = main_window.classify_deploy_model_dialog
         self.detect_deploy_model_dialog = main_window.detect_deploy_model_dialog
         self.segment_deploy_model_dialog = main_window.segment_deploy_model_dialog
@@ -48,7 +48,7 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_3:
                     self.segment_deploy_model_dialog.predict()
                     return True
-                
+
                 # Handle hotkey for segment everything prediction
                 if event.key() == Qt.Key_4:
                     self.sam_deploy_generator_dialog.predict()
@@ -75,14 +75,14 @@ class GlobalEventFilter(QObject):
                     self.image_window.cycle_next_image()
                     return True
 
-            # Unselect annotation on End key press
-            if event.key() == Qt.Key_End:
-                self.annotation_window.unselect_annotations()
+            # Select all annotations on < key press
+            if event.key() == Qt.Key_Less:
+                self.annotation_window.select_annotations()
                 return True
 
-            # Untoggle all tools on Home key press
-            if event.key() == Qt.Key_Home:
-                self.main_window.untoggle_all_tools()
+            # Unselect all annotations on > key press
+            if event.key() == Qt.Key_Greater:
+                self.annotation_window.unselect_annotations()
                 return True
 
             # Handle Escape key for exiting program

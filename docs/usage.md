@@ -14,10 +14,17 @@ This guide provides instructions on how to use the application, including key fu
 - **Detection**: Detect objects in an image (Rectangle).
 - **Segmentation**: Segment objects in an image (Polygon).
 
+## Thresholds for Computer Vision Tasks
+- Patch Size: Adjust the patch size in the status bar.
+- Uncertainty Threshold: Adjust the uncertainty threshold in the status bar.
+- IoU Threshold: Adjust the IoU threshold in the status bar.
+- Area Threshold: Adjust the min and max area threshold in the status bar.
+
 ## Main Window
 The main window consists of several components:
 - **Menu Bar**: Contains import, export, and other actions.
 - **Tool Bar**: Contains tools for selection and annotation.
+- **Status Bar**: Displays the image size, cursor position, view extent, annotation transparency, and thresholds.
 - **Annotation Window**: Displays the image and annotations.
 - **Label Window**: Lists and manages labels.
 - **Image Window**: Displays imported images.
@@ -78,6 +85,14 @@ The main window consists of several components:
 - **Rectangle Tool**: Add new RectangleAnnotations.
 - **SAM Tool**: Use SAM model for automatic segmentation (points, box).
 
+## Status Bar
+- **Image Size**: Displays the image size.
+- **Cursor Position**: Displays the cursor position.
+- **View Extent**: Displays the view extent.
+- **Annotation Transparency**: Adjust the annotation transparency.
+  - **Select All Labels**: Select all labels, adjusting transparency for all labels.
+  - **Unselect All Labels**: Unselect all labels, adjusting transparency for only selected labels.
+
 ## Annotation Window
 - **Zoom**: Use the mouse wheel to zoom in and out.
 - **Pan**: Hold Ctrl + Right-click the mouse button to pan the image.
@@ -93,18 +108,25 @@ The main window consists of several components:
 ## Label Window
 - **Move Label**: Right-click and drag to move labels.
 - **Add Label**: Click the "Add Label" button to add a new label.
-- **Edit Label**: Click the "Edit Label" button to edit the selected label.
 - **Delete Label**: Click the "Delete Label" button to delete the selected label.
+- **Edit Label**: Click the "Edit Label" button to edit the selected label.
+- **Lock Label**: Click the "Lock Label" button to lock the selected label.
 
 ## Image Window
 - **Load Image**: Click on a row to load the image in the annotation window.
+- **Delete Image**: Right-click on a row and select "Delete Image" to remove the image.
 - **Delete Annotations**: Right-click on a row and select "Delete Annotations" to remove the image's annotations.
-- **Search Image**: Search for an image row by typing out a search string
+- **Search / Filter**:
+  - **By Image**: Filter for images by name or sub-string.
+  - **By Label**: Filter images by labels they contain.
+  - **No Annotations**: Filter images with no annotations.
+  - **Has Annotations**: Filter images with annotations.
+  - **Has Predictions**: Filter images with predictions.
 
 ## Confidence Window
 - **Display Cropped Image**: Shows the cropped image of the selected annotation.
 - **Confidence Chart**: Displays a bar chart with confidence scores.
-- **Prediction Selection**: Select a prediction from the list to change the label.
+  - **Prediction Selection**: Select a prediction from the list to change the label.
 
 ### Hotkeys
 - **Ctrl + Delete**: Delete the selected annotations.
@@ -112,8 +134,8 @@ The main window consists of several components:
 - **Ctrl + Mouse Wheel**: Adjust annotation size.
 - **Ctrl + Left/Right**: Cycle through annotations.
 - **Ctrl + Up/Down**: Cycle through images.
-- **End**: Unselect annotation.
-- **Home**: Untoggle all tools.
+- **Ctrl + <**: Select all annotations.
+- **Ctrl + >**: Unselect all annotations.
 - **Escape**: Exit the program.
 
 - **Machine Learning, SAM, and AutoDistill**: After a model is loaded
@@ -128,10 +150,3 @@ The main window consists of several components:
   - **Left-Click**: Start a box; press again to end a box.
   - **Ctrl + Left-Click**: Add positive point.
   - **Ctrl + Right-Click**: Add negative point.
-
-## Additional Tips
-- **Annotation Sampling**: Use the "Sample Annotations" action in the menu bar to automatically generate annotations.
-- **Transparency Control**: Adjust the transparency slider in the status bar to change annotation transparency.
-- **Uncertainty Threshold**: Modify the uncertainty threshold in the status bar to restrict predicts with low confidence.
-- **IoU Threshold**: Adjust the IoU threshold in the status bar to filter predictions based on Intersection over Union.
-- **Use SAM**: Use SAM with a deployed Detection or Segmentation model to create Polygons for each detected object.

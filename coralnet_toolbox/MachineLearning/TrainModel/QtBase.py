@@ -80,13 +80,13 @@ class TrainModelWorker(QThread):
             # Load the model, train, and save the best weights
             self.model = YOLO(model_path)
             self.model.train(**self.params, device=self.device)
-            
+
             # Revert to the original dataset class without weighted sampling
             if weighted and self.params['task'] == 'classify':
                 train_build.ClassificationDataset = ClassificationDataset
             elif weighted and self.params['task'] in ['detect', 'segment']:
                 build.YOLODataset = YOLODataset
-                
+
             # Evaluate the model after training
             self.evaluate_model()
             # Emit signal to indicate training has completed
@@ -151,7 +151,7 @@ class TrainModelWorker(QThread):
 
 class Base(QDialog):
     """
-    Dialog for training machine learning models for image classification, object detection, 
+    Dialog for training machine learning models for image classification, object detection,
     and instance segmentation.
 
     :param main_window: MainWindow object
@@ -160,7 +160,7 @@ class Base(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
-        
+
         self.setWindowTitle("Train Model")
         self.resize(600, 800)
 
@@ -170,7 +170,7 @@ class Base(QDialog):
                             Qt.WindowMinimizeButtonHint |
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
-        
+
         # Task
         self.task = None
         # For holding parameters
@@ -192,38 +192,38 @@ class Base(QDialog):
         self.setup_parameters_layout()
         # Create the buttons layout
         self.setup_buttons_layout()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Details on different hyperparameters can be found "
                             "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_dataset_layout(self):
         raise NotImplementedError("Subclasses must implement this method.")
-        
+
     def setup_parameters_layout(self):
         """
         Set up the layout and widgets for the generic layout.
-        """ 
+        """
         # Create helper function for boolean dropdowns
         def create_bool_combo():
             combo = QComboBox()
             combo.addItems(["True", "False"])
             return combo
-        
+
         # Create a widget to hold the form layout
         form_widget = QWidget()
         form_layout = QFormLayout(form_widget)
@@ -237,7 +237,7 @@ class Base(QDialog):
         group_box = QGroupBox("Parameters")
         group_layout = QVBoxLayout(group_box)
         group_layout.addWidget(scroll_area)
-        
+
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
@@ -286,6 +286,10 @@ class Base(QDialog):
         self.imgsz_spinbox.setValue(256)
         form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
+        # Multi Scale
+        self.multi_scale_combo = create_bool_combo()
+        form_layout.addRow("Multi Scale:", self.multi_scale_combo)
+
         # Batch
         self.batch_spinbox = QSpinBox()
         self.batch_spinbox.setMinimum(1)
@@ -322,7 +326,7 @@ class Base(QDialog):
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
         form_layout.addRow("Weighted:", self.weighted_combo)
-        
+
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
         self.dropout_spinbox.setMinimum(0.0)
@@ -367,12 +371,12 @@ class Base(QDialog):
         self.add_param_button = QPushButton("Add Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
         form_layout.addRow("", self.add_param_button)
-        
-        self.layout.addWidget(group_box)        
-        
+
+        self.layout.addWidget(group_box)
+
     def setup_buttons_layout(self):
         """
-        
+
         """
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
@@ -382,7 +386,7 @@ class Base(QDialog):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.layout.addWidget(self.cancel_button)
-    
+
     def add_parameter_pair(self):
         """
         Add a new pair of parameter name and value input fields.
@@ -395,7 +399,7 @@ class Base(QDialog):
 
         self.custom_params.append((param_name, param_value))
         self.custom_params_layout.addLayout(param_layout)
-        
+
     def load_model_combobox(self):
         raise NotImplementedError("Subclasses must implement this method.")
 
@@ -444,7 +448,7 @@ class Base(QDialog):
         if file_path:
             # Load the class mapping
             self.class_mapping = json.load(open(file_path, 'r'))
-            
+
             # Set the class mapping path
             self.mapping_edit.setText(file_path)
 
@@ -487,12 +491,13 @@ class Base(QDialog):
             'data': self.dataset_edit.text(),
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),
-            'batch': self.batch_spinbox.value(), 
+            'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
+            'multi_scale': self.multi_scale_combo.currentText() == "True",
             'save': self.save_combo.currentText() == "True",
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
-            'pretrained': self.pretrained_combo.currentText() == "True", 
+            'pretrained': self.pretrained_combo.currentText() == "True",
             'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_combo.currentText() == "True",
             'fraction': self.fraction_spinbox.value(),
@@ -540,7 +545,7 @@ class Base(QDialog):
         """
         # Get training parameters
         self.params = self.get_parameters()
-        
+
         # Create and start the worker thread
         self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
