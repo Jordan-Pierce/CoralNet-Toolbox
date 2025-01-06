@@ -16,8 +16,7 @@ from coralnet_toolbox.Icons import get_icon
 
 class Base(QDialog):
     """
-    Base class for performing batch inference on images for image classification, object detection, 
-    and instance segmentation.
+    Base class for tiling object detection, and instance segmentation datasets using yolo-tiling.
     
     :param main_window: MainWindow object
     :param parent: Parent widget
@@ -29,7 +28,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("Batch Inference")
+        self.setWindowTitle("Tile Dataset")
         self.resize(400, 100)
 
         self.deploy_model_dialog = None

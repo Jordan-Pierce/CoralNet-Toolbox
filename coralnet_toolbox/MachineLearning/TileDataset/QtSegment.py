@@ -15,7 +15,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 class Segment(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        self.setWindowTitle("Segment Batch Inference")
+        self.setWindowTitle("Tile Segmentation Dataset")
         
         self.deploy_model_dialog = main_window.segment_deploy_model_dialog
         
@@ -32,7 +32,7 @@ class Segment(Base):
         self.loaded_model = self.deploy_model_dialog.loaded_model
         
         # Make predictions on each image's annotations
-        progress_bar = ProgressBar(self, title="Batch Inference")
+        progress_bar = ProgressBar(self, title="")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
 
