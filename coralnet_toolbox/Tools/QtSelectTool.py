@@ -171,8 +171,8 @@ class SelectTool(Tool):
                     # Check if a label is locked, and only select annotations with this label
                     if locked_label and annotation.label.id != locked_label.id:
                         continue
-                    # Always *add* to selection when using rectangle
-                    self.annotation_window.select_annotation(annotation, True)
+                    if annotation not in self.annotation_window.selected_annotations:
+                        self.annotation_window.select_annotation(annotation, True)
 
     def get_item_center(self, item):
         """Return the center point of the item."""

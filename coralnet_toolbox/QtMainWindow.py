@@ -100,7 +100,11 @@ class MainWindow(QMainWindow):
         self.apple_icon = get_icon("apple.png")
         self.transparent_icon = get_icon("transparent.png")
         self.opaque_icon = get_icon("opaque.png")
+        self.all_icon = get_icon("all.png")
         self.parameters_icon = get_icon("parameters.png")
+        self.add_icon = get_icon("add.png")
+        self.remove_icon = get_icon("remove.png")
+        self.edit_icon = get_icon("edit.png")
         self.lock_icon = get_icon("lock.png")
         self.unlock_icon = get_icon("unlock.png")
 
@@ -115,11 +119,19 @@ class MainWindow(QMainWindow):
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
 
+        # Set the default uncertainty threshold and IoU threshold
+        self.iou_thresh = 0.20
+        self.uncertainty_thresh = 0.30
+        self.area_thresh_min = 0.00
+        self.area_thresh_max = 0.40
+
+        # Create windows
         self.annotation_window = AnnotationWindow(self)
-        self.label_window = LabelWindow(self)
         self.image_window = ImageWindow(self)
+        self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
+        # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
         self.import_annotations = ImportAnnotations(self)
@@ -132,13 +144,7 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
 
-        # Set the default uncertainty threshold and IoU threshold
-        self.iou_thresh = 0.20
-        self.uncertainty_thresh = 0.30
-        self.area_thresh_min = 0.00
-        self.area_thresh_max = 0.40
-
-        # Create dialogs
+        # Create dialogs (Machine Learning)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
@@ -159,7 +165,7 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)  # TODO
+        self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
         self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
@@ -566,33 +572,43 @@ class MainWindow(QMainWindow):
         self.mouse_position_label.setFixedWidth(150)
         self.view_dimensions_label.setFixedWidth(150)  # Set fixed width for view dimensions label
 
-        # Transparency slider with icons
-        transparency_layout = QHBoxLayout()
-        transparent_icon = QLabel()
-        transparent_icon.setPixmap(get_icon("transparent.png").pixmap(QSize(16, 16)))
-        transparent_icon.setToolTip("Transparent")
-
         # Slider
+        transparency_layout = QHBoxLayout()
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 128)
         self.transparency_slider.setValue(128)  # Default transparency
+        self.transparency_slider.setTickPosition(QSlider.TicksBelow)
+        self.transparency_slider.setTickInterval(16) # Add tick marks every 16 units
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
+
+        # Left icon (transparent)
+        transparent_icon = QLabel()
+        transparent_icon.setPixmap(self.transparent_icon.pixmap(QSize(16, 16)))
+        transparent_icon.setToolTip("Transparent")
 
         # Right icon (opaque)
         opaque_icon = QLabel()
-        opaque_icon.setPixmap(get_icon("opaque.png").pixmap(QSize(16, 16)))
+        opaque_icon.setPixmap(self.opaque_icon.pixmap(QSize(16, 16)))
         opaque_icon.setToolTip("Opaque")
 
-        # Add a checkbox labeled "All" next to the transparency slider
-        self.all_labels_checkbox = QCheckBox("")
-        self.all_labels_checkbox.setCheckState(Qt.Checked)
-        self.all_labels_checkbox.stateChanged.connect(self.update_all_labels_transparency)
+        # Add an action to select all next to the transparency slider
+        self.all_labels_action = QAction(self.all_icon, "", self)
+        self.all_labels_action.setCheckable(True)
+        self.all_labels_action.setChecked(True)
+        self.all_labels_action.triggered.connect(self.update_all_labels_transparency)
+
+        # Create button to hold the action
+        self.all_labels_button = QToolButton()
+        # Set tooltip on both the action and button to ensure it shows
+        self.all_labels_action.setToolTip("Select All Labels")
+        self.all_labels_button.setToolTip("Select All Labels")
+        self.all_labels_button.setDefaultAction(self.all_labels_action)
 
         # Add widgets to the transparency layout
         transparency_layout.addWidget(transparent_icon)
         transparency_layout.addWidget(self.transparency_slider)
         transparency_layout.addWidget(opaque_icon)
-        transparency_layout.addWidget(self.all_labels_checkbox)
+        transparency_layout.addWidget(self.all_labels_button)
 
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
@@ -929,7 +945,7 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setValue(transparency)
 
     def update_label_transparency(self, value):
-        if self.all_labels_checkbox.isChecked():
+        if self.all_labels_button.isChecked():
             self.label_window.set_all_labels_transparency(value)
         else:
             self.label_window.set_label_transparency(value)
