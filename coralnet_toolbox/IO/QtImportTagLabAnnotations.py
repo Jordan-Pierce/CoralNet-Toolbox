@@ -66,13 +66,13 @@ class ImportTagLabAnnotations:
             return
 
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self.annotation_window,
-                                                   "Import TagLab Annotations",
-                                                   "",
-                                                   "JSON Files (*.json);;All Files (*)",
-                                                   options=options)
+        file_paths, _ = QFileDialog.getOpenFileNames(self.annotation_window,
+                                                     "Import TagLab Annotations",
+                                                     "",
+                                                     "JSON Files (*.json);;All Files (*)",
+                                                     options=options)
 
-        if not file_path:
+        if not file_paths:
             return
 
         annotation_size, ok = QInputDialog.getInt(self.annotation_window,
@@ -83,26 +83,41 @@ class ImportTagLabAnnotations:
             return
 
         try:
-            with open(file_path, 'r') as file:
-                taglab_data = json.load(file)
+            all_data = []
+            for file_path in file_paths:
+                with open(file_path, 'r') as file:
+                    data = json.load(file)
+                    all_data.append(data)
+
+            merged_data = {
+                "labels": {},
+                "images": []
+            }
+
+            for data in all_data:
+                merged_data["labels"].update(data["labels"])
+                merged_data["images"].extend(data["images"])
 
             required_keys = ['labels', 'images']
-            if not all(key in taglab_data for key in required_keys):
+            if not all(key in merged_data for key in required_keys):
                 QMessageBox.warning(self.annotation_window,
                                     "Invalid JSON Format",
-                                    "The selected JSON file does not match the expected TagLab format.")
+                                    "The selected JSON files do not match the expected TagLab format.")
                 return
 
             # Map image names to image paths
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
 
+            total_annotations = sum(len(image_data['annotations']['regions']) + len(image_data['annotations']['points'])
+                                    for image_data in merged_data['images'])
+
             progress_bar = ProgressBar(self.annotation_window, title="Importing TagLab Annotations")
             progress_bar.show()
-            progress_bar.start_progress(len(taglab_data['images']))
+            progress_bar.start_progress(total_annotations)
 
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            for image_data in taglab_data['images']:
+            for image_data in merged_data['images']:
                 image_basename = os.path.basename(image_data['channels'][0]['filename'])
                 image_full_path = image_path_map[image_basename]
 
@@ -113,19 +128,11 @@ class ImportTagLabAnnotations:
                                         f"from the TagLab project was not found in this project.")
                     continue
 
-                # Inner progress bar
-                num_polygons = len(image_data['annotations']['regions'])
-                num_points = len(image_data['annotations']['points'])
-                num_annotations = num_polygons + num_points
-                inner_progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
-                inner_progress_bar.show()
-                inner_progress_bar.start_progress(num_annotations)
-
                 # Loop through all the polygon annotations for this image
                 for annotation in list(image_data['annotations']['regions']):
                     # Get the information for the label for this annotation
                     label_id = annotation['class name']
-                    label_info = taglab_data['labels'][label_id]
+                    label_info = merged_data['labels'][label_id]
                     short_label_code = label_info['name']
                     long_label_code = label_info['name']
                     color = QColor(*label_info['fill'])
@@ -167,14 +174,14 @@ class ImportTagLabAnnotations:
                     # Add annotation to the dict
                     self.annotation_window.annotations_dict[polygon_annotation.id] = polygon_annotation
 
-                    # Update the inner progress bar
-                    inner_progress_bar.update_progress()
+                    # Update the progress bar
+                    progress_bar.update_progress()
 
                 # Loop through all the point annotations for this image
                 for annotation in list(image_data['annotations']['points']):
                     # Get the information for the label for this annotation
                     label_id = annotation['Class']  # Inconsistent
-                    label_info = taglab_data['labels'][label_id]
+                    label_info = merged_data['labels'][label_id]
                     short_label_code = label_info['name']
                     long_label_code = label_info['name']
                     color = QColor(*label_info['fill'])
@@ -207,17 +214,11 @@ class ImportTagLabAnnotations:
 
                     # Add annotation to the dict
                     self.annotation_window.annotations_dict[patch_annotation.id] = patch_annotation
-                    # Update the inner progress bar
-                    inner_progress_bar.update_progress()
-
-                # Close the inner progress bar
-                inner_progress_bar.stop_progress()
-                inner_progress_bar.close()
+                    # Update the progress bar
+                    progress_bar.update_progress()
 
                 # Update the image window's image dict
                 self.image_window.update_image_annotations(image_full_path)
-                # Update progress bar
-                progress_bar.update_progress()
 
             # Load the annotations for current image
             self.annotation_window.load_annotations()

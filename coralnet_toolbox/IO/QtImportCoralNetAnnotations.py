@@ -37,13 +37,13 @@ class ImportCoralNetAnnotations:
             return
 
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self.annotation_window,
-                                                   "Import CoralNet Annotations",
-                                                   "",
-                                                   "CSV Files (*.csv);;All Files (*)",
-                                                   options=options)
+        file_paths, _ = QFileDialog.getOpenFileNames(self.annotation_window,
+                                                     "Import CoralNet Annotations",
+                                                     "",
+                                                     "CSV Files (*.csv);;All Files (*)",
+                                                     options=options)
 
-        if not file_path:
+        if not file_paths:
             return
 
         annotation_size, ok = QInputDialog.getInt(self.annotation_window,
@@ -54,16 +54,18 @@ class ImportCoralNetAnnotations:
             return
 
         try:
-            progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
-            progress_bar.show()
-            df = pd.read_csv(file_path)
-            progress_bar.close()
+            all_data = []
+            for file_path in file_paths:
+                df = pd.read_csv(file_path)
+                all_data.append(df)
+
+            df = pd.concat(all_data, ignore_index=True)
 
             required_columns = ['Name', 'Row', 'Column', 'Label']
             if not all(col in df.columns for col in required_columns):
                 QMessageBox.warning(self.annotation_window,
                                     "Invalid CSV Format",
-                                    "The selected CSV file does not match the expected CoralNet format.")
+                                    "The selected CSV files do not match the expected CoralNet format.")
                 return
 
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}

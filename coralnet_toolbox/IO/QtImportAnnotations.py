@@ -36,21 +36,24 @@ class ImportAnnotations:
             return
 
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self.annotation_window,
-                                                   "Load Annotations",
-                                                   "",
-                                                   "JSON Files (*.json);;All Files (*)",
-                                                   options=options)
-        if file_path:
+        file_paths, _ = QFileDialog.getOpenFileNames(self.annotation_window,
+                                                     "Load Annotations",
+                                                     "",
+                                                     "JSON Files (*.json);;All Files (*)",
+                                                     options=options)
+        if file_paths:
             try:
                 QApplication.setOverrideCursor(Qt.WaitCursor)
 
-                with open(file_path, 'r') as file:
-                    data = json.load(file)
+                all_data = {}
+                for file_path in file_paths:
+                    with open(file_path, 'r') as file:
+                        data = json.load(file)
+                        all_data.update(data)
 
                 keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
 
-                filtered_annotations = {p: a for p, a in data.items() if p in self.image_window.image_paths}
+                filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.image_paths}
                 total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
 
                 progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
