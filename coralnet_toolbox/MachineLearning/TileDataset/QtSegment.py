@@ -29,15 +29,27 @@ class Segment(Base):
         """
         Perform batch inference on the selected images.
         """
-        self.loaded_model = self.deploy_model_dialog.loaded_model
-        
-        # Make predictions on each image's annotations
-        progress_bar = ProgressBar(self, title="")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
+        src = self.src_edit.text()
+        dst = self.dst_edit.text()
 
-        if self.loaded_model is not None:
-            self.deploy_model_dialog.predict(inputs=self.image_paths)
+        config = TileConfig(
+            slice_wh=eval(self.slice_wh_edit.text()),
+            overlap_wh=eval(self.overlap_wh_edit.text()),
+            ext=self.ext_edit.text(),
+            annotation_type=self.annotation_type_combo.currentText(),
+            densify_factor=self.densify_factor_spinbox.value(),
+            smoothing_tolerance=self.smoothing_tolerance_spinbox.value(),
+            train_ratio=self.train_ratio_spinbox.value(),
+            valid_ratio=self.valid_ratio_spinbox.value(),
+            test_ratio=self.test_ratio_spinbox.value(),
+            margins=eval(self.margins_edit.text())
+        )
 
-        progress_bar.stop_progress()
-        progress_bar.close()
+        tiler = YoloTiler(
+            source=src,
+            target=dst,
+            config=config,
+            num_viz_samples=15,
+        )
+
+        tiler.run()
