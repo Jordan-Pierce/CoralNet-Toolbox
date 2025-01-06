@@ -408,6 +408,17 @@ class AnnotationWindow(QGraphicsView):
         if len(self.selected_annotations) > 1:
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
+            
+    # TODO test
+    def select_annotations(self):
+        """Select all annotations in the current image."""
+        annotations = self.get_image_annotations()
+        for annotation in annotations:
+            if self.main_window.label_window.label_locked:
+                if annotation.label.id == self.main_window.label_window.locked_label.id:
+                    self.select_annotation(annotation, ctrl_pressed=True)
+            else:       
+                self.select_annotation(annotation, ctrl_pressed=True)
 
     def unselect_annotation(self, annotation):
         if annotation in self.selected_annotations:
