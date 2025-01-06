@@ -377,6 +377,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#thresholds-for-computer-vision-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Thresholds for Computer Vision Tasks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#main-window" class="md-nav__link">
     <span class="md-ellipsis">
       Main Window
@@ -398,6 +407,15 @@
   <a href="#tool-bar" class="md-nav__link">
     <span class="md-ellipsis">
       Tool Bar
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#status-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      Status Bar
     </span>
   </a>
   
@@ -451,15 +469,6 @@
         
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-tips" class="md-nav__link">
-    <span class="md-ellipsis">
-      Additional Tips
-    </span>
-  </a>
   
 </li>
       
@@ -545,6 +554,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#thresholds-for-computer-vision-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Thresholds for Computer Vision Tasks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#main-window" class="md-nav__link">
     <span class="md-ellipsis">
       Main Window
@@ -566,6 +584,15 @@
   <a href="#tool-bar" class="md-nav__link">
     <span class="md-ellipsis">
       Tool Bar
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#status-bar" class="md-nav__link">
+    <span class="md-ellipsis">
+      Status Bar
     </span>
   </a>
   
@@ -622,15 +649,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#additional-tips" class="md-nav__link">
-    <span class="md-ellipsis">
-      Additional Tips
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -668,10 +686,18 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Detection</strong>: Detect objects in an image (Rectangle).</li>
 <li><strong>Segmentation</strong>: Segment objects in an image (Polygon).</li>
 </ul>
+<h2 id="thresholds-for-computer-vision-tasks">Thresholds for Computer Vision Tasks<a class="headerlink" href="#thresholds-for-computer-vision-tasks" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Patch Size: Adjust the patch size in the status bar.</li>
+<li>Uncertainty Threshold: Adjust the uncertainty threshold in the status bar.</li>
+<li>IoU Threshold: Adjust the IoU threshold in the status bar.</li>
+<li>Area Threshold: Adjust the min and max area threshold in the status bar.</li>
+</ul>
 <h2 id="main-window">Main Window<a class="headerlink" href="#main-window" title="Permanent link">&para;</a></h2>
 <p>The main window consists of several components:
 - <strong>Menu Bar</strong>: Contains import, export, and other actions.
 - <strong>Tool Bar</strong>: Contains tools for selection and annotation.
+- <strong>Status Bar</strong>: Displays the image size, cursor position, view extent, annotation transparency, and thresholds.
 - <strong>Annotation Window</strong>: Displays the image and annotations.
 - <strong>Label Window</strong>: Lists and manages labels.
 - <strong>Image Window</strong>: Displays imported images.
@@ -755,6 +781,15 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Rectangle Tool</strong>: Add new RectangleAnnotations.</li>
 <li><strong>SAM Tool</strong>: Use SAM model for automatic segmentation (points, box).</li>
 </ul>
+<h2 id="status-bar">Status Bar<a class="headerlink" href="#status-bar" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Image Size</strong>: Displays the image size.</li>
+<li><strong>Cursor Position</strong>: Displays the cursor position.</li>
+<li><strong>View Extent</strong>: Displays the view extent.</li>
+<li><strong>Annotation Transparency</strong>: Adjust the annotation transparency.</li>
+<li><strong>Select All Labels</strong>: Select all labels, adjusting transparency for all labels.</li>
+<li><strong>Unselect All Labels</strong>: Unselect all labels, adjusting transparency for only selected labels.</li>
+</ul>
 <h2 id="annotation-window">Annotation Window<a class="headerlink" href="#annotation-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Zoom</strong>: Use the mouse wheel to zoom in and out.</li>
@@ -774,14 +809,21 @@ This guide provides instructions on how to use the application, including key fu
 <ul>
 <li><strong>Move Label</strong>: Right-click and drag to move labels.</li>
 <li><strong>Add Label</strong>: Click the "Add Label" button to add a new label.</li>
-<li><strong>Edit Label</strong>: Click the "Edit Label" button to edit the selected label.</li>
 <li><strong>Delete Label</strong>: Click the "Delete Label" button to delete the selected label.</li>
+<li><strong>Edit Label</strong>: Click the "Edit Label" button to edit the selected label.</li>
+<li><strong>Lock Label</strong>: Click the "Lock Label" button to lock the selected label.</li>
 </ul>
 <h2 id="image-window">Image Window<a class="headerlink" href="#image-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Load Image</strong>: Click on a row to load the image in the annotation window.</li>
+<li><strong>Delete Image</strong>: Right-click on a row and select "Delete Image" to remove the image.</li>
 <li><strong>Delete Annotations</strong>: Right-click on a row and select "Delete Annotations" to remove the image's annotations.</li>
-<li><strong>Search Image</strong>: Search for an image row by typing out a search string</li>
+<li><strong>Search / Filter</strong>:</li>
+<li><strong>By Image</strong>: Filter for images by name or sub-string.</li>
+<li><strong>By Label</strong>: Filter images by labels they contain.</li>
+<li><strong>No Annotations</strong>: Filter images with no annotations.</li>
+<li><strong>Has Annotations</strong>: Filter images with annotations.</li>
+<li><strong>Has Predictions</strong>: Filter images with predictions.</li>
 </ul>
 <h2 id="confidence-window">Confidence Window<a class="headerlink" href="#confidence-window" title="Permanent link">&para;</a></h2>
 <ul>
@@ -796,8 +838,8 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Ctrl + Mouse Wheel</strong>: Adjust annotation size.</li>
 <li><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</li>
 <li><strong>Ctrl + Up/Down</strong>: Cycle through images.</li>
-<li><strong>End</strong>: Unselect annotation.</li>
-<li><strong>Home</strong>: Untoggle all tools.</li>
+<li><strong>Ctrl + &lt;</strong>: Select all annotations.</li>
+<li><strong>Ctrl + &gt;</strong>: Unselect all annotations.</li>
 <li>
 <p><strong>Escape</strong>: Exit the program.</p>
 </li>
@@ -818,14 +860,6 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
 <li><strong>Ctrl + Left-Click</strong>: Add positive point.</li>
 <li><strong>Ctrl + Right-Click</strong>: Add negative point.</li>
-</ul>
-<h2 id="additional-tips">Additional Tips<a class="headerlink" href="#additional-tips" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Annotation Sampling</strong>: Use the "Sample Annotations" action in the menu bar to automatically generate annotations.</li>
-<li><strong>Transparency Control</strong>: Adjust the transparency slider in the status bar to change annotation transparency.</li>
-<li><strong>Uncertainty Threshold</strong>: Modify the uncertainty threshold in the status bar to restrict predicts with low confidence.</li>
-<li><strong>IoU Threshold</strong>: Adjust the IoU threshold in the status bar to filter predictions based on Intersection over Union.</li>
-<li><strong>Use SAM</strong>: Use SAM with a deployed Detection or Segmentation model to create Polygons for each detected object.</li>
 </ul>
 
 
@@ -849,7 +883,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago"><span class="timeago" datetime="2024-12-03T17:24:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date">2024-12-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago"><span class="timeago" datetime="2025-01-06T16:21:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date">2025-01-06</span>
   </span>
 
     
