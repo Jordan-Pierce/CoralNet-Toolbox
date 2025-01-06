@@ -4,9 +4,12 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
-                             QLabel, QDialog, QDialogButtonBox, QGroupBox, QButtonGroup)
+                             QLabel, QDialog, QDialogButtonBox, QGroupBox, QButtonGroup,
+                             QFormLayout, QLineEdit, QDoubleSpinBox, QComboBox, QPushButton, QFileDialog)
 
 from coralnet_toolbox.Icons import get_icon
+from yolo_tiler import YoloTiler, TileConfig
+import os
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -56,7 +59,7 @@ class Base(QDialog):
         layout = QVBoxLayout()
         
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Perform batch inferencing on the selected images.")
+        info_label = QLabel("Tile an existing YOLO dataset.")
         
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -103,9 +106,79 @@ class Base(QDialog):
         
     def setup_task_specific_layout(self):
         """
-
+        Set up the layout with input fields for YoloTiler and TileConfig parameters.
         """
-        raise NotImplementedError("Subclasses must implement this method.")
+        group_box = QGroupBox("Tiling Parameters")
+        layout = QFormLayout()
+
+        # Source and Destination Directories
+        self.src_edit = QLineEdit()
+        self.src_button = QPushButton("Browse...")
+        self.src_button.clicked.connect(self.browse_src_dir)
+        src_layout = QVBoxLayout()
+        src_layout.addWidget(self.src_edit)
+        src_layout.addWidget(self.src_button)
+        layout.addRow("Source Directory:", src_layout)
+
+        self.dst_edit = QLineEdit()
+        self.dst_button = QPushButton("Browse...")
+        self.dst_button.clicked.connect(self.browse_dst_dir)
+        dst_layout = QVBoxLayout()
+        dst_layout.addWidget(self.dst_edit)
+        dst_layout.addWidget(self.dst_button)
+        layout.addRow("Destination Directory:", dst_layout)
+
+        # Tile Size
+        self.slice_wh_edit = QLineEdit()
+        layout.addRow("Tile Size (width, height):", self.slice_wh_edit)
+
+        # Overlap
+        self.overlap_wh_edit = QLineEdit()
+        layout.addRow("Overlap (width, height):", self.overlap_wh_edit)
+
+        # Image Extension
+        self.ext_edit = QLineEdit()
+        layout.addRow("Image Extension:", self.ext_edit)
+
+        # Annotation Type
+        self.annotation_type_combo = QComboBox()
+        self.annotation_type_combo.addItems(["object_detection", "instance_segmentation"])
+        layout.addRow("Annotation Type:", self.annotation_type_combo)
+
+        # Densify Factor
+        self.densify_factor_spinbox = QDoubleSpinBox()
+        self.densify_factor_spinbox.setRange(0.0, 1.0)
+        self.densify_factor_spinbox.setSingleStep(0.1)
+        layout.addRow("Densify Factor:", self.densify_factor_spinbox)
+
+        # Smoothing Tolerance
+        self.smoothing_tolerance_spinbox = QDoubleSpinBox()
+        self.smoothing_tolerance_spinbox.setRange(0.0, 1.0)
+        self.smoothing_tolerance_spinbox.setSingleStep(0.1)
+        layout.addRow("Smoothing Tolerance:", self.smoothing_tolerance_spinbox)
+
+        # Train, Validation, and Test Ratios
+        self.train_ratio_spinbox = QDoubleSpinBox()
+        self.train_ratio_spinbox.setRange(0.0, 1.0)
+        self.train_ratio_spinbox.setSingleStep(0.1)
+        layout.addRow("Train Ratio:", self.train_ratio_spinbox)
+
+        self.valid_ratio_spinbox = QDoubleSpinBox()
+        self.valid_ratio_spinbox.setRange(0.0, 1.0)
+        self.valid_ratio_spinbox.setSingleStep(0.1)
+        layout.addRow("Validation Ratio:", self.valid_ratio_spinbox)
+
+        self.test_ratio_spinbox = QDoubleSpinBox()
+        self.test_ratio_spinbox.setRange(0.0, 1.0)
+        self.test_ratio_spinbox.setSingleStep(0.1)
+        layout.addRow("Test Ratio:", self.test_ratio_spinbox)
+
+        # Margins
+        self.margins_edit = QLineEdit()
+        layout.addRow("Margins:", self.margins_edit)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_buttons_layout(self):
         """
@@ -176,4 +249,58 @@ class Base(QDialog):
         """
         Perform batch inference on the selected images and annotations.
         """
-        raise NotImplementedError("Subclasses must implement this method.")
+        src = self.src_edit.text()
+        dst = self.dst_edit.text()
+
+        if not self.validate_source_directory(src):
+            return
+
+        config = TileConfig(
+            slice_wh=eval(self.slice_wh_edit.text()),
+            overlap_wh=eval(self.overlap_wh_edit.text()),
+            ext=self.ext_edit.text(),
+            annotation_type=self.annotation_type_combo.currentText(),
+            densify_factor=self.densify_factor_spinbox.value(),
+            smoothing_tolerance=self.smoothing_tolerance_spinbox.value(),
+            train_ratio=self.train_ratio_spinbox.value(),
+            valid_ratio=self.valid_ratio_spinbox.value(),
+            test_ratio=self.test_ratio_spinbox.value(),
+            margins=eval(self.margins_edit.text())
+        )
+
+        tiler = YoloTiler(
+            source=src,
+            target=dst,
+            config=config,
+            num_viz_samples=15,
+        )
+
+        tiler.run()
+
+    def browse_src_dir(self):
+        """
+        Browse and select a source directory.
+        """
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Source Directory")
+        if dir_path:
+            self.src_edit.setText(dir_path)
+
+    def browse_dst_dir(self):
+        """
+        Browse and select a destination directory.
+        """
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Destination Directory")
+        if dir_path:
+            self.dst_edit.setText(dir_path)
+
+    def validate_source_directory(self, src):
+        """
+        Validate the source directory to ensure it contains a 'train' sub-folder.
+        
+        :param src: Source directory path
+        :return: True if valid, False otherwise
+        """
+        if not os.path.isdir(os.path.join(src, 'train')):
+            QMessageBox.warning(self, "Invalid Source Directory", "The source directory must contain a 'train' sub-folder.")
+            return False
+        return True
