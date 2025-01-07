@@ -12,3 +12,4 @@ roboflow
 rasterio
 requests
 dill
+yolo-tiling>=0.0.7

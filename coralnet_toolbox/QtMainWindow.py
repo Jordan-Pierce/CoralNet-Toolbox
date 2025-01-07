@@ -52,6 +52,8 @@ from coralnet_toolbox.MachineLearning import (
     EvalClassify as ClassifyEvaluateModelDialog,
     EvalDetect as DetectEvaluateModelDialog,
     EvalSegment as SegmentEvaluateModelDialog,
+    TileDetect as DetectTileDatasetDialog,
+    TileSegment as SegmentTileDatasetDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
     Optimize as OptimizeModelDialog
 )
@@ -158,6 +160,8 @@ class MainWindow(QMainWindow):
         self.classify_evaluate_model_dialog = ClassifyEvaluateModelDialog(self)
         self.detect_evaluate_model_dialog = DetectEvaluateModelDialog(self)
         self.segment_evaluate_model_dialog = SegmentEvaluateModelDialog(self)
+        self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
+        self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.classify_deploy_model_dialog = ClassifyDeployModelDialog(self)
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
@@ -352,6 +356,19 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
+
+        # Tile Dataset submenu
+        self.ml_tile_dataset_menu = self.ml_menu.addMenu("Tile Dataset")
+
+        # Tile Detection Dataset
+        self.ml_detect_tile_dataset_action = QAction("Detect", self)
+        self.ml_detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
+        self.ml_tile_dataset_menu.addAction(self.ml_detect_tile_dataset_action)
+
+        # Tile Segment Dataset
+        self.ml_segment_tile_dataset_action = QAction("Segment", self)
+        self.ml_segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
+        self.ml_tile_dataset_menu.addAction(self.ml_segment_tile_dataset_action)
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
@@ -1109,6 +1126,20 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.classify_merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_detect_tile_dataset_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.detect_tile_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_segment_tile_dataset_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.segment_tile_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

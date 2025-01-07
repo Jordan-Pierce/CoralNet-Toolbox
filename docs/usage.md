@@ -61,6 +61,7 @@ The main window consists of several components:
 
 - **Machine Learning**:
   - **Merge Datasets**: Merge multiple Classification datasets.
+  - **Tile Dataset**: Tile existing Detection / Segmention datasets using yolo-tiling.
   - **Train Model**: Train a machine learning model.
   - **Evaluate Model**: Evaluate a trained model.
   - **Optimize Model**: Convert model format.
