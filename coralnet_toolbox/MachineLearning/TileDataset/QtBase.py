@@ -247,7 +247,7 @@ class Base(QDialog):
         """
         Set up the TileConfig parameters layout.
         """
-        group_box = QGroupBox("Configuation Parameters")
+        group_box = QGroupBox("Configuration Parameters")
         layout = QFormLayout()
 
         # Overlap
