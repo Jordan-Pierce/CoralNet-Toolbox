@@ -4,8 +4,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 from coralnet_toolbox.MachineLearning.TileDataset.QtBase import Base
 
-from coralnet_toolbox.QtProgressBar import ProgressBar
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -17,4 +15,3 @@ class Segment(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Tile Segmentation Dataset")
         self.annotation_type = "instance_segmentation"
-        

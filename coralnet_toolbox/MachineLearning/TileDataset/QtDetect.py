@@ -4,8 +4,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 from coralnet_toolbox.MachineLearning.TileDataset.QtBase import Base
 
-from coralnet_toolbox.QtProgressBar import ProgressBar
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes

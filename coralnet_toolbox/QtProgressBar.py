@@ -13,12 +13,13 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class ProgressBar(QDialog):
     progress_updated = pyqtSignal(int)
-    
+
     def __init__(self, parent=None, title="Progress"):
         super().__init__(parent)
 
         self.setWindowTitle(title)
         self.setModal(True)
+        self.resize(300, 100)
 
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setRange(0, 100)
@@ -33,7 +34,7 @@ class ProgressBar(QDialog):
         self.value = 0
         self.max_value = 100
         self.canceled = False
-        
+
         self.progress_updated.connect(self.update_progress)
 
     def update_progress(self):
