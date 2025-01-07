@@ -360,6 +360,10 @@ class Base(QDialog):
 
         # Filter annotations based on the selected labels
         annotations = [a for a in filtered_annotations if a.label.short_label_code in self.selected_labels]
+
+        # Filter annotations based on the selected image option
+        if self.filtered_images_radio.isChecked():
+            annotations = [a for a in annotations if a.image_path in self.image_window.filtered_image_paths]
         
         return annotations
 
@@ -677,4 +681,5 @@ class Base(QDialog):
         """
         Update the table based on the selected image option.
         """
+        self.selected_annotations = self.filter_annotations()
         self.update_summary_statistics()
