@@ -12,7 +12,7 @@ from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QTableWidget, QTableWidgetItem)
+                             QGroupBox, QTableWidget, QTableWidgetItem, QButtonGroup, QRadioButton)
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -60,6 +60,7 @@ class Base(QDialog):
         self.setup_output_layout()
         self.setup_ratio_layout()
         self.setup_annotation_layout()
+        self.setup_options_layout()
         self.setup_table_layout()
         self.setup_status_layout()
         self.setup_button_layout()
@@ -166,6 +167,37 @@ class Base(QDialog):
         layout.addWidget(self.include_patches_checkbox)
         layout.addWidget(self.include_rectangles_checkbox)
         layout.addWidget(self.include_polygons_checkbox)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_options_layout(self):
+        """Setup the image options layout."""
+        group_box = QGroupBox("Image Options")
+        layout = QVBoxLayout()
+
+        # Create a button group for the image checkboxes
+        self.image_options_group = QButtonGroup(self)
+
+        self.all_images_radio = QRadioButton("All Images")
+        self.filtered_images_radio = QRadioButton("Filtered Images")
+
+        # Add the radio buttons to the button group
+        self.image_options_group.addButton(self.all_images_radio)
+        self.image_options_group.addButton(self.filtered_images_radio)
+
+        # Ensure only one radio button can be checked at a time
+        self.image_options_group.setExclusive(True)
+
+        # Set the default radio button
+        self.all_images_radio.setChecked(True)
+
+        # Connect radio button signals
+        self.all_images_radio.toggled.connect(self.update_image_selection)
+        self.filtered_images_radio.toggled.connect(self.update_image_selection)
+
+        layout.addWidget(self.all_images_radio)
+        layout.addWidget(self.filtered_images_radio)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -640,3 +672,9 @@ class Base(QDialog):
     
     def process_annotations(self):
         raise NotImplementedError("Method must be implemented in the subclass.")
+
+    def update_image_selection(self):
+        """
+        Update the table based on the selected image option.
+        """
+        self.update_summary_statistics()
