@@ -54,7 +54,7 @@ class Detect(Base):
         self.model_combo.setEditable(True)
         self.model_combo.addItems(['yolov3u.pt',
                                    'yolov3-sppu.pt',
-                                   'yolov3-tinyu.pt'
+                                   'yolov3-tinyu.pt',
                                    'yolov5nu.pt',
                                    'yolov5su.pt',
                                    'yolov5mu.pt',
