@@ -82,6 +82,7 @@ Enhance your CoralNet experience with these tools:
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
+- 🧱 Tiling: Tile existing Detection / Segmentation datasets using `yolo-tiling`
 
 ### TODO
 - 🔍 API: Get predictions from any CoralNet source model
