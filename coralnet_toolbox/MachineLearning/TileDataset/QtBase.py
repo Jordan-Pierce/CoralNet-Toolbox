@@ -272,11 +272,17 @@ class Base(QDialog):
         tile_layout.addWidget(self.slice_height)
         layout.addRow("Tile Size:", tile_layout)
 
-        # Image Extension
-        self.ext_combo = QComboBox()
-        self.ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
-        self.ext_combo.setEditable(True)
-        layout.addRow("Image Extension:", self.ext_combo)
+        # Input Image Extension
+        self.input_ext_combo = QComboBox()
+        self.input_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
+        self.input_ext_combo.setEditable(True) 
+        layout.addRow("Input Image Extension:", self.input_ext_combo)
+
+        # Output Image Extension
+        self.output_ext_combo = QComboBox()
+        self.output_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"]) 
+        self.output_ext_combo.setEditable(True)
+        layout.addRow("Output Image Extension:", self.output_ext_combo)
 
         # Include negative samples
         self.include_negatives_combo = QComboBox()
@@ -540,9 +546,14 @@ class Base(QDialog):
         if not self.validate_overlap_wh(overlap_wh):
             return
 
-        # Validate the ext parameter
-        ext = self.ext_combo.currentText()
-        if not self.validate_ext(ext):
+        # Validate the input extension parameter
+        input_ext = self.input_ext_combo.currentText()
+        if not self.validate_ext(input_ext):
+            return
+
+        # Validate the output extension parameter
+        output_ext = self.output_ext_combo.currentText()
+        if not self.validate_ext(output_ext):
             return
 
         # Validate the densify_factor parameter
@@ -592,7 +603,8 @@ class Base(QDialog):
         config = TileConfig(
             slice_wh=slice_wh,
             overlap_wh=overlap_wh,
-            ext=ext,
+            input_ext=input_ext,
+            output_ext=output_ext,
             annotation_type=self.annotation_type,
             densify_factor=densify_factor,
             smoothing_tolerance=smoothing_tolerance,
