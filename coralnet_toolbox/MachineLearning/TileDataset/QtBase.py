@@ -582,7 +582,7 @@ class Base(QDialog):
         self.progress_bar.show()
 
         def progress_callback(progress: TileProgress):
-            self.progress_bar.setWindowTitle(f"Tiling {progress.current_set.capitalize()} Set")
+            self.progress_bar.setWindowTitle(f"Processing {progress.current_set.capitalize()} Set")
             progress_percentage = int((progress.current_tile / progress.total_tiles) * 100)
             self.progress_bar.set_value(progress_percentage)
             self.progress_bar.update_progress()
