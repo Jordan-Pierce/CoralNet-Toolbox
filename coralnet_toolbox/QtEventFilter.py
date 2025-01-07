@@ -75,13 +75,13 @@ class GlobalEventFilter(QObject):
                     self.image_window.cycle_next_image()
                     return True
 
-            # Select all annotations on < key press
-            if event.key() == Qt.Key_Less:
+            # Select all annotations on < key press with Shift+Ctrl
+            if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
                 self.annotation_window.select_annotations()
                 return True
 
-            # Unselect all annotations on > key press
-            if event.key() == Qt.Key_Greater:
+            # Unselect all annotations on > key press with Shift+Ctrl
+            if event.key() == Qt.Key_Greater and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
                 self.annotation_window.unselect_annotations()
                 return True
 

@@ -135,8 +135,8 @@ The main window consists of several components:
 - **Ctrl + Mouse Wheel**: Adjust annotation size.
 - **Ctrl + Left/Right**: Cycle through annotations.
 - **Ctrl + Up/Down**: Cycle through images.
-- **Ctrl + <**: Select all annotations.
-- **Ctrl + >**: Unselect all annotations.
+- **Ctrl + Shift + <**: Select all annotations.
+- **Ctrl + Shift + >**: Unselect all annotations.
 - **Escape**: Exit the program.
 
 - **Machine Learning, SAM, and AutoDistill**: After a model is loaded

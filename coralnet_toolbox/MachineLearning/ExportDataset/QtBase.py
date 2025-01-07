@@ -46,7 +46,7 @@ class Base(QDialog):
         self.selected_labels = []
         self.selected_annotations = []
         self.updating_summary_statistics = False
-        
+
         self.output_dir = None
         self.dataset_name = None
         self.train_ratio = 0.7
@@ -77,7 +77,7 @@ class Base(QDialog):
         self.update_annotation_type_checkboxes()
         self.populate_class_filter_list()
         self.update_summary_statistics()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
@@ -300,7 +300,7 @@ class Base(QDialog):
         """
         # Get the label objects for the selected labels
         class_mapping = {}
-        
+
         for label in self.main_window.label_window.labels:
             if label.short_label_code in self.selected_labels:
                 class_mapping[label.short_label_code] = label.to_dict()
@@ -364,7 +364,7 @@ class Base(QDialog):
         # Filter annotations based on the selected image option
         if self.filtered_images_radio.isChecked():
             annotations = [a for a in annotations if a.image_path in self.image_window.filtered_image_paths]
-        
+
         return annotations
 
     def populate_class_filter_list(self):
@@ -529,6 +529,13 @@ class Base(QDialog):
 
         return True
 
+    def update_image_selection(self):
+        """
+        Update the table based on the selected image option.
+        """
+        self.selected_annotations = self.filter_annotations()
+        self.update_summary_statistics()
+
     def update_summary_statistics(self):
         """
         Update the summary statistics for the dataset creation.
@@ -592,7 +599,7 @@ class Base(QDialog):
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
 
         self.updating_summary_statistics = False
-        
+
     def is_ready(self):
         """Check if the dataset is ready to be created."""
         # Extract the input values, store them in the class variables
@@ -620,9 +627,9 @@ class Base(QDialog):
                                 "Input Error",
                                 "Train, Validation, and Test ratios must sum to 1.0")
             return False
-        
+
         return True
-    
+
     def accept(self):
         """
         Handle the OK button click event to create the dataset.
@@ -632,7 +639,7 @@ class Base(QDialog):
 
         # Create the output folder
         output_dir_path = os.path.join(self.output_dir, self.dataset_name)
-        
+
         # Check if the output directory exists
         if os.path.exists(output_dir_path):
             reply = QMessageBox.question(self,
@@ -670,16 +677,9 @@ class Base(QDialog):
                                 "Dataset Created",
                                 "Dataset has been successfully created.")
         super().accept()
-        
-    def create_dataset(self):
-        raise NotImplementedError("Method must be implemented in the subclass.")
-    
-    def process_annotations(self):
+
+    def create_dataset(self, output_dir_path):
         raise NotImplementedError("Method must be implemented in the subclass.")
 
-    def update_image_selection(self):
-        """
-        Update the table based on the selected image option.
-        """
-        self.selected_annotations = self.filter_annotations()
-        self.update_summary_statistics()
+    def process_annotations(self, annotations, split_dir, split):
+        raise NotImplementedError("Method must be implemented in the subclass.")
