@@ -163,6 +163,28 @@ class MarginInput(QGroupBox):
         else:
             widgets = self.margin_doubles if is_percentage else self.margin_spins
             return tuple(w.value() for w in widgets)
+        
+        
+class TileSizeInput(QGroupBox):
+    def __init__(self, parent=None):
+        super().__init__("Tile Size", parent)
+        layout = QFormLayout(self)
+
+        # Width input in pixels
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(0, 9999)
+        self.width_spin.setValue(640)
+
+        # Height input in pixels
+        self.height_spin = QSpinBox()
+        self.height_spin.setRange(0, 9999)
+        self.height_spin.setValue(480)
+
+        layout.addRow("Width:", self.width_spin)
+        layout.addRow("Height:", self.height_spin)
+
+    def get_value(self):
+        return (self.width_spin.value(), self.height_spin.value())
 
 
 class Base(QDialog):
@@ -229,7 +251,7 @@ class Base(QDialog):
 
         # Name of Destination Dataset
         self.dst_name_edit = QLineEdit()
-        layout.addRow("Name of Destination Dataset:", self.dst_name_edit)
+        layout.addRow("Destination Dataset Name:", self.dst_name_edit)
 
         # Destination Directory
         self.dst_edit = QLineEdit()
@@ -250,6 +272,10 @@ class Base(QDialog):
         group_box = QGroupBox("Configuration Parameters")
         layout = QFormLayout()
 
+        # Tile Size
+        self.tile_size_input = TileSizeInput()
+        layout.addRow(self.tile_size_input)
+        
         # Overlap
         self.overlap_input = OverlapInput()
         layout.addRow(self.overlap_input)
@@ -258,31 +284,19 @@ class Base(QDialog):
         self.margins_input = MarginInput()
         layout.addRow(self.margins_input)
 
-        # Tile Size
-        tile_layout = QHBoxLayout()
-        self.slice_width = QSpinBox()
-        self.slice_width.setRange(1, 9999)
-        self.slice_width.setValue(640)
-        self.slice_height = QSpinBox()
-        self.slice_height.setRange(1, 9999)
-        self.slice_height.setValue(480)
-        tile_layout.addWidget(QLabel("Width (px):"))
-        tile_layout.addWidget(self.slice_width)
-        tile_layout.addWidget(QLabel("Height (px):"))
-        tile_layout.addWidget(self.slice_height)
-        layout.addRow("Tile Size:", tile_layout)
-
-        # Input Image Extension
+        # Image Extensions
+        ext_layout = QHBoxLayout()
         self.input_ext_combo = QComboBox()
         self.input_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
-        self.input_ext_combo.setEditable(True) 
-        layout.addRow("Input Image Extension:", self.input_ext_combo)
-
-        # Output Image Extension
+        self.input_ext_combo.setEditable(True)
         self.output_ext_combo = QComboBox()
         self.output_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"]) 
         self.output_ext_combo.setEditable(True)
-        layout.addRow("Output Image Extension:", self.output_ext_combo)
+        ext_layout.addWidget(QLabel("Input Ext:"))
+        ext_layout.addWidget(self.input_ext_combo)
+        ext_layout.addWidget(QLabel("Output Ext:"))
+        ext_layout.addWidget(self.output_ext_combo)
+        layout.addRow("Image Extensions:", ext_layout)
 
         # Include negative samples
         self.include_negatives_combo = QComboBox()
@@ -290,45 +304,55 @@ class Base(QDialog):
         self.include_negatives_combo.setEditable(False)
         self.include_negatives_combo.setCurrentIndex(0)
         layout.addRow("Include Negative Samples:", self.include_negatives_combo)
-
-        # Densify Factor
-        self.densify_factor_spinbox = QDoubleSpinBox()
-        self.densify_factor_spinbox.setRange(0.0, 1.0)
-        self.densify_factor_spinbox.setSingleStep(0.1)
-        self.densify_factor_spinbox.setValue(0.5)
-        layout.addRow("Densify Factor:", self.densify_factor_spinbox)
-
-        # Smoothing Tolerance
-        self.smoothing_tolerance_spinbox = QDoubleSpinBox()
-        self.smoothing_tolerance_spinbox.setRange(0.0, 1.0)
-        self.smoothing_tolerance_spinbox.setSingleStep(0.1)
-        self.smoothing_tolerance_spinbox.setValue(0.1)
-        layout.addRow("Smoothing Tolerance:", self.smoothing_tolerance_spinbox)
-
+        
         # Train, Validation, and Test Ratios
+        ratios_layout = QHBoxLayout()
+        
         self.train_ratio_spinbox = QDoubleSpinBox()
         self.train_ratio_spinbox.setRange(0.0, 1.0)
         self.train_ratio_spinbox.setSingleStep(0.1)
         self.train_ratio_spinbox.setValue(0.7)
-        layout.addRow("Train Ratio:", self.train_ratio_spinbox)
-
+        
         self.valid_ratio_spinbox = QDoubleSpinBox()
         self.valid_ratio_spinbox.setRange(0.0, 1.0)
         self.valid_ratio_spinbox.setSingleStep(0.1)
         self.valid_ratio_spinbox.setValue(0.2)
-        layout.addRow("Validation Ratio:", self.valid_ratio_spinbox)
-
+        
         self.test_ratio_spinbox = QDoubleSpinBox()
         self.test_ratio_spinbox.setRange(0.0, 1.0)
         self.test_ratio_spinbox.setSingleStep(0.1)
         self.test_ratio_spinbox.setValue(0.1)
-        layout.addRow("Test Ratio:", self.test_ratio_spinbox)
+        
+        ratios_layout.addWidget(QLabel("Train:"))
+        ratios_layout.addWidget(self.train_ratio_spinbox)
+        ratios_layout.addWidget(QLabel("Valid:"))
+        ratios_layout.addWidget(self.valid_ratio_spinbox)
+        ratios_layout.addWidget(QLabel("Test:"))
+        ratios_layout.addWidget(self.test_ratio_spinbox)
+        
+        layout.addRow("Dataset Split Ratios:", ratios_layout)
 
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
         self.num_viz_sample_spinbox.setRange(1, 100)
         self.num_viz_sample_spinbox.setValue(25)
-        layout.addRow("Number of Visualization Samples:", self.num_viz_sample_spinbox)
+        layout.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
+
+        # Advanced options (densify factor and smoothing tolerance)
+        advanced_layout = QHBoxLayout()
+        self.densify_factor_spinbox = QDoubleSpinBox()
+        self.densify_factor_spinbox.setRange(0.0, 1.0)
+        self.densify_factor_spinbox.setSingleStep(0.1)
+        self.densify_factor_spinbox.setValue(0.5)
+        self.smoothing_tolerance_spinbox = QDoubleSpinBox()
+        self.smoothing_tolerance_spinbox.setRange(0.0, 1.0)
+        self.smoothing_tolerance_spinbox.setSingleStep(0.1)
+        self.smoothing_tolerance_spinbox.setValue(0.1)
+        advanced_layout.addWidget(QLabel("Densify:"))
+        advanced_layout.addWidget(self.densify_factor_spinbox)
+        advanced_layout.addWidget(QLabel("Smoothing:"))
+        advanced_layout.addWidget(self.smoothing_tolerance_spinbox)
+        layout.addRow("Advanced Parameters:", advanced_layout)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -537,7 +561,7 @@ class Base(QDialog):
             return
 
         # Validate the slice_wh parameter
-        slice_wh = (self.slice_width.value(), self.slice_height.value())
+        slice_wh = self.tile_size_input.get_value()
         if not self.validate_slice_wh(slice_wh):
             return
 
