@@ -13,12 +13,20 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSize
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
                              QGroupBox)
 
+from coralnet_toolbox.QtEventFilter import GlobalEventFilter
 from coralnet_toolbox.QtAnnotationWindow import AnnotationWindow
 from coralnet_toolbox.QtConfidenceWindow import ConfidenceWindow
 from coralnet_toolbox.QtImageWindow import ImageWindow
 from coralnet_toolbox.QtLabelWindow import LabelWindow
+
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
-from coralnet_toolbox.QtEventFilter import GlobalEventFilter
+
+from coralnet_toolbox.Tile import (
+    TileDetectDataset as DetectTileDatasetDialog,
+    TileSegmentDataset as SegmentTileDatasetDialog,
+    TileDetectInference as DetectTileInferenceDialog,
+    TileSegmentInference as SegmentTileInferenceDialog
+)
 
 from coralnet_toolbox.IO import (
     ImportImages,
@@ -52,8 +60,6 @@ from coralnet_toolbox.MachineLearning import (
     EvalClassify as ClassifyEvaluateModelDialog,
     EvalDetect as DetectEvaluateModelDialog,
     EvalSegment as SegmentEvaluateModelDialog,
-    TileDetect as DetectTileDatasetDialog,
-    TileSegment as SegmentTileDatasetDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
     Optimize as OptimizeModelDialog
 )
@@ -146,8 +152,16 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
 
-        # Create dialogs (Machine Learning)
+        # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
+        
+        # Create dialogs (Tile)
+        self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
+        self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
+        self.detect_tile_inference_dialog = DetectTileInferenceDialog(self)
+        self.segment_tile_inference_dialog = SegmentTileInferenceDialog(self)
+                
+        # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
         self.classify_export_dataset_dialog = ClassifyExportDatasetDialog(self)
@@ -160,8 +174,6 @@ class MainWindow(QMainWindow):
         self.classify_evaluate_model_dialog = ClassifyEvaluateModelDialog(self)
         self.detect_evaluate_model_dialog = DetectEvaluateModelDialog(self)
         self.segment_evaluate_model_dialog = SegmentEvaluateModelDialog(self)
-        self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
-        self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.optimize_model_dialog = OptimizeModelDialog(self)
         self.classify_deploy_model_dialog = ClassifyDeployModelDialog(self)
         self.detect_deploy_model_dialog = DetectDeployModelDialog(self)
@@ -322,6 +334,35 @@ class MainWindow(QMainWindow):
         self.annotation_sampling_action = QAction("Sample", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
+        
+        # Tile menu
+        self.tile_menu = self.menu_bar.addMenu("Tile")
+
+        # Tile Dataset submenu
+        self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
+        
+        # Tile Detect Dataset
+        self.detect_tile_dataset_action = QAction("Detect", self)
+        self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.detect_tile_dataset_action)
+
+        # Tile Segment Dataset
+        self.segment_tile_dataset_action = QAction("Segment", self)
+        self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
+        
+        # Tile Inference submenu
+        # self.tile_inference_menu = self.tile_menu.addMenu("Tile Inference")
+        
+        # # Tile Detect Inference
+        # self.detect_tile_inference_action = QAction("Detect", self)
+        # self.detect_tile_inference_action.triggered.connect(self.open_detect_tile_inference_dialog)
+        # self.tile_inference_menu.addAction(self.detect_tile_inference_action)
+        
+        # # Tile Segment Inference
+        # self.segment_tile_inference_action = QAction("Segment", self)
+        # self.segment_tile_inference_action.triggered.connect(self.open_segment_tile_inference_dialog)
+        # self.tile_inference_menu.addAction(self.segment_tile_inference_action)
 
         # CoralNet menu
         # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -356,19 +397,6 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
-
-        # Tile Dataset submenu
-        self.ml_tile_dataset_menu = self.ml_menu.addMenu("Tile Dataset")
-
-        # Tile Detection Dataset
-        self.ml_detect_tile_dataset_action = QAction("Detect", self)
-        self.ml_detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
-        self.ml_tile_dataset_menu.addAction(self.ml_detect_tile_dataset_action)
-
-        # Tile Segment Dataset
-        self.ml_segment_tile_dataset_action = QAction("Segment", self)
-        self.ml_segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
-        self.ml_tile_dataset_menu.addAction(self.ml_segment_tile_dataset_action)
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
@@ -1140,6 +1168,36 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_tile_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_detect_tile_inference_dialog(self):
+        
+        if not self.image_window.image_paths:
+            # Check if there are any images in the project
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+            self.detect_tile_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_segment_tile_inference_dialog(self):
+        
+        if not self.image_window.image_paths:
+            # Check if there are any images in the project
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+            self.segment_tile_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
