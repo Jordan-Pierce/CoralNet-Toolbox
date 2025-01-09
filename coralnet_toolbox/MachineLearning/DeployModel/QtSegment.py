@@ -113,7 +113,9 @@ class Segment(Base):
                 self.handle_missing_class_mapping()
             else:
                 self.add_labels_to_label_window()
-                self.check_and_display_class_names()
+            
+            # Display the class names
+            self.check_and_display_class_names()
             
             # Update the status bar
             self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")

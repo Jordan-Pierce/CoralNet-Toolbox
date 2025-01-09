@@ -307,9 +307,6 @@ class Base(QDialog):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.create_generic_labels()
-        else:
-            self.check_and_display_class_names()
-            QMessageBox.information(self, "Model Loaded", "Model loaded successfully.")
 
     def add_labels_to_label_window(self):
         """
@@ -329,6 +326,7 @@ class Base(QDialog):
             r = random.randint(0, 255)
             g = random.randint(0, 255)
             b = random.randint(0, 255)
+            # Create the label in the label window
             self.label_window.add_label_if_not_exists(
                 class_name,
                 class_name,
