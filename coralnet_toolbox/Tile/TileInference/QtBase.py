@@ -4,13 +4,16 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import shutil
-from yolo_tiler import YoloTiler, TileConfig, TileProgress
 
+from patched_yolo_infer import MakeCropsDetectThem
+from patched_yolo_infer import CombineDetections
+
+from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QDialogButtonBox, QGroupBox, QFormLayout, QLineEdit,
                              QDoubleSpinBox, QComboBox, QPushButton, QFileDialog, QSpinBox,
-                             QHBoxLayout)
+                             QHBoxLayout, QSlider, QWidget)
 
 from coralnet_toolbox.Tile.QtCommon import TileSizeInput, OverlapInput, MarginInput
 
@@ -26,7 +29,8 @@ from coralnet_toolbox.Icons import get_icon
 
 class Base(QDialog):
     """
-    Base class for tiling object detection, and instance segmentation datasets using yolo-tiling.
+    Base class for perfoming tiled inference on images using object detection, and instance segmentation 
+    datasets using YOLO-Patch-Based-Inference.
 
     :param main_window: MainWindow object
     :param parent: Parent widget
@@ -36,21 +40,37 @@ class Base(QDialog):
         self.main_window = main_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("Tile Dataset")
-        self.resize(600, 100)
+        self.setWindowTitle("Tile Inference")
+        self.resize(1000, 600)
 
         # Object Detection / Instance Segmentation
         self.annotation_type = None
+        self.loaded_model = None
 
         self.layout = QVBoxLayout(self)
-
-        # Setup the info layout
+        
+        # Info layout at top
         self.setup_info_layout()
-        # Setup the dataset layout
-        self.setup_dataset_layout()
-        # Setup the config layout
-        self.setup_config_layout()
-        # Setup the buttons layout
+
+        # Create horizontal layout for configs
+        config_layout = QHBoxLayout()
+        
+        # Left side - Tile Config
+        self.tile_config_widget = QWidget()
+        tile_layout = QVBoxLayout(self.tile_config_widget)
+        self.setup_tile_config_layout(tile_layout)
+        config_layout.addWidget(self.tile_config_widget)
+        
+        # Right side - Inference Config
+        self.inference_config_widget = QWidget()
+        inference_layout = QVBoxLayout(self.inference_config_widget)
+        self.setup_inference_config_layout(inference_layout)
+        config_layout.addWidget(self.inference_config_widget)
+        
+        # Add the horizontal config layout to main layout
+        self.layout.addLayout(config_layout)
+
+        # Buttons at bottom
         self.setup_buttons_layout()
 
     def setup_info_layout(self):
@@ -61,7 +81,7 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Tile an existing YOLO dataset into smaller non / overlapping images.")
+        info_label = QLabel("Tile an image into smaller non / overlapping images, performing inference on each.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -70,43 +90,11 @@ class Base(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-    def setup_dataset_layout(self):
+    def setup_tile_config_layout(self, parent_layout):
         """
-        Set up the dataset layout.
+        Set up the tile config parameters layout.
         """
-        group_box = QGroupBox("Dataset Parameters")
-        layout = QFormLayout()
-
-        # Source Directory
-        self.src_edit = QLineEdit()
-        self.src_button = QPushButton("Browse...")
-        self.src_button.clicked.connect(self.browse_src_dir)
-        src_layout = QHBoxLayout()
-        src_layout.addWidget(self.src_edit)
-        src_layout.addWidget(self.src_button)
-        layout.addRow("Source Directory:", src_layout)
-
-        # Name of Destination Dataset
-        self.dst_name_edit = QLineEdit()
-        layout.addRow("Destination Dataset Name:", self.dst_name_edit)
-
-        # Destination Directory
-        self.dst_edit = QLineEdit()
-        self.dst_button = QPushButton("Browse...")
-        self.dst_button.clicked.connect(self.browse_dst_dir)
-        dst_layout = QHBoxLayout()
-        dst_layout.addWidget(self.dst_edit)
-        dst_layout.addWidget(self.dst_button)
-        layout.addRow("Destination Directory:", dst_layout)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_config_layout(self):
-        """
-        Set up the TileConfig parameters layout.
-        """
-        group_box = QGroupBox("Configuration Parameters")
+        group_box = QGroupBox("Tile Configuration Parameters")
         layout = QFormLayout()
 
         # Tile Size
@@ -121,79 +109,97 @@ class Base(QDialog):
         self.margins_input = MarginInput()
         layout.addRow(self.margins_input)
 
-        # Image Extensions
-        ext_layout = QHBoxLayout()
-        self.input_ext_combo = QComboBox()
-        self.input_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
-        self.input_ext_combo.setEditable(True)
-        self.output_ext_combo = QComboBox()
-        self.output_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
-        self.output_ext_combo.setEditable(True)
-        ext_layout.addWidget(QLabel("Input Ext:"))
-        ext_layout.addWidget(self.input_ext_combo)
-        ext_layout.addWidget(QLabel("Output Ext:"))
-        ext_layout.addWidget(self.output_ext_combo)
-        layout.addRow("Image Extensions:", ext_layout)
+        group_box.setLayout(layout)
+        parent_layout.addWidget(group_box)      
+        
+    def setup_inference_config_layout(self, parent_layout):
+        """
+        Set up the inference configuration parameters layout.
+        """
+        group_box = QGroupBox("Inference Configuration Parameters")
+        layout = QFormLayout()
+        
+        # Uncertainty threshold controls
+        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
+        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
+        self.uncertainty_threshold_slider.setRange(0, 100)
+        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
+        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.uncertainty_threshold_slider.setTickInterval(10)
+        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
+        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
+        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
+        layout.addRow("", self.uncertainty_threshold_label)
+        
+        # IoU threshold controls
+        self.iou_thresh = self.main_window.get_iou_thresh()
+        self.iou_threshold_slider = QSlider(Qt.Horizontal)
+        self.iou_threshold_slider.setRange(0, 100)
+        self.iou_threshold_slider.setValue(int(self.iou_thresh * 100))
+        self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.iou_threshold_slider.setTickInterval(10)
+        self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
+        self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
+        layout.addRow("IoU Threshold", self.iou_threshold_slider)
+        layout.addRow("", self.iou_threshold_label)
+        
+        # Area threshold controls
+        min_val, max_val = self.main_window.get_area_thresh()
+        self.area_thresh_min = int(min_val * 100)
+        self.area_thresh_max = int(max_val * 100)
+        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
+        self.area_threshold_slider.setRange(0, 100)
+        self.area_threshold_slider.setValue((self.area_thresh_min, self.area_thresh_max))
+        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_slider.setTickInterval(10)
+        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        layout.addRow("Area Threshold", self.area_threshold_slider)
+        layout.addRow("", self.area_threshold_label)
+        
+        # NMS threshold
+        self.nms_threshold_input = QDoubleSpinBox()
+        self.nms_threshold_input.setRange(0.0, 1.0)
+        self.nms_threshold_input.setSingleStep(0.01)
+        self.nms_threshold_input.setValue(0.3)
+        layout.addRow("NMS Threshold:", self.nms_threshold_input)
 
-        # Include negative samples
-        self.include_negatives_combo = QComboBox()
-        self.include_negatives_combo.addItems(["True", "False"])
-        self.include_negatives_combo.setEditable(False)
-        self.include_negatives_combo.setCurrentIndex(0)
-        layout.addRow("Include Negative Samples:", self.include_negatives_combo)
+        # Match metric
+        self.match_metric_input = QComboBox()
+        self.match_metric_input.addItems(["IOU", "IOS"])
+        self.match_metric_input.setCurrentText("IOS")
+        layout.addRow("Match Metric:", self.match_metric_input)
 
-        # Train, Validation, and Test Ratios
-        ratios_layout = QHBoxLayout()
+        # Class agnostic NMS
+        self.class_agnostic_nms_input = QComboBox()
+        self.class_agnostic_nms_input.addItems(["True", "False"])
+        layout.addRow("Class Agnostic NMS:", self.class_agnostic_nms_input)
 
-        self.train_ratio_spinbox = QDoubleSpinBox()
-        self.train_ratio_spinbox.setRange(0.0, 1.0)
-        self.train_ratio_spinbox.setSingleStep(0.1)
-        self.train_ratio_spinbox.setValue(0.7)
+        # Intelligent sorter
+        self.intelligent_sorter_input = QComboBox()
+        self.intelligent_sorter_input.addItems(["True", "False"])
+        layout.addRow("Intelligent Sorter:", self.intelligent_sorter_input)
 
-        self.valid_ratio_spinbox = QDoubleSpinBox()
-        self.valid_ratio_spinbox.setRange(0.0, 1.0)
-        self.valid_ratio_spinbox.setSingleStep(0.1)
-        self.valid_ratio_spinbox.setValue(0.2)
+        # Sorter bins
+        self.sorter_bins_input = QSpinBox()
+        self.sorter_bins_input.setRange(1, 10)
+        self.sorter_bins_input.setValue(5)
+        layout.addRow("Sorter Bins:", self.sorter_bins_input)
 
-        self.test_ratio_spinbox = QDoubleSpinBox()
-        self.test_ratio_spinbox.setRange(0.0, 1.0)
-        self.test_ratio_spinbox.setSingleStep(0.1)
-        self.test_ratio_spinbox.setValue(0.1)
-
-        ratios_layout.addWidget(QLabel("Train:"))
-        ratios_layout.addWidget(self.train_ratio_spinbox)
-        ratios_layout.addWidget(QLabel("Valid:"))
-        ratios_layout.addWidget(self.valid_ratio_spinbox)
-        ratios_layout.addWidget(QLabel("Test:"))
-        ratios_layout.addWidget(self.test_ratio_spinbox)
-
-        layout.addRow("Dataset Split Ratios:", ratios_layout)
-
-        # Number of Visualization Samples
-        self.num_viz_sample_spinbox = QSpinBox()
-        self.num_viz_sample_spinbox.setRange(1, 100)
-        self.num_viz_sample_spinbox.setValue(25)
-        layout.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
-
-        # Advanced options (densify factor and smoothing tolerance)
-        advanced_layout = QHBoxLayout()
-        self.densify_factor_spinbox = QDoubleSpinBox()
-        self.densify_factor_spinbox.setRange(0.0, 1.0)
-        self.densify_factor_spinbox.setSingleStep(0.1)
-        self.densify_factor_spinbox.setValue(0.5)
-        self.smoothing_tolerance_spinbox = QDoubleSpinBox()
-        self.smoothing_tolerance_spinbox.setRange(0.0, 1.0)
-        self.smoothing_tolerance_spinbox.setSingleStep(0.1)
-        self.smoothing_tolerance_spinbox.setValue(0.1)
-        advanced_layout.addWidget(QLabel("Densify:"))
-        advanced_layout.addWidget(self.densify_factor_spinbox)
-        advanced_layout.addWidget(QLabel("Smoothing:"))
-        advanced_layout.addWidget(self.smoothing_tolerance_spinbox)
-        layout.addRow("Advanced Parameters:", advanced_layout)
+        # Memory optimization
+        self.memory_input = QComboBox()
+        self.memory_input.addItems(["True", "False"])
+        layout.addRow("Memory Optimization:", self.memory_input)
+        
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
+        parent_layout.addWidget(group_box)
+        
     def setup_buttons_layout(self):
         """
         Set up the layout with buttons.
@@ -204,36 +210,65 @@ class Base(QDialog):
         button_box.rejected.connect(self.reject)
 
         self.layout.addWidget(button_box)
+        
+    def initialize_uncertainty_threshold(self):
+        """Initialize the uncertainty threshold slider with the current value"""
+        current_value = self.main_window.get_uncertainty_thresh()
+        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
+        self.uncertainty_thresh = current_value
 
-    def browse_src_dir(self):
-        """
-        Browse and select a source directory.
-        """
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Source Directory")
-        if dir_path:
-            self.src_edit.setText(dir_path)
+    def initialize_iou_threshold(self):
+        """Initialize the IOU threshold slider with the current value"""
+        current_value = self.main_window.get_iou_thresh()
+        self.iou_threshold_slider.setValue(int(current_value * 100))
+        self.iou_thresh = current_value
+        
+    def initialize_area_threshold(self):
+        """Initialize the area threshold range slider"""
+        current_min, current_max = self.main_window.get_area_thresh()
+        self.area_threshold_slider.setValue((int(current_min * 100), int(current_max * 100)))
+        self.area_thresh_min = current_min
+        self.area_thresh_max = current_max
 
-    def browse_dst_dir(self):
-        """
-        Browse and select a destination directory.
-        """
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Destination Directory")
-        if dir_path:
-            self.dst_edit.setText(dir_path)
+    def update_uncertainty_label(self, value):
+        """Update uncertainty threshold and label"""
+        value = value / 100.0
+        self.uncertainty_thresh = value
+        self.main_window.update_uncertainty_thresh(value)
+        self.uncertainty_threshold_label.setText(f"{value:.2f}")
 
-    def validate_source_directory(self, src):
-        """
-        Validate the source directory to ensure it contains a 'train' sub-folder.
+    def update_iou_label(self, value):
+        """Update IoU threshold and label"""
+        value = value / 100.0
+        self.iou_thresh = value 
+        self.main_window.update_iou_thresh(value)
+        self.iou_threshold_label.setText(f"{value:.2f}")
 
-        :param src: Source directory path
-        :return: True if valid, False otherwise
+    def update_area_label(self):
+        """Handle changes to area threshold range slider"""
+        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        self.area_thresh_min = min_val / 100.0
+        self.area_thresh_max = max_val / 100.0
+        self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")      
+        
+    def is_sam_model_deployed(self):
         """
-        if not os.path.isdir(os.path.join(src, 'train')):
-            QMessageBox.warning(self,
-                                "Invalid Source Directory",
-                                "The source directory must contain a 'train' sub-folder.")
+        Check if the SAM model is deployed and update the checkbox state accordingly.
+
+        :return: Boolean indicating whether the SAM model is deployed
+        """
+        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
             return False
-        return True
+        
+        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+
+        if not self.sam_dialog.loaded_model:
+            self.use_sam_dropdown.setCurrentText("False")
+            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
+            return False
+
+        return True 
 
     def validate_slice_wh(self, slice_wh):
         """
@@ -257,71 +292,6 @@ class Base(QDialog):
         correct_type = all(isinstance(i, (int, float)) for i in overlap_wh)
         if not isinstance(overlap_wh, tuple) or len(overlap_wh) != 2 or not correct_type:
             QMessageBox.warning(self, "Invalid Overlap", "The overlap must be a tuple of two floats.")
-            return False
-        return True
-
-    def validate_ext(self, ext):
-        """
-        Validate the ext parameter to ensure it is a string and starts with a dot.
-
-        :param ext: Image file extension
-        :return: True if valid, False otherwise
-        """
-        if not isinstance(ext, str) or not ext.startswith('.'):
-            QMessageBox.warning(self,
-                                "Invalid Image Extension",
-                                "The image extension must be a string starting with a dot.")
-            return False
-        return True
-
-    def validate_densify_factor(self, densify_factor):
-        """
-        Validate the densify_factor parameter to ensure it is a float between 0 and 1.
-
-        :param densify_factor: Densify factor
-        :return: True if valid, False otherwise
-        """
-        if not isinstance(densify_factor, float) or not (0.0 <= densify_factor <= 1.0):
-            QMessageBox.warning(self,
-                                "Invalid Densify Factor",
-                                "The densify factor must be a float between 0 and 1.")
-            return False
-        return True
-
-    def validate_smoothing_tolerance(self, smoothing_tolerance):
-        """
-        Validate the smoothing_tolerance parameter to ensure it is a float between 0 and 1.
-
-        :param smoothing_tolerance: Smoothing tolerance
-        :return: True if valid, False otherwise
-        """
-        if not isinstance(smoothing_tolerance, float) or not (0.0 <= smoothing_tolerance <= 1.0):
-            QMessageBox.warning(self,
-                                "Invalid Smoothing Tolerance",
-                                "The smoothing tolerance must be a float between 0 and 1.")
-            return False
-        return True
-
-    def validate_ratios(self, train_ratio, valid_ratio, test_ratio):
-        """
-        Validate the train_ratio, valid_ratio, and test_ratio parameters to ensure they are
-        floats between 0 and 1 and sum to 1.
-
-        :param train_ratio: Train ratio
-        :param valid_ratio: Validation ratio
-        :param test_ratio: Test ratio
-        :return: True if valid, False otherwise
-        """
-        ratios = [train_ratio, valid_ratio, test_ratio]
-        if not all(isinstance(ratio, float) and 0.0 <= ratio <= 1.0 for ratio in ratios):
-            QMessageBox.warning(self,
-                                "Invalid Ratios",
-                                "The train, validation, and test ratios must be floats between 0 and 1.")
-            return False
-        if not abs(train_ratio + valid_ratio + test_ratio - 1.0) < 1e-9:
-            QMessageBox.warning(self,
-                                "Invalid Ratios",
-                                "The train, validation, and test ratios must sum to 1.")
             return False
         return True
 
@@ -352,151 +322,101 @@ class Base(QDialog):
                             "The margins must be a single integer, float, or a tuple of four integers/floats.")
         return False
 
-    def copy_class_mapping(self):
-        """Checks to see if a class_mapping.json file exists in the source directory
-        and copies it to the destination directory."""
-        src = self.src_edit.text()
-        dst = os.path.join(self.dst_edit.text(), self.dst_name_edit.text())
-
-        src_class_mapping = os.path.join(src, 'class_mapping.json')
-        dst_class_mapping = os.path.join(dst, 'class_mapping.json')
-
-        if os.path.exists(src_class_mapping):
-            shutil.copy(src_class_mapping, dst_class_mapping)
-
     def apply(self):
         """
-        Apply the selected batch inference options.
+        Apply the tile inference options.
         """
         # Pause the cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         try:
-            # Tile the dataset
-            self.tile_dataset()
+            # Tile inference
+            self.tile_inference()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to tile dataset: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to tile inference image: {str(e)}")
         finally:
             # Resume the cursor
             QApplication.restoreOverrideCursor()
 
         self.accept()
 
-    def tile_dataset(self):
+    def tile_inference(self):
         """
-        Use yolo-tiling to tile the dataset.
+        Use YOLO-Patch-Based-Inference.
         """
-        src = self.src_edit.text()
-        dst = os.path.join(self.dst_edit.text(), self.dst_name_edit.text())
+        # Extract the tile parameters
+        slice_wh = self.tile_size_input.get_value()
+        overlap_wh = self.overlap_input.get_value()
+        margins = self.margins_input.get_value()
 
+        # Extract the inference parameters
+        uncertainty_thresh=self.main_window.get_uncertainty_thresh()
+        iou_thresh=self.main_window.get_iou_thresh()
+        min_area_thresh=self.main_window.get_area_thresh_min()
+        max_area_thresh=self.main_window.get_area_thresh_max()
+                
+        nms_threshold = self.nms_threshold_input.value()
+        match_metric = self.match_metric_input.currentText()
+        class_agnostic_nms = self.class_agnostic_nms_input.currentText() == "True"
+        intelligent_sorter = self.intelligent_sorter_input.currentText() == "True"
+        sorter_bins = self.sorter_bins_input.value()
+        memory_optimize = self.memory_input.currentText() == "True"
+        
         # -------------------------
         # Perform validation checks
 
-        # Check the directory has a 'train' folder
-        if not self.validate_source_directory(src):
-            return
-
         # Validate the slice_wh parameter
-        slice_wh = self.tile_size_input.get_value()
         if not self.validate_slice_wh(slice_wh):
             return
+        else:
+            shape_x, shape_y = slice_wh
 
         # Validate the overlap_wh parameter
-        overlap_wh = self.overlap_input.get_value()
         if not self.validate_overlap_wh(overlap_wh):
             return
-
-        # Validate the input extension parameter
-        input_ext = self.input_ext_combo.currentText()
-        if not self.validate_ext(input_ext):
-            return
-
-        # Validate the output extension parameter
-        output_ext = self.output_ext_combo.currentText()
-        if not self.validate_ext(output_ext):
-            return
-
-        # Validate the densify_factor parameter
-        densify_factor = self.densify_factor_spinbox.value()
-        if not self.validate_densify_factor(densify_factor):
-            return
-
-        # Validate the smoothing_tolerance parameter
-        smoothing_tolerance = self.smoothing_tolerance_spinbox.value()
-        if not self.validate_smoothing_tolerance(smoothing_tolerance):
-            return
-
-        # Validate the train_ratio, valid_ratio, and test_ratio parameters
-        train_ratio = self.train_ratio_spinbox.value()
-        valid_ratio = self.valid_ratio_spinbox.value()
-        test_ratio = self.test_ratio_spinbox.value()
-        if not self.validate_ratios(train_ratio, valid_ratio, test_ratio):
-            return
+        else:
+            overlap_x, overlap_y = overlap_wh
 
         # Validate the margins parameter
-        margins = self.margins_input.get_value()
         if not self.validate_margins(margins):
             return
-
-        # Include negative samples
-        include_negatives = self.include_negatives_combo.currentText()
-        include_negatives = True if include_negatives == "True" else False
-
-        # Get the number of visualization samples
-        num_viz_samples = self.num_viz_sample_spinbox.value()
+        
+        # Validation checks        
+        if match_metric not in ["IOU", "IOS"]:
+            QMessageBox.warning(self, 
+                                "Invalid Parameter", 
+                                "Match metric must be either 'IOU' or 'IOS'.")
+            return False
+            
+        if not (1 <= sorter_bins <= 10):
+            QMessageBox.warning(self, 
+                                "Invalid Parameter",
+                                "Sorter bins must be between 1 and 10.")
+            return False
 
         # Pause the cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Create and show the progress bar
-        self.progress_bar = ProgressBar(self, title="Tiling Progress")
+        self.progress_bar = ProgressBar(self, title="Tile Inference Progress")
         self.progress_bar.show()
 
-        def progress_callback(progress: TileProgress):
-            self.progress_bar.setWindowTitle(f"Processing {progress.current_set.capitalize()} Set")
-            progress_percentage = int((progress.current_tile / progress.total_tiles) * 100)
+        def progress_callback(task, current, total):
+            self.progress_bar.setWindowTitle(f"{task}")
+            progress_percentage = int((current / total) * 100)
             self.progress_bar.set_value(progress_percentage)
             self.progress_bar.update_progress()
             if self.progress_bar.wasCanceled():
-                raise Exception("Tiling process was canceled by the user.")
-
-        config = TileConfig(
-            slice_wh=slice_wh,
-            overlap_wh=overlap_wh,
-            input_ext=input_ext,
-            output_ext=output_ext,
-            annotation_type=self.annotation_type,
-            densify_factor=densify_factor,
-            smoothing_tolerance=smoothing_tolerance,
-            train_ratio=train_ratio,
-            valid_ratio=valid_ratio,
-            test_ratio=test_ratio,
-            margins=margins,
-            include_negative_samples=include_negatives
-        )
-
-        tiler = YoloTiler(
-            source=src,
-            target=dst,
-            config=config,
-            callback=progress_callback,
-            num_viz_samples=num_viz_samples,  # Number of samples to visualize
-        )
-
-        # Copy the class_mapping.json file if it exists
-        self.copy_class_mapping()
+                raise Exception("Tile Inference was canceled by the user.")
 
         try:
-            tiler.run()
-            QMessageBox.information(self,
-                                    "Tiling Complete",
-                                    "The dataset has been tiled successfully.")
+            pass
 
         except Exception as e:
             QMessageBox.critical(self,
                                  "Error",
-                                 f"Failed to tile dataset: {str(e)}")
+                                 f"Failed to tile inference: {str(e)}")
         finally:
             self.progress_bar.stop_progress()
             self.progress_bar.close()

@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import shutil
+
 from yolo_tiler import YoloTiler, TileConfig, TileProgress
 
 from PyQt5.QtCore import Qt
@@ -48,8 +49,10 @@ class Base(QDialog):
         self.setup_info_layout()
         # Setup the dataset layout
         self.setup_dataset_layout()
-        # Setup the config layout
-        self.setup_config_layout()
+        # Setup the tile config layout
+        self.setup_tile_config_layout()
+        # Setup the dataset config layout
+        self.setup_dataset_config_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
 
@@ -102,11 +105,11 @@ class Base(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-    def setup_config_layout(self):
+    def setup_tile_config_layout(self):
         """
-        Set up the TileConfig parameters layout.
+        Set up the tile config parameters layout.
         """
-        group_box = QGroupBox("Configuration Parameters")
+        group_box = QGroupBox("Tile Configuration Parameters")
         layout = QFormLayout()
 
         # Tile Size
@@ -120,6 +123,16 @@ class Base(QDialog):
         # Margins
         self.margins_input = MarginInput()
         layout.addRow(self.margins_input)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_dataset_config_layout(self):
+        """
+        Set up the dataset configuration parameters layout.
+        """
+        group_box = QGroupBox("Dataset Configuration Parameters")
+        layout = QFormLayout()
 
         # Image Extensions
         ext_layout = QHBoxLayout()
@@ -171,7 +184,7 @@ class Base(QDialog):
 
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
-        self.num_viz_sample_spinbox.setRange(1, 100)
+        self.num_viz_sample_spinbox.setRange(1, 1000)
         self.num_viz_sample_spinbox.setValue(25)
         layout.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
 
@@ -190,7 +203,7 @@ class Base(QDialog):
         advanced_layout.addWidget(QLabel("Smoothing:"))
         advanced_layout.addWidget(self.smoothing_tolerance_spinbox)
         layout.addRow("Advanced Parameters:", advanced_layout)
-
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -366,7 +379,7 @@ class Base(QDialog):
 
     def apply(self):
         """
-        Apply the selected batch inference options.
+        Apply the tile dataset options.
         """
         # Pause the cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)

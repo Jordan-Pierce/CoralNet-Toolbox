@@ -101,7 +101,7 @@ class MainWindow(QMainWindow):
         self.rectangle_icon = get_icon("rectangle.png")
         self.polygon_icon = get_icon("polygon.png")
         self.sam_icon = get_icon("sam.png")
-        self.slicer_icon = get_icon("slicer.png")
+        self.tile_icon = get_icon("tile.png")
         self.turtle_icon = get_icon("turtle.png")
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
@@ -352,17 +352,17 @@ class MainWindow(QMainWindow):
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
         
         # Tile Inference submenu
-        # self.tile_inference_menu = self.tile_menu.addMenu("Tile Inference")
+        self.tile_inference_menu = self.tile_menu.addMenu("Tile Inference")
         
-        # # Tile Detect Inference
-        # self.detect_tile_inference_action = QAction("Detect", self)
-        # self.detect_tile_inference_action.triggered.connect(self.open_detect_tile_inference_dialog)
-        # self.tile_inference_menu.addAction(self.detect_tile_inference_action)
+        # Tile Detect Inference
+        self.detect_tile_inference_action = QAction("Detect", self)
+        self.detect_tile_inference_action.triggered.connect(self.open_detect_tile_inference_dialog)
+        self.tile_inference_menu.addAction(self.detect_tile_inference_action)
         
-        # # Tile Segment Inference
-        # self.segment_tile_inference_action = QAction("Segment", self)
-        # self.segment_tile_inference_action.triggered.connect(self.open_segment_tile_inference_dialog)
-        # self.tile_inference_menu.addAction(self.segment_tile_inference_action)
+        # Tile Segment Inference
+        self.segment_tile_inference_action = QAction("Segment", self)
+        self.segment_tile_inference_action.triggered.connect(self.open_segment_tile_inference_dialog)
+        self.tile_inference_menu.addAction(self.segment_tile_inference_action)
 
         # CoralNet menu
         # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -563,10 +563,10 @@ class MainWindow(QMainWindow):
 
         self.toolbar.addSeparator()
 
-        self.slicer_tool_action = QAction(self.slicer_icon, "Slicer", self)
-        self.slicer_tool_action.setCheckable(False)
-        self.slicer_tool_action.triggered.connect(self.toggle_tool)
-        # self.toolbar.addAction(self.slicer_tool_action)  TODO
+        self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
+        self.tile_inference_tool_action.setCheckable(False)
+        self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.tile_inference_tool_action)  # TODO
 
         self.toolbar.addSeparator()
 
@@ -1180,6 +1180,8 @@ class MainWindow(QMainWindow):
                                 "Please load images into the project before sampling annotations.")
             return
         
+        # TODO: Check if there is an object detection model loaded
+        
         try:
             self.untoggle_all_tools()
             self.detect_tile_inference_dialog.exec_()
@@ -1194,6 +1196,8 @@ class MainWindow(QMainWindow):
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
             return
+        
+        # TODO: Check if there is a segmentation model loaded
         
         try:
             self.untoggle_all_tools()
