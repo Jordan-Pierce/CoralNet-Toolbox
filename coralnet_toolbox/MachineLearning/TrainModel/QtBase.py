@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
 
 from torch.cuda import empty_cache
-from ultralytics import YOLO
+from ultralytics import YOLO, RTDETR
 
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
@@ -78,7 +78,12 @@ class TrainModelWorker(QThread):
                 build.YOLODataset = WeightedInstanceDataset
 
             # Load the model, train, and save the best weights
-            self.model = YOLO(model_path)
+            if 'yolo' in model_path.lower():
+                self.model = YOLO(model_path)
+            else:
+                self.model = RTDETR(model_path)
+                
+            # Train the model
             self.model.train(**self.params, device=self.device)
 
             # Revert to the original dataset class without weighted sampling

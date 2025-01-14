@@ -89,4 +89,6 @@ class Detect(Base):
                                    'yolo11s.pt',
                                    'yolo11m.pt',
                                    'yolo11l.pt',
-                                   'yolo11x.pt'])
+                                   'yolo11x.pt',
+                                   'rtdetr-l.pt',
+                                   'rtdetr-x.pt'])
