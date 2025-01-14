@@ -471,7 +471,7 @@ class Base(QDialog):
             source=src,
             target=dst,
             config=config,
-            callback=progress_callback,
+            progress_callback=progress_callback,
             num_viz_samples=num_viz_samples,  # Number of samples to visualize
         )
 
