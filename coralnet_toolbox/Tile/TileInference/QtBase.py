@@ -45,7 +45,20 @@ class Base(QDialog):
 
         # Object Detection / Instance Segmentation
         self.annotation_type = None
-        self.loaded_model = None
+        
+        self.shape_x = None
+        self.shape_y = None
+        self.overlap_x = None
+        self.overlap_y = None
+        
+        self.iou_threshold = None
+        self.conf_threshold = None
+        self.nms_threshold = None
+        self.match_metric = None
+        self.class_agnostic_nms = None
+        self.intelligent_sorter = None
+        self.sorter_bins = None
+        self.memory_optimize = None
 
         self.layout = QVBoxLayout(self)
         
@@ -119,43 +132,19 @@ class Base(QDialog):
         group_box = QGroupBox("Inference Configuration Parameters")
         layout = QFormLayout()
         
-        # Uncertainty threshold controls
-        self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
-        self.uncertainty_threshold_slider.setRange(0, 100)
-        self.uncertainty_threshold_slider.setValue(int(self.main_window.get_uncertainty_thresh() * 100))
-        self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_threshold_slider.setTickInterval(10)
-        self.uncertainty_threshold_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
-        layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
-        layout.addRow("", self.uncertainty_threshold_label)
+        # IOU threshold
+        self.iou_threshold_input = QDoubleSpinBox()
+        self.iou_threshold_input.setRange(0.0, 1.0)
+        self.iou_threshold_input.setSingleStep(0.01)
+        self.iou_threshold_input.setValue(0.5)
+        layout.addRow("IOU Threshold:", self.iou_threshold_input)
         
-        # IoU threshold controls
-        self.iou_thresh = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider = QSlider(Qt.Horizontal)
-        self.iou_threshold_slider.setRange(0, 100)
-        self.iou_threshold_slider.setValue(int(self.iou_thresh * 100))
-        self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.iou_threshold_slider.setTickInterval(10)
-        self.iou_threshold_slider.valueChanged.connect(self.update_iou_label)
-        self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
-        layout.addRow("IoU Threshold", self.iou_threshold_slider)
-        layout.addRow("", self.iou_threshold_label)
-        
-        # Area threshold controls
-        min_val, max_val = self.main_window.get_area_thresh()
-        self.area_thresh_min = int(min_val * 100)
-        self.area_thresh_max = int(max_val * 100)
-        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
-        self.area_threshold_slider.setRange(0, 100)
-        self.area_threshold_slider.setValue((self.area_thresh_min, self.area_thresh_max))
-        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_slider.setTickInterval(10)
-        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
-        self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        layout.addRow("Area Threshold", self.area_threshold_slider)
-        layout.addRow("", self.area_threshold_label)
+        # Confidence threshold
+        self.conf_threshold_input = QDoubleSpinBox()
+        self.conf_threshold_input.setRange(0.0, 1.0)
+        self.conf_threshold_input.setSingleStep(0.01)
+        self.conf_threshold_input.setValue(0.5)
+        layout.addRow("Confidence Threshold:", self.conf_threshold_input)
         
         # NMS threshold
         self.nms_threshold_input = QDoubleSpinBox()
@@ -195,7 +184,8 @@ class Base(QDialog):
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
+        label = QLabel("<b>Use SAM for creating Polygons:</b>")
+        layout.addRow(label, self.use_sam_dropdown)
 
         group_box.setLayout(layout)
         parent_layout.addWidget(group_box)
@@ -209,48 +199,7 @@ class Base(QDialog):
         button_box.accepted.connect(self.apply)
         button_box.rejected.connect(self.reject)
 
-        self.layout.addWidget(button_box)
-        
-    def initialize_uncertainty_threshold(self):
-        """Initialize the uncertainty threshold slider with the current value"""
-        current_value = self.main_window.get_uncertainty_thresh()
-        self.uncertainty_threshold_slider.setValue(int(current_value * 100))
-        self.uncertainty_thresh = current_value
-
-    def initialize_iou_threshold(self):
-        """Initialize the IOU threshold slider with the current value"""
-        current_value = self.main_window.get_iou_thresh()
-        self.iou_threshold_slider.setValue(int(current_value * 100))
-        self.iou_thresh = current_value
-        
-    def initialize_area_threshold(self):
-        """Initialize the area threshold range slider"""
-        current_min, current_max = self.main_window.get_area_thresh()
-        self.area_threshold_slider.setValue((int(current_min * 100), int(current_max * 100)))
-        self.area_thresh_min = current_min
-        self.area_thresh_max = current_max
-
-    def update_uncertainty_label(self, value):
-        """Update uncertainty threshold and label"""
-        value = value / 100.0
-        self.uncertainty_thresh = value
-        self.main_window.update_uncertainty_thresh(value)
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
-
-    def update_iou_label(self, value):
-        """Update IoU threshold and label"""
-        value = value / 100.0
-        self.iou_thresh = value 
-        self.main_window.update_iou_thresh(value)
-        self.iou_threshold_label.setText(f"{value:.2f}")
-
-    def update_area_label(self):
-        """Handle changes to area threshold range slider"""
-        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")      
+        self.layout.addWidget(button_box)     
         
     def is_sam_model_deployed(self):
         """
@@ -321,6 +270,10 @@ class Base(QDialog):
                             "Invalid Margins",
                             "The margins must be a single integer, float, or a tuple of four integers/floats.")
         return False
+    
+    def get_current_image(self):
+        """Get the current image from the annotation window."""
+        pass
 
     def apply(self):
         """
@@ -331,7 +284,7 @@ class Base(QDialog):
 
         try:
             # Tile inference
-            self.tile_inference()
+            self.setup_tile_inference()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to tile inference image: {str(e)}")
@@ -341,60 +294,53 @@ class Base(QDialog):
 
         self.accept()
 
-    def tile_inference(self):
+    def setup_tile_inference(self):
         """
         Use YOLO-Patch-Based-Inference.
         """
-        # Extract the tile parameters
+        # Tile parameters
         slice_wh = self.tile_size_input.get_value()
-        overlap_wh = self.overlap_input.get_value()
+        overlap_wh = self.overlap_input.get_value(slice_wh[0], slice_wh[1])
         margins = self.margins_input.get_value()
-
-        # Extract the inference parameters
-        uncertainty_thresh=self.main_window.get_uncertainty_thresh()
-        iou_thresh=self.main_window.get_iou_thresh()
-        min_area_thresh=self.main_window.get_area_thresh_min()
-        max_area_thresh=self.main_window.get_area_thresh_max()
-                
-        nms_threshold = self.nms_threshold_input.value()
-        match_metric = self.match_metric_input.currentText()
-        class_agnostic_nms = self.class_agnostic_nms_input.currentText() == "True"
-        intelligent_sorter = self.intelligent_sorter_input.currentText() == "True"
-        sorter_bins = self.sorter_bins_input.value()
-        memory_optimize = self.memory_input.currentText() == "True"
         
-        # -------------------------
-        # Perform validation checks
+        # Inference parameters 
+        self.iou_threshold = self.iou_threshold_input.value()
+        self.conf_threshold = self.conf_threshold_input.value()
+        self.nms_threshold = self.nms_threshold_input.value()
+        self.match_metric = self.match_metric_input.currentText()
+        self.class_agnostic_nms = self.class_agnostic_nms_input.currentText() == "True"
+        self.intelligent_sorter = self.intelligent_sorter_input.currentText() == "True"
+        self.sorter_bins = self.sorter_bins_input.value()
+        self.memory_optimize = self.memory_input.currentText() == "True"
 
-        # Validate the slice_wh parameter
+        # Perform all validation checks
         if not self.validate_slice_wh(slice_wh):
             return
-        else:
-            shape_x, shape_y = slice_wh
-
-        # Validate the overlap_wh parameter
+            
         if not self.validate_overlap_wh(overlap_wh):
             return
-        else:
-            overlap_x, overlap_y = overlap_wh
-
-        # Validate the margins parameter
+            
         if not self.validate_margins(margins):
             return
-        
-        # Validation checks        
-        if match_metric not in ["IOU", "IOS"]:
+
+        if self.match_metric not in ["IOU", "IOS"]:
             QMessageBox.warning(self, 
                                 "Invalid Parameter", 
                                 "Match metric must be either 'IOU' or 'IOS'.")
-            return False
-            
-        if not (1 <= sorter_bins <= 10):
+            return
+
+        if not (1 <= self.sorter_bins <= 10):
             QMessageBox.warning(self, 
                                 "Invalid Parameter",
                                 "Sorter bins must be between 1 and 10.")
-            return False
+            return
 
+        # Extract components after validation
+        self.shape_x, self.shape_y = slice_wh
+        self.overlap_x, self.overlap_y = overlap_wh
+        
+    def apply_tile_inference(self):
+        """ """
         # Pause the cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -411,7 +357,30 @@ class Base(QDialog):
                 raise Exception("Tile Inference was canceled by the user.")
 
         try:
-            pass
+            # Perform tile cropping
+            element_crops = MakeCropsDetectThem(
+                image=img,
+                model=self.deploy_model_dialog.loaded_model,
+                segment=True if self.annotation_type == "instance_segmentation" else False,
+                show_crops=False,
+                shape_x=self.shape_x,
+                shape_y=self.shape_y,
+                overlap_x=self.overlap_x,
+                overlap_y=self.overlap_y,
+                conf=self.conf_threshold,
+                iou=self.iou_threshold,
+                show_processing_status=True,
+                progress_callback=progress_callback,
+            )
+
+            # Perform inference on cropped images
+            result = CombineDetections(element_crops, 
+                                       nms_threshold=self.nms_threshold, 
+                                       sorter_bins=self.sorter_bins,
+                                       match_metric=self.match_metric,
+                                       class_agnostic_nms=self.class_agnostic_nms,
+                                       intelligent_sorter=self.intelligent_sorter,
+                                       memory_optimize=self.memory_optimize)
 
         except Exception as e:
             QMessageBox.critical(self,

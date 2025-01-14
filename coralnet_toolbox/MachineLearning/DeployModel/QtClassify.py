@@ -74,7 +74,13 @@ class Classify(Base):
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             self.loaded_model = YOLO(self.model_path, task='classify')
-            self.loaded_model(np.zeros((224, 224, 3), dtype=np.uint8))
+            
+            try:
+                imgsz = self.loaded_model.__dict__['overrides']['imgsz']
+            except:
+                imgsz = 640
+                
+            self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8))
             self.class_names = list(self.loaded_model.names.values())
 
             if not self.class_mapping:

@@ -57,11 +57,14 @@ class OverlapInput(QGroupBox):
         self.height_spin.setVisible(not is_percentage)
         self.height_double.setVisible(is_percentage)
 
-    def get_value(self):
+    def get_value(self, tile_width, tile_height):
         is_percentage = self.value_type.currentIndex() == 1
         if is_percentage:
             return self.width_double.value(), self.height_double.value()
-        return self.width_spin.value(), self.height_spin.value()
+        else:
+            width_percentage = (self.width_spin.value() / tile_width) * 100
+            height_percentage = (self.height_spin.value() / tile_height) * 100
+            return width_percentage, height_percentage
 
 
 class MarginInput(QGroupBox):

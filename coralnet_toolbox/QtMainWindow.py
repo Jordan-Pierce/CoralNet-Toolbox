@@ -1180,7 +1180,12 @@ class MainWindow(QMainWindow):
                                 "Please load images into the project before sampling annotations.")
             return
         
-        # TODO: Check if there is an object detection model loaded
+        # TODO
+        # if not self.detect_deploy_model_dialog.loaded_model:
+        #     QMessageBox.warning(self,
+        #                         "Tile Inference",
+        #                         "Please deploy a model before running batch inference.")
+        #     return
         
         try:
             self.untoggle_all_tools()
@@ -1197,7 +1202,12 @@ class MainWindow(QMainWindow):
                                 "Please load images into the project before sampling annotations.")
             return
         
-        # TODO: Check if there is a segmentation model loaded
+        # TODO
+        # if not self.segment_deploy_model_dialog.loaded_model:
+        #     QMessageBox.warning(self,
+        #                         "Tile Inference",
+        #                         "Please deploy a model before running batch inference.")
+        #     return
         
         try:
             self.untoggle_all_tools()

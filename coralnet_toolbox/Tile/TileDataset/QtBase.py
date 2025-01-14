@@ -403,61 +403,39 @@ class Base(QDialog):
         src = self.src_edit.text()
         dst = os.path.join(self.dst_edit.text(), self.dst_name_edit.text())
 
-        # -------------------------
-        # Perform validation checks
-
-        # Check the directory has a 'train' folder
-        if not self.validate_source_directory(src):
-            return
-
-        # Validate the slice_wh parameter
+        # Extract values
+        margins = self.margins_input.get_value()
         slice_wh = self.tile_size_input.get_value()
-        if not self.validate_slice_wh(slice_wh):
-            return
-
-        # Validate the overlap_wh parameter
-        overlap_wh = self.overlap_input.get_value()
-        if not self.validate_overlap_wh(overlap_wh):
-            return
-
-        # Validate the input extension parameter
+        overlap_wh = self.overlap_input.get_value(slice_wh[0], slice_wh[1])
+        
         input_ext = self.input_ext_combo.currentText()
-        if not self.validate_ext(input_ext):
-            return
-
-        # Validate the output extension parameter
         output_ext = self.output_ext_combo.currentText()
-        if not self.validate_ext(output_ext):
-            return
-
-        # Validate the densify_factor parameter
         densify_factor = self.densify_factor_spinbox.value()
-        if not self.validate_densify_factor(densify_factor):
-            return
-
-        # Validate the smoothing_tolerance parameter
         smoothing_tolerance = self.smoothing_tolerance_spinbox.value()
-        if not self.validate_smoothing_tolerance(smoothing_tolerance):
-            return
-
-        # Validate the train_ratio, valid_ratio, and test_ratio parameters
         train_ratio = self.train_ratio_spinbox.value()
         valid_ratio = self.valid_ratio_spinbox.value()
         test_ratio = self.test_ratio_spinbox.value()
-        if not self.validate_ratios(train_ratio, valid_ratio, test_ratio):
-            return
-
-        # Validate the margins parameter
-        margins = self.margins_input.get_value()
-        if not self.validate_margins(margins):
-            return
-
-        # Include negative samples
         include_negatives = self.include_negatives_combo.currentText()
         include_negatives = True if include_negatives == "True" else False
-
-        # Get the number of visualization samples
         num_viz_samples = self.num_viz_sample_spinbox.value()
+
+        # Perform all validation checks
+        validation_checks = [
+            (self.validate_source_directory(src), "Source directory validation failed"),
+            (self.validate_slice_wh(slice_wh), "Slice width/height validation failed"),
+            (self.validate_overlap_wh(overlap_wh), "Overlap width/height validation failed"),
+            (self.validate_ext(input_ext), "Input extension validation failed"),
+            (self.validate_ext(output_ext), "Output extension validation failed"),
+            (self.validate_densify_factor(densify_factor), "Densify factor validation failed"),
+            (self.validate_smoothing_tolerance(smoothing_tolerance), "Smoothing tolerance validation failed"),
+            (self.validate_ratios(train_ratio, valid_ratio, test_ratio), "Dataset split ratios validation failed"),
+            (self.validate_margins(margins), "Margins validation failed")
+        ]
+
+        # Check if any validation failed
+        for is_valid, error_msg in validation_checks:
+            if not is_valid:
+                return
 
         # Pause the cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
