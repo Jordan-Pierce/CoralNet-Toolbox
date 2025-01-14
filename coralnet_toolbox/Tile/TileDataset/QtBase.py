@@ -445,10 +445,18 @@ class Base(QDialog):
         self.progress_bar.show()
 
         def progress_callback(progress: TileProgress):
-            self.progress_bar.setWindowTitle(f"Processing {progress.current_set.capitalize()} Set")
-            progress_percentage = int((progress.current_tile / progress.total_tiles) * 100)
+            title = f"Processing {progress.current_set_name.capitalize()} Set"
+            
+            if progress.total_tiles:
+                progress_percentage = int((progress.current_tile_idx / progress.total_tiles) * 100)
+                title += f": {int(progress.current_image_idx/progress.total_images*100)}%"
+            else:
+                progress_percentage = int((progress.current_image_idx / progress.total_images) * 100)
+            
+            self.progress_bar.setWindowTitle(title)
             self.progress_bar.set_value(progress_percentage)
             self.progress_bar.update_progress()
+            
             if self.progress_bar.wasCanceled():
                 raise Exception("Tiling process was canceled by the user.")
 
