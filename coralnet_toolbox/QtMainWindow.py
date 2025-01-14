@@ -154,12 +154,6 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
-        
-        # Create dialogs (Tile)
-        self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
-        self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
-        self.detect_tile_inference_dialog = DetectTileInferenceDialog(self)
-        self.segment_tile_inference_dialog = SegmentTileInferenceDialog(self)
                 
         # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
@@ -181,11 +175,21 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
+        
+        # Create dialogs (SAM)
         self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
         self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
+        
+        # Create dialogs (AutoDistill)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
+        
+        # Create dialogs (Tile)
+        self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
+        self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
+        self.detect_tile_inference_dialog = DetectTileInferenceDialog(self)
+        self.segment_tile_inference_dialog = SegmentTileInferenceDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
