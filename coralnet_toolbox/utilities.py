@@ -78,6 +78,46 @@ def attempt_download_asset(app, asset_name, asset_url):
     progress_dialog.close()
 
 
+# TODO deal with optimized model types
+def check_model_architecture(weights_file):
+    """
+    Determine the model architecture type and task from weights file.
+
+    Args:
+        weights_file (str): Path to model weights (.pt or .pth)
+
+    Returns:
+        tuple: (architecture_type, task_type) where both are strings.
+               Returns ("", "") if architecture cannot be determined.
+    """
+    try:
+        model = torch.load(weights_file)
+        if 'model' not in model:
+            return "", ""
+
+        decoder = model["model"].model[-1]
+        decoder_name = decoder.__class__.__name__
+
+        if decoder_name == "RTDETRDecoder":
+            return "rtdetr", "detect"
+
+        if not any(task in decoder_name for task in ["Detect", "Segment", "Classify"]):
+            return "", ""
+
+        task_map = {
+            "Detect": "detect",
+            "Segment": "segment",
+            "Classify": "classify"
+        }
+
+        for key, task in task_map.items():
+            if key in decoder_name:
+                return "yolo", task
+
+    except Exception:
+        return "", ""
+
+
 def preprocess_image(image):
     """
     Ensure the image has correct dimensions (h, w, 3).
