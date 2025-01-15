@@ -319,11 +319,11 @@ class LabelWindow(QWidget):
         return label
 
     def set_active_label(self, selected_label):
-
+        
         if self.active_label and self.active_label != selected_label:
             # Deselect the active label
             self.deselect_active_label()
-
+    
         # Make the selected label active
         self.active_label = selected_label
         self.active_label.select()
@@ -331,14 +331,14 @@ class LabelWindow(QWidget):
 
         # Update the transparency slider with the new label's transparency
         self.transparencyChanged.emit(self.active_label.transparency)
+        # Update annotations (locked, transparency)
+        self.update_annotations_with_label(selected_label)
 
         # Only enable edit/delete buttons if not locked
         if not self.label_locked:
             self.delete_label_button.setEnabled(self.active_label is not None)
             self.edit_label_button.setEnabled(self.active_label is not None)
-
-        # Update annotations with the new label
-        self.update_annotations_with_label(selected_label)
+ 
         self.scroll_area.ensureWidgetVisible(self.active_label)
 
     def set_label_transparency(self, transparency):
@@ -359,6 +359,7 @@ class LabelWindow(QWidget):
     def set_all_labels_transparency(self, transparency):
         for label in self.labels:
             label.update_transparency(transparency)
+
         for annotation in self.annotation_window.annotations_dict.values():
             annotation.update_transparency(transparency)
 
@@ -374,10 +375,8 @@ class LabelWindow(QWidget):
             self.delete_label(self.active_label)
 
     def update_annotations_with_label(self, label):
-        for annotation in self.annotation_window.annotations_dict.values():
+        for annotation in self.annotation_window.selected_annotations:
             if annotation.label.id == label.id:
-                # Update the annotation label
-                annotation.update_label(label)
                 # Get the transparency of the label
                 transparency = self.get_label_transparency(label.id)
                 # Update the annotation transparency
