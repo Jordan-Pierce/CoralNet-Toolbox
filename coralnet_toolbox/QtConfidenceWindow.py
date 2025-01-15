@@ -79,7 +79,6 @@ class ConfidenceWindow(QWidget):
 
         self.graphics_view = None
         self.scene = None
-        self.downscale_factor = 1.0
 
         self.bar_chart_widget = None
         self.bar_chart_layout = None
@@ -140,8 +139,8 @@ class ConfidenceWindow(QWidget):
             self.clear_display()  # Clear the current display before updating
             self.update_annotation(annotation)
             if self.cropped_image:  # Ensure cropped_image is not None
-                cropped_image = annotation.get_cropped_image(self.downscale_factor)
-                cropped_image_graphic = annotation.get_cropped_image_graphic() # TODO Fix top-left for patch
+                cropped_image = annotation.get_cropped_image()
+                cropped_image_graphic = annotation.get_cropped_image_graphic()
                 # Add the image
                 self.scene.addPixmap(cropped_image)
                 # Add the annotation graphic
