@@ -27,6 +27,8 @@ from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificat
 
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
+from coralnet_toolbox.Icons import get_icon
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -82,7 +84,7 @@ class TrainModelWorker(QThread):
                 self.model = YOLO(model_path)
             else:
                 self.model = RTDETR(model_path)
-                
+
             # Train the model
             self.model.train(**self.params, device=self.device)
 
@@ -166,6 +168,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Train Model")
         self.resize(600, 800)
 

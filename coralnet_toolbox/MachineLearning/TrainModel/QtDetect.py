@@ -15,10 +15,10 @@ from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base
 
 class Detect(Base):
     def __init__(self, main_window, parent=None):
-        self.task = "detect"
-
         super().__init__(main_window, parent)
         self.setWindowTitle("Train Detection Model")
+
+        self.task = "detect"
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""

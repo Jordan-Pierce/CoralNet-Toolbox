@@ -14,10 +14,10 @@ from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, Q
 
 class Classify(Base):
     def __init__(self, main_window, parent=None):
-        self.task = "classify"
-
         super().__init__(main_window, parent)
         self.setWindowTitle("Train Classification Model")
+
+        self.task = "classify"
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
