@@ -1,7 +1,9 @@
 import json
 import warnings
 
-from PyQt5.QtWidgets import QFileDialog, QMessageBox
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -43,31 +45,33 @@ class ImportTagLabLabels:
                                         "Invalid JSON Format",
                                         "The selected JSON file does not contain 'Labels' or 'labels' key.")
                     return
+                                
+                # Make cursor busy
+                QApplication.setOverrideCursor(Qt.WaitCursor)
                 
                 # Create a progress bar
                 total_labels = len(data['labels'])
-                progress_bar = ProgressBar("Importing TagLab Labels", self.label_window)
+                progress_bar = ProgressBar(self.label_window, "Importing TagLab Labels")
                 progress_bar.show()
                 progress_bar.start_progress(total_labels)
 
-                for label_id, label_info in data['labels'].items():
-                    short_label_code = label_info['name'].strip()
-                    long_label_code = label_info['name'].strip()
-                    color = label_info['fill']
+                for label_info in data['labels']:
+                    try:
+                        short_label_code = label_info['name'].strip()
+                        long_label_code = label_info['name'].strip()
+                        color = label_info['fill']
+                        
+                        # Create a QtColor object from the color string
+                        color = QColor(color[0], color[1], color[2])
 
-                    label = Label(short_label_code, long_label_code, color, label_id)
-                    if not self.label_window.label_exists(label.short_label_code, label.long_label_code):
-                        self.label_window.add_label(label.short_label_code,
-                                                    label.long_label_code,
-                                                    label.color,
-                                                    label.id)
+                        # Add label if it does not exist
+                        self.label_window.add_label_if_not_exists(short_label_code, long_label_code, color)
+                        
+                    except Exception as e:
+                        print(f"Warning: Could not import label {label_info['name']}: {str(e)}")
                         
                     # Update the progress bar
                     progress_bar.update_progress()
-                    
-                # Close the progress bar
-                progress_bar.close()
-                progress_bar.stop_progress()
 
                 QMessageBox.information(self.label_window,
                                         "Labels Imported",
@@ -77,3 +81,9 @@ class ImportTagLabLabels:
                 QMessageBox.warning(self.label_window,
                                     "Error Importing Labels",
                                     f"An error occurred while importing TagLab labels: {str(e)}")
+                
+            finally:
+                # Stop the progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
+                QApplication.restoreOverrideCursor()

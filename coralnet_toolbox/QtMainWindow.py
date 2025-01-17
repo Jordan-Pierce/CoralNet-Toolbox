@@ -363,17 +363,17 @@ class MainWindow(QMainWindow):
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
         
         # Tile Inference submenu
-        self.tile_inference_menu = self.tile_menu.addMenu("Tile Inference")
+        # self.tile_inference_menu = self.tile_menu.addMenu("Tile Inference")
         
         # Tile Detect Inference
-        self.detect_tile_inference_action = QAction("Detect", self)
-        self.detect_tile_inference_action.triggered.connect(self.open_detect_tile_inference_dialog)
-        self.tile_inference_menu.addAction(self.detect_tile_inference_action)
+        # self.detect_tile_inference_action = QAction("Detect", self)
+        # self.detect_tile_inference_action.triggered.connect(self.open_detect_tile_inference_dialog)
+        # self.tile_inference_menu.addAction(self.detect_tile_inference_action)
         
         # Tile Segment Inference
-        self.segment_tile_inference_action = QAction("Segment", self)
-        self.segment_tile_inference_action.triggered.connect(self.open_segment_tile_inference_dialog)
-        self.tile_inference_menu.addAction(self.segment_tile_inference_action)
+        # self.segment_tile_inference_action = QAction("Segment", self)
+        # self.segment_tile_inference_action.triggered.connect(self.open_segment_tile_inference_dialog)
+        # self.tile_inference_menu.addAction(self.segment_tile_inference_action)
 
         # CoralNet menu
         # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
         self.tile_inference_tool_action.setCheckable(False)
         self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.tile_inference_tool_action)  # TODO
+        # self.toolbar.addAction(self.tile_inference_tool_action)  # TODO
 
         self.toolbar.addSeparator()
 

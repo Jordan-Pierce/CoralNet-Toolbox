@@ -318,10 +318,10 @@ class DeployPredictorDialog(QDialog):
             self.loaded_model.model.eval()
             
             self.status_bar.setText("Model loaded")
-            QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
+            QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
+            QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
 
         progress_bar.stop_progress()
         progress_bar.close()
@@ -380,7 +380,7 @@ class DeployPredictorDialog(QDialog):
                 raise Exception("Model not loaded")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error Setting Image", f"Error setting image: {e}")
+            QMessageBox.critical(self.annotation_window, "Error Setting Image", f"Error setting image: {e}")
 
         finally:
             # Ensure cleanup happens even if an error occurs
@@ -497,7 +497,9 @@ class DeployPredictorDialog(QDialog):
             results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
-            QMessageBox.critical(self, "Model Not Loaded", "Model not loaded, cannot make predictions")
+            QMessageBox.critical(self.annotation_window, 
+                                 "Model Not Loaded", 
+                                 "Model not loaded, cannot make predictions")
             return None
 
         try:
@@ -528,7 +530,9 @@ class DeployPredictorDialog(QDialog):
             results = results_processor.from_sam(masks, scores, self.original_image, self.image_path)
 
         except Exception as e:
-            QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
+            QMessageBox.critical(self.annotation_window, 
+                                 "Prediction Error", 
+                                 f"Error predicting: {e}")
             return None
 
         return results
@@ -580,7 +584,9 @@ class DeployPredictorDialog(QDialog):
                 yield new_results
 
             except Exception as e:
-                QMessageBox.critical(self, "Prediction Error", f"Error predicting: {e}")
+                QMessageBox.critical(self.annotation_window, 
+                                     "Prediction Error", 
+                                     f"Error predicting: {e}")
 
     def deactivate_model(self):
         """
@@ -595,4 +601,4 @@ class DeployPredictorDialog(QDialog):
         empty_cache()
         self.main_window.untoggle_all_tools()
         self.status_bar.setText("No model loaded")
-        QMessageBox.information(self, "Model Deactivated", "Model deactivated")
+        QMessageBox.information(self.annotation_window, "Model Deactivated", "Model deactivated")

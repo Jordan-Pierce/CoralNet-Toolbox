@@ -285,6 +285,8 @@ class Base(QDialog):
         try:
             # Tile inference
             self.setup_tile_inference()
+            # Apply tile inference
+            # self.apply_tile_inference()  # TODO
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to tile inference image: {str(e)}")

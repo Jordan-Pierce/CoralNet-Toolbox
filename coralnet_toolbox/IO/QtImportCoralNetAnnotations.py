@@ -160,10 +160,6 @@ class ImportCoralNetAnnotations:
             # Load the annotations for current image
             self.annotation_window.load_annotations()
 
-            # Stop the progress bar
-            progress_bar.stop_progress()
-            progress_bar.close()
-
             QMessageBox.information(self.annotation_window,
                                     "Annotations Imported",
                                     "Annotations have been successfully imported.")
@@ -172,5 +168,9 @@ class ImportCoralNetAnnotations:
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations: {str(e)}")
-
-        QApplication.restoreOverrideCursor()
+            
+        finally:
+            # Restore the cursor to the default cursor
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()

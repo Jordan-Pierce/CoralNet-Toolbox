@@ -180,10 +180,6 @@ class ExportTagLabAnnotations:
                     json.dump(taglab_data, file, indent=4)
                     file.flush()
 
-                # Close the progress bar
-                progress_bar.stop_progress()
-                progress_bar.close()
-
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Exported",
                                         "Annotations have been successfully exported.")
@@ -193,4 +189,8 @@ class ExportTagLabAnnotations:
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
-            QApplication.restoreOverrideCursor()
+            finally:
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()
