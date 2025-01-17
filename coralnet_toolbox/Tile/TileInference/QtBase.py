@@ -29,7 +29,7 @@ from coralnet_toolbox.Icons import get_icon
 
 class Base(QDialog):
     """
-    Base class for perfoming tiled inference on images using object detection, and instance segmentation 
+    Base class for performing tiled inference on images using object detection, and instance segmentation 
     datasets using YOLO-Patch-Based-Inference.
 
     :param main_window: MainWindow object
