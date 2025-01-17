@@ -39,7 +39,8 @@ from coralnet_toolbox.IO import (
     ExportAnnotations,
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
-    ExportTagLabAnnotations
+    ExportTagLabAnnotations,
+    ImportTagLabLabels  # Import the new class
 )
 
 from coralnet_toolbox.MachineLearning import (
@@ -151,6 +152,7 @@ class MainWindow(QMainWindow):
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
+        self.import_taglab_labels = ImportTagLabLabels(self)  # Create an instance of the new class
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
@@ -245,6 +247,11 @@ class MainWindow(QMainWindow):
         self.import_labels_action = QAction("Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
+
+        # Import TagLab Labels
+        self.import_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
+        self.import_taglab_labels_action.triggered.connect(self.import_taglab_labels.import_taglab_labels)
+        self.import_labels_menu.addAction(self.import_taglab_labels_action)
 
         # Annotations submenu
         self.import_annotations_menu = self.import_menu.addMenu("Annotations")
@@ -770,7 +777,7 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        if event.type() == QEvent.WindowStateChange:
+        if (event.type() == QEvent.WindowStateChange):
             if self.windowState() & Qt.WindowMinimized:
                 # Allow minimizing
                 pass
