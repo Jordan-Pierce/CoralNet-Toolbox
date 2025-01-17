@@ -372,13 +372,12 @@ class DeployPredictorDialog(QDialog):
                 # Resize the image if the checkbox is checked
                 if self.resize_image_dropdown.currentText() == "True":
                     image = self.resize_image(image)
-                    
-                # Save the resized image
-                self.resized_image = image
 
                 try:
                     # Set the image in the predictor
-                    self.loaded_model.set_image(self.resized_image)
+                    self.loaded_model.set_image(image)
+                    # Save the resized image
+                    self.resized_image = image
                 except Exception as e:
                     raise Exception(f"{e}\n\n\n Tip: Try setting device to CPU instead")
                 
