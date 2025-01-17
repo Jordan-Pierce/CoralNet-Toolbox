@@ -180,6 +180,7 @@ class ExportTagLabAnnotations:
                     json.dump(taglab_data, file, indent=4)
                     file.flush()
 
+                # Close the progress bar
                 progress_bar.stop_progress()
                 progress_bar.close()
 

@@ -5,7 +5,14 @@ from PyQt5.QtWidgets import QFileDialog, QMessageBox
 
 from coralnet_toolbox.QtLabelWindow import Label
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class ImportTagLabLabels:
@@ -26,12 +33,22 @@ class ImportTagLabLabels:
             try:
                 with open(file_path, 'r') as file:
                     data = json.load(file)
-
-                if 'labels' not in data:
+                    
+                if 'Labels' in data:
+                    data['labels'] = data.pop('Labels')
+                elif 'labels' in data:
+                    pass
+                else:
                     QMessageBox.warning(self.label_window,
                                         "Invalid JSON Format",
-                                        "The selected JSON file does not contain 'labels' key.")
+                                        "The selected JSON file does not contain 'Labels' or 'labels' key.")
                     return
+                
+                # Create a progress bar
+                total_labels = len(data['labels'])
+                progress_bar = ProgressBar("Importing TagLab Labels", self.label_window)
+                progress_bar.show()
+                progress_bar.start_progress(total_labels)
 
                 for label_id, label_info in data['labels'].items():
                     short_label_code = label_info['name'].strip()
@@ -44,6 +61,13 @@ class ImportTagLabLabels:
                                                     label.long_label_code,
                                                     label.color,
                                                     label.id)
+                        
+                    # Update the progress bar
+                    progress_bar.update_progress()
+                    
+                # Close the progress bar
+                progress_bar.close()
+                progress_bar.stop_progress()
 
                 QMessageBox.information(self.label_window,
                                         "Labels Imported",

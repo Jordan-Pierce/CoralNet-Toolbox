@@ -31,6 +31,7 @@ from coralnet_toolbox.Tile import (
 from coralnet_toolbox.IO import (
     ImportImages,
     ImportLabels,
+    ImportTagLabLabels,
     ImportAnnotations,
     ImportCoralNetAnnotations,
     ImportViscoreAnnotations,
@@ -40,7 +41,6 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
-    ImportTagLabLabels  # Import the new class
 )
 
 from coralnet_toolbox.MachineLearning import (
@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
+        self.import_taglab_labels = ImportTagLabLabels(self)
         self.import_annotations = ImportAnnotations(self)
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
         self.import_viscore_annotations = ImportViscoreAnnotations(self)
@@ -152,7 +153,6 @@ class MainWindow(QMainWindow):
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
-        self.import_taglab_labels = ImportTagLabLabels(self)  # Create an instance of the new class
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
