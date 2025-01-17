@@ -372,16 +372,28 @@ class DeployPredictorDialog(QDialog):
                 # Resize the image if the checkbox is checked
                 if self.resize_image_dropdown.currentText() == "True":
                     image = self.resize_image(image)
-
-                # Set the image in the predictor
-                self.loaded_model.set_image(image)
+                    
+                # Save the resized image
                 self.resized_image = image
+
+                try:
+                    # Set the image in the predictor
+                    self.loaded_model.set_image(self.resized_image)
+                except Exception as e:
+                    raise Exception(f"{e}\n\n\n Tip: Try setting device to CPU instead")
+                
             else:
-                raise Exception("Model not loaded")
+                raise Exception("You must load a SAM Predictor model first")
 
         except Exception as e:
-            QMessageBox.critical(self.annotation_window, "Error Setting Image", f"Error setting image: {e}")
-
+            QMessageBox.critical(self.annotation_window, "Error Setting Image", f"{e}")
+            # Deactivate the SAM tool if it is active, clearing the scene
+            if self.annotation_window.tools["sam"].is_active:
+                self.annotation_window.tools["sam"].deactivate()
+                
+            # Deactivate the model
+            self.deactivate_model()
+            
         finally:
             # Ensure cleanup happens even if an error occurs
             progress_bar.stop_progress()
