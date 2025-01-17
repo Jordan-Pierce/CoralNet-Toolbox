@@ -23,9 +23,6 @@ from .EvaluateModel.QtClassify import Classify as EvalClassify
 from .EvaluateModel.QtDetect import Detect as EvalDetect
 from .EvaluateModel.QtSegment import Segment as EvalSegment
 
-from .TileDataset.QtDetect import Detect as TileDetect
-from .TileDataset.QtSegment import Segment as TileSegment
-
 from .MergeDatasets.QtClassify import Classify as MergeClassify
 from .OptimizeModel.QtBase import Base as Optimize
 

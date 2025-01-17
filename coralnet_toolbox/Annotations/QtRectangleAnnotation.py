@@ -91,18 +91,6 @@ class RectangleAnnotation(Annotation):
 
         self.annotationUpdated.emit(self)  # Notify update
 
-    def get_cropped_image(self, downscaling_factor=1.0):
-        if self.cropped_image is None:
-            return None
-
-        # Downscale the cropped image if downscaling_factor is not 1.0
-        if downscaling_factor != 1.0:
-            new_size = (int(self.cropped_image.width() * downscaling_factor),
-                        int(self.cropped_image.height() * downscaling_factor))
-            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
-
-        return self.cropped_image
-
     def get_cropped_image_graphic(self):
         if self.cropped_image is None:
             return None

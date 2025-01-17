@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialo
                              QLabel, QHBoxLayout, QPushButton, QDialogButtonBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -209,9 +210,11 @@ class ImportViscoreAnnotations:
 
                 # Start the import process
                 QApplication.setOverrideCursor(Qt.WaitCursor)
+                
+                total_annotations = len(df)
                 progress_bar = ProgressBar(self.annotation_window, title="Importing Viscore Annotations")
                 progress_bar.show()
-                progress_bar.start_progress(len(df))
+                progress_bar.start_progress(total_annotations)
 
                 # Map image names to image paths
                 image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
@@ -280,6 +283,7 @@ class ImportViscoreAnnotations:
 
                         # Add annotation to the dict
                         self.annotation_window.annotations_dict[annotation.id] = annotation
+                        # Update the progress bar
                         progress_bar.update_progress()
 
                     # Update the image window's image dict
@@ -288,16 +292,17 @@ class ImportViscoreAnnotations:
                 # Load the annotations for current image
                 self.annotation_window.load_annotations()
 
-                # Stop the progress bar
-                progress_bar.stop_progress()
-                progress_bar.close()
-
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Imported",
                                         "Annotations have been successfully imported.")
 
             except Exception as e:
-                QMessageBox.critical(self.annotation_window, "Critical Error", f"Failed to import annotations: {e}")
+                QMessageBox.critical(self.annotation_window, 
+                                     "Critical Error",
+                                     f"Failed to import annotations: {e}")
 
-        # Make the cursor active
-        QApplication.restoreOverrideCursor()
+            finally: 
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()

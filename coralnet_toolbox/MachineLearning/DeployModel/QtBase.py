@@ -24,7 +24,7 @@ from coralnet_toolbox.Icons import get_icon
 class Base(QDialog):
     """
     Base class for deploying machine learning models.
-    
+
     :param main_window: MainWindow object
     :param parent: Parent widget
     """
@@ -34,24 +34,25 @@ class Base(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
-        
+
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Deploy Model")
         self.resize(400, 325)
 
         # Initialize variables
+        self.task = None
         self.imgsz = 1024
         self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
         self.model_path = None
-        self.loaded_model = None  
+        self.loaded_model = None
         self.class_names = []
         self.class_mapping = {}
 
         self.layout = QVBoxLayout(self)
-        
+
         # Setup the info layout
         self.setup_info_layout()
         # Setup the labels layout
@@ -62,39 +63,39 @@ class Base(QDialog):
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Deploy an Ultralytics model to use.")
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_labels_layout(self):
         """
-        
+
         """
         group_box = QGroupBox("Labels")
         layout = QVBoxLayout()
-        
+
         # Text area for displaying model info
         self.label_area = QTextEdit()
         self.label_area.setReadOnly(True)
         layout.addWidget(self.label_area)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_parameters_layout(self):
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -113,13 +114,13 @@ class Base(QDialog):
         # Model control buttons
         self.browse_button = QPushButton("Browse Model")
         self.browse_button.clicked.connect(self.browse_file)
-        
-        self.mapping_button = QPushButton("Browse Class Mapping") 
+
+        self.mapping_button = QPushButton("Browse Class Mapping")
         self.mapping_button.clicked.connect(self.browse_class_mapping_file)
-        
+
         self.load_button = QPushButton("Load Model")
         self.load_button.clicked.connect(self.load_model)
-        
+
         self.deactivate_button = QPushButton("Deactivate Model")
         self.deactivate_button.clicked.connect(self.deactivate_model)
 
@@ -135,22 +136,22 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_status_layout(self):
         """
-        
+
         """
         # Create a group box for the status bar
         group_box = QGroupBox("Status")
         layout = QVBoxLayout()
-        
+
         # Status bar for model status
         self.status_bar = QLabel("No model loaded")
         layout.addWidget(self.status_bar)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
         current_value = self.main_window.get_uncertainty_thresh()
@@ -162,7 +163,7 @@ class Base(QDialog):
         current_value = self.main_window.get_iou_thresh()
         self.iou_threshold_slider.setValue(int(current_value * 100))
         self.iou_thresh = current_value
-        
+
     def initialize_area_threshold(self):
         """Initialize the area threshold range slider"""
         current_min, current_max = self.main_window.get_area_thresh()
@@ -180,7 +181,7 @@ class Base(QDialog):
     def update_iou_label(self, value):
         """Update IoU threshold and label"""
         value = value / 100.0
-        self.iou_thresh = value 
+        self.iou_thresh = value
         self.main_window.update_iou_thresh(value)
         self.iou_threshold_label.setText(f"{value:.2f}")
 
@@ -190,8 +191,8 @@ class Base(QDialog):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")      
-        
+        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+
     def is_sam_model_deployed(self):
         """
         Check if the SAM model is deployed and update the checkbox state accordingly.
@@ -200,7 +201,7 @@ class Base(QDialog):
         """
         if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
             return False
-        
+
         self.sam_dialog = self.main_window.sam_deploy_model_dialog
 
         if not self.sam_dialog.loaded_model:
@@ -208,8 +209,8 @@ class Base(QDialog):
             QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
 
-        return True 
-              
+        return True
+
     def browse_file(self):
         """Browse and select a model file"""
         options = QFileDialog.Options()
@@ -219,11 +220,11 @@ class Base(QDialog):
             "Model Files (*.pt *.onnx *.torchscript *.engine *.bin)",
             options=options
         )
-        
+
         if file_path:
             # Clear the class mapping
             self.class_mapping = {}
-            
+
             if ".bin" in file_path:
                 # OpenVINO is a directory
                 file_path = os.path.dirname(file_path)
@@ -252,7 +253,7 @@ class Base(QDialog):
     def load_class_mapping(self, file_path):
         """
         Load the class mapping file
-        
+
         :param file_path: Path to the class mapping file
         """
         try:
@@ -267,14 +268,14 @@ class Base(QDialog):
         Load the model
         """
         raise NotImplementedError("Subclasses must implement this method")
-            
+
     def check_and_display_class_names(self):
         """
         Check and display the class names
         """
         if not self.loaded_model:
             return
-            
+
         class_names_str = ""
         missing_labels = []
 
@@ -285,9 +286,9 @@ class Base(QDialog):
             else:
                 class_names_str += f"❌ {class_name}\n"
                 missing_labels.append(class_name)
-        
+
         self.label_area.setText(class_names_str)
-        
+
         if missing_labels:
             missing_labels_str = "\n".join(missing_labels)
             QMessageBox.warning(
@@ -296,7 +297,7 @@ class Base(QDialog):
                 f"The following short labels are missing and cannot be predicted "
                 f"until added manually:\n{missing_labels_str}"
             )
-            
+
     def handle_missing_class_mapping(self):
         """
         Handle the case when the class mapping file is missing.
@@ -307,9 +308,6 @@ class Base(QDialog):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.create_generic_labels()
-        else:
-            self.check_and_display_class_names()
-            QMessageBox.information(self, "Model Loaded", "Model loaded successfully.")
 
     def add_labels_to_label_window(self):
         """
@@ -320,15 +318,16 @@ class Base(QDialog):
                 self.label_window.add_label_if_not_exists(label['short_label_code'],
                                                           label['long_label_code'],
                                                           QColor(*label['color']))
-    
+
     def create_generic_labels(self):
         """
         Create generic labels for the given class names
-        """  
+        """
         for class_name in self.class_names:
             r = random.randint(0, 255)
             g = random.randint(0, 255)
             b = random.randint(0, 255)
+            # Create the label in the label window
             self.label_window.add_label_if_not_exists(
                 class_name,
                 class_name,
@@ -336,13 +335,13 @@ class Base(QDialog):
             )
             label = self.label_window.get_label_by_short_code(class_name)
             self.class_mapping[class_name] = label.to_dict()
-    
+
     def predict(self, inputs):
         """
         Predict using deployed model
         """
         raise NotImplementedError("Subclasses must implement predict method")
-    
+
     def deactivate_model(self):
         """
         Deactivate the current model

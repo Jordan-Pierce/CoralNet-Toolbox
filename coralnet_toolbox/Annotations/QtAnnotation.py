@@ -184,20 +184,29 @@ class Annotation(QObject):
 
         return QImage(data, width, height, bytes_per_line, image_format)
 
-    def get_cropped_image(self, downscaling_factor=1.0):
+    def get_cropped_image(self, max_size=None):
         if self.cropped_image is None:
             return None
 
-        # Downscale the cropped image if downscaling_factor is not 1.0
-        if downscaling_factor != 1.0:
-            new_size = (int(self.cropped_image.width() * downscaling_factor),
-                        int(self.cropped_image.height() * downscaling_factor))
-            self.cropped_image = self.cropped_image.scaled(new_size[0], new_size[1])
+        if max_size is not None:
+            current_width = self.cropped_image.width()
+            current_height = self.cropped_image.height()
+            
+            # Calculate scaling factor while maintaining aspect ratio
+            width_ratio = max_size / current_width
+            height_ratio = max_size / current_height
+            scale_factor = min(width_ratio, height_ratio)
+            
+            # Only scale if image is larger than max_size
+            if scale_factor < 1.0:
+                new_width = int(current_width * scale_factor)
+                new_height = int(current_height * scale_factor)
+                return self.cropped_image.scaled(new_width, new_height)
 
         return self.cropped_image
 
     def get_cropped_image_graphic(self):
-        return None
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def create_center_graphics_item(self, center_xy, scene):
         if self.center_graphics_item and self.center_graphics_item.scene():

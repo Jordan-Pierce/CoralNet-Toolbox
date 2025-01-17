@@ -31,11 +31,14 @@ class ExportCoralNetAnnotations:
                                                    "CSV Files (*.csv);;All Files (*)",
                                                    options=options)
         if file_path:
-
+            
+            # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            total_annotations = len(self.annotation_window.annotations_dict)
             progress_bar = ProgressBar(self.annotation_window, title="Exporting CoralNet Annotations")
             progress_bar.show()
-            progress_bar.start_progress(len(self.annotation_window.annotations_dict))
+            progress_bar.start_progress(total_annotations)
 
             try:
                 df = []
@@ -55,7 +58,9 @@ class ExportCoralNetAnnotations:
                 QMessageBox.warning(self.annotation_window,
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
-
-            progress_bar.stop_progress()
-            progress_bar.close()
-            QApplication.restoreOverrideCursor()
+                
+            finally:
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()

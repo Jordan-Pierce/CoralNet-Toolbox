@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -35,6 +36,7 @@ class ExportAnnotations:
                                                    options=options)
         if file_path:
             try:
+                # Make cursor busy
                 QApplication.setOverrideCursor(Qt.WaitCursor)
 
                 total_annotations = len(list(self.annotation_window.annotations_dict.values()))
@@ -74,9 +76,6 @@ class ExportAnnotations:
                     json.dump(export_dict, file, indent=4)
                     file.flush()
 
-                progress_bar.stop_progress()
-                progress_bar.close()
-
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Exported",
                                         "Annotations have been successfully exported.")
@@ -85,5 +84,9 @@ class ExportAnnotations:
                 QMessageBox.warning(self.annotation_window,
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
-
-            QApplication.restoreOverrideCursor()
+                
+            finally:
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()

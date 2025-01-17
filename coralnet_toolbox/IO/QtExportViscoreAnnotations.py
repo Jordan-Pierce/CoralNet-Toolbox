@@ -58,7 +58,9 @@ class ExportViscoreAnnotations:
                 QMessageBox.warning(self.annotation_window,
                                     "Error Exporting Viscore Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
-
-            progress_bar.stop_progress()
-            progress_bar.close()
-            QApplication.restoreOverrideCursor()
+                
+            finally:
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()

@@ -8,6 +8,8 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -34,6 +36,12 @@ class ImportLabels:
             try:
                 with open(file_path, 'r') as file:
                     labels_data = json.load(file)
+                    
+                # Create a progress bar
+                total_labels = len(labels_data)
+                progress_bar = ProgressBar("Importing Labels", self.label_window)
+                progress_bar.show()
+                progress_bar.start_progress(total_labels)
 
                 for label_data in labels_data:
                     label = Label.from_dict(label_data)
@@ -42,6 +50,8 @@ class ImportLabels:
                                                     label.long_label_code,
                                                     label.color,
                                                     label.id)
+                    # Update the progress bar
+                    progress_bar.update_progress()
 
                 # Set the Review label as active
                 self.label_window.set_active_label(self.label_window.get_label_by_long_code("Review"))
@@ -54,3 +64,9 @@ class ImportLabels:
                 QMessageBox.warning(self.label_window,
                                     "Error Importing Labels",
                                     f"An error occurred while importing Labels: {str(e)}")
+                
+            finally:
+                # Stop the progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
+                QApplication.restoreOverrideCursor()

@@ -107,7 +107,7 @@ class Detect(Base):
         if not image_paths:
             return
 
-        progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+        progress_bar = ProgressBar(self.annotation_window, title=f"Creating {split} Dataset")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 

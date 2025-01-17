@@ -43,6 +43,7 @@ class ImportAnnotations:
                                                      options=options)
         if file_paths:
             try:
+                # Make cursor busy
                 QApplication.setOverrideCursor(Qt.WaitCursor)
 
                 all_data = {}
@@ -114,10 +115,6 @@ class ImportAnnotations:
                 # Load the annotations for current image
                 self.annotation_window.load_annotations()
 
-                # Stop the progress bar
-                progress_bar.stop_progress()
-                progress_bar.close()
-
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Imported",
                                         "Annotations have been successfully imported.")
@@ -127,4 +124,8 @@ class ImportAnnotations:
                                     "Error Importing Annotations",
                                     f"An error occurred while importing annotations: {str(e)}")
 
-            QApplication.restoreOverrideCursor()
+            finally:
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()
