@@ -28,21 +28,22 @@ class ImportImages:
                                                      "",
                                                      "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
         if file_names:
+            # Make the cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            progress_bar = ProgressBar(self.image_window, title="Importing Images")
+            progress_bar.show()
+            progress_bar.start_progress(len(file_names))
+
             try:
-                # Set the cursor to waiting (busy) cursor
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-
-                progress_bar = ProgressBar(self.image_window, title="Importing Images")
-                progress_bar.show()
-                progress_bar.start_progress(len(file_names))
-
+                # Add images to the image window
                 for i, file_name in enumerate(file_names):
                     if file_name not in set(self.image_window.image_paths):
                         try:
                             self.image_window.add_image(file_name)
                         except Exception as e:
                             print(f"Warning: Could not import image {file_name}. Error: {e}")
-                                
+
                     # Update the progress bar
                     progress_bar.update_progress()
 
