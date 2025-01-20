@@ -35,15 +35,15 @@ class ExportAnnotations:
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            total_annotations = len(list(self.annotation_window.annotations_dict.values()))
+            progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(total_annotations)
+
             try:
-                # Make cursor busy
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-
-                total_annotations = len(list(self.annotation_window.annotations_dict.values()))
-                progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(total_annotations)
-
                 export_dict = {}
                 for annotation in self.annotation_window.annotations_dict.values():
                     image_path = annotation.image_path
@@ -84,7 +84,7 @@ class ExportAnnotations:
                 QMessageBox.warning(self.annotation_window,
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
-                
+
             finally:
                 # Restore the cursor
                 QApplication.restoreOverrideCursor()

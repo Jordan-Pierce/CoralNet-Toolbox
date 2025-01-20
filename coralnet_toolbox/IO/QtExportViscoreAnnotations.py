@@ -32,7 +32,7 @@ class ExportViscoreAnnotations:
                                                    "CSV Files (*.csv);;All Files (*)",
                                                    options=options)
         if file_path:
-
+            # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
             progress_bar = ProgressBar(self.annotation_window, title="Exporting Viscore Annotations")
             progress_bar.show()
@@ -58,7 +58,7 @@ class ExportViscoreAnnotations:
                 QMessageBox.warning(self.annotation_window,
                                     "Error Exporting Viscore Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
-                
+
             finally:
                 # Restore the cursor
                 QApplication.restoreOverrideCursor()

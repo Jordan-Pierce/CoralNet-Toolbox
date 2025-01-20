@@ -4,7 +4,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import json
 
-from PyQt5.QtWidgets import (QFileDialog, QMessageBox)
+from PyQt5.QtWidgets import (QApplication, QFileDialog, QMessageBox)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -34,15 +34,24 @@ class ImportLabels:
                                                    options=options)
         if file_path:
             try:
+                # Open the file
                 with open(file_path, 'r') as file:
                     labels_data = json.load(file)
-                    
-                # Create a progress bar
-                total_labels = len(labels_data)
-                progress_bar = ProgressBar("Importing Labels", self.label_window)
-                progress_bar.show()
-                progress_bar.start_progress(total_labels)
 
+            except Exception as e:
+                QMessageBox.warning(self.label_window,
+                                    "Error Loading Labels",
+                                    f"An error occurred while loading Labels: {str(e)}")
+                return
+
+            # Create a progress bar
+            total_labels = len(labels_data)
+            progress_bar = ProgressBar(self.label_window, "Importing Labels")
+            progress_bar.show()
+            progress_bar.start_progress(total_labels)
+
+            try:
+                # Import the labels
                 for label_data in labels_data:
                     label = Label.from_dict(label_data)
                     if not self.label_window.label_exists(label.short_label_code, label.long_label_code):
@@ -64,7 +73,7 @@ class ImportLabels:
                 QMessageBox.warning(self.label_window,
                                     "Error Importing Labels",
                                     f"An error occurred while importing Labels: {str(e)}")
-                
+
             finally:
                 # Stop the progress bar
                 progress_bar.stop_progress()

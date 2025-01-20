@@ -42,25 +42,31 @@ class ImportAnnotations:
                                                      "JSON Files (*.json);;All Files (*)",
                                                      options=options)
         if file_paths:
-            try:
-                # Make cursor busy
-                QApplication.setOverrideCursor(Qt.WaitCursor)
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
+            try:
                 all_data = {}
                 for file_path in file_paths:
                     with open(file_path, 'r') as file:
                         data = json.load(file)
                         all_data.update(data)
+            except Exception as e:
+                QMessageBox.warning(self.annotation_window,
+                                    "Error Loading Annotations",
+                                    f"An error occurred while loading annotations: {str(e)}")
+                return
 
-                keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
+            keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
 
-                filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.image_paths}
-                total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
+            filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.image_paths}
+            total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
 
-                progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(total_annotations)
+            progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(total_annotations)
 
+            try:
                 updated_annotations = False
 
                 for image_path, annotations in filtered_annotations.items():

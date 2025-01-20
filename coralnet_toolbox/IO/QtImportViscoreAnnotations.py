@@ -198,7 +198,6 @@ class ImportViscoreAnnotations:
                 result = msg_box.exec_()
 
                 if result == QMessageBox.Cancel:
-                    self.import_viscore_annotations()
                     return
 
                 annotation_size, ok = QInputDialog.getInt(self.annotation_window,
@@ -208,14 +207,20 @@ class ImportViscoreAnnotations:
                 if not ok:
                     return
 
-                # Start the import process
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                
-                total_annotations = len(df)
-                progress_bar = ProgressBar(self.annotation_window, title="Importing Viscore Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(total_annotations)
+            except Exception as e:
+                QMessageBox.warning(self.annotation_window,
+                                    "Error Importing Annotations",
+                                    f"An error occurred while importing annotations: {str(e)}")
+                return
 
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            total_annotations = len(df)
+            progress_bar = ProgressBar(self.annotation_window, title="Importing Viscore Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(total_annotations)
+
+            try:
                 # Map image names to image paths
                 image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
 
@@ -297,11 +302,11 @@ class ImportViscoreAnnotations:
                                         "Annotations have been successfully imported.")
 
             except Exception as e:
-                QMessageBox.critical(self.annotation_window, 
+                QMessageBox.critical(self.annotation_window,
                                      "Critical Error",
                                      f"Failed to import annotations: {e}")
 
-            finally: 
+            finally:
                 # Restore the cursor
                 QApplication.restoreOverrideCursor()
                 progress_bar.stop_progress()

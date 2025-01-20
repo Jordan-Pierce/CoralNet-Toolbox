@@ -59,15 +59,14 @@ class ImportCoralNetAnnotations:
                 df = pd.read_csv(file_path)
                 all_data.append(df)
 
+            # Concatenate all the data
             df = pd.concat(all_data, ignore_index=True)
 
             required_columns = ['Name', 'Row', 'Column', 'Label']
             if not all(col in df.columns for col in required_columns):
-                QMessageBox.warning(self.annotation_window,
-                                    "Invalid CSV Format",
-                                    "The selected CSV files do not match the expected CoralNet format.")
-                return
+                raise Exception("The selected CSV files do not match the expected CoralNet format.")
 
+            # Filter out rows with missing values
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
             df['Name'] = df['Name'].apply(lambda x: os.path.basename(x))
             df = df[df['Name'].isin(image_path_map.keys())]
@@ -78,13 +77,21 @@ class ImportCoralNetAnnotations:
             if df.empty:
                 raise Exception("No annotations found for loaded images.")
 
-            # Start the import process
-            progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
-            progress_bar.show()
-            progress_bar.start_progress(len(df))
+        except Exception as e:
+            QMessageBox.warning(self.annotation_window,
+                                "Error Importing Annotations",
+                                f"An error occurred while importing annotations: {str(e)}")
+            return
 
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Create a progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(df))
 
+        try:
+            # Iterate over the rows
             for image_name, group in df.groupby('Name'):
                 image_path = image_path_map.get(image_name)
                 if not image_path:
@@ -168,7 +175,7 @@ class ImportCoralNetAnnotations:
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations: {str(e)}")
-            
+
         finally:
             # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()

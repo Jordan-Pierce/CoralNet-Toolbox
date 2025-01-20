@@ -58,7 +58,7 @@ class ImportTagLabAnnotations:
         """Parse the contour string into a list of QPointF objects."""
         points = self.taglabToContour(contour_str)
         return [QPointF(x, y) for x, y in points]
-    
+
     def standardize_data(self, image_data):
         """Standardize the data format for TagLab annotations."""
         # Deals with the fact that TagLab JSON files can have different structures
@@ -67,7 +67,7 @@ class ImportTagLabAnnotations:
             # Older versions do not have regions and points, annotations is a list not a dict
             if isinstance(image['annotations'], list):
                 image['annotations'] = {'regions': image['annotations'], 'points': []}
-                
+
         return image_data
 
     def import_annotations(self):
@@ -114,14 +114,11 @@ class ImportTagLabAnnotations:
                 merged_data["images"].extend(data["images"])
 
             if not all(key in merged_data for key in ['labels', 'images']):
-                QMessageBox.warning(self.annotation_window,
-                                    "Invalid JSON Format",
-                                    "The selected JSON files do not match the expected TagLab format.")
-                return
+                raise Exception("The selected JSON files do not match the expected TagLab format.")
 
             # Standardize the data (deals with different TagLab JSON structures)
             merged_data["images"] = self.standardize_data(merged_data["images"])
-            
+
             # Map image names to image paths
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
 
@@ -129,19 +126,27 @@ class ImportTagLabAnnotations:
             num_points = sum(len(image_data['annotations']['points']) for image_data in merged_data['images'])
             total_annotations = num_regions + num_points
 
-            progress_bar = ProgressBar(self.annotation_window, title="Importing TagLab Annotations")
-            progress_bar.show()
-            progress_bar.start_progress(total_annotations)
+        except Exception as e:
+            QMessageBox.warning(self.annotation_window,
+                                "Error Loading Annotations",
+                                f"An error occurred while loading annotations: {str(e)}")
+            return
 
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Importing TagLab Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(total_annotations)
 
+        try:
+            # Import the annotations
             for image_data in merged_data['images']:
                 # Get the basename from the TagLab project file (not path)
                 image_basename = os.path.basename(image_data['channels'][0]['filename'])
                 # Check to see if there is a matching image (using basename) in the current project
                 if image_basename not in image_path_map:
                     continue  # Skip this image
-                
+
                 # Get the full path to the image
                 image_full_path = image_path_map[image_basename]
 
@@ -178,9 +183,9 @@ class ImportTagLabAnnotations:
                             label_id = existing_label.id
                         else:
                             label_id = str(uuid.uuid4())
-                            self.label_window.add_label_if_not_exists(short_label_code, 
-                                                                      long_label_code, 
-                                                                      color, 
+                            self.label_window.add_label_if_not_exists(short_label_code,
+                                                                      long_label_code,
+                                                                      color,
                                                                       label_id)
                         # Create the polygon annotation
                         polygon_annotation = PolygonAnnotation(
@@ -224,11 +229,11 @@ class ImportTagLabAnnotations:
                             label_id = existing_label.id
                         else:
                             label_id = str(uuid.uuid4())
-                            self.label_window.add_label_if_not_exists(short_label_code, 
-                                                                      long_label_code, 
-                                                                      color, 
+                            self.label_window.add_label_if_not_exists(short_label_code,
+                                                                      long_label_code,
+                                                                      color,
                                                                       label_id)
-                        # Create the patch annotation 
+                        # Create the patch annotation
                         patch_annotation = PatchAnnotation(
                             center_xy=QPointF(x, y),
                             annotation_size=annotation_size,
@@ -240,7 +245,7 @@ class ImportTagLabAnnotations:
                         )
                         # Add annotation to the dict
                         self.annotation_window.annotations_dict[patch_annotation.id] = patch_annotation
-                        
+
                     except Exception as e:
                         print(f"Error importing annotation: {str(e)}\n{traceback.print_exc()}")
                     finally:
@@ -259,12 +264,12 @@ class ImportTagLabAnnotations:
 
         except Exception as e:
             print(f"Error importing annotation: {str(e)}\n{traceback.print_exc()}")
-            
+
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations:\n\n{str(e)}\
                                     \n\nPlease check the console for more details.")
-            
+
         finally:
             # Stop the progress bar
             progress_bar.stop_progress()
