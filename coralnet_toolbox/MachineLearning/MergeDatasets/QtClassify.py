@@ -14,5 +14,5 @@ class Classify(Base):
         :param parent: Parent widget, default is None.
         """
         super().__init__(parent)
-        self.setWindowTitle("Merge Classification Datasets")
+        self.setWindowTitle("Merge YOLO-formatted Classification Datasets")
         self.task = 'classify'
