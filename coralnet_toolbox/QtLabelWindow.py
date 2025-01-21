@@ -212,6 +212,12 @@ class LabelWindow(QWidget):
         self.label_lock_button.setFixedSize(self.label_height, self.label_height)
         self.top_bar.addWidget(self.label_lock_button)
 
+        # Search bar for labels
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search Labels")
+        self.search_bar.textChanged.connect(self.filter_labels)
+        self.top_bar.addWidget(self.search_bar)
+
         # Scroll area for labels
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -559,6 +565,13 @@ class LabelWindow(QWidget):
     def unlock_label_lock(self):
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
+
+    def filter_labels(self, search_text):
+        for label in self.labels:
+            if search_text.lower() in label.short_label_code.lower() or search_text.lower() in label.long_label_code.lower():
+                label.show()
+            else:
+                label.hide()
 
 
 class AddLabelDialog(QDialog):
