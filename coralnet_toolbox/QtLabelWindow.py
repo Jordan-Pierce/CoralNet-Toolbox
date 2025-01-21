@@ -202,6 +202,13 @@ class LabelWindow(QWidget):
         self.top_bar.addWidget(self.edit_label_button)
 
         self.top_bar.addStretch()  # Add stretch to the right side
+        
+        # Search bar for labels
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search Labels")
+        self.search_bar.textChanged.connect(self.filter_labels)
+        self.search_bar.setFixedWidth(150)
+        self.top_bar.addWidget(self.search_bar)
 
         # Lock button
         self.label_lock_button = QPushButton()
@@ -506,26 +513,34 @@ class LabelWindow(QWidget):
         if not self.active_label or self.label_locked:
             return
 
-        try:
-            current_index = self.labels.index(self.active_label)
-        except ValueError:
-            # If the active label is not in the list, set it to None
-            self.active_label = None
+        # Get only visible labels
+        visible_labels = [label for label in self.labels if not label.isHidden()]
+        if not visible_labels:
             return
 
+        try:
+            current_index = visible_labels.index(self.active_label)
+        except ValueError:
+            # If the active label is not visible, select the first visible label
+            self.set_active_label(visible_labels[0])
+            return
+
+        # Calculate visible labels per row based on actual visible labels
+        visible_labels_per_row = min(self.labels_per_row, len(visible_labels))
+        
         if key == Qt.Key_W:
-            new_index = current_index - self.labels_per_row
+            new_index = current_index - visible_labels_per_row
         elif key == Qt.Key_S:
-            new_index = current_index + self.labels_per_row
+            new_index = current_index + visible_labels_per_row
         elif key == Qt.Key_A:
-            new_index = current_index - 1 if current_index % self.labels_per_row != 0 else current_index
+            new_index = current_index - 1 if current_index % visible_labels_per_row != 0 else current_index
         elif key == Qt.Key_D:
-            new_index = current_index + 1 if (current_index + 1) % self.labels_per_row != 0 else current_index
+            new_index = current_index + 1 if (current_index + 1) % visible_labels_per_row != 0 else current_index
         else:
             return
 
-        if 0 <= new_index < len(self.labels):
-            self.set_active_label(self.labels[new_index])
+        if 0 <= new_index < len(visible_labels):
+            self.set_active_label(visible_labels[new_index])
 
     def toggle_label_lock(self, checked):
         """Toggle between lock and unlock states"""
@@ -559,6 +574,16 @@ class LabelWindow(QWidget):
     def unlock_label_lock(self):
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
+
+    def filter_labels(self, search_text):
+        """Filter labels based on the search text"""
+        for label in self.labels:
+            short_code = label.short_label_code.lower()
+            long_code = label.long_label_code.lower()
+            if search_text.lower() in short_code or search_text.lower() in long_code:
+                label.show()
+            else:
+                label.hide()
 
 
 class AddLabelDialog(QDialog):
