@@ -4,16 +4,18 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import shutil
+import random
 
 from patched_yolo_infer import MakeCropsDetectThem
 from patched_yolo_infer import CombineDetections
 
 from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QDialogButtonBox, QGroupBox, QFormLayout, QLineEdit,
                              QDoubleSpinBox, QComboBox, QPushButton, QFileDialog, QSpinBox,
-                             QHBoxLayout, QSlider, QWidget)
+                             QHBoxLayout, QSlider, QWidget, QGraphicsRectItem)
 
 from coralnet_toolbox.Tile.QtCommon import TileSizeInput, OverlapInput, MarginInput
 
@@ -392,16 +394,38 @@ class Base(QDialog):
         Uses the tile parameters to create a grid of tiles on the image 
         in the annotation window.
         """
-        print("Updating tile graphics")
-        
-        # Use the following to create a grid of tiles on the image in the annotation window:
-        # self.shape_x - width of the tile
-        # self.shape_y - height of the tile
-        # self.overlap_x - overlap in the x direction
-        # self.overlap_y - overlap in the y direction
-        # self.margins - margins around the image to black out
-        
-        # Each tile should be a randomm color, with a black dotted border; transparency should be 50%
+        self.clear_tile_graphics()
+
+        if not self.annotation_window.image_pixmap:
+            return
+
+        image_width = self.annotation_window.image_pixmap.width()
+        image_height = self.annotation_window.image_pixmap.height()
+
+        tile_width = self.shape_x
+        tile_height = self.shape_y
+        overlap_x = self.overlap_x
+        overlap_y = self.overlap_y
+        margins = self.margins
+
+        x_start = margins[3]
+        y_start = margins[0]
+        x_end = image_width - margins[1]
+        y_end = image_height - margins[2]
+
+        x = x_start
+        while x < x_end:
+            y = y_start
+            while y < y_end:
+                tile = QGraphicsRectItem(x, y, tile_width, tile_height)
+                tile_color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 128)
+                tile.setBrush(QBrush(tile_color))
+                tile.setPen(QPen(QColor(0, 0, 0), 1, Qt.DotLine))
+                tile.setOpacity(0.5)
+                self.annotation_window.scene.addItem(tile)
+                self.tile_graphics.append(tile)
+                y += tile_height - overlap_y
+            x += tile_width - overlap_x
 
     def clear_tile_graphics(self):
         """
@@ -411,5 +435,3 @@ class Base(QDialog):
         for tile in self.tile_graphics:
             self.annotation_window.scene.removeItem(tile)
         self.tile_graphics = []
-
-
