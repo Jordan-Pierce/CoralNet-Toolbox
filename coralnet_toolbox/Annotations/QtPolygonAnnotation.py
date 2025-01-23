@@ -1,6 +1,5 @@
 import warnings
 
-import cv2
 import math
 import numpy as np
 
@@ -203,15 +202,6 @@ class PolygonAnnotation(Annotation):
 
         # Read the data from rasterio
         data = rasterio_src.read(window=window)
-        
-        # Create mask from polygon
-        polygon_points = np.array([(p.x() - min_x, p.y() - min_y) for p in self.points])
-        mask = np.zeros((window.height, window.width), dtype=np.uint8)
-        cv2.fillPoly(mask, [polygon_points.astype(np.int32)], 1)
-    
-        # Apply mask to each channel
-        for i in range(data.shape[0]):
-            data[i] = data[i] * mask
 
         # Ensure the data is in the correct format for QImage
         data = self._prepare_data_for_qimage(data)
