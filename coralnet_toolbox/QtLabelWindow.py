@@ -202,6 +202,13 @@ class LabelWindow(QWidget):
         self.top_bar.addWidget(self.edit_label_button)
 
         self.top_bar.addStretch()  # Add stretch to the right side
+        
+        # Search bar for labels
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Search Labels")
+        self.search_bar.textChanged.connect(self.filter_labels)
+        self.search_bar.setFixedWidth(150)
+        self.top_bar.addWidget(self.search_bar)
 
         # Lock button
         self.label_lock_button = QPushButton()
@@ -506,13 +513,24 @@ class LabelWindow(QWidget):
         if not self.active_label or self.label_locked:
             return
 
-        try:
-            current_index = self.labels.index(self.active_label)
-        except ValueError:
-            # If the active label is not in the list, set it to None
-            self.active_label = None
+        # Get all labels from grid
+        grid_labels = []
+        for i in range(self.grid_layout.count()):
+            item = self.grid_layout.itemAt(i)
+            if item and item.widget():
+                grid_labels.append(item.widget())
+
+        if not grid_labels:
             return
 
+        try:
+            current_index = grid_labels.index(self.active_label)
+        except ValueError:
+            # If active label not in grid, select first label
+            if grid_labels:
+                self.set_active_label(grid_labels[0])
+            return
+        
         if key == Qt.Key_W:
             new_index = current_index - self.labels_per_row
         elif key == Qt.Key_S:
@@ -524,8 +542,8 @@ class LabelWindow(QWidget):
         else:
             return
 
-        if 0 <= new_index < len(self.labels):
-            self.set_active_label(self.labels[new_index])
+        if 0 <= new_index < len(grid_labels):
+            self.set_active_label(grid_labels[new_index])
 
     def toggle_label_lock(self, checked):
         """Toggle between lock and unlock states"""
@@ -560,6 +578,45 @@ class LabelWindow(QWidget):
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
 
+    def filter_labels(self, search_text):
+        """Filter labels based on the search text and rebuild the grid with matching labels"""
+        # Unselect the selected annotation
+        self.annotation_window.unselect_annotations()
+        # Unselect the active label
+        self.deselect_active_label()
+        
+        # Get the search text in lowercase
+        search_text = search_text.lower()
+        
+        # Clear all widgets from the grid layout
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Filter labels that match the search criteria
+        filtered_labels = [
+            label for label in self.labels 
+            if search_text in label.short_label_code.lower() 
+            or search_text in label.long_label_code.lower()
+        ]
+        
+        # Add matching labels to the grid
+        for i, label in enumerate(filtered_labels):
+            row = i // self.labels_per_row
+            col = i % self.labels_per_row
+            self.grid_layout.addWidget(label, row, col)
+            label.show()
+        
+        # If we have an active label that's no longer visible, select first visible label
+        if self.active_label and self.active_label not in filtered_labels:
+            if filtered_labels:
+                self.set_active_label(filtered_labels[0])
+            else:
+                self.active_label = None
+                self.delete_label_button.setEnabled(False)
+                self.edit_label_button.setEnabled(False)
+                
 
 class AddLabelDialog(QDialog):
     def __init__(self, label_window, parent=None):

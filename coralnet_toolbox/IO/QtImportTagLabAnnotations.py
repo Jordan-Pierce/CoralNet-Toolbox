@@ -102,8 +102,16 @@ class ImportTagLabAnnotations:
             for file_path in file_paths:
                 with open(file_path, 'r') as file:
                     data = json.load(file)
-                    all_data.append(data)
+                
+                # Inconsistent JSON structures in TagLab files
+                if 'Labels' in data:
+                    data['labels'] = data.pop('Labels')
+                if 'Images' in data:
+                    data['images'] = data.pop('Images')
+                
+                all_data.append(data)
 
+            # Merge all the data
             merged_data = {
                 "labels": {},
                 "images": []
@@ -118,7 +126,49 @@ class ImportTagLabAnnotations:
 
             # Standardize the data (deals with different TagLab JSON structures)
             merged_data["images"] = self.standardize_data(merged_data["images"])
+            
+        except Exception as e:
+            QMessageBox.warning(self.annotation_window,
+                                "Error Loading Annotations",
+                                f"An error occurred while opening annotation file: {str(e)}")
+            
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Importing TagLab Labels")
+        progress_bar.show()
+        progress_bar.start_progress(len(merged_data['labels']))
+            
+        try:
+            # Import the labels from the TagLab project file (dict)
+            for label in merged_data['labels'].values():
+                short_label_code = label['name'].strip()
+                long_label_code = label['name'].strip()
+                color = QColor(*label['fill'])
 
+                existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
+
+                if existing_label:
+                    label_id = existing_label.id
+                else:
+                    label_id = str(uuid.uuid4())
+                    self.label_window.add_label_if_not_exists(short_label_code,
+                                                              long_label_code,
+                                                              color,
+                                                              label_id) 
+                    
+                # Update the progress bar
+                progress_bar.update_progress()
+                
+        except Exception as e:
+            pass  # Ignore errors
+        
+        finally:
+            # Stop the progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
+            QApplication.restoreOverrideCursor()
+            
+        try:
             # Map image names to image paths
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
 
