@@ -41,6 +41,7 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
+    ExportTagLabLabels
 )
 
 from coralnet_toolbox.MachineLearning import (
@@ -149,6 +150,7 @@ class MainWindow(QMainWindow):
         self.import_viscore_annotations = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
         self.export_labels = ExportLabels(self)
+        self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
@@ -299,6 +301,11 @@ class MainWindow(QMainWindow):
         self.export_labels_action = QAction("Labels (JSON)", self)
         self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
+
+        # Export TagLab Labels
+        self.export_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
+        self.export_taglab_labels_action.triggered.connect(self.export_taglab_labels.export_taglab_labels)
+        self.export_labels_menu.addAction(self.export_taglab_labels_action)
 
         # Annotations submenu
         self.export_annotations_menu = self.export_menu.addMenu("Annotations")
