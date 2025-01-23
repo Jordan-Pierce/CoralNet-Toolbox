@@ -24,8 +24,7 @@ from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 from coralnet_toolbox.Tile import (
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
-    TileDetectInference as DetectTileInferenceDialog,
-    TileSegmentInference as SegmentTileInferenceDialog
+    TileInference as TileInferenceDialog,
 )
 
 from coralnet_toolbox.IO import (
@@ -192,8 +191,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (Tile)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
-        self.detect_tile_inference_dialog = DetectTileInferenceDialog(self)
-        self.segment_tile_inference_dialog = SegmentTileInferenceDialog(self)
+        self.tile_inference_dialog = TileInferenceDialog(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -369,18 +367,10 @@ class MainWindow(QMainWindow):
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
         
-        # Tile Inference submenu
-        self.tile_inference_menu = self.tile_menu.addMenu("Tile Inference")
-        
-        # Tile Detect Inference
-        self.detect_tile_inference_action = QAction("Detect", self)
-        self.detect_tile_inference_action.triggered.connect(self.open_detect_tile_inference_dialog)
-        self.tile_inference_menu.addAction(self.detect_tile_inference_action)
-        
-        # Tile Segment Inference
-        self.segment_tile_inference_action = QAction("Segment", self)
-        self.segment_tile_inference_action.triggered.connect(self.open_segment_tile_inference_dialog)
-        self.tile_inference_menu.addAction(self.segment_tile_inference_action)
+        # Tile Inference action
+        self.tile_inference_action = QAction("Tile Inference", self)
+        self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
+        self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
         # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -1212,7 +1202,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
-    def open_detect_tile_inference_dialog(self):
+    def open_tile_inference_dialog(self):
         
         if not self.image_window.image_paths:
             # Check if there are any images in the project
@@ -1223,22 +1213,12 @@ class MainWindow(QMainWindow):
         
         try:
             self.untoggle_all_tools()
-            self.detect_tile_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
+            self.tile_inference_dialog.exec_()
             
-    def open_segment_tile_inference_dialog(self):
-        
-        if not self.image_window.image_paths:
-            # Check if there are any images in the project
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before sampling annotations.")
-            return
-        
-        try:
-            self.untoggle_all_tools()
-            self.segment_tile_inference_dialog.exec_()
+            # Get the tile parameters and tile inference parameters
+            self.tile_params = self.tile_inference_dialog.get_tile_params()
+            self.tile_inference_params = self.tile_inference_dialog.get_tile_inference_params()
+            
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
