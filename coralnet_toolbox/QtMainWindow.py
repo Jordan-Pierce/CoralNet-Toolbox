@@ -582,9 +582,9 @@ class MainWindow(QMainWindow):
         self.toolbar.addSeparator()
 
         self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
-        self.tile_inference_tool_action.setCheckable(False)
+        self.tile_inference_tool_action.setCheckable(True)
         self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.tile_inference_tool_action)  # TODO
+        self.toolbar.addAction(self.tile_inference_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -796,6 +796,9 @@ class MainWindow(QMainWindow):
                 pass  # Do nothing, let the OS handle the restore
 
     def toggle_tool(self, state):
+        # Unlock the label lock
+        self.label_window.unlock_label_lock()
+        
         action = self.sender()
         if action == self.select_tool_action:
             if state:
@@ -803,44 +806,48 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+                
                 self.toolChanged.emit("select")
             else:
-                self.label_window.unlock_label_lock()
-
                 self.toolChanged.emit(None)
+                
         elif action == self.patch_tool_action:
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
+                
         elif action == self.rectangle_tool_action:
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
+                
         elif action == self.polygon_tool_action:
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+                
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
+                
         elif action == self.sam_tool_action:
             if not self.sam_deploy_model_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
@@ -849,17 +856,26 @@ class MainWindow(QMainWindow):
                                     "You must deploy a Predictor before using the SAM tool.")
                 return
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+
                 self.toolChanged.emit("sam")
             else:
-                self.label_window.unlock_label_lock()
-
                 self.toolChanged.emit(None)
+                
+        elif action == self.tile_inference_tool_action:           
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+
+            # Emit None to close other tools
+            self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
         # Unlock the label lock
@@ -871,57 +887,64 @@ class MainWindow(QMainWindow):
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
+        self.tile_inference_tool_action.setChecked(False)
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
+        # Unlock the label lock
+        self.label_window.unlock_label_lock()
+        
         if tool == "select":
             self.select_tool_action.setChecked(True)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
+        elif tool == "tile_inference":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.tile_inference_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
 
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
@@ -1198,13 +1221,6 @@ class MainWindow(QMainWindow):
                                 "Please load images into the project before sampling annotations.")
             return
         
-        # TODO
-        # if not self.detect_deploy_model_dialog.loaded_model:
-        #     QMessageBox.warning(self,
-        #                         "Tile Inference",
-        #                         "Please deploy a model before running batch inference.")
-        #     return
-        
         try:
             self.untoggle_all_tools()
             self.detect_tile_inference_dialog.exec_()
@@ -1219,13 +1235,6 @@ class MainWindow(QMainWindow):
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
             return
-        
-        # TODO
-        # if not self.segment_deploy_model_dialog.loaded_model:
-        #     QMessageBox.warning(self,
-        #                         "Tile Inference",
-        #                         "Please deploy a model before running batch inference.")
-        #     return
         
         try:
             self.untoggle_all_tools()
@@ -1384,7 +1393,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_sam_deploy_model_dialog(self):  # TODO
+    def open_sam_deploy_model_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Predictor",
