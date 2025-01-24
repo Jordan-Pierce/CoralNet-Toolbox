@@ -772,8 +772,8 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.label_window, 15)
 
         # Add widgets to right layout
-        self.right_layout.addWidget(self.create_accordion("Image Window", self.image_window), 54)
-        self.right_layout.addWidget(self.create_accordion("Confidence Window", self.confidence_window), 46)
+        self.right_layout.addWidget(self.image_window, 54)
+        self.right_layout.addWidget(self.confidence_window, 46)
 
         # Add left and right layouts to main layout
         self.main_layout.addLayout(self.left_layout, 85)
@@ -1469,13 +1469,6 @@ class MainWindow(QMainWindow):
             self.auto_distill_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
-    def create_accordion(self, title, widget):
-        accordion = QGroupBox(title)
-        layout = QVBoxLayout()
-        layout.addWidget(widget)
-        accordion.setLayout(layout)
-        return accordion
 
 
 class CollapsibleSection(QWidget):
