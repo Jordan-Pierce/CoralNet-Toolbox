@@ -270,9 +270,29 @@ class ImageWindow(QWidget):
 
     def update_table_selection(self):
         if self.selected_image_path in self.filtered_image_paths:
+            # Get the row index of the selected image
             row = self.filtered_image_paths.index(self.selected_image_path)
+            
+            # Block signals temporarily to prevent recursive calls
+            self.tableWidget.blockSignals(True)
+            
+            # Clear previous selection
+            self.tableWidget.clearSelection()
+            
+            # Select the entire row
             self.tableWidget.selectRow(row)
-            self.tableWidget.scrollToItem(self.tableWidget.item(row, 0), QAbstractItemView.PositionAtCenter)
+            
+            # Ensure the selected row is visible in the viewport
+            self.tableWidget.scrollToItem(
+                self.tableWidget.item(row, 0),
+                QAbstractItemView.PositionAtCenter
+            )
+            
+            # Set focus to maintain highlight
+            self.tableWidget.setFocus()
+            
+            # Restore signals
+            self.tableWidget.blockSignals(False)
         else:
             self.tableWidget.clearSelection()
 
@@ -513,77 +533,113 @@ class ImageWindow(QWidget):
         delete_all_annotations_action.triggered.connect(lambda: self.delete_selected_annotations())
 
         context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
+        
+    def _get_selected_image_paths(self):
+        """
+        Returns list of image paths for rows with checked checkboxes
+        """
+        selected_paths = []
+        for row in range(self.tableWidget.rowCount()):
+            checkbox = self.tableWidget.cellWidget(row, 0)
+            if checkbox and checkbox.isChecked():
+                selected_paths.append(self.filtered_image_paths[row])
+        return selected_paths
 
-    def delete_annotations(self):
-        if self.right_clicked_row is not None:
-            image_path = self.filtered_image_paths[self.right_clicked_row]
-            reply = QMessageBox.question(self,
-                                         "Confirm Delete",
-                                         "Are you sure you want to delete annotations for this image?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                # Proceed with deleting annotations
-                self.annotation_window.delete_image_annotations(image_path)
-                self.main_window.confidence_window.clear_display()
+    def delete_selected_images(self):
+        selected_paths = self._get_selected_image_paths()
+        
+        if not selected_paths:
+            return
 
-    def delete_image(self, image_path):
-        if image_path in self.image_paths:
-            # Get current index before removing
-            current_index = self.filtered_image_paths.index(image_path)
+        reply = QMessageBox.question(self, 
+                                     "Confirm Multiple Image Deletions",
+                                     f"Are you sure you want to delete {len(selected_paths)} images?\n"
+                                     "This will delete all associated annotations.",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            # Delete images and handle loading a new image if necessary
+            self.delete_images(selected_paths)
+                
+    def delete_selected_annotations(self):
+        selected_paths = self._get_selected_image_paths()
+        
+        if not selected_paths:
+            return
 
-            # Remove the image from lists and dict
-            self.image_paths.remove(image_path)
-            del self.image_dict[image_path]
-            if image_path in self.filtered_image_paths:
-                self.filtered_image_paths.remove(image_path)
-
-            # Remove the image's annotations
-            self.annotation_window.delete_image(image_path)
-
+        reply = QMessageBox.question(self, 
+                                     "Confirm Multiple Annotation Deletions",
+                                     f"Are you sure you want to delete annotations for {len(selected_paths)} images?",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            for path in selected_paths:
+                self.annotation_window.delete_image_annotations(path)
+                
             # Update the table widget
             self.update_table_widget()
 
-            # Update the image count label
-            self.update_image_count_label()
+    def delete_images(self, image_paths):
+        """
+        Delete multiple images and their associated annotations.
+        
+        Args:
+            image_paths (list): List of image paths to delete
+        """
+        # Validate input and create a copy to avoid mutation during iteration
+        image_paths = [path for path in image_paths if path in self.image_paths]
+        
+        if not image_paths:
+            return
 
-            # Select next available image
-            if self.filtered_image_paths:
-                # Try to keep same index, fallback to previous
-                if current_index < len(self.filtered_image_paths):
-                    new_image_path = self.filtered_image_paths[current_index]
-                else:
-                    new_image_path = self.filtered_image_paths[current_index - 1]
-                self.load_image_by_path(new_image_path)
-            else:
-                self.selected_image_path = None
-                self.annotation_window.clear_scene()
+        # Check if current image is being deleted
+        current_image_in_deletion = self.selected_image_path in image_paths
 
-            # Update the current image index label
-            self.update_current_image_index_label()
+        # Determine the next image to load if current image is deleted
+        next_image_to_load = None
+        if current_image_in_deletion:
+            # Find remaining images in the filtered list
+            remaining_images = [path for path in self.filtered_image_paths if path not in image_paths]
+            
+            if remaining_images:
+                # If possible, maintain the relative position in the list
+                current_idx = self.filtered_image_paths.index(self.selected_image_path)
+                
+                # Find the next viable image to load
+                viable_images = []
+                for img in remaining_images:
+                    if self.filtered_image_paths.index(img) <= current_idx:
+                        viable_images.append(img)
+                
+                # Prioritize images at or before the current index
+                next_image_to_load = viable_images[0] if viable_images else remaining_images[0]
 
-    def delete_selected_image(self):
-        if self.right_clicked_row is not None:
-            image_path = self.filtered_image_paths[self.right_clicked_row]
-            if self._confirm_delete() == QMessageBox.Yes:
-                self.delete_image(image_path)
+        # Delete each image
+        for image_path in image_paths:
+            # Remove from image paths
+            self.image_paths.remove(image_path)
+            del self.image_dict[image_path]
+            
+            # Remove from filtered image paths if present
+            if image_path in self.filtered_image_paths:
+                self.filtered_image_paths.remove(image_path)
+            
+            # Delete annotations
+            self.annotation_window.delete_image(image_path)
 
-    def _confirm_delete(self):
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Question)
-        msg_box.setWindowTitle("Confirm Delete")
-        msg_box.setText("Are you sure you want to delete this image?\n"
-                        "This will delete all associated annotations.")
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        # Update UI components
+        self.update_table_widget()
+        self.update_image_count_label()
 
-        checkbox = QCheckBox("Do not show this message again")
-        msg_box.setCheckBox(checkbox)
+        # Load next image or clear scene
+        if next_image_to_load:
+            self.load_image_by_path(next_image_to_load)
+        elif not self.filtered_image_paths:
+            self.selected_image_path = None
+            self.annotation_window.clear_scene()
 
-        result = msg_box.exec_()
-
-        if checkbox.isChecked():
-            self.show_confirmation_dialog = False
-
-        return result
+        # Update current image index label
+        self.update_current_image_index_label()
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
@@ -762,47 +818,3 @@ class ImageWindow(QWidget):
             self.search_bar_labels.setEditText(current_label_search)
         else:
             self.search_bar_labels.setPlaceholderText("Type to search labels")
-
-    def _get_selected_image_paths(self):
-        """
-        Returns list of image paths for rows with checked checkboxes
-        """
-        selected_paths = []
-        for row in range(self.tableWidget.rowCount()):
-            checkbox = self.tableWidget.cellWidget(row, 0)
-            if checkbox and checkbox.isChecked():
-                selected_paths.append(self.filtered_image_paths[row])
-        return selected_paths
-
-    def delete_selected_images(self):
-        selected_paths = self._get_selected_image_paths()
-        
-        if not selected_paths:
-            return
-
-        reply = QMessageBox.question(self, 
-                                     "Confirm Multiple Image Deletions",
-                                     f"Are you sure you want to delete {len(selected_paths)} images?\n"
-                                     "This will delete all associated annotations.",
-                                     QMessageBox.Yes | QMessageBox.No)
-        
-        if reply == QMessageBox.Yes:
-            for path in selected_paths:
-                self.delete_image(path)
-
-    def delete_selected_annotations(self):
-        selected_paths = self._get_selected_image_paths()
-        
-        if not selected_paths:
-            return
-
-        reply = QMessageBox.question(self, 
-                                     "Confirm Multiple Annotation Deletions",
-                                     f"Are you sure you want to delete annotations for {len(selected_paths)} images?",
-                                     QMessageBox.Yes | QMessageBox.No)
-        
-        if reply == QMessageBox.Yes:
-            for path in selected_paths:
-                self.annotation_window.delete_image_annotations(path)
-            self.main_window.confidence_window.clear_display()
-            self.update_table_widget()

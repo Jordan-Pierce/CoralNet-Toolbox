@@ -643,6 +643,7 @@ class AnnotationWindow(QGraphicsView):
         # Delete the image
         if self.current_image_path == image_path:
             self.scene.clear()
+            self.main_window.confidence_window.clear_display()
             self.current_image_path = None
             self.image_pixmap = None
             self.rasterio_image = None
