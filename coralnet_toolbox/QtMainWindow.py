@@ -127,6 +127,9 @@ class MainWindow(QMainWindow):
                             Qt.WindowMinimizeButtonHint |
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
+        
+        # Start maximized by default
+        self.showMaximized()
 
         # Set the default uncertainty threshold and IoU threshold
         self.iou_thresh = 0.20
@@ -1208,7 +1211,7 @@ class MainWindow(QMainWindow):
             # Check if there are any images in the project
             QMessageBox.warning(self,
                                 "No Images Loaded",
-                                "Please load images into the project before sampling annotations.")
+                                "Please load images into the project before setting Tile Inference parameters.")
             return
         
         try:

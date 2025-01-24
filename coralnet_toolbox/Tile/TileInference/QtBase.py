@@ -10,7 +10,7 @@ from patched_yolo_infer import MakeCropsDetectThem
 from patched_yolo_infer import CombineDetections
 
 from qtrangeslider import QRangeSlider
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QDialogButtonBox, QGroupBox, QFormLayout, QLineEdit,
@@ -45,6 +45,11 @@ class Base(QDialog):
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Tile Inference")
         self.resize(300, 600)
+        
+        # Initialize debounce timer
+        self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self.update_tile_graphics)
 
         # Tile parameters
         self.tile_params = {}
@@ -98,6 +103,10 @@ class Base(QDialog):
         
     def closeEvent(self, event):
         self.clear_tile_graphics()
+        
+    def debounce_update(self):
+        """Debounce the update_tile_graphics call by Nms"""
+        self.update_timer.start(1000)
 
     def setup_info_layout(self):
         """
@@ -126,35 +135,35 @@ class Base(QDialog):
         # Tile Size
         self.tile_size_input = TileSizeInput()
         
-        # Connect width and height spinboxes
-        self.tile_size_input.width_spin.valueChanged.connect(self.update_tile_graphics)
-        self.tile_size_input.height_spin.valueChanged.connect(self.update_tile_graphics)
+        # Connect width and height spinboxes with debounce
+        self.tile_size_input.width_spin.valueChanged.connect(self.debounce_update)
+        self.tile_size_input.height_spin.valueChanged.connect(self.debounce_update)
         layout.addRow(self.tile_size_input)
 
         # Overlap
         self.overlap_input = OverlapInput() 
         
-        # Connect all spinboxes/doublespinboxes
-        self.overlap_input.width_spin.valueChanged.connect(self.update_tile_graphics)
-        self.overlap_input.height_spin.valueChanged.connect(self.update_tile_graphics)
-        self.overlap_input.width_double.valueChanged.connect(self.update_tile_graphics)
-        self.overlap_input.height_double.valueChanged.connect(self.update_tile_graphics)
+        # Connect all spinboxes/doublespinboxes with debounce
+        self.overlap_input.width_spin.valueChanged.connect(self.debounce_update)
+        self.overlap_input.height_spin.valueChanged.connect(self.debounce_update)
+        self.overlap_input.width_double.valueChanged.connect(self.debounce_update)
+        self.overlap_input.height_double.valueChanged.connect(self.debounce_update)
         layout.addRow(self.overlap_input)
 
         # Margins
         self.margins_input = MarginInput()
         
-        # Connect single value inputs
-        self.margins_input.single_spin.valueChanged.connect(self.update_tile_graphics)
-        self.margins_input.single_double.valueChanged.connect(self.update_tile_graphics)
+        # Connect single value inputs with debounce 
+        self.margins_input.single_spin.valueChanged.connect(self.debounce_update)
+        self.margins_input.single_double.valueChanged.connect(self.debounce_update)
         
-        # Connect all margin spinboxes
+        # Connect all margin spinboxes with debounce
         for spin in self.margins_input.margin_spins:
-            spin.valueChanged.connect(self.update_tile_graphics)
+            spin.valueChanged.connect(self.debounce_update)
             
-        # Connect all margin doublespinboxes
+        # Connect all margin doublespinboxes with debounce
         for double in self.margins_input.margin_doubles:
-            double.valueChanged.connect(self.update_tile_graphics)
+            double.valueChanged.connect(self.debounce_update)
             
         layout.addRow(self.margins_input)
 
@@ -320,9 +329,6 @@ class Base(QDialog):
         """
         Apply the tile inference options.
         """
-        # Pause the cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
         try:          
             # Create tiling parameters dictionary
             self.tile_params = {
@@ -344,13 +350,16 @@ class Base(QDialog):
                 "memory_optimize": self.memory_optimize
             }
             
+            QMessageBox.information(self, 
+                                    "Success", 
+                                    "Tile inference configurations set successfully.")
+            
         except Exception as e:
             QMessageBox.critical(self, 
                                  "Error", 
                                  f"Failed to set tile inference configurations: {str(e)}")
         finally:
-            # Resume the cursor
-            QApplication.restoreOverrideCursor()
+            self.clear_tile_graphics()
 
         self.accept()
         
@@ -358,20 +367,21 @@ class Base(QDialog):
         """
         Reset tile inference configurations.
         """
-        try:
-            self.clear_tile_graphics()
-            
+        try:           
             self.tile_params = {}
             self.tile_inference_params = {}
             QMessageBox.information(self, 
                                     "Success", 
                                     "Tile inference configurations reset successfully.")
-            self.accept()
             
         except Exception as e:
             QMessageBox.critical(self, 
                                  "Error", 
                                  f"Failed to reset tile inference configurations: {str(e)}")
+        finally:
+            self.clear_tile_graphics()
+            
+        self.accept()
             
     def get_tile_params(self):
         """
@@ -391,47 +401,106 @@ class Base(QDialog):
     
     def update_tile_graphics(self):
         """
-        Uses the tile parameters to create a grid of tiles on the image 
-        in the annotation window.
+        Uses class tile parameters to create a grid of tiles on the annotation window image.
         """
+        # Clear existing tile graphics
         self.clear_tile_graphics()
+        
+        # Update and validate all parameters
+        self.update_params()
 
         if not self.annotation_window.image_pixmap:
             return
 
-        image_width = self.annotation_window.image_pixmap.width()
-        image_height = self.annotation_window.image_pixmap.height()
+        # Get image dimensions
+        image_full_width = self.annotation_window.image_pixmap.width()
+        image_full_height = self.annotation_window.image_pixmap.height()
 
-        tile_width = self.shape_x
-        tile_height = self.shape_y
-        overlap_x = self.overlap_x
-        overlap_y = self.overlap_y
-        margins = self.margins
+        # Calculate overlap coefficients
+        if isinstance(self.overlap_x, float):
+            cross_coef_x = 1 - self.overlap_x  # Float between 0-1
+        else:
+            cross_coef_x = 1 - (self.overlap_x / self.shape_x)  # Pixel value
 
-        x_start = margins[3]
-        y_start = margins[0]
-        x_end = image_width - margins[1]
-        y_end = image_height - margins[2]
+        if isinstance(self.overlap_y, float): 
+            cross_coef_y = 1 - self.overlap_y  # Float between 0-1
+        else:
+            cross_coef_y = 1 - (self.overlap_y / self.shape_y)  # Pixel value
 
-        x = x_start
-        while x < x_end:
-            y = y_start
-            while y < y_end:
-                tile = QGraphicsRectItem(x, y, tile_width, tile_height)
-                tile_color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255), 128)
-                tile.setBrush(QBrush(tile_color))
-                tile.setPen(QPen(QColor(0, 0, 0), 1, Qt.DotLine))
-                tile.setOpacity(0.5)
-                self.annotation_window.scene.addItem(tile)
-                self.tile_graphics.append(tile)
-                y += tile_height - overlap_y
-            x += tile_width - overlap_x
+        # Handle margins
+        margin_pixels = [0, 0, 0, 0]  # [top, right, bottom, left]
+        
+        if self.margins is not None:
+            if isinstance(self.margins, (int, float)):
+                if isinstance(self.margins, float):
+                    margin_val = int(self.margins * min(image_full_width, image_full_height))
+                    margin_pixels = [margin_val] * 4
+                else:
+                    margin_pixels = [self.margins] * 4
+            elif isinstance(self.margins, tuple):
+                for i, margin in enumerate(self.margins):
+                    if isinstance(margin, float):
+                        margin_pixels[i] = int(margin * (image_full_height if i % 2 == 0 else image_full_width))
+                    else:
+                        margin_pixels[i] = margin
 
+        # Calculate grid boundaries
+        x_start = margin_pixels[3]  
+        y_start = margin_pixels[0]  
+        x_end = image_full_width - margin_pixels[1]
+        y_end = image_full_height - margin_pixels[2]
+
+        # Calculate grid steps, adjusted to fit within margins
+        x_steps = int((x_end - x_start - self.shape_x) / (self.shape_x * cross_coef_x)) + 1
+        y_steps = int((y_end - y_start - self.shape_y) / (self.shape_y * cross_coef_y)) + 1
+
+        # Calculate line thickness based on resolution
+        line_thickness = max(10, min(20, max(image_full_width, image_full_height) // 1000))
+
+        # Draw tiles
+        for i in range(y_steps + 1):
+            for j in range(x_steps + 1):
+                x = x_start + int(self.shape_x * j * cross_coef_x)
+                y = y_start + int(self.shape_y * i * cross_coef_y)
+
+                # Truncate tile width and height if extending beyond boundaries
+                tile_width = min(self.shape_x, x_end - x)
+                tile_height = min(self.shape_y, y_end - y)
+
+                # Determine tile color and transparency
+                if tile_width == self.shape_x and tile_height == self.shape_y:
+                    # Full tiles within image boundaries
+                    color = QColor(0, 0, 0) if (i * (x_steps + 1) + j) % 2 == 0 else QColor(255, 255, 255)
+                    opacity = 0.5
+                    line_style = Qt.DotLine
+                    brush = QBrush(color)
+                else:
+                    # Tiles outside/partially outside image boundaries
+                    color = QColor(255, 0, 0)  # Red color
+                    opacity = 1.0
+                    line_style = Qt.SolidLine
+                    brush = QBrush(Qt.NoBrush)  # No fill for boundary tiles
+
+                # Skip if tile is completely outside image
+                if tile_width > 0 and tile_height > 0:
+                    tile = QGraphicsRectItem(x, y, tile_width, tile_height)
+                    tile.setPen(QPen(color, line_thickness, line_style))
+                    tile.setBrush(brush)
+                    tile.setOpacity(opacity)
+                        
+                    self.annotation_window.scene.addItem(tile)
+                    self.tile_graphics.append(tile)
+                    
     def clear_tile_graphics(self):
         """
         Clear the tile graphics from the annotation window.
         """
-        print("Clearing tile graphics")
-        for tile in self.tile_graphics:
-            self.annotation_window.scene.removeItem(tile)
+        # Remove all tile graphics from the scene
+        for tile_graphic in self.tile_graphics:
+            tile_graphic.scene().removeItem(tile_graphic)
+        # Update the viewport to remove the tiles
+        self.annotation_window.viewport().update()
+        self.annotation_window.fitInView(self.annotation_window.scene.sceneRect(), Qt.KeepAspectRatio)
+        # Clear the tile graphics list
         self.tile_graphics = []
+        
