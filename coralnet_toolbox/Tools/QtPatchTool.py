@@ -23,12 +23,12 @@ class PatchTool(Tool):
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
-        self.annotation_window.main_window.annotation_size_spinbox.setVisible(True)  # Show annotation size spin box
+        self.annotation_window.main_window.annotation_size_spinbox.setEnabled(True)
 
     def deactivate(self):
         self.active = False
         self.annotation_window.setCursor(Qt.ArrowCursor)
-        self.annotation_window.main_window.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box
+        self.annotation_window.main_window.annotation_size_spinbox.setEnabled(False)
 
     def mousePressEvent(self, event: QMouseEvent):
 

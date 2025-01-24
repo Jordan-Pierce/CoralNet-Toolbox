@@ -660,6 +660,7 @@ class MainWindow(QMainWindow):
 
         # Create button to hold the action
         self.all_labels_button = QToolButton()
+        
         # Set tooltip on both the action and button to ensure it shows
         self.all_labels_action.setToolTip("Select All Labels")
         self.all_labels_button.setToolTip("Select All Labels")
@@ -674,25 +675,29 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
+        
+        # Patch Annotation Size
+        annotation_size_label = QLabel("Patch Size")
+        self.annotation_size_spinbox = QSpinBox()
+        self.annotation_size_spinbox.setMinimum(1)
+        self.annotation_size_spinbox.setMaximum(5000) 
+        self.annotation_size_spinbox.setEnabled(False)
+        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
+        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
+        
+        annotation_size_layout = QHBoxLayout()
+        annotation_size_layout.addWidget(annotation_size_label)
+        annotation_size_layout.addWidget(self.annotation_size_spinbox)
+        
+        self.annotation_size_widget = QWidget()
+        self.annotation_size_widget.setLayout(annotation_size_layout)
 
         # --------------------------------------------------
         # Create collapsible Parameters section
         # --------------------------------------------------
         self.parameters_section = CollapsibleSection("Parameters")
-
-        # Patch Annotation Size
-        self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(5000)
-        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
-        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
-        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
-        annotation_size_layout = QHBoxLayout()
-        annotation_size_layout.addWidget(self.annotation_size_spinbox)
-        annotation_size_widget = QWidget()
-        annotation_size_widget.setLayout(annotation_size_layout)
-        self.parameters_section.add_widget(annotation_size_widget, "Patch Size")
-
+        
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
@@ -747,7 +752,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.view_dimensions_label)
         self.status_bar_layout.addWidget(self.transparency_widget)
         self.status_bar_layout.addStretch()
-        self.status_bar_layout.addWidget(self.annotation_size_spinbox)  # Move annotation size spin box to status bar
+        self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 
         # --------------------------------------------------
@@ -808,7 +813,6 @@ class MainWindow(QMainWindow):
                 self.tile_inference_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("select")
-                self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
             else:
                 self.toolChanged.emit(None)
                 
@@ -821,10 +825,8 @@ class MainWindow(QMainWindow):
                 self.tile_inference_tool_action.setChecked(False)
 
                 self.toolChanged.emit("patch")
-                self.annotation_size_spinbox.setVisible(True)  # Show annotation size spin box when in patch tool
             else:
                 self.toolChanged.emit(None)
-                self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
                 
         elif action == self.rectangle_tool_action:
             if state:
@@ -835,7 +837,6 @@ class MainWindow(QMainWindow):
                 self.tile_inference_tool_action.setChecked(False)
 
                 self.toolChanged.emit("rectangle")
-                self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
             else:
                 self.toolChanged.emit(None)
                 
@@ -848,7 +849,6 @@ class MainWindow(QMainWindow):
                 self.tile_inference_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("polygon")
-                self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
             else:
                 self.toolChanged.emit(None)
                 
@@ -867,7 +867,6 @@ class MainWindow(QMainWindow):
                 self.tile_inference_tool_action.setChecked(False)
 
                 self.toolChanged.emit("sam")
-                self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
             else:
                 self.toolChanged.emit(None)
                 
@@ -887,7 +886,6 @@ class MainWindow(QMainWindow):
 
             # Emit None to close other tools
             self.toolChanged.emit(None)
-            self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
 
     def untoggle_all_tools(self):
         # Unlock the label lock
@@ -903,8 +901,7 @@ class MainWindow(QMainWindow):
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
-        self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
-
+        
     def handle_tool_changed(self, tool):
         # Unlock the label lock
         self.label_window.unlock_label_lock()
@@ -916,7 +913,6 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.tile_inference_tool_action.setChecked(False)
-            self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
@@ -924,7 +920,6 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.tile_inference_tool_action.setChecked(False)
-            self.annotation_size_spinbox.setVisible(True)  # Show annotation size spin box when in patch tool
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -932,7 +927,6 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.tile_inference_tool_action.setChecked(False)
-            self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -940,7 +934,6 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
             self.tile_inference_tool_action.setChecked(False)
-            self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -948,7 +941,6 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
             self.tile_inference_tool_action.setChecked(False)
-            self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
         elif tool == "tile_inference":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -956,7 +948,6 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.tile_inference_tool_action.setChecked(True)
-            self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -964,8 +955,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.tile_inference_tool_action.setChecked(False)
-            self.annotation_size_spinbox.setVisible(False)  # Hide annotation size spin box when not in patch tool
-
+            
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
         if dialog.exec_() == QDialog.Accepted:
