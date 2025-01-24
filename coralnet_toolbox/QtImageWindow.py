@@ -250,7 +250,6 @@ class ImageWindow(QWidget):
             # Add checkbox
             checkbox = QCheckBox()
             checkbox.setStyleSheet("margin-left:10px;")
-            checkbox.setFixedSize(20, 20)  # Increase the size of the checkbox
             self.tableWidget.setCellWidget(row_position, 0, checkbox)
 
             item_text = f"{self.image_dict[path]['filename']}"
@@ -788,10 +787,8 @@ class ImageWindow(QWidget):
                                      QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            self.annotation_window.blockSignals(True)  # Block signals to prevent new images from being loaded
             for path in selected_paths:
                 self.delete_image(path)
-            self.annotation_window.blockSignals(False)  # Unblock signals after deletion
 
     def delete_selected_annotations(self):
         selected_paths = self._get_selected_image_paths()
@@ -805,9 +802,7 @@ class ImageWindow(QWidget):
                                      QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            self.annotation_window.blockSignals(True)  # Block signals to prevent new images from being loaded
             for path in selected_paths:
                 self.annotation_window.delete_image_annotations(path)
-            self.annotation_window.blockSignals(False)  # Unblock signals after deletion
             self.main_window.confidence_window.clear_display()
             self.update_table_widget()
