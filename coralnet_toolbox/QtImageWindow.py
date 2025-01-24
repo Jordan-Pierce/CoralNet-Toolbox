@@ -166,8 +166,8 @@ class ImageWindow(QWidget):
 
         # Create and setup table widget
         self.tableWidget = QTableWidget(self)
-        self.tableWidget.setColumnCount(2)
-        self.tableWidget.setHorizontalHeaderLabels(["Image Name", "Annotations"])
+        self.tableWidget.setColumnCount(3)
+        self.tableWidget.setHorizontalHeaderLabels(["Select", "Image Name", "Annotations"])
         self.tableWidget.horizontalHeader().setStretchLastSection(True)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
@@ -185,7 +185,7 @@ class ImageWindow(QWidget):
             }
         """)
 
-        self.tableWidget.setColumnWidth(0, 200)
+        self.tableWidget.setColumnWidth(0, 50)
         self.tableWidget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
 
         # Add table widget to the info table group layout
@@ -247,19 +247,24 @@ class ImageWindow(QWidget):
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
 
+            # Add checkbox
+            checkbox = QCheckBox()
+            checkbox.setStyleSheet("margin-left:10px;")
+            self.tableWidget.setCellWidget(row_position, 0, checkbox)
+
             item_text = f"{self.image_dict[path]['filename']}"
             item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
             item = QTableWidgetItem(item_text)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setToolTip(os.path.basename(path))
             item.setTextAlignment(Qt.AlignCenter)  # Center align the text
-            self.tableWidget.setItem(row_position, 0, item)
+            self.tableWidget.setItem(row_position, 1, item)
 
             annotation_count = self.image_dict[path]['annotation_count']
             annotation_item = QTableWidgetItem(str(annotation_count))
             annotation_item.setFlags(annotation_item.flags() & ~Qt.ItemIsEditable)
             annotation_item.setTextAlignment(Qt.AlignCenter)  # Center align the text
-            self.tableWidget.setItem(row_position, 1, annotation_item)
+            self.tableWidget.setItem(row_position, 2, annotation_item)
 
         self.update_table_selection()
 
@@ -494,16 +499,19 @@ class ImageWindow(QWidget):
         self.rasterio_images[image_path] = None
 
     def show_context_menu(self, position):
-        row = self.tableWidget.rowAt(position.y())
-        if row < 0 or row >= len(self.filtered_image_paths):
+        # Get selected checkboxes
+        selected_paths = self._get_selected_image_paths()
+
+        if not selected_paths:
             return
 
-        self.right_clicked_row = row
         context_menu = QMenu(self)
-        delete_annotations_action = context_menu.addAction("Delete Annotations")
-        delete_annotations_action.triggered.connect(self.delete_annotations)
-        delete_image_action = context_menu.addAction("Delete Image")
-        delete_image_action.triggered.connect(self.delete_selected_image)
+        delete_all_images_action = context_menu.addAction(f"Delete {len(selected_paths)} Images")
+        delete_all_images_action.triggered.connect(lambda: self.delete_selected_images())
+
+        delete_all_annotations_action = context_menu.addAction(f"Delete Annotations for {len(selected_paths)} Images")
+        delete_all_annotations_action.triggered.connect(lambda: self.delete_selected_annotations())
+
         context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
 
     def delete_annotations(self):
@@ -754,3 +762,47 @@ class ImageWindow(QWidget):
             self.search_bar_labels.setEditText(current_label_search)
         else:
             self.search_bar_labels.setPlaceholderText("Type to search labels")
+
+    def _get_selected_image_paths(self):
+        """
+        Returns list of image paths for rows with checked checkboxes
+        """
+        selected_paths = []
+        for row in range(self.tableWidget.rowCount()):
+            checkbox = self.tableWidget.cellWidget(row, 0)
+            if checkbox and checkbox.isChecked():
+                selected_paths.append(self.filtered_image_paths[row])
+        return selected_paths
+
+    def delete_selected_images(self):
+        selected_paths = self._get_selected_image_paths()
+        
+        if not selected_paths:
+            return
+
+        reply = QMessageBox.question(self, 
+                                     "Confirm Multiple Image Deletions",
+                                     f"Are you sure you want to delete {len(selected_paths)} images?\n"
+                                     "This will delete all associated annotations.",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            for path in selected_paths:
+                self.delete_image(path)
+
+    def delete_selected_annotations(self):
+        selected_paths = self._get_selected_image_paths()
+        
+        if not selected_paths:
+            return
+
+        reply = QMessageBox.question(self, 
+                                     "Confirm Multiple Annotation Deletions",
+                                     f"Are you sure you want to delete annotations for {len(selected_paths)} images?",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            for path in selected_paths:
+                self.annotation_window.delete_image_annotations(path)
+            self.main_window.confidence_window.clear_display()
+            self.update_table_widget()
