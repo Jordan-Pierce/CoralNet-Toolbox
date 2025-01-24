@@ -13,7 +13,7 @@ from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
-                             QGroupBox)
+                             QGroupBox, QPushButton)
 
 from rasterio.windows import Window
 
@@ -190,6 +190,20 @@ class ImageWindow(QWidget):
 
         # Add table widget to the info table group layout
         info_table_layout.addWidget(self.tableWidget)
+
+        # Add a new horizontal layout below the table widget to hold the buttons
+        self.button_layout = QHBoxLayout()
+        info_table_layout.addLayout(self.button_layout)
+
+        # Add 'Select All' button to the new layout
+        self.select_all_button = QPushButton("Select All", self)
+        self.select_all_button.clicked.connect(self.select_all_checkboxes)
+        self.button_layout.addWidget(self.select_all_button)
+
+        # Add 'Deselect All' button to the new layout
+        self.deselect_all_button = QPushButton("Deselect All", self)
+        self.deselect_all_button.clicked.connect(self.deselect_all_checkboxes)
+        self.button_layout.addWidget(self.deselect_all_button)
 
         # Add the group box to the main layout
         self.layout.addWidget(self.info_table_group)
@@ -818,3 +832,15 @@ class ImageWindow(QWidget):
             self.search_bar_labels.setEditText(current_label_search)
         else:
             self.search_bar_labels.setPlaceholderText("Type to search labels")
+
+    def select_all_checkboxes(self):
+        for row in range(self.tableWidget.rowCount()):
+            checkbox = self.tableWidget.cellWidget(row, 0)
+            if checkbox:
+                checkbox.setChecked(True)
+
+    def deselect_all_checkboxes(self):
+        for row in range(self.tableWidget.rowCount()):
+            checkbox = self.tableWidget.cellWidget(row, 0)
+            if checkbox:
+                checkbox.setChecked(False)
