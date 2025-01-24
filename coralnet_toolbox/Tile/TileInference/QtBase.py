@@ -352,12 +352,12 @@ class Base(QDialog):
             
             QMessageBox.information(self, 
                                     "Success", 
-                                    "Tile inference configurations set successfully.")
+                                    "Tile Inference parameters set successfully.")
             
         except Exception as e:
             QMessageBox.critical(self, 
                                  "Error", 
-                                 f"Failed to set tile inference configurations: {str(e)}")
+                                 f"Failed to set Tile Inference parameters: {str(e)}")
         finally:
             self.clear_tile_graphics()
 
@@ -372,12 +372,12 @@ class Base(QDialog):
             self.tile_inference_params = {}
             QMessageBox.information(self, 
                                     "Success", 
-                                    "Tile inference configurations reset successfully.")
+                                    "Tile inference parameters reset successfully.")
             
         except Exception as e:
             QMessageBox.critical(self, 
                                  "Error", 
-                                 f"Failed to reset tile inference configurations: {str(e)}")
+                                 f"Failed to reset Tile Inference parameters: {str(e)}")
         finally:
             self.clear_tile_graphics()
             
@@ -398,6 +398,14 @@ class Base(QDialog):
         :return: Tile inference parameters
         """
         return self.tile_inference_params
+
+    def get_params(self):
+        """
+        Get both the tile and tile inference parameters.
+
+        :return: Tuple of tile and tile inference parameters
+        """
+        return self.get_tile_params(), self.get_tile_inference_params()
     
     def update_tile_graphics(self):
         """

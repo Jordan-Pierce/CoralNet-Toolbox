@@ -24,6 +24,8 @@ class GlobalEventFilter(QObject):
         self.segment_deploy_model_dialog = main_window.segment_deploy_model_dialog
         self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
         self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
+        
+        self.tile_inference_dialog = main_window.tile_inference_dialog
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
@@ -33,7 +35,13 @@ class GlobalEventFilter(QObject):
                 if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
                     self.label_window.handle_wasd_key(event.key())
                     return True
-
+                
+                # Handle G key for displaying existing tile inference parameters
+                if event.key() == Qt.Key_G:
+                    if self.main_window.tile_inference_tool_action.isChecked():
+                        self.tile_inference_dialog.update_tile_graphics()
+                    return True
+                
                 # Handle hotkey for image classification prediction
                 if event.key() == Qt.Key_1:
                     self.classify_deploy_model_dialog.predict()
@@ -88,6 +96,14 @@ class GlobalEventFilter(QObject):
             # Handle Escape key for exiting program
             if event.key() == Qt.Key_Escape:
                 self.show_exit_confirmation_dialog()
+                return True
+            
+        # Handle key release events 
+        elif event.type() == QEvent.KeyRelease:
+            
+            # Handle G key for removing existing tile inference parameter
+            if event.key() == Qt.Key_G:
+                self.tile_inference_dialog.clear_tile_graphics()
                 return True
 
         # Return False for other events to allow them to be processed by the target object

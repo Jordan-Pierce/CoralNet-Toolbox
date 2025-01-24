@@ -76,6 +76,8 @@ from coralnet_toolbox.AutoDistill import (
     BatchInferenceDialog as AutoDistillBatchInferenceDialog
 )
 
+from coralnet_toolbox.TileProcessor import TileProcessor
+
 from coralnet_toolbox.Icons import get_icon
 
 from coralnet_toolbox.utilities import get_available_device
@@ -195,6 +197,9 @@ class MainWindow(QMainWindow):
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.tile_inference_dialog = TileInferenceDialog(self)
+        
+        # Create the tile processor
+        self.tile_processor = TileProcessor(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -859,7 +864,13 @@ class MainWindow(QMainWindow):
             else:
                 self.toolChanged.emit(None)
                 
-        elif action == self.tile_inference_tool_action:           
+        elif action == self.tile_inference_tool_action: 
+            if not self.tile_processor.params_set():
+                self.tile_inference_tool_action.setChecked(False)
+                QMessageBox.warning(self,
+                                    "Tile Inference",
+                                    "You must set the parameters for Tile Inference before using the tool.")
+                return          
             if state:
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
@@ -1219,8 +1230,8 @@ class MainWindow(QMainWindow):
             self.tile_inference_dialog.exec_()
             
             # Get the tile parameters and tile inference parameters
-            self.tile_params = self.tile_inference_dialog.get_tile_params()
-            self.tile_inference_params = self.tile_inference_dialog.get_tile_inference_params()
+            tile_params, tile_inference_params = self.tile_inference_dialog.get_params()
+            self.tile_processor.set_params(tile_params, tile_inference_params)
             
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
