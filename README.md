@@ -143,7 +143,7 @@ Enhance your CoralNet experience with these tools:
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 - 🏁 Tile Inference: Perform Tile Inference on large images
-  - Uses [`YOLO-Patch-Based-Inference`](https://github.com/Jordan-Pierce/YOLO-Patch-Based-Inference)
+  - Uses [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 
 ### TODO
 - 🔍 API: Get predictions from any CoralNet source model

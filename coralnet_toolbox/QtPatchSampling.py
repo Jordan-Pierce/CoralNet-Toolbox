@@ -4,24 +4,50 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import random
 
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF
-from PyQt5.QtGui import QColor, QPen, QBrush
-from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton,
-                             QComboBox, QSpinBox, QFormLayout, QButtonGroup, QCheckBox)
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
+from PyQt5.QtGui import QPen, QBrush, QColor
+from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QLabel, QDialog, QHBoxLayout, 
+                             QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox,
+                             QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
-from coralnet_toolbox.Tile.QtCommon import MarginInput
+from coralnet_toolbox.QtCommon import MarginInput
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+        
+
+class PatchGraphic(QGraphicsRectItem):
+    def __init__(self, x, y, size, parent=None):
+        super().__init__(x, y, size, size, parent)
+        
+        # Default styling
+        self.default_pen = QPen(Qt.white, 2, Qt.DashLine)
+        self.hover_pen = QPen(Qt.yellow, 3, Qt.DashLine)
+        self.default_brush = QBrush(QColor(255, 255, 255, 50))
+        
+        # Initial appearance
+        self.setPen(self.default_pen)
+        self.setBrush(self.default_brush)
+        self.setAcceptHoverEvents(True)
+        
+    def hoverEnterEvent(self, event):
+        """Highlight patch on hover"""
+        self.setPen(self.hover_pen)
+        super().hoverEnterEvent(event)
+        
+    def hoverLeaveEvent(self, event):
+        """Restore default appearance on hover exit"""
+        self.setPen(self.default_pen) 
+        super().hoverLeaveEvent(event)
 
 
 class PatchSamplingDialog(QDialog):
-    annotationsSampled = pyqtSignal(list, bool)  # Signal to emit the sampled annotations and apply to all flag
+    annotationsSampled = pyqtSignal(list, bool)
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -31,103 +57,187 @@ class PatchSamplingDialog(QDialog):
 
         self.setWindowTitle("Sample Annotations")
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowState(Qt.WindowMaximized)  # Ensure the dialog is maximized
-
+        
         self.layout = QVBoxLayout(self)
+        
+        # Create sections of the dialog
+        self.setup_sampling_config_layout()
+        self.setup_annotation_config_layout()
+        self.setup_apply_options_layout()
+        self.setup_buttons_layout()
+        
+        self.sampled_annotations = []
+        
+        # Initialize graphics list
+        self.annotation_graphics = []
+
+    def setup_sampling_config_layout(self):
+        """Set up the sampling method and count configuration."""
+        group_box = QGroupBox("Sampling Configuration")
+        layout = QFormLayout()
 
         # Sampling Method
-        self.method_label = QLabel("Sampling Method:")
         self.method_combo = QComboBox()
         self.method_combo.addItems(["Random", "Stratified Random", "Uniform"])
-        self.method_combo.currentIndexChanged.connect(self.preview_annotations)  # Connect to preview
-        self.layout.addWidget(self.method_label)
-        self.layout.addWidget(self.method_combo)
+        self.method_combo.currentIndexChanged.connect(self.preview_annotations)
+        layout.addRow("Sampling Method:", self.method_combo)
 
         # Number of Annotations
-        self.num_annotations_label = QLabel("Number of Annotations:")
         self.num_annotations_spinbox = QSpinBox()
         self.num_annotations_spinbox.setMinimum(1)
         self.num_annotations_spinbox.setMaximum(10000)
         self.num_annotations_spinbox.setValue(10)
-        self.num_annotations_spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
-        self.layout.addWidget(self.num_annotations_label)
-        self.layout.addWidget(self.num_annotations_spinbox)
-
+        self.num_annotations_spinbox.valueChanged.connect(self.preview_annotations)
+        layout.addRow("Number of Annotations:", self.num_annotations_spinbox)
+        
         # Annotation Size
-        self.annotation_size_label = QLabel("Annotation Size:")
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(32)
-        self.annotation_size_spinbox.setMaximum(10000)  # Arbitrary large number for "infinite"
+        self.annotation_size_spinbox.setMaximum(10000)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
-        self.annotation_size_spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
-        self.layout.addWidget(self.annotation_size_label)
-        self.layout.addWidget(self.annotation_size_spinbox)
+        self.annotation_size_spinbox.valueChanged.connect(self.preview_annotations)
+        layout.addRow("Annotation Size:", self.annotation_size_spinbox)
 
-        # Margin Offsets using MarginInput
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_annotation_config_layout(self):
+        """Set up the annotation size and margin configuration."""
+        # Margin Offsets
         self.margin_input = MarginInput()
-        self.margin_input.value_type.currentIndexChanged.connect(self.preview_annotations)  # Connect to preview
-        self.margin_input.type_combo.currentIndexChanged.connect(self.preview_annotations)  # Connect to preview
+        self.margin_input.value_type.currentIndexChanged.connect(self.preview_annotations)
+        self.margin_input.type_combo.currentIndexChanged.connect(self.preview_annotations)
         for spin in self.margin_input.margin_spins:
-            spin.valueChanged.connect(self.preview_annotations)  # Connect to preview
+            spin.valueChanged.connect(self.preview_annotations)
         for double in self.margin_input.margin_doubles:
-            double.valueChanged.connect(self.preview_annotations)  # Connect to preview
+            double.valueChanged.connect(self.preview_annotations)
+        
+        # Add margin label and input directly to main layout
         self.layout.addWidget(self.margin_input)
 
-        # Apply to Filtered Images Checkbox
-        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
-        self.layout.addWidget(self.apply_filtered_checkbox)
-        # Apply to Previous Images Checkbox
-        self.apply_prev_checkbox = QCheckBox("Apply to previous images")
-        self.layout.addWidget(self.apply_prev_checkbox)
-        # Apply to Next Images Checkbox
-        self.apply_next_checkbox = QCheckBox("Apply to next images")
-        self.layout.addWidget(self.apply_next_checkbox)
-        # Apply to All Images Checkbox
-        self.layout.addWidget(self.apply_all_checkbox)
+    def setup_apply_options_layout(self):
+        """Set up the application scope options."""
+        group_box = QGroupBox("Apply To")
+        layout = QVBoxLayout()
 
-        # Ensure only one of the apply checkboxes can be selected at a time
+        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.apply_prev_checkbox = QCheckBox("Apply to previous images")
+        self.apply_next_checkbox = QCheckBox("Apply to next images")
+        self.apply_all_checkbox = QCheckBox("Apply to all images")
+
+        layout.addWidget(self.apply_filtered_checkbox)
+        layout.addWidget(self.apply_prev_checkbox)
+        layout.addWidget(self.apply_next_checkbox)
+        layout.addWidget(self.apply_all_checkbox)
+
         self.apply_group = QButtonGroup(self)
         self.apply_group.addButton(self.apply_filtered_checkbox)
         self.apply_group.addButton(self.apply_prev_checkbox)
         self.apply_group.addButton(self.apply_next_checkbox)
         self.apply_group.addButton(self.apply_all_checkbox)
-        self.apply_group.setExclusive(False)
+        self.apply_group.setExclusive(True)
 
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_buttons_layout(self):
+        """Set up the bottom button controls."""
+        button_layout = QHBoxLayout()
+        
         # Preview Button
         self.preview_button = QPushButton("Preview")
         self.preview_button.clicked.connect(self.preview_annotations)
-        self.layout.addWidget(self.preview_button)
-
-        # Accept/Cancel Buttons
-        self.button_box = QHBoxLayout()
+        button_layout.addWidget(self.preview_button)
+        
+        # Accept Button
         self.accept_button = QPushButton("Accept")
         self.accept_button.clicked.connect(self.accept_annotations)
-        self.button_box.addWidget(self.accept_button)
-        self.layout.addLayout(self.button_box)
-
-        self.sampled_annotations = []
+        button_layout.addWidget(self.accept_button)
+        
+        # Cancel Button
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_button)
+        
+        self.layout.addLayout(button_layout)
 
     def showEvent(self, event):
-        # Call update_margin_spinbox when the dialog is shown
-        self.annotation_window.imageLoaded.connect(self.update_margin_spinbox)
-        self.update_margin_spinbox()
+        """Handle dialog show event."""
+        self.update_annotation_graphics()
 
-    def hideEvent(self, event):
-        # Disconnect the signal when the dialog is hidden
-        self.annotation_window.imageLoaded.disconnect(self.update_margin_spinbox)
+    def closeEvent(self, event):
+        """Handle dialog close event."""
+        self.clear_annotation_graphics()
+        event.accept()
 
-    def update_margin_spinbox(self):
-        if self.annotation_window.image_pixmap:
-            width = self.annotation_window.image_pixmap.width()
-            height = self.annotation_window.image_pixmap.height()
-            # Set the margin spinboxes to the image dimensions
-            annotation_size = self.annotation_size_spinbox.value()
-            self.margin_input.single_spin.setMaximum(min(width, height) // 2 - annotation_size)
-            for spin in self.margin_input.margin_spins:
-                spin.setMaximum(min(width, height) // 2 - annotation_size)
+    def reject(self):
+        """Handle dialog rejection."""
+        self.clear_annotation_graphics()
+        super().reject()
+                
+    def validate_margins(self, margins, image_width, image_height):
+        """
+        Validate the margins parameter to ensure it is a valid type and value.
+
+        Args:
+            margins: Single int/float or tuple of 4 margins (top, right, bottom, left)
+            image_width: Width of image in pixels
+            image_height: Height of image in pixels
+            
+        Returns:
+            tuple: Validated margins as (left, top, right, bottom) in pixels
+            
+        Raises:
+            ValueError: If margins are invalid
+        """
+        margin_pixels = [0, 0, 0, 0]  # [top, right, bottom, left]
+        
+        if isinstance(margins, (int, float)):
+            if isinstance(margins, float):
+                if not 0.0 <= margins <= 1.0:
+                    raise ValueError("Margin percentage must be between 0 and 1")
+                # Use minimum dimension for percentage calculation
+                margin_val = int(margins * min(image_width, image_height))
+                margin_pixels = [margin_val] * 4
+            else:
+                if margins < 0:
+                    raise ValueError("Margin pixels must be non-negative") 
+                margin_pixels = [margins] * 4
+                
+        elif isinstance(margins, tuple) and len(margins) == 4:
+            for i, margin in enumerate(margins):
+                if isinstance(margin, float):
+                    if not 0.0 <= margin <= 1.0:
+                        raise ValueError(f"Margin percentage at index {i} must be between 0 and 1")
+                    # Use height for top/bottom margins, width for left/right margins
+                    dim = image_width if i in (1, 3) else image_height
+                    margin_pixels[i] = int(margin * dim)
+                elif isinstance(margin, int):
+                    if margin < 0:
+                        raise ValueError(f"Margin pixels at index {i} must be non-negative")
+                    margin_pixels[i] = margin
+                else:
+                    raise ValueError(f"Invalid margin type at index {i}")
+        else:
+            raise ValueError("Margins must be a single number or tuple of 4 numbers")
+            
+        # Convert from TRBL to LTRB order
+        margin_pixels = [margin_pixels[3], margin_pixels[0], margin_pixels[1], margin_pixels[2]]
+
+        # Validate margin sum doesn't exceed image dimensions 
+        if margin_pixels[0] + margin_pixels[2] >= image_width:  # Left + Right
+            raise ValueError("Horizontal margins exceed image width")
+        if margin_pixels[1] + margin_pixels[3] >= image_height:  # Top + Bottom  
+            raise ValueError("Vertical margins exceed image height")
+
+        return tuple(margin_pixels)  # Returns (left, top, right, bottom)
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
-        # Extract the margins
+        """Sample annotations using specified method."""
+        # Validate margins first
+        margins = self.validate_margins(margins, image_width, image_height)
+        
+        # Extract the validated margins
         margin_x_min, margin_y_min, margin_x_max, margin_y_max = margins
 
         annotations = []
@@ -162,23 +272,53 @@ class PatchSamplingDialog(QDialog):
 
         return annotations
 
-    def preview_annotations(self):
+    def update_annotation_graphics(self):
+        """Create and display annotation preview graphics."""
+        self.clear_annotation_graphics()
+        
+        # Get current parameters  
         method = self.method_combo.currentText()
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
-        margins = self.margin_input.get_value()
+        raw_margins = self.margin_input.get_value()
+        
+        # Validate margins before sampling
+        try:
+            margins = self.validate_margins(
+                raw_margins,
+                self.annotation_window.image_pixmap.width(),
+                self.annotation_window.image_pixmap.height()
+            )
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Margins", str(e))
+            return
+        
+        # Sample new annotations
+        self.sampled_annotations = self.sample_annotations(
+            method,
+            num_annotations,
+            annotation_size, 
+            margins,
+            self.annotation_window.image_pixmap.width(),
+            self.annotation_window.image_pixmap.height()
+        )
 
-        self.sampled_annotations = self.sample_annotations(method,
-                                                           num_annotations,
-                                                           annotation_size,
-                                                           margins,
-                                                           self.annotation_window.image_pixmap.width(),
-                                                           self.annotation_window.image_pixmap.height())
+        # Create graphics for each annotation
+        for annotation in self.sampled_annotations:
+            x, y, size = annotation
+            
+            # Create simple patch graphic
+            graphic = PatchGraphic(x, y, size)
+            
+            self.annotation_window.scene.addItem(graphic)
+            self.annotation_graphics.append(graphic)
 
-        self.draw_annotation_previews(margins)
+    def preview_annotations(self):
+        """Preview sampled annotations."""
+        self.update_annotation_graphics()
 
     def draw_annotation_previews(self, margins):
-
+        """Draw annotation previews on the current image."""
         margin_x_min, margin_y_min, margin_x_max, margin_y_max = margins
 
         self.annotation_window.unselect_annotations()
@@ -192,11 +332,11 @@ class PatchSamplingDialog(QDialog):
                                              self.annotation_window.current_image_path,
                                              self.label_window.active_label.id,
                                              transparency=self.annotation_window.transparency)
+            
             new_annotation.create_graphics_item(self.annotation_window.scene)
-            self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
 
     def accept_annotations(self):
-
+        """Accept the sampled annotations and add them to the current image."""
         margins = self.margin_input.get_value()
 
         self.add_sampled_annotations(self.method_combo.currentText(),
@@ -204,8 +344,8 @@ class PatchSamplingDialog(QDialog):
                                      self.annotation_size_spinbox.value(),
                                      margins)
 
-    def add_sampled_annotations(self, method, num_annotations, annotation_size, margins):
-
+    def add_sampled_annotations(self, method, num_annotations, annotation_size, raw_margins):
+        """Add the sampled annotations to the current image."""
         # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -238,13 +378,21 @@ class PatchSamplingDialog(QDialog):
         progress_bar = ProgressBar(self, title="Sampling Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths) * num_annotations)
-        
+
         for image_path in image_paths:
             sampled_annotations = []
-            
+
             # Load the rasterio representation
             rasterio_image = self.image_window.rasterio_open(image_path)
             height, width = rasterio_image.shape[0:2]
+
+            # Validate margins for each image
+            try:
+                margins = self.validate_margins(raw_margins, width, height)
+            except ValueError as e:
+                QApplication.restoreOverrideCursor()
+                QMessageBox.warning(self, "Invalid Margins", f"For image {image_path}: {str(e)}")
+                return
 
             # Sample the annotation, given params
             annotations = self.sample_annotations(method,
@@ -282,5 +430,14 @@ class PatchSamplingDialog(QDialog):
 
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
-
+        
+        # Close the dialog
+        self.clear_annotation_graphics()
         self.accept()
+        
+    def clear_annotation_graphics(self):
+        """Remove all annotation preview graphics."""
+        for graphic in self.annotation_graphics:
+            self.annotation_window.scene.removeItem(graphic)
+        self.annotation_graphics = []
+        self.annotation_window.viewport().update()
