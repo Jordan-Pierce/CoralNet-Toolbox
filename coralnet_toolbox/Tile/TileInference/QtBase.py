@@ -4,16 +4,18 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import shutil
+import random
 
 from patched_yolo_infer import MakeCropsDetectThem
 from patched_yolo_infer import CombineDetections
 
 from qtrangeslider import QRangeSlider
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QColor, QPen, QBrush
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QDialogButtonBox, QGroupBox, QFormLayout, QLineEdit,
                              QDoubleSpinBox, QComboBox, QPushButton, QFileDialog, QSpinBox,
-                             QHBoxLayout, QSlider, QWidget)
+                             QHBoxLayout, QSlider, QWidget, QGraphicsRectItem)
 
 from coralnet_toolbox.Tile.QtCommon import TileSizeInput, OverlapInput, MarginInput
 
@@ -38,27 +40,35 @@ class Base(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
+        self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Tile Inference")
-        self.resize(1000, 600)
+        self.resize(300, 600)
+        
+        # Initialize debounce timer
+        self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self.update_tile_graphics)
 
-        # Object Detection / Instance Segmentation
-        self.annotation_type = None
+        # Tile parameters
+        self.tile_params = {}
+        self.tile_inference_params = {}
         
         self.shape_x = None
         self.shape_y = None
         self.overlap_x = None
         self.overlap_y = None
+        self.margins = None
         
-        self.iou_threshold = None
-        self.conf_threshold = None
-        self.nms_threshold = None
         self.match_metric = None
         self.class_agnostic_nms = None
         self.intelligent_sorter = None
         self.sorter_bins = None
         self.memory_optimize = None
+        
+        self.image = None
+        self.tile_graphics = []
 
         self.layout = QVBoxLayout(self)
         
@@ -85,6 +95,18 @@ class Base(QDialog):
 
         # Buttons at bottom
         self.setup_buttons_layout()
+        
+    def showEvent(self, event):
+        # Get the image pixmap from the annotation window
+        self.image = self.annotation_window.image_pixmap
+        self.update_tile_graphics()
+        
+    def closeEvent(self, event):
+        self.clear_tile_graphics()
+        
+    def debounce_update(self):
+        """Debounce the update_tile_graphics call by Nms"""
+        self.update_timer.start(1000)
 
     def setup_info_layout(self):
         """
@@ -112,18 +134,41 @@ class Base(QDialog):
 
         # Tile Size
         self.tile_size_input = TileSizeInput()
+        
+        # Connect width and height spinboxes with debounce
+        self.tile_size_input.width_spin.valueChanged.connect(self.debounce_update)
+        self.tile_size_input.height_spin.valueChanged.connect(self.debounce_update)
         layout.addRow(self.tile_size_input)
 
         # Overlap
-        self.overlap_input = OverlapInput()
+        self.overlap_input = OverlapInput() 
+        
+        # Connect all spinboxes/doublespinboxes with debounce
+        self.overlap_input.width_spin.valueChanged.connect(self.debounce_update)
+        self.overlap_input.height_spin.valueChanged.connect(self.debounce_update)
+        self.overlap_input.width_double.valueChanged.connect(self.debounce_update)
+        self.overlap_input.height_double.valueChanged.connect(self.debounce_update)
         layout.addRow(self.overlap_input)
 
         # Margins
         self.margins_input = MarginInput()
+        
+        # Connect single value inputs with debounce 
+        self.margins_input.single_spin.valueChanged.connect(self.debounce_update)
+        self.margins_input.single_double.valueChanged.connect(self.debounce_update)
+        
+        # Connect all margin spinboxes with debounce
+        for spin in self.margins_input.margin_spins:
+            spin.valueChanged.connect(self.debounce_update)
+            
+        # Connect all margin doublespinboxes with debounce
+        for double in self.margins_input.margin_doubles:
+            double.valueChanged.connect(self.debounce_update)
+            
         layout.addRow(self.margins_input)
 
         group_box.setLayout(layout)
-        parent_layout.addWidget(group_box)      
+        parent_layout.addWidget(group_box)
         
     def setup_inference_config_layout(self, parent_layout):
         """
@@ -132,27 +177,6 @@ class Base(QDialog):
         group_box = QGroupBox("Inference Configuration Parameters")
         layout = QFormLayout()
         
-        # IOU threshold
-        self.iou_threshold_input = QDoubleSpinBox()
-        self.iou_threshold_input.setRange(0.0, 1.0)
-        self.iou_threshold_input.setSingleStep(0.01)
-        self.iou_threshold_input.setValue(0.5)
-        layout.addRow("IOU Threshold:", self.iou_threshold_input)
-        
-        # Confidence threshold
-        self.conf_threshold_input = QDoubleSpinBox()
-        self.conf_threshold_input.setRange(0.0, 1.0)
-        self.conf_threshold_input.setSingleStep(0.01)
-        self.conf_threshold_input.setValue(0.5)
-        layout.addRow("Confidence Threshold:", self.conf_threshold_input)
-        
-        # NMS threshold
-        self.nms_threshold_input = QDoubleSpinBox()
-        self.nms_threshold_input.setRange(0.0, 1.0)
-        self.nms_threshold_input.setSingleStep(0.01)
-        self.nms_threshold_input.setValue(0.3)
-        layout.addRow("NMS Threshold:", self.nms_threshold_input)
-
         # Match metric
         self.match_metric_input = QComboBox()
         self.match_metric_input.addItems(["IOU", "IOS"])
@@ -179,13 +203,6 @@ class Base(QDialog):
         self.memory_input = QComboBox()
         self.memory_input.addItems(["True", "False"])
         layout.addRow("Memory Optimization:", self.memory_input)
-        
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        label = QLabel("<b>Use SAM for creating Polygons:</b>")
-        layout.addRow(label, self.use_sam_dropdown)
 
         group_box.setLayout(layout)
         parent_layout.addWidget(group_box)
@@ -194,30 +211,21 @@ class Base(QDialog):
         """
         Set up the layout with buttons.
         """
-        # Create a button box for the buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        # Create a button box with custom buttons
+        button_box = QDialogButtonBox()
+        apply_button = QPushButton("Apply")
+        unapply_button = QPushButton("Unapply")
+        cancel_button = QPushButton("Cancel")
+        
+        button_box.addButton(apply_button, QDialogButtonBox.AcceptRole)
+        button_box.addButton(unapply_button, QDialogButtonBox.ActionRole)
+        button_box.addButton(cancel_button, QDialogButtonBox.RejectRole)
+        
         button_box.accepted.connect(self.apply)
+        unapply_button.clicked.connect(self.unapply)
         button_box.rejected.connect(self.reject)
 
-        self.layout.addWidget(button_box)     
-        
-    def is_sam_model_deployed(self):
-        """
-        Check if the SAM model is deployed and update the checkbox state accordingly.
-
-        :return: Boolean indicating whether the SAM model is deployed
-        """
-        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
-            return False
-        
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
-
-        if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
-            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
-            return False
-
-        return True 
+        self.layout.addWidget(button_box)
 
     def validate_slice_wh(self, slice_wh):
         """
@@ -271,34 +279,9 @@ class Base(QDialog):
                             "The margins must be a single integer, float, or a tuple of four integers/floats.")
         return False
     
-    def get_current_image(self):
-        """Get the current image from the annotation window."""
-        pass
-
-    def apply(self):
+    def update_params(self):
         """
-        Apply the tile inference options.
-        """
-        # Pause the cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        try:
-            # Tile inference
-            self.setup_tile_inference()
-            # Apply tile inference
-            # self.apply_tile_inference()  # TODO
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to tile inference image: {str(e)}")
-        finally:
-            # Resume the cursor
-            QApplication.restoreOverrideCursor()
-
-        self.accept()
-
-    def setup_tile_inference(self):
-        """
-        Use YOLO-Patch-Based-Inference.
+        Update the tile inference and inference parameters.
         """
         # Tile parameters
         slice_wh = self.tile_size_input.get_value()
@@ -306,14 +289,8 @@ class Base(QDialog):
         margins = self.margins_input.get_value()
         
         # Inference parameters 
-        self.iou_threshold = self.iou_threshold_input.value()
-        self.conf_threshold = self.conf_threshold_input.value()
-        self.nms_threshold = self.nms_threshold_input.value()
-        self.match_metric = self.match_metric_input.currentText()
-        self.class_agnostic_nms = self.class_agnostic_nms_input.currentText() == "True"
-        self.intelligent_sorter = self.intelligent_sorter_input.currentText() == "True"
-        self.sorter_bins = self.sorter_bins_input.value()
-        self.memory_optimize = self.memory_input.currentText() == "True"
+        match_metric = self.match_metric_input.currentText()
+        sorter_bins = self.sorter_bins_input.value()
 
         # Perform all validation checks
         if not self.validate_slice_wh(slice_wh):
@@ -325,13 +302,13 @@ class Base(QDialog):
         if not self.validate_margins(margins):
             return
 
-        if self.match_metric not in ["IOU", "IOS"]:
+        if match_metric not in ["IOU", "IOS"]:
             QMessageBox.warning(self, 
                                 "Invalid Parameter", 
                                 "Match metric must be either 'IOU' or 'IOS'.")
             return
 
-        if not (1 <= self.sorter_bins <= 10):
+        if not (1 <= sorter_bins <= 10):
             QMessageBox.warning(self, 
                                 "Invalid Parameter",
                                 "Sorter bins must be between 1 and 10.")
@@ -340,55 +317,198 @@ class Base(QDialog):
         # Extract components after validation
         self.shape_x, self.shape_y = slice_wh
         self.overlap_x, self.overlap_y = overlap_wh
+        self.margins = margins
         
-    def apply_tile_inference(self):
-        """ """
-        # Pause the cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.match_metric = match_metric
+        self.sorter_bins = sorter_bins
+        self.class_agnostic_nms = self.class_agnostic_nms_input.currentText() == "True"
+        self.intelligent_sorter = self.intelligent_sorter_input.currentText() == "True"
+        self.memory_optimize = self.memory_input.currentText() == "True"
 
-        # Create and show the progress bar
-        self.progress_bar = ProgressBar(self, title="Tile Inference Progress")
-        self.progress_bar.show()
+    def apply(self):
+        """
+        Apply the tile inference options.
+        """
+        try:          
+            # Create tiling parameters dictionary
+            self.tile_params = {
+                "shape_x": self.shape_x,
+                "shape_y": self.shape_y, 
+                "overlap_x": self.overlap_x,
+                "overlap_y": self.overlap_y,
+                "margins": self.margins,
+                "show_crops": False,
+                "show_processing_status": True
+            }
 
-        def progress_callback(task, current, total):
-            self.progress_bar.setWindowTitle(f"{task}")
-            progress_percentage = int((current / total) * 100)
-            self.progress_bar.set_value(progress_percentage)
-            self.progress_bar.update_progress()
-            if self.progress_bar.wasCanceled():
-                raise Exception("Tile Inference was canceled by the user.")
-
-        try:
-            # Perform tile cropping
-            element_crops = MakeCropsDetectThem(
-                image=img,
-                model=self.deploy_model_dialog.loaded_model,
-                segment=True if self.annotation_type == "instance_segmentation" else False,
-                show_crops=False,
-                shape_x=self.shape_x,
-                shape_y=self.shape_y,
-                overlap_x=self.overlap_x,
-                overlap_y=self.overlap_y,
-                conf=self.conf_threshold,
-                iou=self.iou_threshold,
-                show_processing_status=True,
-                progress_callback=progress_callback,
-            )
-
-            # Perform inference on cropped images
-            result = CombineDetections(element_crops, 
-                                       nms_threshold=self.nms_threshold, 
-                                       sorter_bins=self.sorter_bins,
-                                       match_metric=self.match_metric,
-                                       class_agnostic_nms=self.class_agnostic_nms,
-                                       intelligent_sorter=self.intelligent_sorter,
-                                       memory_optimize=self.memory_optimize)
-
+            # Create inference parameters dictionary
+            self.tile_inference_params = {
+                "match_metric": self.match_metric,
+                "class_agnostic_nms": self.class_agnostic_nms,
+                "intelligent_sorter": self.intelligent_sorter,
+                "sorter_bins": self.sorter_bins,
+                "memory_optimize": self.memory_optimize
+            }
+            
+            QMessageBox.information(self, 
+                                    "Success", 
+                                    "Tile Inference parameters set successfully.")
+            
         except Exception as e:
-            QMessageBox.critical(self,
-                                 "Error",
-                                 f"Failed to tile inference: {str(e)}")
+            QMessageBox.critical(self, 
+                                 "Error", 
+                                 f"Failed to set Tile Inference parameters: {str(e)}")
         finally:
-            self.progress_bar.stop_progress()
-            self.progress_bar.close()
-            QApplication.restoreOverrideCursor()
+            self.clear_tile_graphics()
+
+        self.accept()
+        
+    def unapply(self):
+        """
+        Reset tile inference configurations.
+        """
+        try:           
+            self.tile_params = {}
+            self.tile_inference_params = {}
+            QMessageBox.information(self, 
+                                    "Success", 
+                                    "Tile inference parameters reset successfully.")
+            
+        except Exception as e:
+            QMessageBox.critical(self, 
+                                 "Error", 
+                                 f"Failed to reset Tile Inference parameters: {str(e)}")
+        finally:
+            self.clear_tile_graphics()
+            
+        self.accept()
+            
+    def get_tile_params(self):
+        """
+        Get the tile parameters.
+
+        :return: Tile parameters
+        """
+        return self.tile_params
+    
+    def get_tile_inference_params(self):
+        """
+        Get the tile inference parameters.
+
+        :return: Tile inference parameters
+        """
+        return self.tile_inference_params
+
+    def get_params(self):
+        """
+        Get both the tile and tile inference parameters.
+
+        :return: Tuple of tile and tile inference parameters
+        """
+        return self.get_tile_params(), self.get_tile_inference_params()
+    
+    def update_tile_graphics(self):
+        """
+        Uses class tile parameters to create a grid of tiles on the annotation window image.
+        """
+        # Clear existing tile graphics
+        self.clear_tile_graphics()
+        
+        # Update and validate all parameters
+        self.update_params()
+
+        if not self.annotation_window.image_pixmap:
+            return
+
+        # Get image dimensions
+        image_full_width = self.annotation_window.image_pixmap.width()
+        image_full_height = self.annotation_window.image_pixmap.height()
+
+        # Calculate overlap coefficients
+        if isinstance(self.overlap_x, float):
+            cross_coef_x = 1 - self.overlap_x  # Float between 0-1
+        else:
+            cross_coef_x = 1 - (self.overlap_x / self.shape_x)  # Pixel value
+
+        if isinstance(self.overlap_y, float): 
+            cross_coef_y = 1 - self.overlap_y  # Float between 0-1
+        else:
+            cross_coef_y = 1 - (self.overlap_y / self.shape_y)  # Pixel value
+
+        # Handle margins
+        margin_pixels = [0, 0, 0, 0]  # [top, right, bottom, left]
+        
+        if self.margins is not None:
+            if isinstance(self.margins, (int, float)):
+                if isinstance(self.margins, float):
+                    margin_val = int(self.margins * min(image_full_width, image_full_height))
+                    margin_pixels = [margin_val] * 4
+                else:
+                    margin_pixels = [self.margins] * 4
+            elif isinstance(self.margins, tuple):
+                for i, margin in enumerate(self.margins):
+                    if isinstance(margin, float):
+                        margin_pixels[i] = int(margin * (image_full_height if i % 2 == 0 else image_full_width))
+                    else:
+                        margin_pixels[i] = margin
+
+        # Calculate grid boundaries
+        x_start = margin_pixels[3]  
+        y_start = margin_pixels[0]  
+        x_end = image_full_width - margin_pixels[1]
+        y_end = image_full_height - margin_pixels[2]
+
+        # Calculate grid steps, adjusted to fit within margins
+        x_steps = int((x_end - x_start - self.shape_x) / (self.shape_x * cross_coef_x)) + 1
+        y_steps = int((y_end - y_start - self.shape_y) / (self.shape_y * cross_coef_y)) + 1
+
+        # Calculate line thickness based on resolution
+        line_thickness = max(10, min(20, max(image_full_width, image_full_height) // 1000))
+
+        # Draw tiles
+        for i in range(y_steps + 1):
+            for j in range(x_steps + 1):
+                x = x_start + int(self.shape_x * j * cross_coef_x)
+                y = y_start + int(self.shape_y * i * cross_coef_y)
+
+                # Truncate tile width and height if extending beyond boundaries
+                tile_width = min(self.shape_x, x_end - x)
+                tile_height = min(self.shape_y, y_end - y)
+
+                # Determine tile color and transparency
+                if tile_width == self.shape_x and tile_height == self.shape_y:
+                    # Full tiles within image boundaries
+                    color = QColor(0, 0, 0) if (i * (x_steps + 1) + j) % 2 == 0 else QColor(255, 255, 255)
+                    opacity = 0.5
+                    line_style = Qt.DotLine
+                    brush = QBrush(color)
+                else:
+                    # Tiles outside/partially outside image boundaries
+                    color = QColor(255, 0, 0)  # Red color
+                    opacity = 1.0
+                    line_style = Qt.SolidLine
+                    brush = QBrush(Qt.NoBrush)  # No fill for boundary tiles
+
+                # Skip if tile is completely outside image
+                if tile_width > 0 and tile_height > 0:
+                    tile = QGraphicsRectItem(x, y, tile_width, tile_height)
+                    tile.setPen(QPen(color, line_thickness, line_style))
+                    tile.setBrush(brush)
+                    tile.setOpacity(opacity)
+                        
+                    self.annotation_window.scene.addItem(tile)
+                    self.tile_graphics.append(tile)
+                    
+    def clear_tile_graphics(self):
+        """
+        Clear the tile graphics from the annotation window.
+        """
+        # Remove all tile graphics from the scene
+        for tile_graphic in self.tile_graphics:
+            tile_graphic.scene().removeItem(tile_graphic)
+        # Update the viewport to remove the tiles
+        self.annotation_window.viewport().update()
+        self.annotation_window.fitInView(self.annotation_window.scene.sceneRect(), Qt.KeepAspectRatio)
+        # Clear the tile graphics list
+        self.tile_graphics = []
+        

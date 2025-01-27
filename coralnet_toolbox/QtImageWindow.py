@@ -13,7 +13,7 @@ from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
-                             QGroupBox)
+                             QGroupBox, QPushButton)
 
 from rasterio.windows import Window
 
@@ -75,29 +75,41 @@ class ImageWindow(QWidget):
         self.filter_layout = QVBoxLayout()
         self.filter_group.setLayout(self.filter_layout)
 
-        # Create a horizontal layout for the checkboxes
-        self.checkbox_layout = QHBoxLayout()
+        # Create a grid layout for the checkboxes
+        self.checkbox_layout = QVBoxLayout()
         self.filter_layout.addLayout(self.checkbox_layout)
+
+        # Create two horizontal layouts for the rows
+        self.checkbox_row1 = QHBoxLayout()
+        self.checkbox_row2 = QHBoxLayout()
+        self.checkbox_layout.addLayout(self.checkbox_row1)
+        self.checkbox_layout.addLayout(self.checkbox_row2)
 
         # Add a QButtonGroup for the checkboxes
         self.checkbox_group = QButtonGroup(self)
         self.checkbox_group.setExclusive(False)
 
-        # Add checkboxes for filtering images based on annotations
+        # Top row: Selected and Has Predictions
+        self.selected_checkbox = QCheckBox("Selected", self) 
+        self.selected_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_row1.addWidget(self.selected_checkbox)
+        self.checkbox_group.addButton(self.selected_checkbox)
+
+        self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
+        self.has_predictions_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_row1.addWidget(self.has_predictions_checkbox)
+        self.checkbox_group.addButton(self.has_predictions_checkbox)
+
+        # Bottom row: No Annotations and Has Annotations
         self.no_annotations_checkbox = QCheckBox("No Annotations", self)
         self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.no_annotations_checkbox)
+        self.checkbox_row2.addWidget(self.no_annotations_checkbox)
         self.checkbox_group.addButton(self.no_annotations_checkbox)
 
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
         self.has_annotations_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.has_annotations_checkbox)
+        self.checkbox_row2.addWidget(self.has_annotations_checkbox)
         self.checkbox_group.addButton(self.has_annotations_checkbox)
-
-        self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
-        self.has_predictions_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.has_predictions_checkbox)
-        self.checkbox_group.addButton(self.has_predictions_checkbox)
 
         # Create a vertical layout for the search bars
         self.search_layout = QVBoxLayout()
@@ -166,8 +178,8 @@ class ImageWindow(QWidget):
 
         # Create and setup table widget
         self.tableWidget = QTableWidget(self)
-        self.tableWidget.setColumnCount(2)
-        self.tableWidget.setHorizontalHeaderLabels(["Image Name", "Annotations"])
+        self.tableWidget.setColumnCount(3)
+        self.tableWidget.setHorizontalHeaderLabels(["Select", "Image Name", "Annotations"])
         self.tableWidget.horizontalHeader().setStretchLastSection(True)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
@@ -185,11 +197,25 @@ class ImageWindow(QWidget):
             }
         """)
 
-        self.tableWidget.setColumnWidth(0, 200)
+        self.tableWidget.setColumnWidth(0, 50)
         self.tableWidget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
 
         # Add table widget to the info table group layout
         info_table_layout.addWidget(self.tableWidget)
+
+        # Add a new horizontal layout below the table widget to hold the buttons
+        self.button_layout = QHBoxLayout()
+        info_table_layout.addLayout(self.button_layout)
+
+        # Add 'Select All' button to the new layout
+        self.select_all_button = QPushButton("Select All", self)
+        self.select_all_button.clicked.connect(self.select_all_checkboxes)
+        self.button_layout.addWidget(self.select_all_button)
+
+        # Add 'Deselect All' button to the new layout
+        self.deselect_all_button = QPushButton("Deselect All", self)
+        self.deselect_all_button.clicked.connect(self.deselect_all_checkboxes)
+        self.button_layout.addWidget(self.deselect_all_button)
 
         # Add the group box to the main layout
         self.layout.addWidget(self.info_table_group)
@@ -247,27 +273,52 @@ class ImageWindow(QWidget):
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
 
+            # Add checkbox
+            checkbox = QCheckBox()
+            checkbox.setStyleSheet("margin-left:10px;")
+            self.tableWidget.setCellWidget(row_position, 0, checkbox)
+
             item_text = f"{self.image_dict[path]['filename']}"
             item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
             item = QTableWidgetItem(item_text)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setToolTip(os.path.basename(path))
             item.setTextAlignment(Qt.AlignCenter)  # Center align the text
-            self.tableWidget.setItem(row_position, 0, item)
+            self.tableWidget.setItem(row_position, 1, item)
 
             annotation_count = self.image_dict[path]['annotation_count']
             annotation_item = QTableWidgetItem(str(annotation_count))
             annotation_item.setFlags(annotation_item.flags() & ~Qt.ItemIsEditable)
             annotation_item.setTextAlignment(Qt.AlignCenter)  # Center align the text
-            self.tableWidget.setItem(row_position, 1, annotation_item)
+            self.tableWidget.setItem(row_position, 2, annotation_item)
 
         self.update_table_selection()
 
     def update_table_selection(self):
         if self.selected_image_path in self.filtered_image_paths:
+            # Get the row index of the selected image
             row = self.filtered_image_paths.index(self.selected_image_path)
+            
+            # Block signals temporarily to prevent recursive calls
+            self.tableWidget.blockSignals(True)
+            
+            # Clear previous selection
+            self.tableWidget.clearSelection()
+            
+            # Select the entire row
             self.tableWidget.selectRow(row)
-            self.tableWidget.scrollToItem(self.tableWidget.item(row, 0), QAbstractItemView.PositionAtCenter)
+            
+            # Ensure the selected row is visible in the viewport
+            self.tableWidget.scrollToItem(
+                self.tableWidget.item(row, 0),
+                QAbstractItemView.PositionAtCenter
+            )
+            
+            # Set focus to maintain highlight
+            self.tableWidget.setFocus()
+            
+            # Restore signals
+            self.tableWidget.blockSignals(False)
         else:
             self.tableWidget.clearSelection()
 
@@ -494,88 +545,169 @@ class ImageWindow(QWidget):
         self.rasterio_images[image_path] = None
 
     def show_context_menu(self, position):
-        row = self.tableWidget.rowAt(position.y())
-        if row < 0 or row >= len(self.filtered_image_paths):
+        # Get selected checkboxes
+        selected_paths = self._get_selected_image_paths()
+
+        if not selected_paths:
             return
 
-        self.right_clicked_row = row
         context_menu = QMenu(self)
-        delete_annotations_action = context_menu.addAction("Delete Annotations")
-        delete_annotations_action.triggered.connect(self.delete_annotations)
-        delete_image_action = context_menu.addAction("Delete Image")
-        delete_image_action.triggered.connect(self.delete_selected_image)
+        delete_all_images_action = context_menu.addAction(f"Delete {len(selected_paths)} Images")
+        delete_all_images_action.triggered.connect(lambda: self.delete_selected_images())
+
+        delete_all_annotations_action = context_menu.addAction(f"Delete Annotations for {len(selected_paths)} Images")
+        delete_all_annotations_action.triggered.connect(lambda: self.delete_selected_annotations())
+
         context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
+        
+    def _get_selected_image_paths(self):
+        """
+        Returns list of image paths for rows with checked checkboxes
+        """
+        selected_paths = []
+        for row in range(self.tableWidget.rowCount()):
+            checkbox = self.tableWidget.cellWidget(row, 0)
+            if checkbox and checkbox.isChecked():
+                selected_paths.append(self.filtered_image_paths[row])
+        return selected_paths
 
-    def delete_annotations(self):
-        if self.right_clicked_row is not None:
-            image_path = self.filtered_image_paths[self.right_clicked_row]
-            reply = QMessageBox.question(self,
-                                         "Confirm Delete",
-                                         "Are you sure you want to delete annotations for this image?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                # Proceed with deleting annotations
-                self.annotation_window.delete_image_annotations(image_path)
-                self.main_window.confidence_window.clear_display()
+    def delete_selected_images(self):
+        selected_paths = self._get_selected_image_paths()
+        
+        if not selected_paths:
+            return
 
-    def delete_image(self, image_path):
-        if image_path in self.image_paths:
-            # Get current index before removing
-            current_index = self.filtered_image_paths.index(image_path)
+        reply = QMessageBox.question(self, 
+                                     "Confirm Multiple Image Deletions",
+                                     f"Are you sure you want to delete {len(selected_paths)} images?\n"
+                                     "This will delete all associated annotations.",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            # Delete images and handle loading a new image if necessary
+            self.delete_images(selected_paths)
+                
+    def delete_selected_annotations(self):
+        selected_paths = self._get_selected_image_paths()
+        
+        if not selected_paths:
+            return
 
-            # Remove the image from lists and dict
-            self.image_paths.remove(image_path)
-            del self.image_dict[image_path]
-            if image_path in self.filtered_image_paths:
-                self.filtered_image_paths.remove(image_path)
+        reply = QMessageBox.question(self, 
+                                     "Confirm Multiple Annotation Deletions",
+                                     f"Are you sure you want to delete annotations for {len(selected_paths)} images?",
+                                     QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            
+            # Disconnect signals temporarily
+            self.annotation_window.annotationCreated.disconnect(self.update_annotation_count)
+            self.annotation_window.annotationDeleted.disconnect(self.update_annotation_count)
 
-            # Remove the image's annotations
-            self.annotation_window.delete_image(image_path)
-
+            try:
+                # Make cursor busy
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                progress_bar = ProgressBar(self, title="Deleting Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(len(selected_paths))
+                
+                # Delete annotations for selected images
+                for path in selected_paths:
+                    self.annotation_window.delete_image_annotations(path)
+                    # Update the image annotation count in the table widget
+                    self.update_image_annotations(path)
+                    progress_bar.update_progress()
+                    
+                # Close the progress bar
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()
+                
+            finally:
+                # Reconnect signals
+                self.annotation_window.annotationCreated.connect(self.update_annotation_count)
+                self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+                       
             # Update the table widget
             self.update_table_widget()
 
-            # Update the image count label
-            self.update_image_count_label()
+    def delete_images(self, image_paths):
+        """
+        Delete multiple images and their associated annotations.
+        
+        Args:
+            image_paths (list): List of image paths to delete
+        """
+        # Validate input and create a copy to avoid mutation during iteration
+        image_paths = [path for path in image_paths if path in self.image_paths]
+        
+        if not image_paths:
+            return
 
-            # Select next available image
-            if self.filtered_image_paths:
-                # Try to keep same index, fallback to previous
-                if current_index < len(self.filtered_image_paths):
-                    new_image_path = self.filtered_image_paths[current_index]
-                else:
-                    new_image_path = self.filtered_image_paths[current_index - 1]
-                self.load_image_by_path(new_image_path)
-            else:
-                self.selected_image_path = None
-                self.annotation_window.clear_scene()
+        # Check if current image is being deleted
+        current_image_in_deletion = self.selected_image_path in image_paths
 
-            # Update the current image index label
-            self.update_current_image_index_label()
+        # Determine the next image to load if current image is deleted
+        next_image_to_load = None
+        if current_image_in_deletion:
+            # Find remaining images in the filtered list
+            remaining_images = [path for path in self.filtered_image_paths if path not in image_paths]
+            
+            if remaining_images:
+                # If possible, maintain the relative position in the list
+                current_idx = self.filtered_image_paths.index(self.selected_image_path)
+                
+                # Find the next viable image to load
+                viable_images = []
+                for img in remaining_images:
+                    if self.filtered_image_paths.index(img) <= current_idx:
+                        viable_images.append(img)
+                
+                # Prioritize images at or before the current index
+                next_image_to_load = viable_images[0] if viable_images else remaining_images[0]
 
-    def delete_selected_image(self):
-        if self.right_clicked_row is not None:
-            image_path = self.filtered_image_paths[self.right_clicked_row]
-            if self._confirm_delete() == QMessageBox.Yes:
-                self.delete_image(image_path)
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, title="Loading Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+        
+        # Delete each image
+        for image_path in image_paths:
+            # Remove from image paths
+            self.image_paths.remove(image_path)
+            del self.image_dict[image_path]
+            
+            # Remove from filtered image paths if present
+            if image_path in self.filtered_image_paths:
+                self.filtered_image_paths.remove(image_path)
+            
+            # Delete annotations
+            self.annotation_window.delete_image(image_path)
+            
+            # Update progress bar
+            progress_bar.update_progress()
+        
+        # Close the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
 
-    def _confirm_delete(self):
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(QMessageBox.Question)
-        msg_box.setWindowTitle("Confirm Delete")
-        msg_box.setText("Are you sure you want to delete this image?\n"
-                        "This will delete all associated annotations.")
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        # Update UI components
+        self.update_table_widget()
+        self.update_image_count_label()
 
-        checkbox = QCheckBox("Do not show this message again")
-        msg_box.setCheckBox(checkbox)
+        # Load next image or clear scene
+        if next_image_to_load:
+            self.load_image_by_path(next_image_to_load)
+        elif not self.filtered_image_paths:
+            self.selected_image_path = None
+            self.annotation_window.clear_scene()
 
-        result = msg_box.exec_()
-
-        if checkbox.isChecked():
-            self.show_confirmation_dialog = False
-
-        return result
+        # Update current image index label
+        self.update_current_image_index_label()
+        
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
@@ -608,21 +740,28 @@ class ImageWindow(QWidget):
         # Store the currently selected image path before filtering
         current_selected_path = self.selected_image_path
 
+        # Search bars
         search_text_images = self.search_bar_images.currentText()
         search_text_labels = self.search_bar_labels.currentText()
+        # Filter checkboxes
         no_annotations = self.no_annotations_checkbox.isChecked()
         has_annotations = self.has_annotations_checkbox.isChecked()
         has_predictions = self.has_predictions_checkbox.isChecked()
+        selected_only = self.selected_checkbox.isChecked()
 
-        # Return early if none of the search bar or checkboxes are being used
+        # Return early if none of the filters are active
         if (not (search_text_images or search_text_labels) and
-            not (no_annotations or has_annotations or has_predictions)):
+            not (no_annotations or has_annotations or has_predictions or selected_only)):
             self.filtered_image_paths = self.image_paths.copy()
             self.update_table_widget()
             self.update_current_image_index_label()
             self.update_image_count_label()
             return
+        
+        # Get list of selected image paths if needed
+        selected_paths = self._get_selected_image_paths() if selected_only else None
 
+        # Initialize filtered image paths
         self.filtered_image_paths = []
 
         # Initialize the progress bar
@@ -641,6 +780,7 @@ class ImageWindow(QWidget):
                     no_annotations,
                     has_annotations,
                     has_predictions,
+                    selected_paths
                 )
                 futures.append(future)
 
@@ -679,7 +819,8 @@ class ImageWindow(QWidget):
                      search_text_labels,
                      no_annotations,
                      has_annotations,
-                     has_predictions):
+                     has_predictions,
+                     selected_paths=None):
         """
         Filter images based on search text and checkboxes
 
@@ -690,10 +831,15 @@ class ImageWindow(QWidget):
             no_annotations (bool): Filter images with no annotations
             has_annotations (bool): Filter images with annotations
             has_predictions (bool): Filter images with predictions
+            selected_paths (list): List of selected image paths
 
             Returns:
                 str: Path to the image if it passes the filters, None otherwise
         """
+        # Check selected filter first
+        if selected_paths is not None and path not in selected_paths:
+            return None
+        
         filename = os.path.basename(path)
         # Check for annotations for the provided path
         annotations = self.annotation_window.get_image_annotations(path)
@@ -701,7 +847,7 @@ class ImageWindow(QWidget):
         predictions = self.image_dict[path]['has_predictions']
         # Check the labels for the provided path
         labels = self.image_dict[path]['labels']
-
+        
         # Filter images based on search text and checkboxes
         if search_text_images and search_text_images not in filename:
             return None
@@ -754,3 +900,15 @@ class ImageWindow(QWidget):
             self.search_bar_labels.setEditText(current_label_search)
         else:
             self.search_bar_labels.setPlaceholderText("Type to search labels")
+
+    def select_all_checkboxes(self):
+        for row in range(self.tableWidget.rowCount()):
+            checkbox = self.tableWidget.cellWidget(row, 0)
+            if checkbox:
+                checkbox.setChecked(True)
+
+    def deselect_all_checkboxes(self):
+        for row in range(self.tableWidget.rowCount()):
+            checkbox = self.tableWidget.cellWidget(row, 0)
+            if checkbox:
+                checkbox.setChecked(False)

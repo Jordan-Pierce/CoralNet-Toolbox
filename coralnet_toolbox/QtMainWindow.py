@@ -24,8 +24,7 @@ from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 from coralnet_toolbox.Tile import (
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
-    TileDetectInference as DetectTileInferenceDialog,
-    TileSegmentInference as SegmentTileInferenceDialog
+    TileInference as TileInferenceDialog,
 )
 
 from coralnet_toolbox.IO import (
@@ -41,6 +40,7 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
+    ExportTagLabLabels
 )
 
 from coralnet_toolbox.MachineLearning import (
@@ -75,6 +75,8 @@ from coralnet_toolbox.AutoDistill import (
     DeployModelDialog as AutoDistillDeployModelDialog,
     BatchInferenceDialog as AutoDistillBatchInferenceDialog
 )
+
+from coralnet_toolbox.TileProcessor import TileProcessor
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -127,6 +129,9 @@ class MainWindow(QMainWindow):
                             Qt.WindowMinimizeButtonHint |
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
+        
+        # Start maximized by default
+        self.showMaximized()
 
         # Set the default uncertainty threshold and IoU threshold
         self.iou_thresh = 0.20
@@ -149,6 +154,7 @@ class MainWindow(QMainWindow):
         self.import_viscore_annotations = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
         self.export_labels = ExportLabels(self)
+        self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
@@ -190,8 +196,10 @@ class MainWindow(QMainWindow):
         # Create dialogs (Tile)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
-        self.detect_tile_inference_dialog = DetectTileInferenceDialog(self)
-        self.segment_tile_inference_dialog = SegmentTileInferenceDialog(self)
+        self.tile_inference_dialog = TileInferenceDialog(self)
+        
+        # Create the tile processor
+        self.tile_processor = TileProcessor(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -300,6 +308,11 @@ class MainWindow(QMainWindow):
         self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
 
+        # Export TagLab Labels
+        self.export_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
+        self.export_taglab_labels_action.triggered.connect(self.export_taglab_labels.export_taglab_labels)
+        self.export_labels_menu.addAction(self.export_taglab_labels_action)
+
         # Annotations submenu
         self.export_annotations_menu = self.export_menu.addMenu("Annotations")
 
@@ -362,18 +375,10 @@ class MainWindow(QMainWindow):
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
         
-        # Tile Inference submenu
-        # self.tile_inference_menu = self.tile_menu.addMenu("Tile Inference")
-        
-        # Tile Detect Inference
-        # self.detect_tile_inference_action = QAction("Detect", self)
-        # self.detect_tile_inference_action.triggered.connect(self.open_detect_tile_inference_dialog)
-        # self.tile_inference_menu.addAction(self.detect_tile_inference_action)
-        
-        # Tile Segment Inference
-        # self.segment_tile_inference_action = QAction("Segment", self)
-        # self.segment_tile_inference_action.triggered.connect(self.open_segment_tile_inference_dialog)
-        # self.tile_inference_menu.addAction(self.segment_tile_inference_action)
+        # Tile Inference action
+        self.tile_inference_action = QAction("Tile Inference", self)
+        self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
+        self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
         # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -575,9 +580,9 @@ class MainWindow(QMainWindow):
         self.toolbar.addSeparator()
 
         self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
-        self.tile_inference_tool_action.setCheckable(False)
+        self.tile_inference_tool_action.setCheckable(True)
         self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
-        # self.toolbar.addAction(self.tile_inference_tool_action)  # TODO
+        self.toolbar.addAction(self.tile_inference_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -655,6 +660,7 @@ class MainWindow(QMainWindow):
 
         # Create button to hold the action
         self.all_labels_button = QToolButton()
+        
         # Set tooltip on both the action and button to ensure it shows
         self.all_labels_action.setToolTip("Select All Labels")
         self.all_labels_button.setToolTip("Select All Labels")
@@ -669,25 +675,29 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
+        
+        # Patch Annotation Size
+        annotation_size_label = QLabel("Patch Size")
+        self.annotation_size_spinbox = QSpinBox()
+        self.annotation_size_spinbox.setMinimum(1)
+        self.annotation_size_spinbox.setMaximum(5000) 
+        self.annotation_size_spinbox.setEnabled(False)
+        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
+        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
+        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
+        
+        annotation_size_layout = QHBoxLayout()
+        annotation_size_layout.addWidget(annotation_size_label)
+        annotation_size_layout.addWidget(self.annotation_size_spinbox)
+        
+        self.annotation_size_widget = QWidget()
+        self.annotation_size_widget.setLayout(annotation_size_layout)
 
         # --------------------------------------------------
         # Create collapsible Parameters section
         # --------------------------------------------------
         self.parameters_section = CollapsibleSection("Parameters")
-
-        # Patch Annotation Size
-        self.annotation_size_spinbox = QSpinBox()
-        self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(5000)
-        self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
-        self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
-        self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
-        annotation_size_layout = QHBoxLayout()
-        annotation_size_layout.addWidget(self.annotation_size_spinbox)
-        annotation_size_widget = QWidget()
-        annotation_size_widget.setLayout(annotation_size_layout)
-        self.parameters_section.add_widget(annotation_size_widget, "Patch Size")
-
+        
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
@@ -742,6 +752,7 @@ class MainWindow(QMainWindow):
         self.status_bar_layout.addWidget(self.view_dimensions_label)
         self.status_bar_layout.addWidget(self.transparency_widget)
         self.status_bar_layout.addStretch()
+        self.status_bar_layout.addWidget(self.annotation_size_widget)
         self.status_bar_layout.addWidget(self.parameters_section)
 
         # --------------------------------------------------
@@ -789,6 +800,9 @@ class MainWindow(QMainWindow):
                 pass  # Do nothing, let the OS handle the restore
 
     def toggle_tool(self, state):
+        # Unlock the label lock
+        self.label_window.unlock_label_lock()
+        
         action = self.sender()
         if action == self.select_tool_action:
             if state:
@@ -796,44 +810,48 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+                
                 self.toolChanged.emit("select")
             else:
-                self.label_window.unlock_label_lock()
-
                 self.toolChanged.emit(None)
+                
         elif action == self.patch_tool_action:
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
+                
         elif action == self.rectangle_tool_action:
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
+                
         elif action == self.polygon_tool_action:
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+                
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
+                
         elif action == self.sam_tool_action:
             if not self.sam_deploy_model_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
@@ -842,17 +860,32 @@ class MainWindow(QMainWindow):
                                     "You must deploy a Predictor before using the SAM tool.")
                 return
             if state:
-                self.label_window.unlock_label_lock()
-
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.tile_inference_tool_action.setChecked(False)
+
                 self.toolChanged.emit("sam")
             else:
-                self.label_window.unlock_label_lock()
-
                 self.toolChanged.emit(None)
+                
+        elif action == self.tile_inference_tool_action: 
+            if not self.tile_processor.params_set():
+                self.tile_inference_tool_action.setChecked(False)
+                QMessageBox.warning(self,
+                                    "Tile Inference",
+                                    "You must set the parameters for Tile Inference before using the tool.")
+                return          
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+
+            # Emit None to close other tools
+            self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
         # Unlock the label lock
@@ -864,58 +897,65 @@ class MainWindow(QMainWindow):
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
+        self.tile_inference_tool_action.setChecked(False)
 
         # Emit to reset the tool
         self.toolChanged.emit(None)
-
+        
     def handle_tool_changed(self, tool):
+        # Unlock the label lock
+        self.label_window.unlock_label_lock()
+        
         if tool == "select":
             self.select_tool_action.setChecked(True)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
-
-            self.label_window.unlock_label_lock()
+            self.tile_inference_tool_action.setChecked(False)
+        elif tool == "tile_inference":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.tile_inference_tool_action.setChecked(True)
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-
-            self.label_window.unlock_label_lock()
-
+            self.tile_inference_tool_action.setChecked(False)
+            
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
         if dialog.exec_() == QDialog.Accepted:
@@ -1182,47 +1222,23 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
-    def open_detect_tile_inference_dialog(self):
+    def open_tile_inference_dialog(self):
         
         if not self.image_window.image_paths:
             # Check if there are any images in the project
             QMessageBox.warning(self,
                                 "No Images Loaded",
-                                "Please load images into the project before sampling annotations.")
+                                "Please load images into the project before setting Tile Inference parameters.")
             return
-        
-        # TODO
-        # if not self.detect_deploy_model_dialog.loaded_model:
-        #     QMessageBox.warning(self,
-        #                         "Tile Inference",
-        #                         "Please deploy a model before running batch inference.")
-        #     return
         
         try:
             self.untoggle_all_tools()
-            self.detect_tile_inference_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
+            self.tile_inference_dialog.exec_()
             
-    def open_segment_tile_inference_dialog(self):
-        
-        if not self.image_window.image_paths:
-            # Check if there are any images in the project
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before sampling annotations.")
-            return
-        
-        # TODO
-        # if not self.segment_deploy_model_dialog.loaded_model:
-        #     QMessageBox.warning(self,
-        #                         "Tile Inference",
-        #                         "Please deploy a model before running batch inference.")
-        #     return
-        
-        try:
-            self.untoggle_all_tools()
-            self.segment_tile_inference_dialog.exec_()
+            # Get the tile parameters and tile inference parameters
+            tile_params, tile_inference_params = self.tile_inference_dialog.get_params()
+            self.tile_processor.set_params(tile_params, tile_inference_params)
+            
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -1377,7 +1393,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_sam_deploy_model_dialog(self):  # TODO
+    def open_sam_deploy_model_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Predictor",

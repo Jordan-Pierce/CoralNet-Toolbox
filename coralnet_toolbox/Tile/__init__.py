@@ -2,12 +2,10 @@
 
 from .TileDataset.QtDetect import Detect as TileDetectDataset
 from .TileDataset.QtSegment import Segment as TileSegmentDataset
-from .TileInference.QtDetect import Detect as TileDetectInference
-from .TileInference.QtSegment import Segment as TileSegmentInference
+from .TileInference.QtBase import Base as TileInference
 
 __all__ = [
     'TileDetectDataset',
     'TileSegmentDataset',
-    'TileDetectInference',
-    'TileSegmentInference',
+    'TileInference',
 ]

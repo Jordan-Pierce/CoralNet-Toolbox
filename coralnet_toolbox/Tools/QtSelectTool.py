@@ -59,7 +59,13 @@ class SelectTool(Tool):
                 self.rectangle_selection = True
                 self.selection_start_pos = position
                 self.selection_rectangle = QGraphicsRectItem()
-                self.selection_rectangle.setPen(QPen(Qt.black, 2, Qt.DashLine))
+                # Calculate line thickness based on current viewing extent
+                extent = self.annotation_window.viewportToScene()
+                view_width = round(extent.width())
+                view_height = round(extent.height())
+                line_thickness = max(5, min(20, max(view_width, view_height) // 1000))
+                self.selection_rectangle.setPen(QPen(Qt.black, line_thickness, Qt.DashLine))
+                # Add the selection rectangle to the scene
                 self.annotation_window.scene.addItem(self.selection_rectangle)
 
             selected_annotation = self.select_annotation(position, items, event.modifiers())
