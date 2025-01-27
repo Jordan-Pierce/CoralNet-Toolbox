@@ -75,29 +75,41 @@ class ImageWindow(QWidget):
         self.filter_layout = QVBoxLayout()
         self.filter_group.setLayout(self.filter_layout)
 
-        # Create a horizontal layout for the checkboxes
-        self.checkbox_layout = QHBoxLayout()
+        # Create a grid layout for the checkboxes
+        self.checkbox_layout = QVBoxLayout()
         self.filter_layout.addLayout(self.checkbox_layout)
+
+        # Create two horizontal layouts for the rows
+        self.checkbox_row1 = QHBoxLayout()
+        self.checkbox_row2 = QHBoxLayout()
+        self.checkbox_layout.addLayout(self.checkbox_row1)
+        self.checkbox_layout.addLayout(self.checkbox_row2)
 
         # Add a QButtonGroup for the checkboxes
         self.checkbox_group = QButtonGroup(self)
         self.checkbox_group.setExclusive(False)
 
-        # Add checkboxes for filtering images based on annotations
+        # Top row: Selected and Has Predictions
+        self.selected_checkbox = QCheckBox("Selected", self) 
+        self.selected_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_row1.addWidget(self.selected_checkbox)
+        self.checkbox_group.addButton(self.selected_checkbox)
+
+        self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
+        self.has_predictions_checkbox.stateChanged.connect(self.filter_images)
+        self.checkbox_row1.addWidget(self.has_predictions_checkbox)
+        self.checkbox_group.addButton(self.has_predictions_checkbox)
+
+        # Bottom row: No Annotations and Has Annotations
         self.no_annotations_checkbox = QCheckBox("No Annotations", self)
         self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.no_annotations_checkbox)
+        self.checkbox_row2.addWidget(self.no_annotations_checkbox)
         self.checkbox_group.addButton(self.no_annotations_checkbox)
 
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
         self.has_annotations_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.has_annotations_checkbox)
+        self.checkbox_row2.addWidget(self.has_annotations_checkbox)
         self.checkbox_group.addButton(self.has_annotations_checkbox)
-
-        self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
-        self.has_predictions_checkbox.stateChanged.connect(self.filter_images)
-        self.checkbox_layout.addWidget(self.has_predictions_checkbox)
-        self.checkbox_group.addButton(self.has_predictions_checkbox)
 
         # Create a vertical layout for the search bars
         self.search_layout = QVBoxLayout()
@@ -587,8 +599,22 @@ class ImageWindow(QWidget):
                                      QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
+            
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            progress_bar = ProgressBar(self, title="Deleting Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(len(selected_paths))
+            
+            # Delete annotations for selected images
             for path in selected_paths:
                 self.annotation_window.delete_image_annotations(path)
+                progress_bar.update_progress()
+                
+            # Close the progress bar
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
                 
             # Update the table widget
             self.update_table_widget()
@@ -628,6 +654,12 @@ class ImageWindow(QWidget):
                 # Prioritize images at or before the current index
                 next_image_to_load = viable_images[0] if viable_images else remaining_images[0]
 
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, title="Loading Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+        
         # Delete each image
         for image_path in image_paths:
             # Remove from image paths
@@ -640,6 +672,13 @@ class ImageWindow(QWidget):
             
             # Delete annotations
             self.annotation_window.delete_image(image_path)
+            
+            # Update progress bar
+            progress_bar.update_progress()
+        
+        # Close the progress bar
+        progress_bar.stop_progress()
+        progress_bar.close()
 
         # Update UI components
         self.update_table_widget()
@@ -654,6 +693,9 @@ class ImageWindow(QWidget):
 
         # Update current image index label
         self.update_current_image_index_label()
+        
+        # Restore cursor
+        QApplication.restoreOverrideCursor()
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
@@ -686,21 +728,28 @@ class ImageWindow(QWidget):
         # Store the currently selected image path before filtering
         current_selected_path = self.selected_image_path
 
+        # Search bars
         search_text_images = self.search_bar_images.currentText()
         search_text_labels = self.search_bar_labels.currentText()
+        # Filter checkboxes
         no_annotations = self.no_annotations_checkbox.isChecked()
         has_annotations = self.has_annotations_checkbox.isChecked()
         has_predictions = self.has_predictions_checkbox.isChecked()
+        selected_only = self.selected_checkbox.isChecked()
 
-        # Return early if none of the search bar or checkboxes are being used
+        # Return early if none of the filters are active
         if (not (search_text_images or search_text_labels) and
-            not (no_annotations or has_annotations or has_predictions)):
+            not (no_annotations or has_annotations or has_predictions or selected_only)):
             self.filtered_image_paths = self.image_paths.copy()
             self.update_table_widget()
             self.update_current_image_index_label()
             self.update_image_count_label()
             return
+        
+        # Get list of selected image paths if needed
+        selected_paths = self._get_selected_image_paths() if selected_only else None
 
+        # Initialize filtered image paths
         self.filtered_image_paths = []
 
         # Initialize the progress bar
@@ -719,6 +768,7 @@ class ImageWindow(QWidget):
                     no_annotations,
                     has_annotations,
                     has_predictions,
+                    selected_paths
                 )
                 futures.append(future)
 
@@ -757,7 +807,8 @@ class ImageWindow(QWidget):
                      search_text_labels,
                      no_annotations,
                      has_annotations,
-                     has_predictions):
+                     has_predictions,
+                     selected_paths=None):
         """
         Filter images based on search text and checkboxes
 
@@ -768,10 +819,15 @@ class ImageWindow(QWidget):
             no_annotations (bool): Filter images with no annotations
             has_annotations (bool): Filter images with annotations
             has_predictions (bool): Filter images with predictions
+            selected_paths (list): List of selected image paths
 
             Returns:
                 str: Path to the image if it passes the filters, None otherwise
         """
+        # Check selected filter first
+        if selected_paths is not None and path not in selected_paths:
+            return None
+        
         filename = os.path.basename(path)
         # Check for annotations for the provided path
         annotations = self.annotation_window.get_image_annotations(path)
@@ -779,7 +835,7 @@ class ImageWindow(QWidget):
         predictions = self.image_dict[path]['has_predictions']
         # Check the labels for the provided path
         labels = self.image_dict[path]['labels']
-
+        
         # Filter images based on search text and checkboxes
         if search_text_images and search_text_images not in filename:
             return None
