@@ -69,22 +69,59 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 <div align="center">
   <table>
     <tr>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" width="250" height="250"/></td>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" width="250" height="250"/></td>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" width="250" height="250"/></td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" height="200"/>
+        <br>
+        <em>Patch Annotation Tool</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" height="200"/>
+        <br>
+        <em>Rectangle Annotation Tool</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" height="200"/>
+        <br>
+        <em>Polygon Annotation Tool</em>
+      </td>
     </tr>
     <tr>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" width="250" height="250"/></td>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" width="250" height="250"/></td>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" width="250" height="250"/></td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" height="200"/>
+        <br>
+        <em>Patch-based Image Classification</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" height="200"/>
+        <br>
+        <em>Object Detection</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" height="200"/>
+        <br>
+        <em>Instance Segmentation</em>
+      </td>
     </tr>
     <tr>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" width="250" height="250"/></td>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" width="250" height="250"/></td>
-      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" width="250" height="250"/></td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" height="200"/>
+        <br>
+        <em>Segment Anything Model (SAM)</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" height="200"/>
+        <br>
+        <em>Polygon Classification</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" height="200"/>
+        <br>
+        <em>Orthomosaic Patch-based Image Classification</em>
+      </td>
     </tr>
   </table>
 </div>
+
 
 Enhance your CoralNet experience with these tools:
 - ✏️ Annotate: Create annotations freely
