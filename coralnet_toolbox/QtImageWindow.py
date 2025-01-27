@@ -600,22 +600,34 @@ class ImageWindow(QWidget):
         
         if reply == QMessageBox.Yes:
             
-            # Make cursor busy
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            progress_bar = ProgressBar(self, title="Deleting Annotations")
-            progress_bar.show()
-            progress_bar.start_progress(len(selected_paths))
-            
-            # Delete annotations for selected images
-            for path in selected_paths:
-                self.annotation_window.delete_image_annotations(path)
-                progress_bar.update_progress()
+            # Disconnect signals temporarily
+            self.annotation_window.annotationCreated.disconnect(self.update_annotation_count)
+            self.annotation_window.annotationDeleted.disconnect(self.update_annotation_count)
+
+            try:
+                # Make cursor busy
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                progress_bar = ProgressBar(self, title="Deleting Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(len(selected_paths))
                 
-            # Close the progress bar
-            QApplication.restoreOverrideCursor()
-            progress_bar.stop_progress()
-            progress_bar.close()
+                # Delete annotations for selected images
+                for path in selected_paths:
+                    self.annotation_window.delete_image_annotations(path)
+                    # Update the image annotation count in the table widget
+                    self.update_image_annotations(path)
+                    progress_bar.update_progress()
+                    
+                # Close the progress bar
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()
                 
+            finally:
+                # Reconnect signals
+                self.annotation_window.annotationCreated.connect(self.update_annotation_count)
+                self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+                       
             # Update the table widget
             self.update_table_widget()
 
