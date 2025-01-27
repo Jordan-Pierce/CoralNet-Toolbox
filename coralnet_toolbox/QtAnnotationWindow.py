@@ -633,6 +633,15 @@ class AnnotationWindow(QGraphicsView):
                 annotation.delete()
                 del self.annotations_dict[annotation.id]
 
+    def delete_annotations_batch(self, annotation_ids):
+        for annotation_id in annotation_ids:
+            if annotation_id in self.annotations_dict:
+                annotation = self.annotations_dict[annotation_id]
+                annotation.delete()
+                del self.annotations_dict[annotation_id]
+                self.annotationDeleted.emit(annotation_id)
+        self.main_window.confidence_window.clear_display()
+
     def delete_image_annotations(self, image_path):
         """Efficiently delete all annotations for a given image path"""
         # Get IDs of annotations to delete
@@ -642,11 +651,7 @@ class AnnotationWindow(QGraphicsView):
         ]
         
         # Delete graphics items and annotations in batch
-        for annotation_id in annotation_ids:
-            annotation = self.annotations_dict[annotation_id]
-            annotation.delete()  # Remove graphics item
-            del self.annotations_dict[annotation_id]  # Remove from dictionary
-            self.annotationDeleted.emit(annotation_id)  # Emit signal
+        self.delete_annotations_batch(annotation_ids)
         
         # Clear confidence window if needed
         if self.current_image_path == image_path:
