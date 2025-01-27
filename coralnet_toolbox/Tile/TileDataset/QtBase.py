@@ -11,7 +11,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDialog,
                              QDialogButtonBox, QGroupBox, QFormLayout, QLineEdit,
                              QDoubleSpinBox, QComboBox, QPushButton, QFileDialog, QSpinBox,
-                             QHBoxLayout)
+                             QHBoxLayout, QWidget)
 
 from coralnet_toolbox.Tile.QtCommon import TileSizeInput, OverlapInput, MarginInput
 
@@ -38,46 +38,83 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Tile Dataset")
-        self.resize(600, 100)
+        self.resize(800, 500)
 
-        # Object Detection / Instance Segmentation
-        self.annotation_type = None
+        # Main vertical layout
+        main_layout = QVBoxLayout(self)
 
-        self.layout = QVBoxLayout(self)
+        # Horizontal layout for columns
+        columns_layout = QHBoxLayout()
 
-        # Setup the info layout
+        # Create containers for left and right columns
+        left_container = QWidget()
+        right_container = QWidget()
+        left_layout = QVBoxLayout(left_container)
+        right_layout = QVBoxLayout(right_container)
+
+        # Create group boxes
+        self.info_group = QGroupBox()
+        self.tile_config_group = QGroupBox()
+        self.dataset_group = QGroupBox()
+        self.dataset_config_group = QGroupBox()
+
+        # Setup layouts
         self.setup_info_layout()
-        # Setup the dataset layout
-        self.setup_dataset_layout()
-        # Setup the tile config layout
         self.setup_tile_config_layout()
-        # Setup the dataset config layout
+        self.setup_dataset_layout()
         self.setup_dataset_config_layout()
-        # Setup the buttons layout
-        self.setup_buttons_layout()
+
+        # Add groups to column layouts
+        left_layout.addWidget(self.info_group)
+        left_layout.addWidget(self.tile_config_group)
+        right_layout.addWidget(self.dataset_group)
+        right_layout.addWidget(self.dataset_config_group)
+
+        # Add containers to columns layout
+        columns_layout.addWidget(left_container)
+        columns_layout.addWidget(right_container)
+
+        # Add columns to main layout
+        main_layout.addLayout(columns_layout)
+
+        # Add buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.apply)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
 
     def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
-        group_box = QGroupBox("Information")
+        """Set up the info layout."""
+        self.info_group.setTitle("Information")
         layout = QVBoxLayout()
 
-        # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Tile an existing YOLO dataset into smaller non / overlapping images.")
-
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
 
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.info_group.setLayout(layout)
+
+    def setup_tile_config_layout(self):
+        """Set up tile config layout."""
+        self.tile_config_group.setTitle("Tile Configuration Parameters")
+        layout = QFormLayout()
+
+        # Existing tile config code...
+        self.tile_size_input = TileSizeInput()
+        layout.addRow(self.tile_size_input)
+
+        self.overlap_input = OverlapInput()
+        layout.addRow(self.overlap_input)
+
+        self.margins_input = MarginInput()
+        layout.addRow(self.margins_input)
+
+        self.tile_config_group.setLayout(layout)
 
     def setup_dataset_layout(self):
-        """
-        Set up the dataset layout.
-        """
-        group_box = QGroupBox("Dataset Parameters")
+        """Set up dataset layout.""" 
+        self.dataset_group.setTitle("Dataset Parameters")
         layout = QFormLayout()
 
         # Source Directory
@@ -102,36 +139,11 @@ class Base(QDialog):
         dst_layout.addWidget(self.dst_button)
         layout.addRow("Destination Directory:", dst_layout)
 
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_tile_config_layout(self):
-        """
-        Set up the tile config parameters layout.
-        """
-        group_box = QGroupBox("Tile Configuration Parameters")
-        layout = QFormLayout()
-
-        # Tile Size
-        self.tile_size_input = TileSizeInput()
-        layout.addRow(self.tile_size_input)
-
-        # Overlap
-        self.overlap_input = OverlapInput()
-        layout.addRow(self.overlap_input)
-
-        # Margins
-        self.margins_input = MarginInput()
-        layout.addRow(self.margins_input)
-
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.dataset_group.setLayout(layout)
         
     def setup_dataset_config_layout(self):
-        """
-        Set up the dataset configuration parameters layout.
-        """
-        group_box = QGroupBox("Dataset Configuration Parameters")
+        """Set up dataset config layout."""
+        self.dataset_config_group.setTitle("Dataset Configuration Parameters") 
         layout = QFormLayout()
 
         # Image Extensions
@@ -204,19 +216,14 @@ class Base(QDialog):
         advanced_layout.addWidget(self.smoothing_tolerance_spinbox)
         layout.addRow("Advanced Parameters:", advanced_layout)
         
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.dataset_config_group.setLayout(layout)
 
-    def setup_buttons_layout(self):
-        """
-        Set up the layout with buttons.
-        """
-        # Create a button box for the buttons
+    def setup_buttons_layout(self, layout):
+        """Set up buttons layout."""
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.apply)
         button_box.rejected.connect(self.reject)
-
-        self.layout.addWidget(button_box)
+        layout.addWidget(button_box)
 
     def browse_src_dir(self):
         """
