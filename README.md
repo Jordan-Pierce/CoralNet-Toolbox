@@ -66,6 +66,26 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 
 ## Tools
 
+<div align="center">
+  <table>
+    <tr>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" width="250" height="250"/></td>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" width="250" height="250"/></td>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" width="250" height="250"/></td>
+    </tr>
+    <tr>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" width="250" height="250"/></td>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" width="250" height="250"/></td>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" width="250" height="250"/></td>
+    </tr>
+    <tr>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" width="250" height="250"/></td>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" width="250" height="250"/></td>
+      <td><img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" width="250" height="250"/></td>
+    </tr>
+  </table>
+</div>
+
 Enhance your CoralNet experience with these tools:
 - ✏️ Annotate: Create annotations freely
 - 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
