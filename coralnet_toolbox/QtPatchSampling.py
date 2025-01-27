@@ -6,14 +6,13 @@ import random
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF
 from PyQt5.QtGui import QColor, QPen, QBrush
-from PyQt5.QtWidgets import (QApplication, QGraphicsView, QGraphicsScene, QCheckBox,
-                             QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton,
-                             QComboBox, QSpinBox, QGraphicsPixmapItem, QGraphicsRectItem,
-                             QFormLayout, QButtonGroup)
+from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QLabel, QDialog, QHBoxLayout, QPushButton,
+                             QComboBox, QSpinBox, QFormLayout, QButtonGroup, QCheckBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.Tile.QtCommon import MarginInput
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -64,13 +63,15 @@ class PatchSamplingDialog(QDialog):
         self.layout.addWidget(self.annotation_size_label)
         self.layout.addWidget(self.annotation_size_spinbox)
 
-        # Margin Offsets using QFormLayout
-        self.margin_form_layout = QFormLayout()
-        self.margin_x_min_spinbox = self.create_margin_spinbox("X Min", self.margin_form_layout)
-        self.margin_y_min_spinbox = self.create_margin_spinbox("Y Min", self.margin_form_layout)
-        self.margin_x_max_spinbox = self.create_margin_spinbox("X Max", self.margin_form_layout)
-        self.margin_y_max_spinbox = self.create_margin_spinbox("Y Max", self.margin_form_layout)
-        self.layout.addLayout(self.margin_form_layout)
+        # Margin Offsets using MarginInput
+        self.margin_input = MarginInput()
+        self.margin_input.value_type.currentIndexChanged.connect(self.preview_annotations)  # Connect to preview
+        self.margin_input.type_combo.currentIndexChanged.connect(self.preview_annotations)  # Connect to preview
+        for spin in self.margin_input.margin_spins:
+            spin.valueChanged.connect(self.preview_annotations)  # Connect to preview
+        for double in self.margin_input.margin_doubles:
+            double.valueChanged.connect(self.preview_annotations)  # Connect to preview
+        self.layout.addWidget(self.margin_input)
 
         # Apply to Filtered Images Checkbox
         self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
@@ -82,7 +83,6 @@ class PatchSamplingDialog(QDialog):
         self.apply_next_checkbox = QCheckBox("Apply to next images")
         self.layout.addWidget(self.apply_next_checkbox)
         # Apply to All Images Checkbox
-        self.apply_all_checkbox = QCheckBox("Apply to all images")
         self.layout.addWidget(self.apply_all_checkbox)
 
         # Ensure only one of the apply checkboxes can be selected at a time
@@ -97,14 +97,6 @@ class PatchSamplingDialog(QDialog):
         self.preview_button = QPushButton("Preview")
         self.preview_button.clicked.connect(self.preview_annotations)
         self.layout.addWidget(self.preview_button)
-
-        # Preview Area
-        self.preview_view = QGraphicsView(self)
-        self.preview_scene = QGraphicsScene(self)
-        self.preview_view.setScene(self.preview_scene)
-        self.preview_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.preview_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.layout.addWidget(self.preview_view)
 
         # Accept/Cancel Buttons
         self.button_box = QHBoxLayout()
@@ -124,25 +116,15 @@ class PatchSamplingDialog(QDialog):
         # Disconnect the signal when the dialog is hidden
         self.annotation_window.imageLoaded.disconnect(self.update_margin_spinbox)
 
-    def create_margin_spinbox(self, label_text, layout):
-        label = QLabel(label_text + ":")
-        spinbox = QSpinBox()
-        spinbox.setMinimum(0)
-        spinbox.setMaximum(1)
-        spinbox.valueChanged.connect(self.preview_annotations)  # Connect to preview
-        layout.addRow(label, spinbox)
-        return spinbox
-
     def update_margin_spinbox(self):
         if self.annotation_window.image_pixmap:
             width = self.annotation_window.image_pixmap.width()
             height = self.annotation_window.image_pixmap.height()
             # Set the margin spinboxes to the image dimensions
             annotation_size = self.annotation_size_spinbox.value()
-            self.margin_x_min_spinbox.setMaximum(width // 2 - annotation_size)
-            self.margin_y_min_spinbox.setMaximum(height // 2 - annotation_size)
-            self.margin_x_max_spinbox.setMaximum(width // 2 - annotation_size)
-            self.margin_y_max_spinbox.setMaximum(height // 2 - annotation_size)
+            self.margin_input.single_spin.setMaximum(min(width, height) // 2 - annotation_size)
+            for spin in self.margin_input.margin_spins:
+                spin.setMaximum(min(width, height) // 2 - annotation_size)
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         # Extract the margins
@@ -184,12 +166,7 @@ class PatchSamplingDialog(QDialog):
         method = self.method_combo.currentText()
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
-        margin_x_min = self.margin_x_min_spinbox.value()
-        margin_y_min = self.margin_y_min_spinbox.value()
-        margin_x_max = self.margin_x_max_spinbox.value()
-        margin_y_max = self.margin_y_max_spinbox.value()
-
-        margins = margin_x_min, margin_y_min, margin_x_max, margin_y_max
+        margins = self.margin_input.get_value()
 
         self.sampled_annotations = self.sample_annotations(method,
                                                            num_annotations,
@@ -204,75 +181,23 @@ class PatchSamplingDialog(QDialog):
 
         margin_x_min, margin_y_min, margin_x_max, margin_y_max = margins
 
-        self.preview_scene.clear()
-        pixmap = self.annotation_window.image_pixmap
-        if pixmap:
-            # Add the image to the scene
-            self.preview_scene.addItem(QGraphicsPixmapItem(pixmap))
-
-            # Draw annotations
-            for annotation in self.sampled_annotations:
-                x, y, size = annotation
-                rect_item = QGraphicsRectItem(x, y, size, size)
-                rect_item.setPen(QPen(Qt.white, 4))
-                brush = QBrush(Qt.white)
-                brush.setStyle(Qt.SolidPattern)
-                color = brush.color()
-                color.setAlpha(75)
-                brush.setColor(color)
-                rect_item.setBrush(brush)
-                self.preview_scene.addItem(rect_item)
-
-            # Draw margin lines
-            pen = QPen(QColor("red"), 5)
-            pen.setStyle(Qt.DotLine)
-            image_width = pixmap.width()
-            image_height = pixmap.height()
-
-            self.preview_scene.addLine(margin_x_min, 0, margin_x_min, image_height, pen)
-            self.preview_scene.addLine(image_width - margin_x_max, 0, image_width - margin_x_max, image_height, pen)
-            self.preview_scene.addLine(0, margin_y_min, image_width, margin_y_min, pen)
-            self.preview_scene.addLine(0, image_height - margin_y_max, image_width, image_height - margin_y_max, pen)
-
-            # Apply dark transparency outside the margins
-            overlay_color = QColor(0, 0, 0, 150)  # Black with transparency
-
-            # Left overlay
-            left_overlay = QGraphicsRectItem(0, 0, margin_x_min, image_height)
-            left_overlay.setBrush(QBrush(overlay_color))
-            left_overlay.setPen(QPen(Qt.NoPen))
-            self.preview_scene.addItem(left_overlay)
-
-            # Right overlay
-            right_overlay = QGraphicsRectItem(image_width - margin_x_max, 0, margin_x_max, image_height)
-            right_overlay.setBrush(QBrush(overlay_color))
-            right_overlay.setPen(QPen(Qt.NoPen))
-            self.preview_scene.addItem(right_overlay)
-
-            # Top overlay
-            top_overlay = QGraphicsRectItem(margin_x_min, 0, image_width - margin_x_min - margin_x_max, margin_y_min)
-            top_overlay.setBrush(QBrush(overlay_color))
-            top_overlay.setPen(QPen(Qt.NoPen))
-            self.preview_scene.addItem(top_overlay)
-
-            # Bottom overlay
-            bottom_overlay = QGraphicsRectItem(margin_x_min,
-                                               image_height - margin_y_max,
-                                               image_width - margin_x_min - margin_x_max,
-                                               margin_y_max)
-
-            bottom_overlay.setBrush(QBrush(overlay_color))
-            bottom_overlay.setPen(QPen(Qt.NoPen))
-            self.preview_scene.addItem(bottom_overlay)
-
-            self.preview_view.fitInView(self.preview_scene.sceneRect(), Qt.KeepAspectRatio)
+        self.annotation_window.unselect_annotations()
+        for annotation in self.sampled_annotations:
+            x, y, size = annotation
+            new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
+                                             size,
+                                             self.label_window.active_label.short_label_code,
+                                             self.label_window.active_label.long_label_code,
+                                             self.label_window.active_label.color,
+                                             self.annotation_window.current_image_path,
+                                             self.label_window.active_label.id,
+                                             transparency=self.annotation_window.transparency)
+            new_annotation.create_graphics_item(self.annotation_window.scene)
+            self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
 
     def accept_annotations(self):
 
-        margins = (self.margin_x_min_spinbox.value(),
-                   self.margin_y_min_spinbox.value(),
-                   self.margin_x_max_spinbox.value(),
-                   self.margin_y_max_spinbox.value())
+        margins = self.margin_input.get_value()
 
         self.add_sampled_annotations(self.method_combo.currentText(),
                                      self.num_annotations_spinbox.value(),
