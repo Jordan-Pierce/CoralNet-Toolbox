@@ -127,20 +127,18 @@ class ExportTagLabAnnotations:
                     if isinstance(annotation, PolygonAnnotation):
                         # Calculate bounding box, centroid, area, perimeter, and contour
                         points = annotation.points
-                        min_x = int(min(point.x() for point in points))
-                        min_y = int(min(point.y() for point in points))
-                        max_x = int(max(point.x() for point in points))
-                        max_y = int(max(point.y() for point in points))
-                        width = max_x - min_x
-                        height = max_y - min_y
-                        centroid_x = float(f"{sum(point.x() for point in points) / len(points):.1f}")
-                        centroid_y = float(f"{sum(point.y() for point in points) / len(points):.1f}")
-                        area = float(f"{annotation.calculate_area():.1f}")
-                        perimeter = float(f"{annotation.calculate_perimeter():.1f}")
+                        min_x = min(point.x() for point in points)
+                        min_y = min(point.y() for point in points)
+                        max_x = max(point.x() for point in points)
+                        max_y = max(point.y() for point in points)
+                        centroid_x = sum(point.x() for point in points) / len(points)
+                        centroid_y = sum(point.y() for point in points) / len(points)
+                        area = annotation.calculate_area()
+                        perimeter = annotation.calculate_perimeter()
                         contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
 
                         annotation_dict = {
-                            "bbox": [min_y, min_x, width, height],
+                            "bbox": [min_x, min_y, max_x, max_y],
                             "centroid": [centroid_x, centroid_y],
                             "area": area,
                             "perimeter": perimeter,

@@ -6,7 +6,6 @@ from .QtImportCoralNetAnnotations import ImportCoralNetAnnotations
 from .QtImportViscoreAnnotations import ImportViscoreAnnotations
 from .QtImportTagLabAnnotations import ImportTagLabAnnotations
 from .QtExportLabels import ExportLabels
-from .QtExportTagLabLabels import ExportTagLabLabels
 from .QtExportAnnotations import ExportAnnotations
 from .QtExportCoralNetAnnotations import ExportCoralNetAnnotations
 from .QtExportViscoreAnnotations import ExportViscoreAnnotations
@@ -21,7 +20,6 @@ __all__ = [
     'ImportViscoreAnnotations',
     'ImportTagLabAnnotations',
     'ExportLabels',
-    'ExportTagLabLabels',
     'ExportAnnotations',
     'ExportCoralNetAnnotations', 
     'ExportViscoreAnnotations',

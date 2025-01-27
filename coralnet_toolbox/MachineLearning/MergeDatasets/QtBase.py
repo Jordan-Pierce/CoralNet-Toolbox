@@ -63,7 +63,7 @@ class Base(QDialog):
         layout = QVBoxLayout()
         
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Select multiple YOLO-formatted Classification datasets to merge.")
+        info_label = QLabel("Select multiple Classification datasets to merge.")
         
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
