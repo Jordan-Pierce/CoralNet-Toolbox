@@ -177,10 +177,10 @@ class PatchSamplingDialog(QDialog):
                 
     def validate_margins(self, margins, image_width, image_height):
         """
-        Validate the margins parameter to ensure it is a valid type and value.
-
+        Validate and normalize margins to pixel values.
+        
         Args:
-            margins: Single int/float or tuple of 4 margins (top, right, bottom, left)
+            margins: Single int/float or tuple of 4 margins (left, top, right, bottom)
             image_width: Width of image in pixels
             image_height: Height of image in pixels
             
@@ -190,18 +190,22 @@ class PatchSamplingDialog(QDialog):
         Raises:
             ValueError: If margins are invalid
         """
-        margin_pixels = [0, 0, 0, 0]  # [top, right, bottom, left]
+        # Initialize margins in LTRB order
+        margin_pixels = [0, 0, 0, 0]  # [left, top, right, bottom]
+        
+        # Minimum margin size in pixels when using percentages
+        MIN_MARGIN_PIXELS = 10
         
         if isinstance(margins, (int, float)):
             if isinstance(margins, float):
                 if not 0.0 <= margins <= 1.0:
                     raise ValueError("Margin percentage must be between 0 and 1")
-                # Use minimum dimension for percentage calculation
-                margin_val = int(margins * min(image_width, image_height))
+                # Calculate pixel value ensuring minimum size
+                margin_val = max(MIN_MARGIN_PIXELS, int(margins * min(image_width, image_height)))
                 margin_pixels = [margin_val] * 4
             else:
                 if margins < 0:
-                    raise ValueError("Margin pixels must be non-negative") 
+                    raise ValueError("Margin pixels must be non-negative")
                 margin_pixels = [margins] * 4
                 
         elif isinstance(margins, tuple) and len(margins) == 4:
@@ -209,9 +213,9 @@ class PatchSamplingDialog(QDialog):
                 if isinstance(margin, float):
                     if not 0.0 <= margin <= 1.0:
                         raise ValueError(f"Margin percentage at index {i} must be between 0 and 1")
-                    # Use height for top/bottom margins, width for left/right margins
-                    dim = image_width if i in (1, 3) else image_height
-                    margin_pixels[i] = int(margin * dim)
+                    # Use appropriate dimension for each margin
+                    dim = image_width if i in (0, 2) else image_height  # left/right use width, top/bottom use height
+                    margin_pixels[i] = max(MIN_MARGIN_PIXELS, int(margin * dim))
                 elif isinstance(margin, int):
                     if margin < 0:
                         raise ValueError(f"Margin pixels at index {i} must be non-negative")
@@ -220,56 +224,96 @@ class PatchSamplingDialog(QDialog):
                     raise ValueError(f"Invalid margin type at index {i}")
         else:
             raise ValueError("Margins must be a single number or tuple of 4 numbers")
-            
-        # Convert from TRBL to LTRB order
-        margin_pixels = [margin_pixels[3], margin_pixels[0], margin_pixels[1], margin_pixels[2]]
 
-        # Validate margin sum doesn't exceed image dimensions 
+        # Validate margin sum doesn't exceed image dimensions
         if margin_pixels[0] + margin_pixels[2] >= image_width:  # Left + Right
             raise ValueError("Horizontal margins exceed image width")
-        if margin_pixels[1] + margin_pixels[3] >= image_height:  # Top + Bottom  
+        if margin_pixels[1] + margin_pixels[3] >= image_height:  # Top + Bottom
             raise ValueError("Vertical margins exceed image height")
 
-        return tuple(margin_pixels)  # Returns (left, top, right, bottom)
+        return tuple(margin_pixels)
+    
+    def calculate_grid_parameters(self, num_annotations, annotation_size, margins, image_width, image_height):
+        """
+        Calculate grid parameters ensuring proper spacing with margins.
+        
+        Args:
+            num_annotations: Number of desired annotations
+            annotation_size: Size of each annotation
+            margins: Tuple of (left, top, right, bottom) margins in pixels
+            image_width: Width of image in pixels
+            image_height: Height of image in pixels
+            
+        Returns:
+            tuple: (grid_size, x_step, y_step, usable_width, usable_height)
+        """
+        margin_left, margin_top, margin_right, margin_bottom = margins
+        
+        # Calculate usable space
+        usable_width = image_width - margin_left - margin_right - annotation_size
+        usable_height = image_height - margin_top - margin_bottom - annotation_size
+        
+        # Calculate grid size
+        grid_size = int(num_annotations ** 0.5)
+        
+        # Ensure minimum spacing between annotations
+        min_spacing = max(annotation_size // 2, 10)  # At least half annotation size or 10px
+        
+        # Calculate step sizes with minimum spacing
+        x_step = max(min_spacing, usable_width // grid_size)
+        y_step = max(min_spacing, usable_height // grid_size)
+        
+        return grid_size, x_step, y_step, usable_width, usable_height
 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
-        """Sample annotations using specified method."""
+        """Sample annotations using specified method with improved margin and spacing handling."""
         # Validate margins first
         margins = self.validate_margins(margins, image_width, image_height)
+        margin_left, margin_top, margin_right, margin_bottom = margins
         
-        # Extract the validated margins
-        margin_x_min, margin_y_min, margin_x_max, margin_y_max = margins
-
         annotations = []
-
+        
         if method == "Random":
-            for _ in range(num_annotations):
-                x = random.randint(margin_x_min, image_width - annotation_size - margin_x_max)
-                y = random.randint(margin_y_min, image_height - annotation_size - margin_y_max)
-                annotations.append((x, y, annotation_size))
-
-        if method == "Uniform":
-            grid_size = int(num_annotations ** 0.5)
-            x_step = (image_width - margin_x_min - margin_x_max - annotation_size) / grid_size
-            y_step = (image_height - margin_y_min - margin_y_max - annotation_size) / grid_size
+            max_attempts = num_annotations * 10  # Prevent infinite loops
+            attempts = 0
+            min_spacing = annotation_size // 2
+            
+            while len(annotations) < num_annotations and attempts < max_attempts:
+                x = random.randint(margin_left, image_width - annotation_size - margin_right)
+                y = random.randint(margin_top, image_height - annotation_size - margin_bottom)
+                
+                # Check spacing from existing annotations
+                valid_position = True
+                for existing_x, existing_y, _ in annotations:
+                    if (abs(existing_x - x) < min_spacing and 
+                        abs(existing_y - y) < min_spacing):
+                        valid_position = False
+                        break
+                
+                if valid_position:
+                    annotations.append((x, y, annotation_size))
+                attempts += 1
+                
+        elif method in ["Uniform", "Stratified Random"]:
+            grid_size, x_step, y_step, usable_width, usable_height = self.calculate_grid_parameters(
+                num_annotations, annotation_size, margins, image_width, image_height
+            )
+            
             for i in range(grid_size):
                 for j in range(grid_size):
-                    x = margin_x_min + int(i * x_step + annotation_size / 2)
-                    y = margin_y_min + int(j * y_step + annotation_size / 2)
+                    if method == "Uniform":
+                        x = margin_left + int(i * x_step)
+                        y = margin_top + int(j * y_step)
+                    else:  # Stratified Random
+                        x = margin_left + int(i * x_step + random.uniform(0, x_step - annotation_size))
+                        y = margin_top + int(j * y_step + random.uniform(0, y_step - annotation_size))
+                    
+                    # Ensure we don't exceed image boundaries
+                    x = min(x, image_width - annotation_size - margin_right)
+                    y = min(y, image_height - annotation_size - margin_bottom)
+                    
                     annotations.append((x, y, annotation_size))
-
-        if method == "Stratified Random":
-            grid_size = int(num_annotations ** 0.5)
-            x_step = (image_width - margin_x_min - margin_x_max - annotation_size) / grid_size
-            y_step = (image_height - margin_y_min - margin_y_max - annotation_size) / grid_size
-            for i in range(grid_size):
-                for j in range(grid_size):
-                    x = margin_x_min + int(
-                        i * x_step + random.uniform(annotation_size / 2, x_step - annotation_size / 2))
-                    y = margin_y_min + int(
-                        j * y_step + random.uniform(annotation_size / 2, y_step - annotation_size / 2))
-                    annotations.append((x, y, annotation_size))
-
+        
         return annotations
 
     def update_annotation_graphics(self):
