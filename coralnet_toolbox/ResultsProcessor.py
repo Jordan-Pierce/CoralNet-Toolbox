@@ -464,3 +464,6 @@ class ResultsProcessor:
                           masks=scaled_masks)
 
         yield results
+        
+    def from_patched_yolo_infer(self, detections):
+        pass

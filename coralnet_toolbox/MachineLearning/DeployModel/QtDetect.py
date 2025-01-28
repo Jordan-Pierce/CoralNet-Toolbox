@@ -154,22 +154,10 @@ class Detect(Base):
         """
         if self.loaded_model is None:
             return
-
+        
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        if not inputs:
-            # Predict only the current image
-            inputs = [self.annotation_window.current_image_path]
-
-        # Predict the detection results
-        results = self.loaded_model(inputs,
-                                    agnostic_nms=True,
-                                    conf=self.main_window.get_uncertainty_thresh(),
-                                    iou=self.main_window.get_iou_thresh(),
-                                    device=self.main_window.device,
-                                    stream=True)
-
+        
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
@@ -178,10 +166,33 @@ class Detect(Base):
                                              min_area_thresh=self.main_window.get_area_thresh_min(),
                                              max_area_thresh=self.main_window.get_area_thresh_max())
 
+        if not inputs:
+            # Predict only the current image
+            inputs = [self.annotation_window.current_image_path]
+        
+        if self.main_window.tile_inference_tool_action.isChecked():
+            # Get tile crops
+            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, inputs)
+            
+        # Predict the detection results
+        results = self.loaded_model(inputs,
+                                    agnostic_nms=True,
+                                    conf=self.main_window.get_uncertainty_thresh(),
+                                    iou=self.main_window.get_iou_thresh(),
+                                    device=self.main_window.device,
+                                    stream=True)
+
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() == "True":
+            self.task = 'segment'
             # Apply SAM to the detection results
             results = self.sam_dialog.predict_from_results(results, self.class_mapping)
+            
+        if self.main_window.tile_inference_tool_action.isChecked():
+            # Detect on crops
+            results = self.main_window.tile_processor.detect_them(results)
+        
+        if self.task == 'segment':
             # Process the segmentation results
             results_processor.process_segmentation_results(results)
         else:
