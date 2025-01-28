@@ -6,3 +6,6 @@ __version__ = "0.0.26"
 __author__ = "Jordan Pierce"
 __email__ = "jordan.pierce@noaa.gov"
 __credits__ = "National Center for Coastal and Ocean Sciences (NCCOS)"
+
+def get_version():
+    return __version__

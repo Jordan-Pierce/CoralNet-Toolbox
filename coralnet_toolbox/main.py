@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtMainWindow import MainWindow
 from coralnet_toolbox.utilities import console_user
+from coralnet_toolbox import get_version
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -15,7 +16,7 @@ def run():
     try:
         app = QApplication([])
         app.setStyle('WindowsXP')
-        main_window = MainWindow()
+        main_window = MainWindow(version=get_version())
         main_window.show()
         app.exec_()
 

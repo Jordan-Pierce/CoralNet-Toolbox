@@ -94,7 +94,7 @@ class MainWindow(QMainWindow):
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
 
-    def __init__(self):
+    def __init__(self, version):
         super().__init__()
 
         # Define icons
@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
         self.unlock_icon = get_icon("unlock.png")
 
         # Set the title and icon for the main window
-        self.setWindowTitle("CoralNet-Toolbox")
+        self.setWindowTitle(f"CoralNet-Toolbox v{version}")
         self.setWindowIcon(self.coral_icon)
 
         # Set window flags for resizing, minimize, maximize, and customizing
