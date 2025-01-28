@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDi
                              QDoubleSpinBox, QComboBox, QPushButton, QFileDialog, QSpinBox,
                              QHBoxLayout, QWidget)
 
-from coralnet_toolbox.Tile.QtCommon import TileSizeInput, OverlapInput, MarginInput
+from coralnet_toolbox.QtCommon import TileSizeInput, OverlapInput, MarginInput
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -113,7 +113,7 @@ class Base(QDialog):
         self.tile_config_group.setLayout(layout)
 
     def setup_dataset_layout(self):
-        """Set up dataset layout.""" 
+        """Set up dataset layout."""
         self.dataset_group.setTitle("Dataset Parameters")
         layout = QFormLayout()
 
@@ -140,10 +140,10 @@ class Base(QDialog):
         layout.addRow("Destination Directory:", dst_layout)
 
         self.dataset_group.setLayout(layout)
-        
+
     def setup_dataset_config_layout(self):
         """Set up dataset config layout."""
-        self.dataset_config_group.setTitle("Dataset Configuration Parameters") 
+        self.dataset_config_group.setTitle("Dataset Configuration Parameters")
         layout = QFormLayout()
 
         # Image Extensions
@@ -215,7 +215,7 @@ class Base(QDialog):
         advanced_layout.addWidget(QLabel("Smoothing:"))
         advanced_layout.addWidget(self.smoothing_tolerance_spinbox)
         layout.addRow("Advanced Parameters:", advanced_layout)
-        
+
         self.dataset_config_group.setLayout(layout)
 
     def setup_buttons_layout(self, layout):
@@ -414,7 +414,7 @@ class Base(QDialog):
         margins = self.margins_input.get_value()
         slice_wh = self.tile_size_input.get_value()
         overlap_wh = self.overlap_input.get_value(slice_wh[0], slice_wh[1])
-        
+
         input_ext = self.input_ext_combo.currentText()
         output_ext = self.output_ext_combo.currentText()
         densify_factor = self.densify_factor_spinbox.value()
@@ -453,17 +453,17 @@ class Base(QDialog):
 
         def progress_callback(progress: TileProgress):
             title = f"Processing {progress.current_set_name.capitalize()} Set"
-            
+
             if progress.total_tiles:
                 progress_percentage = int((progress.current_tile_idx / progress.total_tiles) * 100)
                 title += f": {int(progress.current_image_idx/progress.total_images*100)}%"
             else:
                 progress_percentage = int((progress.current_image_idx / progress.total_images) * 100)
-            
+
             self.progress_bar.setWindowTitle(title)
             self.progress_bar.set_value(progress_percentage)
             self.progress_bar.update_progress()
-            
+
             if self.progress_bar.wasCanceled():
                 raise Exception("Tiling process was canceled by the user.")
 
