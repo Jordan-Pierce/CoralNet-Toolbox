@@ -85,13 +85,15 @@ class GlobalEventFilter(QObject):
 
             # Select all annotations on < key press with Shift+Ctrl
             if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
-                self.annotation_window.select_annotations()
-                return True
+                if self.main_window.select_tool_action.isChecked():
+                    self.annotation_window.select_annotations()
+                    return True
 
             # Unselect all annotations on > key press with Shift+Ctrl
             if event.key() == Qt.Key_Greater and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
-                self.annotation_window.unselect_annotations()
-                return True
+                if self.main_window.select_tool_action.isChecked():
+                    self.annotation_window.select_annotations()
+                    return True
 
             # Handle Escape key for exiting program
             if event.key() == Qt.Key_Escape:
