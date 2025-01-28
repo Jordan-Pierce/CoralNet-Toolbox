@@ -58,6 +58,7 @@ class TileProcessor:
             
         # Initialize 
         self.element_crops = MakeCropsDetectThem(
+            imgsz=640,
             image=image,
             model=model,
             segment=segment,
@@ -66,9 +67,9 @@ class TileProcessor:
             shape_y=self.tile_params['shape_y'],
             overlap_x=self.tile_params['overlap_x'],
             overlap_y=self.tile_params['overlap_y'],
-            conf=0.5,
-            iou=0.7,
-            batch_inference=True,
+            conf=self.main_window.get_uncertainty_thresh(),
+            iou=self.main_window.get_iou_thresh(),
+            batch_inference=False,
             show_processing_status=True,
         )
         # Create crops
@@ -81,10 +82,7 @@ class TileProcessor:
         self.element_crops.detect_them(results)
         
         # Combine them
-        self.combined_detections = CombineDetections(
-            self.element_crops, 
-            nms_threshold=0.05,
-        )
+        self.combined_detections = CombineDetections(self.element_crops, **self.tile_inference_params)
         
         # Convert to Ultralytics Results
         results = self.to_ultralytics()
@@ -132,64 +130,122 @@ class TileProcessor:
         )
         
 
-# ----------------------------------------------------------------------------------------------------------------------
-# Child Classes
-# ----------------------------------------------------------------------------------------------------------------------
-
-
 class MakeCropsDetectThem:
-    def __init__(self, image, **kwargs):
-        
-        # Get parameters from kwargs with defaults
-        self.show_process_status = kwargs.get('show_processing_status', False)
+    """
+    Class implementing cropping and passing crops through a neural network
+    for detection/segmentation.
+
+    Args:
+        image (np.ndarray): Input image BGR.
+        imgsz (int): Size of the input image for inference YOLO.
+        conf (float): Confidence threshold for detections YOLO.
+        iou (float): IoU threshold for non-maximum suppression YOLOv8 of single crop.
+        segment (bool): Whether to perform segmentation (YOLO-seg).
+        shape_x (int): Size of the crop in the x-coordinate.
+        shape_y (int): Size of the crop in the y-coordinate.
+        overlap_x (int): Percentage of overlap along the x-axis.
+        overlap_y (int): Percentage of overlap along the y-axis.
+        show_crops (bool): Whether to visualize the cropping.
+        show_processing_status (bool): Whether to show the processing status using tqdm.
+        resize_initial_size (bool): Whether to resize the results to the original image size (ps: slow operation).
+        model: Pre-initialized model object.
+        memory_optimize (bool): Memory optimization option for segmentation (less accurate results)
+        batch_inference (bool): Batch inference of image crops through a neural network instead of 
+                    sequential passes of crops (ps: Faster inference, higher memory use)
+        progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
+        inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
+
+    Attributes:
+        model: YOLOv8 model loaded from the specified path.
+        image (np.ndarray): Input image BGR.
+        imgsz (int): Size of the input image for inference.
+        conf (float): Confidence threshold for detections.
+        iou (float): IoU threshold for non-maximum suppression.
+        segment (bool): Whether to perform segmentation (YOLO-seg).
+        shape_x (int): Size of the crop in the x-coordinate.
+        shape_y (int): Size of the crop in the y-coordinate.
+        overlap_x (int): Percentage of overlap along the x-axis.
+        overlap_y (int): Percentage of overlap along the y-axis.
+        crops (list): List to store the CropElement objects.
+        show_crops (bool): Whether to visualize the cropping.
+        show_processing_status (bool): Whether to show the processing status using tqdm.
+        resize_initial_size (bool): Whether to resize the results to the original  
+                                    image size (ps: slow operation).
+        class_names_dict (dict): Dictionary containing class names of the YOLO model.
+        memory_optimize (bool): Memory optimization option for segmentation (less accurate results)
+        batch_inference (bool): Batch inference of image crops through a neural network instead of 
+                                    sequential passes of crops (ps: Faster inference, higher memory use)
+        progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
+        inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
+    """
+
+    def __init__(
+        self,
+        image: np.ndarray,
+        imgsz=640,
+        conf=0.25,
+        iou=0.7,
+        segment=False,
+        shape_x=700,
+        shape_y=600,
+        overlap_x=25,
+        overlap_y=25,
+        show_crops=False,
+        show_processing_status=True,
+        resize_initial_size=True,
+        model=None,
+        memory_optimize=True,
+        inference_extra_args=None,
+        batch_inference=False,
+        progress_callback=None,
+    ) -> None:
+
+        # Add show_process_status parameter and initialize progress bars dict
+        self.show_process_status = show_processing_status
         self._progress_bars = {}
 
-        progress_callback = kwargs.get('progress_callback', None)
         # Set up the progress callback based on parameters
-        if progress_callback is not None and self.show_process_status:
+        if progress_callback is not None and show_processing_status:
             self.progress_callback = progress_callback
-        elif self.show_process_status:
+        elif show_processing_status:
             self.progress_callback = self._tqdm_callback
         else:
             self.progress_callback = None
 
+        self.model = model
+        
         # Input image
         self.image = image
-        # Model 
-        self.model = kwargs.get('model')
-        
         # Size of the input image for inference
-        # Size of the input image for inference
-        self.imgsz = kwargs.get('imgsz', 640)  
+        self.imgsz = imgsz  
         # Confidence threshold for detections
-        self.conf = kwargs.get('conf', 0.35)  
+        self.conf = conf
         # IoU threshold for non-maximum suppression
-        self.iou = kwargs.get('iou', 0.7)  
+        self.iou = iou
         # Classes to detect
-        self.classes_list = kwargs.get('classes_list')  
+        self.classes_list = None
         # Whether to perform segmentation
-        self.segment = kwargs.get('segment', False)  
+        self.segment = segment
         # Size of the crop in the x-coordinate
-        self.shape_x = kwargs.get('shape_x', 640)  
-        # Size of the crop in the y-coordinate
-        self.shape_y = kwargs.get('shape_y', 640)  
+        self.shape_x = shape_x
+        # Size of the crop in the y-coordinate  
+        self.shape_y = shape_y
         # Percentage of overlap along the x-axis
-        self.overlap_x = kwargs.get('overlap_x', 0)  
+        self.overlap_x = overlap_x
         # Percentage of overlap along the y-axis
-        self.overlap_y = kwargs.get('overlap_y', 0)  
+        self.overlap_y = overlap_y
         # Whether to visualize the cropping
-        self.show_crops = kwargs.get('show_crops', False)  
-        # slow operation!
-        self.resize_initial_size = kwargs.get('resize_initial_size', False)
-        
-        # memory optimization option for segmentation
-        self.memory_optimize = kwargs.get('memory_optimize', False)
+        self.show_crops = show_crops
+        # slow operation !
+        self.resize_initial_size = resize_initial_size
+        # memory opimization option for segmentation
+        self.memory_optimize = memory_optimize
         # dict with human-readable class names
-        self.class_names_dict = self.model.names if self.model else {}
+        self.class_names_dict = self.model.names
         # dict with extra ultralytics inference parameters
-        self.inference_extra_args = kwargs.get('inference_extra_args', {})
+        self.inference_extra_args = inference_extra_args
         # batch inference of image crops through a neural network
-        self.batch_inference = kwargs.get('batch_inference', False)
+        self.batch_inference = batch_inference
 
         self.crops = None
 
@@ -205,6 +261,7 @@ class MakeCropsDetectThem:
 
         y_new = round((y_steps - 1) * (self.shape_y * cross_koef_y) + self.shape_y)
         x_new = round((x_steps - 1) * (self.shape_x * cross_koef_x) + self.shape_x)
+        
         image_initial = self.image.copy()
         image_full = cv2.resize(self.image, (x_new, y_new))
         batch_of_crops = []
@@ -286,6 +343,37 @@ class MakeCropsDetectThem:
             self._detect_objects_batch(predictions)
         else:
             self._detect_objects()
+            
+    def _detect_objects(self):
+        """
+        Method to detect objects in each crop.
+
+        This method iterates through each crop, performs inference using the YOLO model,
+        calculates real values, and optionally resizes the results.
+
+        Returns:
+            None
+        """
+        total_crops = len(self.crops)  # Total number of crops
+        for index, crop in enumerate(self.crops):
+            crop.calculate_inference(
+                self.model,
+                imgsz=self.imgsz,
+                conf=self.conf,
+                iou=self.iou,
+                segment=self.segment,
+                classes_list=self.classes_list,
+                memory_optimize=self.memory_optimize,
+                extra_args=self.inference_extra_args
+            )
+            crop.calculate_real_values()
+            if self.resize_initial_size:
+                crop.resize_results()
+
+            # Call the progress callback function if provided
+            if self.progress_callback is not None:
+                self.progress_callback(
+                    "Detecting objects", (index + 1), total_crops)
 
     def _detect_objects_batch(self, predictions=None):
         """
