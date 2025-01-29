@@ -261,11 +261,11 @@ class PatchSamplingDialog(QDialog):
         method = self.method_combo.currentText()
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
-        raw_margins = self.margin_input.get_value()
         
-        # Validate margins before sampling
         try:
-            margins = self.margin_input.validate_margins(self.annotation_window.image_pixmap.width(), self.annotation_window.image_pixmap.height())
+            # Validate margins before sampling
+            margins = self.margin_input.validate_margins(self.annotation_window.image_pixmap.width(), 
+                                                         self.annotation_window.image_pixmap.height())
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Margins", str(e))
             return
@@ -294,37 +294,19 @@ class PatchSamplingDialog(QDialog):
         """Preview sampled annotations."""
         self.update_annotation_graphics()
 
-    def draw_annotation_previews(self, margins):
-        """Draw annotation previews on the current image."""
-        margin_x_min, margin_y_min, margin_x_max, margin_y_max = margins
-
-        self.annotation_window.unselect_annotations()
-        for annotation in self.sampled_annotations:
-            x, y, size = annotation
-            new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
-                                             size,
-                                             self.label_window.active_label.short_label_code,
-                                             self.label_window.active_label.long_label_code,
-                                             self.label_window.active_label.color,
-                                             self.annotation_window.current_image_path,
-                                             self.label_window.active_label.id,
-                                             transparency=self.annotation_window.transparency)
-            
-            new_annotation.create_graphics_item(self.annotation_window.scene)
-
     def accept_annotations(self):
         """Accept the sampled annotations and add them to the current image."""
-        margins = self.margin_input.get_value()
-
         self.add_sampled_annotations(self.method_combo.currentText(),
                                      self.num_annotations_spinbox.value(),
-                                     self.annotation_size_spinbox.value(),
-                                     margins)
+                                     self.annotation_size_spinbox.value())
 
-    def add_sampled_annotations(self, method, num_annotations, annotation_size, raw_margins):
+    def add_sampled_annotations(self, method, num_annotations, annotation_size):
         """Add the sampled annotations to the current image."""
         # Set the cursor to waiting (busy) cursor
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Clear the graphics
+        self.clear_annotation_graphics()
 
         self.apply_to_filtered = self.apply_filtered_checkbox.isChecked()
         self.apply_to_prev = self.apply_prev_checkbox.isChecked()
@@ -368,7 +350,9 @@ class PatchSamplingDialog(QDialog):
                 margins = self.margin_input.validate_margins(width, height)
             except ValueError as e:
                 QApplication.restoreOverrideCursor()
-                QMessageBox.warning(self, "Invalid Margins", f"For image {image_path}: {str(e)}")
+                QMessageBox.warning(self, 
+                                    "Invalid Margins", 
+                                    f"For image {image_path}: {str(e)}")
                 return
 
             # Sample the annotation, given params
@@ -409,7 +393,6 @@ class PatchSamplingDialog(QDialog):
         QApplication.restoreOverrideCursor()
         
         # Close the dialog
-        self.clear_annotation_graphics()
         self.accept()
         
     def clear_annotation_graphics(self):
