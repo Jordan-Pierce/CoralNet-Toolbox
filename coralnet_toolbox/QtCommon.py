@@ -5,7 +5,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QFormLayout,
                              QDoubleSpinBox, QComboBox, QSpinBox, QHBoxLayout,
-                             QWidget, QStackedWidget, QGridLayout)
+                             QWidget, QStackedWidget, QGridLayout, QMessageBox)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -157,6 +157,72 @@ class MarginInput(QGroupBox):
         else:
             widgets = self.margin_doubles if is_percentage else self.margin_spins
             return tuple(w.value() for w in widgets)
+
+    def validate_margins(self, image_width, image_height):
+        """
+        Validate and convert margins to pixel values in the order (Left, Top, Right, Bottom).
+        Handles both single values and tuples, adjusting for percentage conversion based on image dimensions.
+        """
+        # Check if we're dealing with percentages or pixels
+        is_percentage = self.value_type.currentIndex() == 1
+
+        margin_pixels = [0, 0, 0, 0]  # [Left, Top, Right, Bottom]
+
+        try:
+            raw_margins = self.get_value()
+            # Single value input
+            if isinstance(raw_margins, (int, float)):
+                if is_percentage:
+                    if not (0.0 <= raw_margins <= 1.0):
+                        raise ValueError("Percentage must be between 0 and 1")
+                    # Apply percentage to all margins using correct dimensions
+                    margin_pixels = [
+                        raw_margins * image_width,    # Left
+                        raw_margins * image_height,   # Top
+                        raw_margins * image_width,    # Right
+                        raw_margins * image_height    # Bottom
+                    ]
+                else:
+                    margin_pixels = [raw_margins] * 4
+
+            # Multiple values input (original order: Top, Right, Bottom, Left)
+            elif isinstance(raw_margins, tuple) and len(raw_margins) == 4:
+                # Reorder to (Left, Top, Right, Bottom)
+                ordered_margins = (
+                    raw_margins[3],  # Left
+                    raw_margins[0],  # Top
+                    raw_margins[1],  # Right
+                    raw_margins[2]   # Bottom
+                )
+
+                if is_percentage:
+                    if not all(0.0 <= m <= 1.0 for m in ordered_margins):
+                        raise ValueError("All percentages must be between 0 and 1")
+                    # Convert each margin using appropriate dimension
+                    margin_pixels = [
+                        ordered_margins[0] * image_width,   # Left
+                        ordered_margins[1] * image_height,  # Top
+                        ordered_margins[2] * image_width,   # Right
+                        ordered_margins[3] * image_height   # Bottom
+                    ]
+                else:
+                    margin_pixels = list(ordered_margins)
+
+            else:
+                raise ValueError("Invalid margin format")
+
+            # Convert to integers and validate
+            margin_pixels = [int(m) for m in margin_pixels]
+            if (margin_pixels[0] + margin_pixels[2]) >= image_width:
+                raise ValueError("Horizontal margins exceed image width")
+            if (margin_pixels[1] + margin_pixels[3]) >= image_height:
+                raise ValueError("Vertical margins exceed image height")
+
+            return tuple(margin_pixels)
+
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Margins", str(e))
+            return None
 
 
 class TileSizeInput(QGroupBox):

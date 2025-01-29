@@ -176,73 +176,6 @@ class PatchSamplingDialog(QDialog):
         self.clear_annotation_graphics()
         super().reject()
                 
-    def validate_margins(self, raw_margins):
-        """
-        Validate and convert margins to pixel values in the order (Left, Top, Right, Bottom).
-        Handles both single values and tuples, adjusting for percentage conversion based on image dimensions.
-        """
-        # Check if we're dealing with percentages or pixels
-        is_percentage = self.margin_input.value_type.currentIndex() == 1
-        image_width = self.annotation_window.image_pixmap.width()
-        image_height = self.annotation_window.image_pixmap.height()
-
-        margin_pixels = [0, 0, 0, 0]  # [Left, Top, Right, Bottom]
-
-        try:
-            # Single value input
-            if isinstance(raw_margins, (int, float)):
-                if is_percentage:
-                    if not (0.0 <= raw_margins <= 1.0):
-                        raise ValueError("Percentage must be between 0 and 1")
-                    # Apply percentage to all margins using correct dimensions
-                    margin_pixels = [
-                        raw_margins * image_width,    # Left
-                        raw_margins * image_height,   # Top
-                        raw_margins * image_width,    # Right
-                        raw_margins * image_height    # Bottom
-                    ]
-                else:
-                    margin_pixels = [raw_margins] * 4
-
-            # Multiple values input (original order: Top, Right, Bottom, Left)
-            elif isinstance(raw_margins, tuple) and len(raw_margins) == 4:
-                # Reorder to (Left, Top, Right, Bottom)
-                ordered_margins = (
-                    raw_margins[3],  # Left
-                    raw_margins[0],  # Top
-                    raw_margins[1],  # Right
-                    raw_margins[2]   # Bottom
-                )
-
-                if is_percentage:
-                    if not all(0.0 <= m <= 1.0 for m in ordered_margins):
-                        raise ValueError("All percentages must be between 0 and 1")
-                    # Convert each margin using appropriate dimension
-                    margin_pixels = [
-                        ordered_margins[0] * image_width,   # Left
-                        ordered_margins[1] * image_height,  # Top
-                        ordered_margins[2] * image_width,   # Right
-                        ordered_margins[3] * image_height   # Bottom
-                    ]
-                else:
-                    margin_pixels = list(ordered_margins)
-
-            else:
-                raise ValueError("Invalid margin format")
-
-            # Convert to integers and validate
-            margin_pixels = [int(m) for m in margin_pixels]
-            if (margin_pixels[0] + margin_pixels[2]) >= image_width:
-                raise ValueError("Horizontal margins exceed image width")
-            if (margin_pixels[1] + margin_pixels[3]) >= image_height:
-                raise ValueError("Vertical margins exceed image height")
-
-            return tuple(margin_pixels)
-
-        except ValueError as e:
-            QMessageBox.warning(self, "Invalid Margins", str(e))
-            return None
-
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         """Sample annotations using the specified method."""
         if not margins:
@@ -332,7 +265,7 @@ class PatchSamplingDialog(QDialog):
         
         # Validate margins before sampling
         try:
-            margins = self.validate_margins(raw_margins)
+            margins = self.margin_input.validate_margins(self.annotation_window.image_pixmap.width(), self.annotation_window.image_pixmap.height())
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Margins", str(e))
             return
@@ -432,7 +365,7 @@ class PatchSamplingDialog(QDialog):
 
             # Validate margins for each image
             try:
-                margins = self.validate_margins(raw_margins)
+                margins = self.margin_input.validate_margins(width, height)
             except ValueError as e:
                 QApplication.restoreOverrideCursor()
                 QMessageBox.warning(self, "Invalid Margins", f"For image {image_path}: {str(e)}")
