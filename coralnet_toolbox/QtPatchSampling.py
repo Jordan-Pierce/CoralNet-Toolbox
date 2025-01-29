@@ -264,8 +264,8 @@ class PatchSamplingDialog(QDialog):
         
         try:
             # Validate margins before sampling
-            margins = self.margin_input.validate_margins(self.annotation_window.image_pixmap.width(), 
-                                                         self.annotation_window.image_pixmap.height())
+            margins = self.margin_input.get_margins(self.annotation_window.image_pixmap.width(), 
+                                                    self.annotation_window.image_pixmap.height())
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Margins", str(e))
             return
@@ -347,7 +347,7 @@ class PatchSamplingDialog(QDialog):
 
             # Validate margins for each image
             try:
-                margins = self.margin_input.validate_margins(width, height)
+                margins = self.margin_input.get_margins(width, height)
             except ValueError as e:
                 QApplication.restoreOverrideCursor()
                 QMessageBox.warning(self, 

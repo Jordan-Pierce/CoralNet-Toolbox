@@ -62,15 +62,17 @@ class TileProcessor:
             image=image,
             model=model,
             segment=segment,
-            show_crops=False,
+            show_crops=self.tile_params['show_crops'],
             shape_x=self.tile_params['shape_x'],
             shape_y=self.tile_params['shape_y'],
             overlap_x=self.tile_params['overlap_x'],
             overlap_y=self.tile_params['overlap_y'],
+            marings=self.tile_params['margins'],
+            batch_inference=True,  # self.tile_params['batch_inference'],
+            include_residuals=self.tile_params['include_residuals'],
+            show_processing_status=self.tile_params['show_processing_status'],
             conf=self.main_window.get_uncertainty_thresh(),
             iou=self.main_window.get_iou_thresh(),
-            batch_inference=False,
-            show_processing_status=True,
         )
         # Create crops
         self.element_crops.make_crops()
@@ -82,7 +84,14 @@ class TileProcessor:
         self.element_crops.detect_them(results)
         
         # Combine them
-        self.combined_detections = CombineDetections(self.element_crops, **self.tile_inference_params)
+        self.combined_detections = CombineDetections(
+            element_crops=self.element_crops, 
+            nms_threshold=self.tile_inference_params['nms_threshold'],
+            match_metric=self.tile_inference_params['match_metric'],
+            class_agnostic_nms=self.tile_inference_params['class_agnostic_nms'],
+            intelligent_sorter=self.tile_inference_params['intelligent_sorter'],
+            sorter_bins=self.tile_inference_params['sorter_bins'],                                  
+        )
         
         # Convert to Ultralytics Results
         results = self.to_ultralytics()
@@ -145,6 +154,7 @@ class MakeCropsDetectThem:
         shape_y (int): Size of the crop in the y-coordinate.
         overlap_x (int): Percentage of overlap along the x-axis.
         overlap_y (int): Percentage of overlap along the y-axis.
+        margins (tuple): Tuple of margins (left, top, right, bottom) to be applied to the image.
         show_crops (bool): Whether to visualize the cropping.
         show_processing_status (bool): Whether to show the processing status using tqdm.
         resize_initial_size (bool): Whether to resize the results to the original image size (ps: slow operation).
@@ -153,6 +163,7 @@ class MakeCropsDetectThem:
         batch_inference (bool): Batch inference of image crops through a neural network instead of 
                     sequential passes of crops (ps: Faster inference, higher memory use)
         progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
+        include_residuals (bool): Whether to include residuals in the crops.
         inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
 
     Attributes:
@@ -166,6 +177,7 @@ class MakeCropsDetectThem:
         shape_y (int): Size of the crop in the y-coordinate.
         overlap_x (int): Percentage of overlap along the x-axis.
         overlap_y (int): Percentage of overlap along the y-axis.
+        margins (tuple): Tuple of margins (left, top, right, bottom) to be applied to the image.
         crops (list): List to store the CropElement objects.
         show_crops (bool): Whether to visualize the cropping.
         show_processing_status (bool): Whether to show the processing status using tqdm.
@@ -176,6 +188,7 @@ class MakeCropsDetectThem:
         batch_inference (bool): Batch inference of image crops through a neural network instead of 
                                     sequential passes of crops (ps: Faster inference, higher memory use)
         progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
+        include_residuals (bool): Whether to include residuals in the crops.
         inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
     """
 
@@ -190,6 +203,7 @@ class MakeCropsDetectThem:
         shape_y=600,
         overlap_x=25,
         overlap_y=25,
+        marings=(0, 0, 0, 0),
         show_crops=False,
         show_processing_status=True,
         resize_initial_size=True,
@@ -198,6 +212,7 @@ class MakeCropsDetectThem:
         inference_extra_args=None,
         batch_inference=False,
         progress_callback=None,
+        include_residuals=True,
     ) -> None:
 
         # Add show_process_status parameter and initialize progress bars dict
@@ -234,6 +249,8 @@ class MakeCropsDetectThem:
         self.overlap_x = overlap_x
         # Percentage of overlap along the y-axis
         self.overlap_y = overlap_y
+        # Tuple of margins (left, top, right, bottom) to be applied to the image
+        self.margins = marings
         # Whether to visualize the cropping
         self.show_crops = show_crops
         # slow operation !
@@ -246,62 +263,93 @@ class MakeCropsDetectThem:
         self.inference_extra_args = inference_extra_args
         # batch inference of image crops through a neural network
         self.batch_inference = batch_inference
+        # whether to include residuals in the crops
+        self.include_residuals = include_residuals
 
         self.crops = None
-
+    
     def make_crops(self):
-        """Preprocessing of the image. Generating crops with overlapping."""
-        cross_koef_x = 1 - (self.overlap_x / 100)
-        cross_koef_y = 1 - (self.overlap_y / 100)
+        """
+        Generates crops with overlapping using the same logic as update_tile_graphics.
+        If include_residuals is False, only includes crops that match the specified shape.
+        Returns a list of CropElement objects.
+        """        
+        # Get image dimensions
+        image_full_height, image_full_width = self.image.shape[:2]
+
+        # Calculate grid boundaries with margins
+        x_start = self.margins[0]  # left margin
+        y_start = self.margins[1]  # top margin
+        x_end = image_full_width - self.margins[2]  # right margin
+        y_end = image_full_height - self.margins[3]  # bottom margin
+
+        # Calculate overlap coefficients
+        if isinstance(self.overlap_x, float):
+            cross_coef_x = 1 - self.overlap_x  # Float between 0-1
+        else:
+            cross_coef_x = 1 - (self.overlap_x / self.shape_x)  # Pixel value
+
+        if isinstance(self.overlap_y, float):
+            cross_coef_y = 1 - self.overlap_y  # Float between 0-1
+        else:
+            cross_coef_y = 1 - (self.overlap_y / self.shape_y)  # Pixel value
+
+        # Calculate grid steps, adjusted to fit within margins
+        x_steps = int((x_end - x_start - self.shape_x) / (self.shape_x * cross_coef_x)) + 1
+        y_steps = int((y_end - y_start - self.shape_y) / (self.shape_y * cross_coef_y)) + 1
 
         data_all_crops = []
-
-        y_steps = int((self.image.shape[0] - self.shape_y) / (self.shape_y * cross_koef_y)) + 1
-        x_steps = int((self.image.shape[1] - self.shape_x) / (self.shape_x * cross_koef_x)) + 1
-
-        y_new = round((y_steps - 1) * (self.shape_y * cross_koef_y) + self.shape_y)
-        x_new = round((x_steps - 1) * (self.shape_x * cross_koef_x) + self.shape_x)
-        
-        image_initial = self.image.copy()
-        image_full = cv2.resize(self.image, (x_new, y_new))
         batch_of_crops = []
-
+        
         count = 0
-        total_steps = y_steps * x_steps  # Total number of crops
-        for i in range(y_steps):
-            for j in range(x_steps):
-                x_start = int(self.shape_x * j * cross_koef_x)
-                y_start = int(self.shape_y * i * cross_koef_y)
+        total_steps = y_steps * x_steps
 
-                # Check for residuals
-                if x_start + self.shape_x > image_full.shape[1]:
-                    print('Error in generating crops along the x-axis')
-                    continue
-                if y_start + self.shape_y > image_full.shape[0]:
-                    print('Error in generating crops along the y-axis')
+        for i in range(y_steps + 1):
+            for j in range(x_steps + 1):
+                x = x_start + int(self.shape_x * j * cross_coef_x)
+                y = y_start + int(self.shape_y * i * cross_coef_y)
+
+                # Calculate actual crop dimensions (handling boundary cases)
+                crop_width = min(self.shape_x, x_end - x)
+                crop_height = min(self.shape_y, y_end - y)
+
+                # Skip if crop is completely outside image
+                if crop_width <= 0 or crop_height <= 0:
                     continue
 
-                im_temp = image_full[y_start:y_start + self.shape_y, x_start:x_start + self.shape_x]
+                # Skip if not including residuals and dimensions don't match specified shape
+                if not self.include_residuals:
+                    if crop_width != self.shape_x or crop_height != self.shape_y:
+                        continue
+
+                # Extract the crop
+                crop = self.image[y:y + crop_height, x:x + crop_width]
 
                 # Call the progress callback function if provided
                 if self.progress_callback is not None:
                     self.progress_callback("Getting crops", count, total_steps)
 
-                data_all_crops.append(CropElement(
-                    source_image=image_initial,
-                    source_image_resized=image_full,
-                    crop=im_temp,
+                # Create crop element
+                crop_element = CropElement(
+                    source_image=self.image,
+                    source_image_resized=self.image,
+                    crop=crop,
                     number_of_crop=count,
-                    x_start=x_start,
-                    y_start=y_start,
-                ))
+                    x_start=x,
+                    y_start=y,
+                )
+                
+                data_all_crops.append(crop_element)
                 if self.batch_inference:
-                    batch_of_crops.append(im_temp)
+                    self.crops = data_all_crops, batch_of_crops
+                else:
+                    self.crops = data_all_crops
+                    
+                count += 1
 
         if self.batch_inference:
-            self.crops = data_all_crops, batch_of_crops
-        else:
-            self.crops = data_all_crops
+            return data_all_crops, batch_of_crops
+        return data_all_crops
 
     def get_crops(self):
         """Get list of image arrays from all crops.
@@ -328,8 +376,7 @@ class MakeCropsDetectThem:
             RuntimeError: If batch_inference=False
         """
         if not self.batch_inference:
-            raise RuntimeError(
-                "Batch crops only available when batch_inference=True")
+            raise RuntimeError("Batch crops only available when batch_inference=True")
 
         if self.crops is None:
             return []
@@ -372,8 +419,7 @@ class MakeCropsDetectThem:
 
             # Call the progress callback function if provided
             if self.progress_callback is not None:
-                self.progress_callback(
-                    "Detecting objects", (index + 1), total_crops)
+                self.progress_callback("Detecting objects", (index + 1), total_crops)
 
     def _detect_objects_batch(self, predictions=None):
         """
