@@ -148,7 +148,7 @@ class Detect(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, inputs=None):
+    def predict(self, image_paths=None):
         """
         Predict the detection results for the given inputs.
         """
@@ -166,43 +166,48 @@ class Detect(Base):
                                              min_area_thresh=self.main_window.get_area_thresh_min(),
                                              max_area_thresh=self.main_window.get_area_thresh_max())
 
-        if not inputs:
+        if not image_paths:
             # Predict only the current image
-            inputs = [self.annotation_window.current_image_path]
+            image_paths = [self.annotation_window.current_image_path]
         
-        if self.main_window.tile_inference_tool_action.isChecked():
-            # Get tile crops
-            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, inputs)
+        # Loop through the image paths
+        for image_path in image_paths:
+            # Check if tile inference tool is enabled
+            if self.main_window.tile_inference_tool_action.isChecked():
+                # Get tile crops (numpy arrays)
+                inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
+                
+                if not len(inputs):
+                    continue
+            else:
+                # TODO - Check if this is correct
+                inputs = image_path
             
-            if not len(inputs):
-                # Exit early
-                QApplication.restoreOverrideCursor()
-                return
-            
-        # Predict the detection results
-        results = self.loaded_model(inputs,
-                                    agnostic_nms=True,
-                                    conf=self.main_window.get_uncertainty_thresh(),
-                                    iou=self.main_window.get_iou_thresh(),
-                                    device=self.main_window.device,
-                                    stream=True)
+            # Predict the detection results
+            results = self.loaded_model(inputs,
+                                        agnostic_nms=True,
+                                        conf=self.main_window.get_uncertainty_thresh(),
+                                        iou=self.main_window.get_iou_thresh(),
+                                        device=self.main_window.device,
+                                        stream=True)
 
-        # Check if SAM model is deployed
-        if self.use_sam_dropdown.currentText() == "True":
-            self.task = 'segment'
-            # Apply SAM to the detection results
-            results = self.sam_dialog.predict_from_results(results, self.class_mapping)
+            # Check if SAM model is deployed
+            if self.use_sam_dropdown.currentText() == "True":
+                self.task = 'segment'
+                # Apply SAM to the detection results
+                results = self.sam_dialog.predict_from_results(results, self.class_mapping)
             
-        if self.main_window.tile_inference_tool_action.isChecked():
-            # Detect on crops
-            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
-        
-        if self.task == 'segment':
-            # Process the segmentation results
-            results_processor.process_segmentation_results(results)
-        else:
-            # Process the detection results
-            results_processor.process_detection_results(results)
+            # Check if tile inference tool is enabled
+            if self.main_window.tile_inference_tool_action.isChecked():
+                # Detect on crops
+                results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
+            
+            if self.task == 'segment':
+                # Process the segmentation results
+                results_processor.process_segmentation_results(results)
+            else:
+                # Process the detection results
+                results_processor.process_detection_results(results)
 
         QApplication.restoreOverrideCursor()
         gc.collect()

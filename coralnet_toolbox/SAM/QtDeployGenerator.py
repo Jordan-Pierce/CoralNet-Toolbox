@@ -7,6 +7,7 @@ import gc
 import numpy as np
 
 import torch
+from torch.cuda import empty_cache
 from ultralytics.models.fastsam import FastSAMPredictor
 
 from qtrangeslider import QRangeSlider
@@ -15,10 +16,13 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, QHBo
                              QLabel, QMessageBox, QPushButton, QSlider, QSpinBox,
                              QVBoxLayout, QGroupBox)
 
-from torch.cuda import empty_cache
 
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import open_image
+
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -335,6 +339,7 @@ class DeployGeneratorDialog(QDialog):
             
             # Load the model
             self.loaded_model = FastSAMPredictor(overrides=overrides)
+            self.loaded_model.names = self.class_mapping
             
             with torch.no_grad():
                 # Run a blank through the model to initialize it
@@ -368,54 +373,62 @@ class DeployGeneratorDialog(QDialog):
         """
         if not self.loaded_model:
             return
-   
-        if not image_paths:
-            image_paths = [self.annotation_window.current_image_path]
-            
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-            
-        progress_bar = ProgressBar(self.annotation_window, title="Making FastSAM Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
+        
+        # Create a results processor
+        results_processor = ResultsProcessor(self.main_window, 
+                                             self.class_mapping,
+                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                             iou_thresh=self.main_window.get_iou_thresh(),
+                                             min_area_thresh=self.main_window.get_area_thresh_min(),
+                                             max_area_thresh=self.main_window.get_area_thresh_max())
+    
+        if not image_paths:
+            # Predict only the current image
+            image_paths = [self.annotation_window.current_image_path]
 
+        # Loop through the image paths
         for image_path in image_paths:
+            # Check if tile inference tool is enabled
+            if self.main_window.tile_inference_tool_action.isChecked():
+                # Get tile crops
+                inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
+                
+                if not len(inputs):
+                    continue
+            else:
+                inputs = image_path
             
+            # Predict the detection results
             with torch.no_grad():
-                # Predict the image
-                results = self.loaded_model(image_path)
-
+                results = self.loaded_model(inputs)
                 gc.collect()
                 empty_cache()
             
-            # Update the results names
+            # Update the results path 
+            results[0].path = image_path
             results[0].names = self.class_mapping
                         
             # Check if SAM model is deployed
             if self.use_sam_dropdown.currentText() == "True":
+                self.task = 'segment'
                 # Apply SAM to the detection results
                 results = self.sam_dialog.predict_from_results(results, self.class_mapping)
-                        
-            # Update the progress bar
-            progress_bar.update_progress()
-            
-            # Create a results processor
-            results_processor = ResultsProcessor(self.main_window, 
-                                                 self.class_mapping,
-                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                                 iou_thresh=self.main_window.get_iou_thresh(),
-                                                 min_area_thresh=self.main_window.get_area_thresh_min(),
-                                                 max_area_thresh=self.main_window.get_area_thresh_max())
+                
+            # Check if tile inference tool is enabled
+            if self.main_window.tile_inference_tool_action.isChecked():
+                # Detect on crops
+                results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
             
             if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
+                # Process the segmentation results
                 results_processor.process_segmentation_results(results)
             else:
+                # Process the detection results
                 results_processor.process_detection_results(results)
                         
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-                
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         gc.collect()

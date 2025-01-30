@@ -73,7 +73,7 @@ class TileProcessor:
         if self.progress_bar.wasCanceled():
             raise Exception("Tiling process was canceled by the user.")
     
-    def make_crops(self, model, image):
+    def make_crops(self, model, image_path):
         """Make crops from image and return them"""
         # Make cursor busy
         QtApplication.setOverrideCursor(Qt.WaitCursor)
@@ -82,10 +82,9 @@ class TileProcessor:
         crops = []
         
         try:
-            # Open image if path is provided
-            if isinstance(image, list) and all(isinstance(x, str) for x in image):
-                self.image_path = image[0]
-                image = open_image(self.image_path)
+            # Open image
+            self.image_path = image_path
+            image = open_image(self.image_path)
                 
             # Initialize 
             self.element_crops = MakeCropsDetectThem(

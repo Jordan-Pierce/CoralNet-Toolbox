@@ -5,6 +5,7 @@ from dataclasses import dataclass
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+import cv2
 import torch
 
 torch.use_deterministic_algorithms(False)
@@ -90,16 +91,19 @@ class GroundingDINO(DetectionBaseModel):
     box_threshold: float
     text_threshold: float
 
-    def __init__(
-        self, ontology: CaptionOntology, box_threshold=0.35, text_threshold=0.25, model="SwinB",
-    ):
+    def __init__(self, ontology: CaptionOntology, box_threshold=0.35, text_threshold=0.25, model="SwinB"):
         self.ontology = ontology
         self.grounding_dino_model = load_grounding_dino(model)
         self.box_threshold = box_threshold
         self.text_threshold = text_threshold
 
-    def predict(self, input: str) -> sv.Detections:
-        image = load_image(input, return_format="cv2")
+    def predict(self, input) -> sv.Detections:
+        # Check if input is a path
+        if isinstance(input, str):
+            image = load_image(input, return_format="cv2")
+        else:
+            # Convert numpy array to CV2 format
+            image = cv2.cvtColor(input, cv2.COLOR_RGB2BGR)
 
         detections_list = []
 

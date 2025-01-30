@@ -148,7 +148,7 @@ class Segment(Base):
         finally:
             QApplication.restoreOverrideCursor()
 
-    def predict(self, inputs=None):
+    def predict(self, image_paths=None):
         """
         Predict the segmentation results for the given inputs.
         """
@@ -157,19 +157,7 @@ class Segment(Base):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        if not inputs:
-            # Predict only the current image
-            inputs = [self.annotation_window.current_image_path]
-
-        # Predict the segmentation results
-        results = self.loaded_model(inputs,
-                                    agnostic_nms=True,
-                                    conf=self.main_window.get_uncertainty_thresh(),
-                                    iou=self.main_window.get_iou_thresh(),
-                                    device=self.main_window.device,
-                                    stream=True)
-
+        
         # Create a result processor
         results_processor = ResultsProcessor(self.main_window,
                                              self.class_mapping,
@@ -178,10 +166,40 @@ class Segment(Base):
                                              min_area_thresh=self.main_window.get_area_thresh_min(),
                                              max_area_thresh=self.main_window.get_area_thresh_max())
 
+        if not image_paths:
+            # Predict only the current image
+            image_paths = [self.annotation_window.current_image_path]
+            
+        # Loop through the image paths
+        for image_path in image_paths:
+            # Check if tile inference tool is enabled
+            if self.main_window.tile_inference_tool_action.isChecked():
+                # Get tile crops (numpy arrays)
+                inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
+                
+                if not len(inputs):
+                    continue
+            else:
+                # TODO - Check if this is correct
+                inputs = image_path
+            
+            # Predict the detection results
+            results = self.loaded_model(inputs,
+                                        agnostic_nms=True,
+                                        conf=self.main_window.get_uncertainty_thresh(),
+                                        iou=self.main_window.get_iou_thresh(),
+                                        device=self.main_window.device,
+                                        stream=True)
+            
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() == "True":
             # Apply SAM to the segmentation results
             results = self.sam_dialog.predict_from_results(results, self.class_mapping)
+        
+        # Detect on crops
+        if self.main_window.tile_inference_tool_action.isChecked():
+            # Detect on crops
+            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
 
         # Process the segmentation results
         results_processor.process_segmentation_results(results)

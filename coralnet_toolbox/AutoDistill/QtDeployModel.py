@@ -5,6 +5,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import gc
 
 import torch
+from torch.cuda import empty_cache
 from autodistill.detection import CaptionOntology
 
 from qtrangeslider import QRangeSlider
@@ -13,11 +14,14 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog,
                              QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPushButton, QSlider, QVBoxLayout, QGroupBox)
 
-from torch.cuda import empty_cache
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
-from coralnet_toolbox.utilities import rasterio_to_numpy
+
+from coralnet_toolbox.utilities import open_image
+
+from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -44,6 +48,7 @@ class DeployModelDialog(QDialog):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         
+        self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("AutoDistill Deploy Model")
         self.resize(400, 325)
 
@@ -405,49 +410,60 @@ class DeployModelDialog(QDialog):
         if not self.loaded_model:
             return
    
-        if not image_paths:
-            image_paths = [self.annotation_window.current_image_path]
-            
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-            
-        progress_bar = ProgressBar(self.annotation_window, title=f"Making {self.model_name} Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
-
+        
+        # Create a results processor
+        results_processor = ResultsProcessor(self.main_window, 
+                                             self.class_mapping,
+                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                             iou_thresh=self.main_window.get_iou_thresh(),
+                                             min_area_thresh=self.main_window.get_area_thresh_min(),
+                                             max_area_thresh=self.main_window.get_area_thresh_max())
+        
+        if not image_paths:
+            # Predict only the current
+            image_paths = [self.annotation_window.current_image_path]
+    
+        # Loop through the image paths
         for image_path in image_paths:
             # Open the image
-            image = self.main_window.image_window.rasterio_open(image_path)
-            image = rasterio_to_numpy(image)
+            image = open_image(image_path)
+            
+            # Check if tile inference tool is enabled
+            if self.main_window.tile_inference_tool_action.isChecked():
+                # Get tile crops (numpy arrays)
+                inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
+                
+                if not len(inputs):
+                    continue
+            else:
+                # Open the image
+                inputs = image
+                
             # Predict the image
-            results = self.loaded_model.predict(image)
-            
-            # Create a results processor
-            results_processor = ResultsProcessor(self.main_window, 
-                                                 self.class_mapping,
-                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                                 iou_thresh=self.main_window.get_iou_thresh(),
-                                                 min_area_thresh=self.main_window.get_area_thresh_min(),
-                                                 max_area_thresh=self.main_window.get_area_thresh_max())
-            
-            results = results_processor.from_supervision(results, image, image_path, self.class_mapping)
-            
-            # Update the progress bar
-            progress_bar.update_progress()
+            results = self.loaded_model.predict(inputs)
+            # Process the TODO
+            results = results_processor.from_supervision(results, inputs, image_path, self.class_mapping)
 
+            # Check if SAM model is deployed
             if self.use_sam_dropdown.currentText() == "True":
+                task = 'segment'
                 # Apply SAM to the detection results
                 results = self.sam_dialog.predict_from_results(results, self.class_mapping)
+            
+            # Check if tile inference tool is enabled
+            if self.main_window.tile_inference_tool_action.isChecked():
+                # Detect on crops
+                results = self.main_window.tile_processor.detect_them(results, task == 'segment')
+                
+            if task == 'segment':
                 # Process the segmentation results
                 results_processor.process_segmentation_results(results)
             else:
                 # Process the detection results
                 results_processor.process_detection_results(results)
-                
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-                
+
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         gc.collect()
