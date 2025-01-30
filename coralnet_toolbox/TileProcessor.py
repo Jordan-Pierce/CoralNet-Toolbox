@@ -10,6 +10,9 @@ from ultralytics.models.sam.amg import batched_mask_to_box
 from ultralytics.utils import ops
 from ultralytics.utils.ops import scale_masks
 
+from PyQt5.Qt import Qt
+from PyQt5.QtWidgets import QApplication as QtApplication
+
 from patched_yolo_infer.elements.CropElement import CropElement
 from patched_yolo_infer.nodes.CombineDetections import CombineDetections
 
@@ -36,6 +39,8 @@ class TileProcessor:
         self.combined_detections = None
         
         self.image_path = None
+        
+        self.progress_bar = ProgressBar(self.annotation_window, title="Tile Inference")
 
     def params_set(self):
         return self.tile_params and self.tile_inference_params
@@ -50,51 +55,105 @@ class TileProcessor:
         self.set_tile_params(tile_params)
         self.set_tile_inference_params(tile_inference_params)
         
-    def make_crops(self, model, image, segment=False):
+    def custom_progress_callback(self, task, current, total):
+        """Progress callback function that uses QtProgressBar to show progress.
         
-        if isinstance(image, list) and all(isinstance(x, str) for x in image):
-            self.image_path = image[0]
-            image = open_image(self.image_path)
-            
-        # Initialize 
-        self.element_crops = MakeCropsDetectThem(
-            imgsz=640,
-            image=image,
-            model=model,
-            segment=segment,
-            show_crops=self.tile_params['show_crops'],
-            shape_x=self.tile_params['shape_x'],
-            shape_y=self.tile_params['shape_y'],
-            overlap_x=self.tile_params['overlap_x'],
-            overlap_y=self.tile_params['overlap_y'],
-            marings=self.tile_params['margins'],
-            batch_inference=True,  # self.tile_params['batch_inference'],
-            include_residuals=self.tile_params['include_residuals'],
-            show_processing_status=self.tile_params['show_processing_status'],
-            conf=self.main_window.get_uncertainty_thresh(),
-            iou=self.main_window.get_iou_thresh(),
-        )
-        # Create crops
-        self.element_crops.make_crops()
+        Args:
+            task (str): Description of current task
+            current (int): Current progress value 
+            total (int): Total steps for task
+        """
+        # Update progress bar
+        self.progress_bar.setWindowTitle(task)
+        self.progress_bar.show()
+        progress_percentage = int((current / total) * 100)
+        self.progress_bar.set_value(progress_percentage)
+        self.progress_bar.update_progress()
         
-        return self.element_crops.get_crops()
+        if self.progress_bar.wasCanceled():
+            raise Exception("Tiling process was canceled by the user.")
     
-    def detect_them(self, results):
-        # Detect objects in crops
-        self.element_crops.detect_them(results)
+    def make_crops(self, model, image):
+        """Make crops from image and return them"""
+        # Make cursor busy
+        QtApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Combine them
-        self.combined_detections = CombineDetections(
-            element_crops=self.element_crops, 
-            nms_threshold=self.tile_inference_params['nms_threshold'],
-            match_metric=self.tile_inference_params['match_metric'],
-            class_agnostic_nms=self.tile_inference_params['class_agnostic_nms'],
-            intelligent_sorter=self.tile_inference_params['intelligent_sorter'],
-            sorter_bins=self.tile_inference_params['sorter_bins'],                                  
-        )
+        # Initialize 
+        crops = []
         
-        # Convert to Ultralytics Results
-        results = self.to_ultralytics()
+        try:
+            # Open image if path is provided
+            if isinstance(image, list) and all(isinstance(x, str) for x in image):
+                self.image_path = image[0]
+                image = open_image(self.image_path)
+                
+            # Initialize 
+            self.element_crops = MakeCropsDetectThem(
+                imgsz=self.tile_params['imgsz'],
+                image=image,
+                model=model,
+                conf=self.main_window.get_uncertainty_thresh(),
+                iou=self.main_window.get_iou_thresh(),
+                show_crops=self.tile_params['show_crops'],
+                shape_x=self.tile_params['shape_x'],
+                shape_y=self.tile_params['shape_y'],
+                overlap_x=self.tile_params['overlap_x'],
+                overlap_y=self.tile_params['overlap_y'],
+                marings=self.tile_params['margins'],
+                # batch_inference=True,  # self.tile_params['batch_inference'],
+                include_residuals=self.tile_params['include_residuals'],
+                show_processing_status=self.tile_params['show_processing_status'],
+                progress_callback=self.custom_progress_callback 
+            )
+            # Create crops
+            self.element_crops.make_crops()
+            crops = self.element_crops.get_crops()
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            # Make cursor not busy
+            QtApplication.restoreOverrideCursor()
+            self.progress_bar.stop_progress()
+            self.progress_bar.close()
+            
+        # Return the crops list (numpy arrays)
+        return crops
+    
+    def detect_them(self, predictions, segment=False):
+        """Detect objects in image crops"""
+        # Make cursor busy
+        QtApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Initialize
+        results = []
+        
+        try:
+            # Set segment flag
+            self.element_crops.segment = segment
+            
+            # Predictions made, detect objects in crops
+            self.element_crops.detect_them(predictions)
+            
+            # Combine them
+            self.combined_detections = CombineDetections(
+                element_crops=self.element_crops, 
+                nms_threshold=self.tile_inference_params['nms_threshold'],
+                match_metric=self.tile_inference_params['match_metric'],
+                class_agnostic_nms=self.tile_inference_params['class_agnostic_nms'],
+                intelligent_sorter=self.tile_inference_params['intelligent_sorter'],
+                sorter_bins=self.tile_inference_params['sorter_bins'],                                  
+            )
+            
+            # Convert to Ultralytics Results
+            results = self.to_ultralytics()
+            
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            # Make cursor not busy
+            QtApplication.restoreOverrideCursor()
+            self.progress_bar.stop_progress()
+            self.progress_bar.close()
         
         return results
     
@@ -160,8 +219,8 @@ class MakeCropsDetectThem:
         resize_initial_size (bool): Whether to resize the results to the original image size (ps: slow operation).
         model: Pre-initialized model object.
         memory_optimize (bool): Memory optimization option for segmentation (less accurate results)
-        batch_inference (bool): Batch inference of image crops through a neural network instead of 
-                    sequential passes of crops (ps: Faster inference, higher memory use)
+        # batch_inference (bool): Batch inference of image crops through a neural network instead of 
+        #             sequential passes of crops (ps: Faster inference, higher memory use)
         progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
         include_residuals (bool): Whether to include residuals in the crops.
         inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
@@ -185,8 +244,8 @@ class MakeCropsDetectThem:
                                     image size (ps: slow operation).
         class_names_dict (dict): Dictionary containing class names of the YOLO model.
         memory_optimize (bool): Memory optimization option for segmentation (less accurate results)
-        batch_inference (bool): Batch inference of image crops through a neural network instead of 
-                                    sequential passes of crops (ps: Faster inference, higher memory use)
+        # batch_inference (bool): Batch inference of image crops through a neural network instead of 
+        #                             sequential passes of crops (ps: Faster inference, higher memory use)
         progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
         include_residuals (bool): Whether to include residuals in the crops.
         inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
@@ -210,7 +269,7 @@ class MakeCropsDetectThem:
         model=None,
         memory_optimize=True,
         inference_extra_args=None,
-        batch_inference=False,
+        # batch_inference=False,
         progress_callback=None,
         include_residuals=True,
     ) -> None:
@@ -262,7 +321,7 @@ class MakeCropsDetectThem:
         # dict with extra ultralytics inference parameters
         self.inference_extra_args = inference_extra_args
         # batch inference of image crops through a neural network
-        self.batch_inference = batch_inference
+        # self.batch_inference = batch_inference
         # whether to include residuals in the crops
         self.include_residuals = include_residuals
 
@@ -302,7 +361,7 @@ class MakeCropsDetectThem:
         batch_of_crops = []
         
         count = 0
-        total_steps = y_steps * x_steps
+        total_steps = (y_steps + 1) * (x_steps + 1)
 
         for i in range(y_steps + 1):
             for j in range(x_steps + 1):
@@ -324,10 +383,10 @@ class MakeCropsDetectThem:
 
                 # Extract the crop
                 crop = self.image[y:y + crop_height, x:x + crop_width]
-
-                # Call the progress callback function if provided
+                
+                count += 1
                 if self.progress_callback is not None:
-                    self.progress_callback("Getting crops", count, total_steps)
+                    self.progress_callback("Getting Crops", count, total_steps)
 
                 # Create crop element
                 crop_element = CropElement(
@@ -340,16 +399,14 @@ class MakeCropsDetectThem:
                 )
                 
                 data_all_crops.append(crop_element)
-                if self.batch_inference:
-                    self.crops = data_all_crops, batch_of_crops
-                else:
-                    self.crops = data_all_crops
-                    
-                count += 1
+                # if self.batch_inference:
+                self.crops = data_all_crops, batch_of_crops
+                # else:
+                #     self.crops = data_all_crops
 
-        if self.batch_inference:
-            return data_all_crops, batch_of_crops
-        return data_all_crops
+        # if self.batch_inference:
+        return data_all_crops, batch_of_crops
+        # return data_all_crops
 
     def get_crops(self):
         """Get list of image arrays from all crops.
@@ -360,68 +417,13 @@ class MakeCropsDetectThem:
         if self.crops is None:
             return []
 
-        if self.batch_inference:
-            crops, _ = self.crops
-            return [crop.crop for crop in crops]
+        # if self.batch_inference:
+        crops, _ = self.crops
+        return [crop.crop for crop in crops]
 
-        return [crop.crop for crop in self.crops]
-
-    def get_crops_batch(self):
-        """Get batch array of all crops for batch inference.
-
-        Returns:
-            List[np.ndarray]: Batch array of all crops
-
-        Raises:
-            RuntimeError: If batch_inference=False
-        """
-        if not self.batch_inference:
-            raise RuntimeError("Batch crops only available when batch_inference=True")
-
-        if self.crops is None:
-            return []
-
-        _, batch = self.crops
-        return batch
+        # return [crop.crop for crop in self.crops]
 
     def detect_them(self, predictions=None):
-        """Method to detect objects in each crop."""
-        if self.batch_inference:
-            self._detect_objects_batch(predictions)
-        else:
-            self._detect_objects()
-            
-    def _detect_objects(self):
-        """
-        Method to detect objects in each crop.
-
-        This method iterates through each crop, performs inference using the YOLO model,
-        calculates real values, and optionally resizes the results.
-
-        Returns:
-            None
-        """
-        total_crops = len(self.crops)  # Total number of crops
-        for index, crop in enumerate(self.crops):
-            crop.calculate_inference(
-                self.model,
-                imgsz=self.imgsz,
-                conf=self.conf,
-                iou=self.iou,
-                segment=self.segment,
-                classes_list=self.classes_list,
-                memory_optimize=self.memory_optimize,
-                extra_args=self.inference_extra_args
-            )
-            crop.calculate_real_values()
-            if self.resize_initial_size:
-                crop.resize_results()
-
-            # Call the progress callback function if provided
-            if self.progress_callback is not None:
-                self.progress_callback("Detecting objects", (index + 1), total_crops)
-
-    def _detect_objects_batch(self, predictions=None):
         """
         Method to detect objects in batch of image crops.
 
@@ -431,10 +433,7 @@ class MakeCropsDetectThem:
         crops, batch = self.crops
         self.crops = crops
 
-        if self.progress_callback is not None:
-            self.progress_callback("Detecting objects in batch", 0, 1)
-
-        self._calculate_batch_inference(
+        self._calculate_inference(
             batch,
             self.crops,
             self.model,
@@ -447,16 +446,16 @@ class MakeCropsDetectThem:
             extra_args=self.inference_extra_args,
             predictions=predictions
         )
-        for crop in self.crops:
+        for idx, crop in enumerate(self.crops):
+            
             crop.calculate_real_values()
             if self.resize_initial_size:
                 crop.resize_results()
+            
+            if self.progress_callback is not None:
+                self.progress_callback("Resizing Detections", idx + 1, len(self.crops))
 
-        # Call the progress callback function if provided
-        if self.progress_callback is not None:
-            self.progress_callback("Detecting objects in batch", 1, 1)
-
-    def _calculate_batch_inference(
+    def _calculate_inference(
         self,
         batch,
         crops,
@@ -500,7 +499,7 @@ class MakeCropsDetectThem:
                 **extra_args
             )
 
-        for pred, crop in zip(predictions, crops):
+        for idx, (pred, crop) in enumerate(zip(predictions, crops)):
 
             # Get the bounding boxes and convert them to a list of lists
             crop.detected_xyxy = pred.boxes.xyxy.cpu().int().tolist()
@@ -518,6 +517,9 @@ class MakeCropsDetectThem:
                 else:
                     # Get the masks
                     crop.detected_masks = pred.masks.data.cpu().numpy()
+
+            if self.progress_callback is not None:
+                self.progress_callback("Detecting Objects", idx + 1, len(crops))
                     
     def __str__(self):
         # Print info about patches amount

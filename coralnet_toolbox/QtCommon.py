@@ -294,12 +294,12 @@ class TileSizeInput(QGroupBox):
         # Width input in pixels
         self.width_spin = QSpinBox()
         self.width_spin.setRange(32, 10000)
-        self.width_spin.setValue(640)
+        self.width_spin.setValue(1024)
 
         # Height input in pixels
         self.height_spin = QSpinBox()
         self.height_spin.setRange(32, 10000)
-        self.height_spin.setValue(480)
+        self.height_spin.setValue(768)
 
         layout.addRow("Width:", self.width_spin)
         layout.addRow("Height:", self.height_spin)

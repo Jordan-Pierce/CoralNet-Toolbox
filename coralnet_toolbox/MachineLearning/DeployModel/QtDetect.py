@@ -174,6 +174,11 @@ class Detect(Base):
             # Get tile crops
             inputs = self.main_window.tile_processor.make_crops(self.loaded_model, inputs)
             
+            if not len(inputs):
+                # Exit early
+                QApplication.restoreOverrideCursor()
+                return
+            
         # Predict the detection results
         results = self.loaded_model(inputs,
                                     agnostic_nms=True,
@@ -190,7 +195,7 @@ class Detect(Base):
             
         if self.main_window.tile_inference_tool_action.isChecked():
             # Detect on crops
-            results = self.main_window.tile_processor.detect_them(results)
+            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
         
         if self.task == 'segment':
             # Process the segmentation results

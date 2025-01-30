@@ -33,7 +33,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Tile Inference")
-        self.resize(300, 600)
+        self.resize(400, 600)
 
         # Initialize debounce timer
         self.update_timer = QTimer()
@@ -173,7 +173,7 @@ class Base(QDialog):
         # Image size
         self.imgsz_input = QSpinBox()
         self.imgsz_input.setRange(1, 4096)
-        self.imgsz_input.setValue(640)
+        self.imgsz_input.setValue(1024)
         layout.addRow("Image Size:", self.imgsz_input)
         
         # NMS threshold
@@ -186,7 +186,7 @@ class Base(QDialog):
         # Match metric
         self.match_metric_input = QComboBox()
         self.match_metric_input.addItems(["IOU", "IOS"])
-        self.match_metric_input.setCurrentText("IOS")
+        self.match_metric_input.setCurrentText("IOU")
         layout.addRow("Match Metric:", self.match_metric_input)
 
         # Class agnostic NMS
@@ -202,7 +202,7 @@ class Base(QDialog):
         # Sorter bins
         self.sorter_bins_input = QSpinBox()
         self.sorter_bins_input.setRange(1, 10)
-        self.sorter_bins_input.setValue(5)
+        self.sorter_bins_input.setValue(7)
         layout.addRow("Sorter Bins:", self.sorter_bins_input)
 
         # Memory optimization

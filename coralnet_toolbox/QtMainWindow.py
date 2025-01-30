@@ -134,10 +134,10 @@ class MainWindow(QMainWindow):
         self.showMaximized()
 
         # Set the default uncertainty threshold and IoU threshold
-        self.iou_thresh = 0.20
-        self.uncertainty_thresh = 0.30
+        self.iou_thresh = 0.50
+        self.uncertainty_thresh = 0.20
         self.area_thresh_min = 0.00
-        self.area_thresh_max = 0.40
+        self.area_thresh_max = 0.70
 
         # Create windows
         self.annotation_window = AnnotationWindow(self)
