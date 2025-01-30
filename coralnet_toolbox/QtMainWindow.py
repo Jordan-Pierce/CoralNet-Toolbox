@@ -35,6 +35,7 @@ from coralnet_toolbox.IO import (
     ImportCoralNetAnnotations,
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
+    ImportFrames,
     ExportLabels,
     ExportAnnotations,
     ExportCoralNetAnnotations,
@@ -153,6 +154,7 @@ class MainWindow(QMainWindow):
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
         self.import_viscore_annotations = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
+        self.import_frames = ImportFrames(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
@@ -283,6 +285,11 @@ class MainWindow(QMainWindow):
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
+
+        # Import Frames
+        self.import_frames_action = QAction("Frames from Video", self)
+        self.import_frames_action.triggered.connect(self.import_frames.import_frames)
+        self.import_menu.addAction(self.import_frames_action)
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
