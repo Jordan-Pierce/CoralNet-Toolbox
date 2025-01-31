@@ -1,11 +1,11 @@
 from .QtImportImages import ImportImages
+from .QtImportFrames import ImportFrames
 from .QtImportLabels import ImportLabels
 from .QtImportTagLabLabels import ImportTagLabLabels
 from .QtImportAnnotations import ImportAnnotations
 from .QtImportCoralNetAnnotations import ImportCoralNetAnnotations
 from .QtImportViscoreAnnotations import ImportViscoreAnnotations
 from .QtImportTagLabAnnotations import ImportTagLabAnnotations
-from .QtImportFrames import ImportFrames
 from .QtExportLabels import ExportLabels
 from .QtExportTagLabLabels import ExportTagLabLabels
 from .QtExportAnnotations import ExportAnnotations
@@ -15,13 +15,13 @@ from .QtExportTagLabAnnotations import ExportTagLabAnnotations
 
 __all__ = [
     'ImportImages',
+    'ImportFrames',
     'ImportLabels',
     'ImportTagLabLabels',
     'ImportAnnotations', 
     'ImportCoralNetAnnotations',
     'ImportViscoreAnnotations',
     'ImportTagLabAnnotations',
-    'ImportFrames',
     'ExportLabels',
     'ExportTagLabLabels',
     'ExportAnnotations',

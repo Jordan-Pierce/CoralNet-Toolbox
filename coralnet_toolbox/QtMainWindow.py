@@ -27,15 +27,16 @@ from coralnet_toolbox.Tile import (
     TileInference as TileInferenceDialog,
 )
 
+# TODO update IO classes to have dialogs
 from coralnet_toolbox.IO import (
     ImportImages,
+    ImportFrames,
     ImportLabels,
     ImportTagLabLabels,
     ImportAnnotations,
     ImportCoralNetAnnotations,
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
-    ImportFrames,
     ExportLabels,
     ExportAnnotations,
     ExportCoralNetAnnotations,
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
+        # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
@@ -154,13 +156,13 @@ class MainWindow(QMainWindow):
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
         self.import_viscore_annotations = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
-        self.import_frames = ImportFrames(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
         self.export_viscore_annotations = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
+        self.import_frames_dialog = ImportFrames(self)
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
@@ -249,6 +251,11 @@ class MainWindow(QMainWindow):
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
+        
+        # Import Frames
+        self.import_frames_action = QAction("Frames from Video", self)
+        self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
+        self.import_rasters_menu.addAction(self.import_frames_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -285,11 +292,6 @@ class MainWindow(QMainWindow):
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_taglab_annotations_action)
-
-        # Import Frames
-        self.import_frames_action = QAction("Frames from Video", self)
-        self.import_frames_action.triggered.connect(self.import_frames.import_frames)
-        self.import_menu.addAction(self.import_frames_action)
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
@@ -1118,6 +1120,15 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        
+    # TODO update IO classes to have dialogs
+    
+    def open_import_frames_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.import_frames_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_patch_annotation_sampling_dialog(self):
 
