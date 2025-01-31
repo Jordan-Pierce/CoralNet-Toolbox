@@ -242,6 +242,8 @@ class ImageWindow(QWidget):
         self.current_workers = []  # List to keep track of running workers
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
 
+        self.checkbox_states = {}  # Store checkbox states for each image path
+
         # TODO add a dict mapping tableWidget row to image path, faster
         # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
@@ -273,10 +275,15 @@ class ImageWindow(QWidget):
             row_position = self.tableWidget.rowCount()
             self.tableWidget.insertRow(row_position)
 
-            # Add checkbox
+            # Add checkbox and restore its state if previously set
             checkbox = QCheckBox()
             checkbox.setStyleSheet("margin-left:10px;")
+            # Restore previous state if it exists
+            if path in self.checkbox_states:
+                checkbox.setChecked(self.checkbox_states[path])
             self.tableWidget.setCellWidget(row_position, 0, checkbox)
+            # Connect checkbox state changes to store state
+            checkbox.stateChanged.connect(lambda state, p=path: self.checkbox_states.update({p: bool(state)}))
 
             item_text = f"{self.image_dict[path]['filename']}"
             item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
@@ -369,9 +376,13 @@ class ImageWindow(QWidget):
         if row < 0 or row >= len(self.filtered_image_paths):
             return
 
-        # Get the image path associated with the selected row
+        # Get the image path associated with the selected row  
         image_path = self.filtered_image_paths[row]
+        
+        # Load the image without clearing selections
         self.load_image_by_path(image_path)
+
+        # No need to update checkbox states here since they're preserved
 
     def load_image_by_path(self, image_path, update=False):
         current_time = QDateTime.currentMSecsSinceEpoch()
