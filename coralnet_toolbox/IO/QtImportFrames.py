@@ -140,9 +140,11 @@ class ImportFrames(QDialog):
         self.range_slider.setTickInterval(10)
         self.range_slider.valueChanged.connect(self.update_range_slider_label)
         self.range_slider.valueChanged.connect(self.update_calculated_frames)
-        self.range_slider_label = QLabel("Select Frame Range: No video loaded")
+        self.range_slider_label = QLabel("Frame Range: No video loaded")
+        self.time_range_label = QLabel("Time Range: No video loaded")  # Add new label
         layout.addRow("Select Frame Range:", self.range_slider)
         layout.addRow("", self.range_slider_label)
+        layout.addRow("", self.time_range_label)  # Add new label to layout
         
         # Calculated frames display
         self.calculated_frames_edit = QLineEdit()
@@ -201,7 +203,8 @@ class ImportFrames(QDialog):
     def update_range_slider_label(self):
         """Update the range slider label with current values."""
         start, end = self.range_slider.value()
-        self.range_slider_label.setText(f"{start} - {end}")
+        self.range_slider_label.setText(f"Frame Range: {start} - {end}")
+        self.update_time_label()  # Update time label when range changes
 
     def update_range_slider(self):
         """Update the range slider based on the selected video file."""
@@ -209,6 +212,7 @@ class ImportFrames(QDialog):
             try:
                 cap = cv2.VideoCapture(self.video_file_edit.text())
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                self.fps = cap.get(cv2.CAP_PROP_FPS)  # Get FPS
                 
                 # Enable the slider and set its range
                 self.range_slider.setEnabled(True)
@@ -217,7 +221,8 @@ class ImportFrames(QDialog):
                 self.range_slider.setRange(0, total_frames)
                 self.range_slider.setTickInterval(tick_interval)
                 self.range_slider.setValue((0, total_frames))
-                self.range_slider_label.setText(f"0 - {total_frames}")
+                self.range_slider_label.setText(f"Frame Range: {0} - {total_frames}")
+                self.update_time_label()  # Update time label
                 self.update_calculated_frames()
                 
                 cap.release()
@@ -227,9 +232,27 @@ class ImportFrames(QDialog):
                 print(f"Error reading video file: {e}")
                 self.range_slider.setValue((1, 1))
                 self.range_slider.setEnabled(False)
-                self.range_slider_label.setText("Unable to read video file")
+                self.range_slider_label.setText("Frame Range: Unable to read video file")
+                self.time_range_label.setText("Time Range: Unable to read video file")
                 self.calculated_frames_edit.setText("Invalid video file")
                 
+    def update_time_label(self):
+        """Update the time range label based on fps and selected range."""
+        try:
+            start, end = self.range_slider.value()
+            start_time = start / self.fps
+            end_time = end / self.fps
+            
+            start_min = int(start_time // 60)
+            start_sec = int(start_time % 60)
+            end_min = int(end_time // 60)
+            end_sec = int(end_time % 60)
+            
+            time_text = f"Time Range: {start_min:02d}:{start_sec:02d} - {end_min:02d}:{end_sec:02d}"
+            self.time_range_label.setText(time_text)
+        except:
+            self.time_range_label.setText("Time Range: Unable to calculate")
+
     def update_calculated_frames(self):
         """Calculate and display the number of frames that will be extracted."""
         try:
@@ -373,4 +396,3 @@ class ImportFrames(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-        
