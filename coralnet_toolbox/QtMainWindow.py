@@ -1146,9 +1146,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-        self.patch_annotation_sampling_dialog = None
-        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
-
     def open_import_dataset_dialog(self):
         try:
             self.untoggle_all_tools()

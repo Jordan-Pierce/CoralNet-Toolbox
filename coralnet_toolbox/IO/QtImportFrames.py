@@ -26,6 +26,7 @@ class ImportFrames(QDialog):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
+        self.image_window = main_window.image_window
         
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Import Frames from Video")
@@ -133,15 +134,13 @@ class ImportFrames(QDialog):
         
         # Range slider for selecting frames
         self.range_slider = QRangeSlider(Qt.Horizontal)
-        self.range_slider.setRange(0, 0)  # Initially set to 0
-        self.range_slider.setEnabled(False)  # Disable initially
+        self.range_slider.setRange(1, 1)  
+        self.range_slider.setValue((1, 1))
         self.range_slider.setTickPosition(QSlider.TicksBelow)
         self.range_slider.setTickInterval(10)
-        # Create a label to display the selected range
-        self.range_slider_label = QLabel("Select Frame Range: No video loaded")
-        # Connect the slider's value changed signal
         self.range_slider.valueChanged.connect(self.update_range_slider_label)
         self.range_slider.valueChanged.connect(self.update_calculated_frames)
+        self.range_slider_label = QLabel("Select Frame Range: No video loaded")
         layout.addRow("Select Frame Range:", self.range_slider)
         layout.addRow("", self.range_slider_label)
         
@@ -202,32 +201,34 @@ class ImportFrames(QDialog):
     def update_range_slider_label(self):
         """Update the range slider label with current values."""
         start, end = self.range_slider.value()
-        self.range_slider_label.setText(f"Select Frame Range: {start} - {end}")
+        self.range_slider_label.setText(f"{start} - {end}")
 
     def update_range_slider(self):
         """Update the range slider based on the selected video file."""
-        if self.video_file:
+        if self.video_file_edit.text():
             try:
-                cap = cv2.VideoCapture(self.video_file)
+                cap = cv2.VideoCapture(self.video_file_edit.text())
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 
                 # Enable the slider and set its range
-                self.range_slider.setEnabled(True)
                 self.range_slider.setRange(0, total_frames)
                 
+                # Set tick interval to 10% of total frames
+                tick_interval = max(1, total_frames // 10)
+                self.range_slider.setTickInterval(tick_interval)
                 # Set initial values to the full range
                 self.range_slider.setValue((0, total_frames))
-                
                 # Update the label and calculated frames
-                self.range_slider_label.setText(f"Select Frame Range: 0 - {total_frames}")
+                self.range_slider_label.setText(f"0 - {total_frames}")
                 self.update_calculated_frames()
                 
                 cap.release()
+                
             except Exception as e:
                 # Handle potential errors in video file reading
                 print(f"Error reading video file: {e}")
-                self.range_slider.setRange(0, 0)
-                self.range_slider.setEnabled(False)
+                self.range_slider.setRange(1, 1)
+                self.range_slider.setValue((1, 1))
                 self.range_slider_label.setText("Unable to read video file")
                 self.calculated_frames_edit.setText("Invalid video file")
                 
@@ -238,26 +239,36 @@ class ImportFrames(QDialog):
             every_n = self.every_n_frames_spinbox.value()
             
             # Calculate sampled frames
-            sampled_frames = len(range(start, end + 1, every_n))
-            
+            sampled_frames = len(range(start, end, every_n))
             self.calculated_frames_edit.setText(f"{sampled_frames} frames will be extracted")
+            
         except Exception as e:
             self.calculated_frames_edit.setText("Unable to calculate frames")
 
     def import_frames(self, import_after=False):
         """Import frames from the video file."""
-        if not self.video_file or not self.output_dir or not self.num_frames_input.text():
+        # Get the video file
+        self.video_file = self.video_file_edit.text()
+        
+        # Create a directory for the frames
+        self.output_dir = f"{self.output_dir_edit.text()}/{os.path.basename(self.video_file).split('.')[0]}/"
+        self.output_dir = self.output_dir.replace("\\", "/")
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Get the frame prefix
+        self.frame_prefix = self.frame_prefix_edit.text()
+        self.frame_prefix = "frame" if not self.frame_prefix else self.frame_prefix
+        
+        # Get the frame extension, and other values
+        self.ext = self.frame_ext_combo.currentText().replace(".", "").lower()
+        self.every_n_frames = self.every_n_frames_spinbox.value()
+        self.start_frame, self.end_frame = self.range_slider.value()
+        
+        if not self.video_file or not self.output_dir:
             QMessageBox.warning(self, 
                                 "Input Error", 
                                 "Please select a video file, output directory, and specify the number of frames.")
             return
-
-        self.video_file = self.video_file_edit.text()
-        self.output_dir = self.output_dir_edit.text()
-        self.ext = self.frame_ext_combo.currentText()
-        self.frame_prefix = self.frame_prefix_edit.text()
-        self.every_n_frames = self.every_n_frames_spinbox.value()
-        self.start_frame, self.end_frame = self.range_slider.value()
 
         cap = cv2.VideoCapture(self.video_file)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -274,6 +285,8 @@ class ImportFrames(QDialog):
 
         if import_after:
             self.import_images()
+            
+        self.accept()
 
     def get_frame_indices(self, total_frames):
         """Get the frame indices based on the start, end, and every_n_frames values."""
@@ -286,20 +299,23 @@ class ImportFrames(QDialog):
         """Save the frames to the output directory."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.main_window, title="Extracting Frames")
+        progress_bar = ProgressBar(self.image_window, title="Extracting Frames")
         progress_bar.show()
         progress_bar.start_progress(len(frame_indices))
         
+        # Clear the frame paths
+        self.frame_paths = []
+        
         try:
-            for i, idx in enumerate(frame_indices):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            for idx, frame_index in enumerate(frame_indices):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
                 ret, frame = cap.read()
             
                 if not ret:
-                    print(f"Failed to read frame {idx}")
+                    print(f"Failed to read frame {frame_index}")
                     continue
                     
-                frame_name = f"{self.output_dir}/{self.frame_prefix}_{idx}.{self.ext}"
+                frame_name = f"{self.output_dir}/{self.frame_prefix}_{frame_index}.{self.ext}"
                 if not cv2.imwrite(frame_name, frame):
                     print(f"Failed to write frame to {frame_name}")
                     continue
@@ -326,14 +342,13 @@ class ImportFrames(QDialog):
         """Import the saved frames to the image window."""
         # Make the cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        progress_bar = ProgressBar(self.main_window, title="Importing Images")
+        progress_bar = ProgressBar(self.image_window, title="Importing Images")
         progress_bar.show()
         progress_bar.start_progress(len(self.frame_paths))
 
         try:
             # Add images to the image window
-            for i, frame_path in enumerate(self.frame_paths.append):
+            for idx, frame_path in enumerate(self.frame_paths):
                 if frame_path not in set(self.image_window.image_paths):
                     try:
                         self.image_window.add_image(frame_path)
@@ -360,3 +375,4 @@ class ImportFrames(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+        

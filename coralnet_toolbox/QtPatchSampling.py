@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import random
 import numpy as np
+from PIL import Image
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor
@@ -341,9 +342,9 @@ class PatchSamplingDialog(QDialog):
         for image_path in image_paths:
             sampled_annotations = []
 
-            # Load the rasterio representation
-            rasterio_image = self.image_window.rasterio_open(image_path)
-            height, width = rasterio_image.shape[0:2]
+            # Get image dimensions using PIL
+            with Image.open(image_path) as img:
+                width, height = img.size
 
             # Validate margins for each image
             try:
