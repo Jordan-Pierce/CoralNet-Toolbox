@@ -134,8 +134,8 @@ class ImportFrames(QDialog):
         
         # Range slider for selecting frames
         self.range_slider = QRangeSlider(Qt.Horizontal)
-        self.range_slider.setRange(1, 1)  
-        self.range_slider.setValue((1, 1))
+        self.range_slider.setEnabled(False)
+        self.range_slider.setValue((0, 0))
         self.range_slider.setTickPosition(QSlider.TicksBelow)
         self.range_slider.setTickInterval(10)
         self.range_slider.valueChanged.connect(self.update_range_slider_label)
@@ -211,14 +211,12 @@ class ImportFrames(QDialog):
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 
                 # Enable the slider and set its range
-                self.range_slider.setRange(0, total_frames)
+                self.range_slider.setEnabled(True)
                 
-                # Set tick interval to 10% of total frames
                 tick_interval = max(1, total_frames // 10)
+                self.range_slider.setRange(0, total_frames)
                 self.range_slider.setTickInterval(tick_interval)
-                # Set initial values to the full range
                 self.range_slider.setValue((0, total_frames))
-                # Update the label and calculated frames
                 self.range_slider_label.setText(f"0 - {total_frames}")
                 self.update_calculated_frames()
                 
@@ -227,8 +225,8 @@ class ImportFrames(QDialog):
             except Exception as e:
                 # Handle potential errors in video file reading
                 print(f"Error reading video file: {e}")
-                self.range_slider.setRange(1, 1)
                 self.range_slider.setValue((1, 1))
+                self.range_slider.setEnabled(False)
                 self.range_slider_label.setText("Unable to read video file")
                 self.calculated_frames_edit.setText("Invalid video file")
                 
