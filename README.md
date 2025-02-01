@@ -124,6 +124,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 
 
 Enhance your CoralNet experience with these tools:
+- 🎬 Rasters: Import images, or extract frames directly from video files
 - ✏️ Annotate: Create annotations freely
 - 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
 - 🔬 Sample: Sample patches using various methods (Uniform, Random, Stratified)
