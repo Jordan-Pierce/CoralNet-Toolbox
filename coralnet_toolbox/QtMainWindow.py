@@ -3,6 +3,9 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import re
+import requests
+from packaging import version
+
 
 from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
@@ -96,7 +99,7 @@ class MainWindow(QMainWindow):
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
 
-    def __init__(self, version):
+    def __init__(self, __version__):
         super().__init__()
 
         # Define icons
@@ -122,7 +125,8 @@ class MainWindow(QMainWindow):
         self.unlock_icon = get_icon("unlock.png")
 
         # Set the title and icon for the main window
-        self.setWindowTitle(f"CoralNet-Toolbox v{version}")
+        self.version = __version__
+        self.setWindowTitle(f"CoralNet-Toolbox v{self.version}")
         self.setWindowIcon(self.coral_icon)
 
         # Set window flags for resizing, minimize, maximize, and customizing
@@ -533,7 +537,15 @@ class MainWindow(QMainWindow):
         self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
         self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
-
+        
+        # Help menu
+        self.help_menu = self.menu_bar.addMenu("Help")
+        
+        # Check for updates
+        self.check_for_updates_action = QAction("Check for Updates", self)
+        self.check_for_updates_action.triggered.connect(self.check_for_updates)
+        self.help_menu.addAction(self.check_for_updates_action)
+        
         # ----------------------------------------
         # Create and add the toolbar
         # ----------------------------------------
@@ -807,6 +819,38 @@ class MainWindow(QMainWindow):
             else:
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
+            
+    def check_for_updates(self):
+        """
+        Checks if package version is up to date with PyPI.
+        """
+        try:
+            # Get package info from PyPI
+            response = requests.get("https://pypi.org/pypi/coralnet-toolbox/json", timeout=5)
+            response.raise_for_status()
+            
+            # Extract latest version
+            package_info = response.json()
+            latest_version = package_info["info"]["version"]
+            
+            # Compare versions
+            needs_update = version.parse(latest_version) > version.parse(self.version)
+            
+            if needs_update:
+                pip_command = "pip install coralnet-toolbox=={}".format(latest_version)
+                QMessageBox.information(self,
+                                        "Hey, there's an update available!",
+                                        f"A new version ({latest_version}) is available.\n\n"
+                                        f"To update, run the following command in your terminal:\n\n{pip_command}")
+            else:
+                QMessageBox.information(self,
+                                        "Nope, you're good!",
+                                        f"You are using the most current version ({self.version}).")
+            
+        except (requests.RequestException, KeyError, ValueError) as e:
+            QMessageBox.warning(self,
+                                "Update Check Failed",
+                                f"Could not check for updates.\nError: {e}")
 
     def toggle_tool(self, state):
         # Unlock the label lock
@@ -1122,7 +1166,6 @@ class MainWindow(QMainWindow):
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
         
     # TODO update IO classes to have dialogs
-    
     def open_import_frames_dialog(self):
         try:
             self.untoggle_all_tools()

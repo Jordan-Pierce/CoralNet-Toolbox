@@ -17,7 +17,7 @@ def run():
     try:
         app = QApplication([])
         app.setStyle('WindowsXP')
-        main_window = MainWindow(version=__version__)
+        main_window = MainWindow(__version__)
         main_window.show()
         app.exec_()
 
