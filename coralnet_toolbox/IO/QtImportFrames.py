@@ -10,7 +10,8 @@ from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit, 
                              QDialog, QApplication, QMessageBox, QCheckBox, QGroupBox,
-                             QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider)
+                             QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider,
+                             QStyle)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -124,6 +125,17 @@ class ImportFrames(QDialog):
         """Set up the layout and widgets for the sample layout."""
         group_box = QGroupBox("Sample Frames")
         layout = QFormLayout()
+        
+        # Specific frames to extract
+        self.specific_frames_edit = QLineEdit()
+        self.specific_frames_edit.setPlaceholderText("e.g., 1, 2, 3, 5-10, 15")
+        self.specif_frames_button = QPushButton()
+        self.specif_frames_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.specif_frames_button.clicked.connect(self.update_calculated_frames)
+        specific_frames_layout = QHBoxLayout()
+        specific_frames_layout.addWidget(self.specific_frames_edit)
+        specific_frames_layout.addWidget(self.specif_frames_button)
+        layout.addRow("Specific Frames:", specific_frames_layout)
         
         # Every N frames to sample
         self.every_n_frames_spinbox = QSpinBox()
@@ -256,15 +268,44 @@ class ImportFrames(QDialog):
     def update_calculated_frames(self):
         """Calculate and display the number of frames that will be extracted."""
         try:
-            start, end = self.range_slider.value()
-            every_n = self.every_n_frames_spinbox.value()
+            if self.range_slider.isEnabled():
+                # Get range slider frames
+                start, end = self.range_slider.value()
+                every_n = self.every_n_frames_spinbox.value()
+                sampled_frames = len(range(start, end, every_n))
+            else:
+                sampled_frames = 0
             
-            # Calculate sampled frames
-            sampled_frames = len(range(start, end, every_n))
-            self.calculated_frames_edit.setText(f"{sampled_frames} frames will be extracted")
+            # Get specific frames
+            if self.specific_frames_edit.text():
+                specific_frames = len(self.parse_specific_frames())
+            else:
+                specific_frames = 0
+                
+            # Calculate total frames
+            total_frames = sampled_frames + specific_frames
+            self.calculated_frames_edit.setText(f"{total_frames} frames will be extracted")
             
         except Exception as e:
             self.calculated_frames_edit.setText("Unable to calculate frames")
+            
+    def parse_specific_frames(self):
+        """
+        Parse the frame ranges string into a list of frame numbers.
+
+        :param frame_ranges_str:
+        """
+        frames = []
+        ranges = self.specific_frames_edit.text().split(',')
+        for r in ranges:
+            r = r.strip()
+            if '-' in r:
+                start, end = map(int, r.split('-'))
+                frames.extend(range(start, end + 1))
+            else:
+                frames.append(int(r))
+
+        return sorted(set(frames))
 
     def import_frames(self, import_after=False):
         """Import frames from the video file."""
@@ -311,10 +352,19 @@ class ImportFrames(QDialog):
 
     def get_frame_indices(self, total_frames):
         """Get the frame indices based on the start, end, and every_n_frames values."""
-        frame_indices = []
+        frame_indices = set()  # Using a set to avoid duplicates
+        
+        # Include the range of frames
         for i in range(self.start_frame, self.end_frame, self.every_n_frames):
-            frame_indices.append(i)
-        return frame_indices
+            frame_indices.add(i)
+            
+        # Include the specific frames
+        specific_frames = self.parse_specific_frames()
+        for f in specific_frames:
+            if f >= self.start_frame and f < self.end_frame:
+                frame_indices.add(f)
+                
+        return sorted(frame_indices)  # Convert back to sorted list
 
     def save_frames(self, cap, frame_indices):
         """Save the frames to the output directory."""
