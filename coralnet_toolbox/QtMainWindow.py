@@ -546,6 +546,11 @@ class MainWindow(QMainWindow):
         self.check_for_updates_action.triggered.connect(self.check_for_updates)
         self.help_menu.addAction(self.check_for_updates_action)
         
+        # Issues / Feature Requests
+        self.create_issue_action = QAction("Issues / Feature Requests", self)
+        self.create_issue_action.triggered.connect(self.create_new_issue)
+        self.help_menu.addAction(self.create_issue_action)
+        
         # ----------------------------------------
         # Create and add the toolbar
         # ----------------------------------------
@@ -851,6 +856,18 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self,
                                 "Update Check Failed",
                                 f"Could not check for updates.\nError: {e}")
+            
+    def create_new_issue(self):
+        """Display QMessageBox with link to create new issue on GitHub."""
+        # URL to create a new issue
+        here = '<a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues/new/choose">here</a>'
+        msg = QMessageBox()
+        msg.setWindowIcon(self.coral_icon)
+        msg.setWindowTitle("Issues / Feature Requests")
+        msg.setText(f'Click {here} to create a new issue or feature request.')
+        msg.setTextFormat(Qt.RichText)
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
 
     def toggle_tool(self, state):
         # Unlock the label lock
