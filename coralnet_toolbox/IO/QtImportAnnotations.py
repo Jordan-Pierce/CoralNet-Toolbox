@@ -112,7 +112,9 @@ class ImportAnnotations:
                             raise ValueError(f"Unknown annotation type: {annotation_type}")
 
                         # Add annotation to the dict
-                        self.annotation_window.annotations_dict[annotation.id] = annotation
+                        self.annotation_window.annotations_dict.add_annotation_to_dict(annotation)
+                        
+                        # Update the progress bar
                         progress_bar.update_progress()
 
                     # Update the image window's image dict

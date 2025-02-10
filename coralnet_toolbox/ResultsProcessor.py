@@ -316,7 +316,7 @@ class ResultsProcessor:
         :param predictions: Dictionary containing class predictions
         """
         # Add the annotation to the annotation window
-        self.annotation_window.annotations_dict[annotation.id] = annotation
+        self.annotation_window.annotations_dict.add_annotation_to_dict(annotation)
 
         # Connect signals
         annotation.selected.connect(self.annotation_window.select_annotation)

@@ -24,13 +24,14 @@ from coralnet_toolbox.QtCommon import MarginInput
         
 
 class PatchGraphic(QGraphicsRectItem):
-    def __init__(self, x, y, size, parent=None):
+    def __init__(self, x, y, size, color, parent=None):
+        # Use size for both width and height; color is applied separately
         super().__init__(x, y, size, size, parent)
         
         # Default styling
         self.default_pen = QPen(Qt.white, 2, Qt.DashLine)
         self.hover_pen = QPen(Qt.yellow, 3, Qt.DashLine)
-        self.default_brush = QBrush(QColor(255, 255, 255, 50))
+        self.default_brush = QBrush(QColor(color.red(), color.blue(), color.green(), 50))
         
         # Initial appearance
         self.setPen(self.default_pen)
@@ -99,6 +100,13 @@ class PatchSamplingDialog(QDialog):
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.preview_annotations)
         layout.addRow("Annotation Size:", self.annotation_size_spinbox)
+        
+        # Sample Label
+        self.label_combo = QComboBox()
+        for label in self.label_window.labels:
+            self.label_combo.addItem(label.short_label_code, label.id)
+        self.label_combo.setCurrentIndex(0) # Default to first label Review
+        layout.addRow("Select Label:", self.label_combo)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -165,6 +173,7 @@ class PatchSamplingDialog(QDialog):
 
     def showEvent(self, event):
         """Handle dialog show event."""
+        self.update_label_combo()
         self.update_annotation_graphics()
 
     def closeEvent(self, event):
@@ -176,6 +185,13 @@ class PatchSamplingDialog(QDialog):
         """Handle dialog rejection."""
         self.clear_annotation_graphics()
         super().reject()
+        
+    def update_label_combo(self):
+        """Update the label combo box with the current labels."""
+        self.label_combo.clear()
+        for label in self.label_window.labels:
+            self.label_combo.addItem(label.short_label_code, label.id)
+        self.label_combo.setCurrentIndex(0)
                 
     def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
         """Sample annotations using the specified method."""
@@ -262,6 +278,7 @@ class PatchSamplingDialog(QDialog):
         method = self.method_combo.currentText()
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
+        sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
         
         try:
             # Validate margins before sampling
@@ -286,7 +303,7 @@ class PatchSamplingDialog(QDialog):
             x, y, size = annotation
             
             # Create simple patch graphic
-            graphic = PatchGraphic(x, y, size)
+            graphic = PatchGraphic(x, y, size, sample_label.color)
             
             self.annotation_window.scene.addItem(graphic)
             self.annotation_graphics.append(graphic)
@@ -315,7 +332,7 @@ class PatchSamplingDialog(QDialog):
         self.apply_to_all = self.apply_all_checkbox.isChecked()
 
         # Sets the LabelWindow and AnnotationWindow to Review
-        review_label = self.label_window.get_label_by_id("-1")
+        sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
 
         # Current image path showing
         current_image_path = self.annotation_window.current_image_path
@@ -368,15 +385,16 @@ class PatchSamplingDialog(QDialog):
                 x, y, size = annotation
                 new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
                                                  size,
-                                                 review_label.short_label_code,
-                                                 review_label.long_label_code,
-                                                 review_label.color,
+                                                 sample_label.short_label_code,
+                                                 sample_label.long_label_code,
+                                                 sample_label.color,
                                                  image_path,
-                                                 review_label.id,
+                                                 sample_label.id,
                                                  transparency=self.annotation_window.transparency)
 
                 # Add annotation to the dict
-                self.annotation_window.annotations_dict[new_annotation.id] = new_annotation
+                self.annotation_window.add_annotation_to_dict(new_annotation)
+                
                 sampled_annotations.append(new_annotation)
                 progress_bar.update_progress()
 

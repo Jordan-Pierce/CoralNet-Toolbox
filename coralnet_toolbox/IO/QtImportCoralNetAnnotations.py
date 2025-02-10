@@ -55,7 +55,7 @@ class ImportCoralNetAnnotations:
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
+        progress_bar = ProgressBar(self.annotation_window, title="Reading CSV Files")
         progress_bar.show()
 
         try:
@@ -87,16 +87,25 @@ class ImportCoralNetAnnotations:
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations: {str(e)}")
             return
+        
+        finally:
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
+            
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Labels")
+        progress_bar.show()
 
         try:
             # Pre-create all required labels
             all_labels = set(df['Label'].unique())
-            progress_bar.start_progress(len(all_labels))
-            
-            text = 'Machine suggestion'
-            machine_suggestions = [col.replace(text, '') for col in df.columns if col.startswith(text)]
+            machine_suggestions = [col for col in df.columns if 'Machine suggestion' in col]
             all_labels.update(df[machine_suggestions].values.flatten())
-
+            
+            progress_bar.start_progress(len(all_labels))
+                
             for label_code in all_labels:
                 if pd.notna(label_code):
                     short_label_code = long_label_code = str(label_code)
@@ -113,7 +122,8 @@ class ImportCoralNetAnnotations:
                                                                   label_id)
                 progress_bar.update_progress()
                 
-            # Set the cursor to the wait cursor
+            # Start the progress bar
+            progress_bar.setWindowTitle("Importing CoralNet Annotations")
             progress_bar.start_progress(len(df['Name'].unique()))
                     
             # Iterate over the rows
@@ -172,7 +182,7 @@ class ImportCoralNetAnnotations:
                     annotation.update_machine_confidence(machine_confidence)
 
                     # Add annotation to the dict
-                    self.annotation_window.annotations_dict[annotation.id] = annotation
+                    self.annotation_window.add_annotation_to_dict(annotation)
                 
                 # Update the progress bar
                 progress_bar.update_progress()

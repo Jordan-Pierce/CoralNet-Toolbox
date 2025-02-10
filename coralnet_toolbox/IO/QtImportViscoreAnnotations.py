@@ -67,10 +67,10 @@ class ImportViscoreAnnotations:
 
         views_label = QLabel("Number of Views:")
         views_spinbox = QSpinBox()
-        views_spinbox.setMinimum(1)
-        views_spinbox.setMaximum(100)
+        views_spinbox.setMinimum(-1)
+        views_spinbox.setMaximum(1000)
         views_spinbox.setValue(3)
-        views_spinbox.setToolTip("Number of best views to keep per dot")
+        views_spinbox.setToolTip("Number of best views to keep per dot (-1 for all views)")
         layout.addWidget(views_label)
         layout.addWidget(views_spinbox)
 
@@ -157,6 +157,7 @@ class ImportViscoreAnnotations:
                     # Sort based on reprpjection error and ViewIndex, ascending
                     subset = subset.sort_values(['ReprojectionError', 'ViewIndex'], ascending=[True, True])
                     # Get the first N views
+                    views = views if views != -1 else len(subset)
                     subset = subset.head(views)
                     filtered.append(subset)
                     
@@ -204,7 +205,7 @@ class ImportViscoreAnnotations:
 
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            progress_bar = ProgressBar(self.annotation_window, title="Importing Viscore Annotations")
+            progress_bar = ProgressBar(self.annotation_window, title="Importing Viscore Labels")
             progress_bar.show()
     
             try:
@@ -213,11 +214,10 @@ class ImportViscoreAnnotations:
 
                 # Pre-create all required labels
                 all_labels = set(df['Label'].unique())
-                progress_bar.start_progress(len(all_labels))
-                
-                text = 'Machine suggestion'
-                machine_suggestions = [col.replace(text, '') for col in df.columns if col.startswith(text)]
+                machine_suggestions = [col for col in df.columns if 'Machine suggestion' in col]
                 all_labels.update(df[machine_suggestions].values.flatten())
+                
+                progress_bar.start_progress(len(all_labels))
 
                 for label_code in all_labels:
                     if pd.notna(label_code):
@@ -236,9 +236,11 @@ class ImportViscoreAnnotations:
                     progress_bar.update_progress()
 
                 # Start the progress bar
+                progress_bar.setWindowTitle("Importing Viscore Annotations")
                 progress_bar.start_progress(len(df['Name'].unique()))
-                
+                                
                 for image_name, group in df.groupby('Name'):
+                    
                     image_path = image_path_map.get(os.path.basename(image_name))
                     if not image_path:
                         progress_bar.update_progress()
@@ -280,10 +282,8 @@ class ImportViscoreAnnotations:
                             if suggested_label:
                                 machine_confidence[suggested_label] = confidence
 
-                        # Update the machine confidence
                         annotation.update_machine_confidence(machine_confidence)
                         
-                        # Add the rest of the annotation data
                         annotation.data = {
                             'Dot': row['Dot'],
                             'X': row['X'],
@@ -293,10 +293,10 @@ class ImportViscoreAnnotations:
                             'ViewIndex': row['ViewIndex'],
                             'ViewCount': row['ViewCount']
                         }
-
-                        # Add annotation to the dict
-                        self.annotation_window.annotations_dict[annotation.id] = annotation
                         
+                        # Add annotation to the dict
+                        self.annotation_window.add_annotation_to_dict(annotation)
+
                     # Update the progress bar
                     progress_bar.update_progress()
 

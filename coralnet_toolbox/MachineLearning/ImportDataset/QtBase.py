@@ -316,7 +316,9 @@ class Base(QDialog):
                     annotations.append(annotation)
 
                     # Add annotation to the dict
-                    self.annotation_window.annotations_dict[annotation.id] = annotation
+                    self.annotation_window.annotations_dict.add_annotation_to_dict(new_annotation)
+                    
+                    # Update the progress bar
                     progress_bar.update_progress()
 
                 # Update the image window's image dict

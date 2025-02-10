@@ -63,6 +63,7 @@ class AnnotationWindow(QGraphicsView):
         self.cursor_annotation = None
 
         self.annotations_dict = {}  # Dictionary to store annotations by UUID
+        self.image_annotations_dict = {}  # Dictionary to store annotations by image path
 
         self.selected_annotations = []  # Stores the selected annotations
         self.selected_label = None  # Flag to check if an active label is set
@@ -494,13 +495,8 @@ class AnnotationWindow(QGraphicsView):
     def get_image_annotations(self, image_path=None):
         if not image_path:
             image_path = self.current_image_path
-
-        annotations = []
-        for annotation_id, annotation in self.annotations_dict.items():
-            if annotation.image_path == image_path:
-                annotations.append(annotation)
-
-        return annotations
+        
+        return self.image_annotations_dict.get(image_path, [])
 
     def get_image_review_annotations(self, image_path=None):
         if not image_path:
@@ -607,14 +603,30 @@ class AnnotationWindow(QGraphicsView):
         annotation.annotationDeleted.connect(self.delete_annotation)
         annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
-        self.annotations_dict[annotation.id] = annotation
+        # Add to annotation dict
+        self.add_annotation_to_dict(annotation)
+        
         self.main_window.confidence_window.display_cropped_image(annotation)
         self.annotationCreated.emit(annotation.id)
+        
+    def add_annotation_to_dict(self, annotation):
+        # Add to annotation dict
+        self.annotations_dict[annotation.id] = annotation
+        # Add to image annotations dict
+        if annotation.image_path not in self.image_annotations_dict:
+            self.image_annotations_dict[annotation.image_path] = []
+        self.image_annotations_dict[annotation.image_path].append(annotation)
 
     def delete_annotation(self, annotation_id):
         if annotation_id in self.annotations_dict:
             # Get the annotation from dict
             annotation = self.annotations_dict[annotation_id]
+            # Remove from image annotations dict
+            if annotation.image_path in self.image_annotations_dict:
+                self.image_annotations_dict[annotation.image_path].remove(annotation)
+                if not self.image_annotations_dict[annotation.image_path]:
+                    del self.image_annotations_dict[annotation.image_path]
+            
             # Delete the annotation
             annotation.delete()
             del self.annotations_dict[annotation_id]
@@ -639,22 +651,19 @@ class AnnotationWindow(QGraphicsView):
 
     def delete_image_annotations(self, image_path):
         """Efficiently delete all annotations for a given image path"""
-        # Get IDs of annotations to delete
-        annotation_ids = [
-            annotation_id for annotation_id, annotation in self.annotations_dict.items()
-            if annotation.image_path == image_path
-        ]
-        
-        # Delete graphics items and annotations in batch
-        for annotation_id in annotation_ids:
-            annotation = self.annotations_dict[annotation_id]
-            annotation.delete()  # Remove graphics item
-            del self.annotations_dict[annotation_id]  # Remove from dictionary
-            self.annotationDeleted.emit(annotation_id)  # Emit signal
-        
-        # Clear confidence window if needed
-        if self.current_image_path == image_path:
-            self.main_window.confidence_window.clear_display()
+        if image_path in self.image_annotations_dict:
+            annotations = self.image_annotations_dict[image_path]
+            # Delete graphics items and annotations in batch
+            for annotation in annotations:
+                annotation.delete()
+                del self.annotations_dict[annotation.id]
+                self.annotationDeleted.emit(annotation.id)
+            
+            del self.image_annotations_dict[image_path]
+            
+            # Clear confidence window if needed
+            if self.current_image_path == image_path:
+                self.main_window.confidence_window.clear_display()
 
     def delete_image(self, image_path):
         # Delete all annotations associated with image path
