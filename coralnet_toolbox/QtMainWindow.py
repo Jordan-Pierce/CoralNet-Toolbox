@@ -83,6 +83,8 @@ from coralnet_toolbox.AutoDistill import (
 
 from coralnet_toolbox.TileProcessor import TileProcessor
 
+from coralnet_toolbox.BreakTime import SnakeGame
+
 from coralnet_toolbox.Icons import get_icon
 
 from coralnet_toolbox.utilities import get_available_device
@@ -208,6 +210,9 @@ class MainWindow(QMainWindow):
         
         # Create the tile processor
         self.tile_processor = TileProcessor(self)
+        
+        # Create dialogs (Break Time)
+        self.snake_game_dialog = SnakeGame(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -551,6 +556,14 @@ class MainWindow(QMainWindow):
         self.create_issue_action.triggered.connect(self.create_new_issue)
         self.help_menu.addAction(self.create_issue_action)
         
+        # Create Break Time submenu
+        break_time_menu = self.help_menu.addMenu("Take a Break")
+        
+        # Snake Game
+        snake_game_action = QAction("Snake Game", self)
+        snake_game_action.triggered.connect(self.open_snake_game_dialog)
+        break_time_menu.addAction(snake_game_action)
+
         # ----------------------------------------
         # Create and add the toolbar
         # ----------------------------------------
@@ -859,15 +872,29 @@ class MainWindow(QMainWindow):
             
     def create_new_issue(self):
         """Display QMessageBox with link to create new issue on GitHub."""
-        # URL to create a new issue
-        here = '<a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues/new/choose">here</a>'
-        msg = QMessageBox()
-        msg.setWindowIcon(self.coral_icon)
-        msg.setWindowTitle("Issues / Feature Requests")
-        msg.setText(f'Click {here} to create a new issue or feature request.')
-        msg.setTextFormat(Qt.RichText)
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec_()
+        try:
+            self.untoggle_all_tools()
+            # URL to create a new issue
+            here = '<a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues/new/choose">here</a>'
+            msg = QMessageBox()
+            msg.setWindowIcon(self.coral_icon)
+            msg.setWindowTitle("Issues / Feature Requests")
+            msg.setText(f'Click {here} to create a new issue or feature request.')
+            msg.setTextFormat(Qt.RichText)
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+        
+    def open_snake_game_dialog(self):
+        """
+        Open the QtSnakeGame in a new window.
+        """
+        try:
+            self.untoggle_all_tools()
+            self.snake_game_dialog.start_game()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def toggle_tool(self, state):
         # Unlock the label lock

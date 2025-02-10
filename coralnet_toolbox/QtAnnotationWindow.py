@@ -273,6 +273,10 @@ class AnnotationWindow(QGraphicsView):
 
         # Clean up
         self.clear_scene()
+        
+        # Check that the image path is valid
+        if image_path not in self.main_window.image_window.images:
+            return
 
         # Set the image representations
         self.image_pixmap = QPixmap(self.main_window.image_window.images[image_path])
