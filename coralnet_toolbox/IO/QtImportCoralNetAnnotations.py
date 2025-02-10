@@ -52,6 +52,11 @@ class ImportCoralNetAnnotations:
                                                   224, 1, 10000, 1)
         if not ok:
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
+        progress_bar.show()
 
         try:
             all_data = []
@@ -83,14 +88,34 @@ class ImportCoralNetAnnotations:
                                 f"An error occurred while importing annotations: {str(e)}")
             return
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Create a progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(df))
-
         try:
+            # Pre-create all required labels
+            all_labels = set(df['Label'].unique())
+            progress_bar.start_progress(len(all_labels))
+            
+            text = 'Machine suggestion'
+            machine_suggestions = [col.replace(text, '') for col in df.columns if col.startswith(text)]
+            all_labels.update(df[machine_suggestions].values.flatten())
+
+            for label_code in all_labels:
+                if pd.notna(label_code):
+                    short_label_code = long_label_code = str(label_code)
+                    if not self.label_window.get_label_by_codes(short_label_code, long_label_code):
+                        
+                        label_id = str(uuid.uuid4())
+                        color = QColor(random.randint(0, 255),
+                                       random.randint(0, 255),
+                                       random.randint(0, 255))
+                        
+                        self.label_window.add_label_if_not_exists(short_label_code,
+                                                                  long_label_code,
+                                                                  color,
+                                                                  label_id)
+                progress_bar.update_progress()
+                
+            # Set the cursor to the wait cursor
+            progress_bar.start_progress(len(df['Name'].unique()))
+                    
             # Iterate over the rows
             for image_name, group in df.groupby('Name'):
                 image_path = image_path_map.get(image_name)
@@ -102,25 +127,14 @@ class ImportCoralNetAnnotations:
                     row_coord = row['Row']
                     col_coord = row['Column']
                     label_code = row['Label']
+                    
                     # Get the label codes
                     short_label_code = label_code
                     long_label_code = row['Long Label'] if 'Long Label' in row else label_code
-                    # Get the existing label (if it exists)
-                    existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
-
-                    if existing_label:
-                        color = existing_label.color
-                        label_id = existing_label.id
-                    else:
-                        label_id = str(uuid.uuid4())
-                        color = QColor(random.randint(0, 255),
-                                       random.randint(0, 255),
-                                       random.randint(0, 255))
-
-                        self.label_window.add_label_if_not_exists(short_label_code,
-                                                                  long_label_code,
-                                                                  color,
-                                                                  label_id)
+                    
+                    existing_label = self.label_window.get_label_by_codes(label_code, label_code)
+                    color = existing_label.color
+                    label_id = existing_label.id
 
                     annotation = PatchAnnotation(QPointF(col_coord, row_coord),
                                                  row['Patch Size'] if "Patch Size" in row else annotation_size,
@@ -131,35 +145,37 @@ class ImportCoralNetAnnotations:
                                                  label_id)
 
                     machine_confidence = {}
-
-                    for i in range(1, 6):
-                        confidence_col = f'Machine confidence {i}'
-                        suggestion_col = f'Machine suggestion {i}'
-                        if confidence_col in row and suggestion_col in row:
-                            if pd.isna(row[confidence_col]) or pd.isna(row[suggestion_col]):
-                                continue
-
-                            confidence = float(row[confidence_col])
-                            suggestion = str(row[suggestion_col])
-
+                    
+                    # Get all confidence and suggestion columns
+                    confidence_cols = [col for col in row.index if col.startswith('Machine confidence')]
+                    suggestion_cols = [col for col in row.index if col.startswith('Machine suggestion')]
+                    
+                    # Create pairs of valid confidence and suggestion values
+                    valid_pairs = {
+                        (str(row[sug]), float(row[conf]))
+                        for conf, sug in zip(confidence_cols, suggestion_cols)
+                        if pd.notna(row[conf]) and pd.notna(row[sug])
+                    }
+                    
+                    # Process all valid pairs at once
+                    for suggestion, confidence in valid_pairs:
+                        suggested_label = self.label_window.get_label_by_short_code(suggestion)
+                        
+                        if not suggested_label:
+                            color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                            self.label_window.add_label_if_not_exists(suggestion, suggestion, color)
                             suggested_label = self.label_window.get_label_by_short_code(suggestion)
-
-                            if not suggested_label:
-                                color = QColor(random.randint(0, 255),
-                                               random.randint(0, 255),
-                                               random.randint(0, 255))
-
-                                self.label_window.add_label_if_not_exists(suggestion, suggestion, color)
-
-                            suggested_label = self.label_window.get_label_by_short_code(suggestion)
-                            machine_confidence[suggested_label] = confidence
+                            
+                        machine_confidence[suggested_label] = confidence
 
                     # Update the machine confidence
                     annotation.update_machine_confidence(machine_confidence)
 
                     # Add annotation to the dict
                     self.annotation_window.annotations_dict[annotation.id] = annotation
-                    progress_bar.update_progress()
+                
+                # Update the progress bar
+                progress_bar.update_progress()
 
                 # Update the image window's image dict
                 self.image_window.update_image_annotations(image_path)
