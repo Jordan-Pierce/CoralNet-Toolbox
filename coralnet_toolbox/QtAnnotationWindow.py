@@ -625,10 +625,11 @@ class AnnotationWindow(QGraphicsView):
     def add_annotation_to_dict(self, annotation):
         # Add to annotation dict
         self.annotations_dict[annotation.id] = annotation
-        # Add to image annotations dict
+        # Add to image annotations dict (if not already present)
         if annotation.image_path not in self.image_annotations_dict:
             self.image_annotations_dict[annotation.image_path] = []
-        self.image_annotations_dict[annotation.image_path].append(annotation)
+        if annotation not in self.image_annotations_dict[annotation.image_path]:
+            self.image_annotations_dict[annotation.image_path].append(annotation)
 
     def delete_annotation(self, annotation_id):
         if annotation_id in self.annotations_dict:
