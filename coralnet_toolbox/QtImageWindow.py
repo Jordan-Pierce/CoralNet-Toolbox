@@ -900,10 +900,11 @@ class ImageWindow(QWidget):
         self.search_bar_images.clear()
         self.search_bar_labels.clear()
 
-        image_names = [self.image_dict[path]['filename'] for path in self.image_paths]
-        label_names = set()
-        for path in self.image_paths:
-            label_names.update(self.image_dict[path]['labels'])
+        try:
+            image_names = set([self.image_dict[path]['filename'] for path in self.image_paths])
+            label_names = set([label.short_label_code for label in self.main_window.label_window.labels])
+        except Exception as e:
+            return
 
         # Only add items if there are any to add
         if image_names:

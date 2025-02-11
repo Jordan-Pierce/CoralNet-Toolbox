@@ -520,35 +520,45 @@ class AnnotationWindow(QGraphicsView):
         if return_annotations:
             return annotations
 
-    def crop_these_image_annotations(self, image_path, annotations, linear=False):
+    def crop_these_image_annotations(self, image_path, annotations, linear=False, verbose=True):
         if linear:
-            self._crop_annotations_batch_linear(image_path, annotations)
+            self._crop_annotations_batch_linear(image_path, annotations, verbose)
         else:
-            self._crop_annotations_batch(image_path, annotations)
+            self._crop_annotations_batch(image_path, annotations, verbose)
         return annotations
 
-    def _crop_annotations_batch_linear(self, image_path, annotations):
-        # Create a progress bar
-        progress_bar = ProgressBar(self, title="Cropping Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(annotations))
+    def _crop_annotations_batch_linear(self, image_path, annotations, verbose=True):
+        if verbose:
+            # Create a progress bar
+            progress_bar = ProgressBar(self, title="Cropping Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(len(annotations))
+            
+        try:
+            # Get the rasterio representation
+            rasterio_image = self.main_window.image_window.rasterio_open(image_path)
+            # Loop through the annotations, crop the image if not already cropped
+            for annotation in annotations:
+                if not annotation.cropped_image:
+                    annotation.create_cropped_image(rasterio_image)
+                    
+                if verbose:
+                    progress_bar.update_progress()
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            
+        finally:    
+            if verbose:
+                progress_bar.stop_progress()
+                progress_bar.close()
 
-        # Get the rasterio representation
-        rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-        # Loop through the annotations, crop the image if not already cropped
-        for annotation in annotations:
-            if not annotation.cropped_image:
-                annotation.create_cropped_image(rasterio_image)
-            progress_bar.update_progress()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-    def _crop_annotations_batch(self, image_path, annotations):
-        # Create a progress bar
-        progress_bar = ProgressBar(self, title="Cropping Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(annotations))
+    def _crop_annotations_batch(self, image_path, annotations, verbose=True): 
+        if verbose:
+            # Create a progress bar
+            progress_bar = ProgressBar(self, title="Cropping Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(len(annotations))
 
         # Create a lock for thread-safe access to the rasterio dataset
         lock = threading.Lock()
@@ -567,10 +577,13 @@ class AnnotationWindow(QGraphicsView):
             futures = [executor.submit(crop_annotation, annotation) for annotation in annotations]
             for future in as_completed(futures):
                 future.result()  # Ensure any exceptions are raised
-                progress_bar.update_progress()
+                
+                if verbose:
+                    progress_bar.update_progress()
 
-        progress_bar.stop_progress()
-        progress_bar.close()
+        if verbose:
+            progress_bar.stop_progress()
+            progress_bar.close()
 
     def add_annotation(self, scene_pos: QPointF = None):
         if not self.selected_label:

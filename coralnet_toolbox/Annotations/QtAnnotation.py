@@ -117,28 +117,31 @@ class Annotation(QObject):
         self.update_graphics_item()
         self.show_message = False
 
-    def update_label(self, new_label: 'Label'):
+    def update_label(self, new_label: 'Label', set_review=False):
         # Initializing
         if self.label is None:
             self.label = new_label
 
-        # Updating
+        # Updating (new label, or new color)
         elif self.label.id != new_label.id or self.label.color != new_label.color:
-            # Update the label in user_confidence if it exists
-            if self.user_confidence:
-                old_confidence = next(iter(self.user_confidence.values()))
-                self.user_confidence = {new_label: old_confidence}
+            
+            if not set_review:
+                # Update the label in user_confidence if it exists
+                if self.user_confidence:
+                    old_confidence = next(iter(self.user_confidence.values()))
+                    self.user_confidence = {new_label: old_confidence}
 
-            # Update the label in machine_confidence if it exists
-            if self.machine_confidence:
-                new_machine_confidence = {}
-                for label, confidence in self.machine_confidence.items():
-                    if label.id == self.label.id:
-                        new_machine_confidence[new_label] = confidence
-                    else:
-                        new_machine_confidence[label] = confidence
-                # Update the machine confidence
-                self.machine_confidence = new_machine_confidence
+                # Update the label in machine_confidence if it exists
+                if self.machine_confidence:
+                    new_machine_confidence = {}
+                    for label, confidence in self.machine_confidence.items():
+                        if label.id == self.label.id:
+                            new_machine_confidence[new_label] = confidence
+                        else:
+                            new_machine_confidence[label] = confidence
+                            
+                    # Update the machine confidence
+                    self.machine_confidence = new_machine_confidence
 
             # Update the label
             self.label = new_label

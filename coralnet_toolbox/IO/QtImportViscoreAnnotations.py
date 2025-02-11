@@ -86,7 +86,7 @@ class ImportViscoreAnnotations(QDialog):
 
         # Views per dot
         self.views_spinbox = QSpinBox()
-        self.views_spinbox.setMinimum(1)
+        self.views_spinbox.setMinimum(-1)
         self.views_spinbox.setMaximum(1000)
         self.views_spinbox.setValue(3)
         self.views_spinbox.setToolTip("Number of best views to keep per dot")
@@ -229,6 +229,7 @@ class ImportViscoreAnnotations(QDialog):
 
                 # Sort and get top N views
                 subset = subset.sort_values(['ReprojectionError', 'ViewIndex'], ascending=[True, True])
+                views = views if views != -1 else len(subset)
                 subset = subset.head(views)
                 filtered.append(subset)
 
@@ -249,8 +250,7 @@ class ImportViscoreAnnotations(QDialog):
         """Process and import the annotations."""
         try:
             # Map image names to paths
-            image_path_map = {os.path.basename(path): path
-                              for path in self.image_window.image_paths}
+            image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
 
             # Pre-create required labels
             progress_bar.setWindowTitle("Creating Labels")

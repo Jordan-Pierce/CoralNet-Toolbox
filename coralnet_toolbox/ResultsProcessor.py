@@ -316,7 +316,7 @@ class ResultsProcessor:
         :param predictions: Dictionary containing class predictions
         """
         # Add the annotation to the annotation window
-        self.annotation_window.annotations_dict.add_annotation_to_dict(annotation)
+        self.annotation_window.add_annotation_to_dict(annotation)
 
         # Connect signals
         annotation.selected.connect(self.annotation_window.select_annotation)
@@ -332,7 +332,7 @@ class ResultsProcessor:
         # If the confidence is below the threshold, set the label to review
         if conf < self.uncertainty_thresh:
             review_label = self.label_window.get_label_by_id('-1')
-            annotation.update_label(review_label)
+            annotation.update_label(review_label, set_review=True)
 
         # If the image is currently displayed in the annotation window, update the graphics item
         if image_path == self.annotation_window.current_image_path:

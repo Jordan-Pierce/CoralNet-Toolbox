@@ -97,28 +97,37 @@ class Classify(Base):
         if not self.image_paths:
             return
 
-        progress_bar = ProgressBar(self, title="Cropping Annotations")
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Cropping Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
-
+        
         # Group annotations by image path
         grouped_annotations = groupby(sorted(self.annotations, key=attrgetter('image_path')), 
                                    key=attrgetter('image_path'))
-
-        for image_path, group in grouped_annotations:
-            try:
+        
+        try:
+            # Crop the annotations
+            for idx, (image_path, group) in enumerate(grouped_annotations):
                 # Process image annotations
                 image_annotations = list(group)
-                image_annotations = self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
+                image_annotations = self.annotation_window.crop_these_image_annotations(image_path, 
+                                                                                        image_annotations,
+                                                                                        verbose=False)
                 self.prepared_patches.extend(image_annotations)
-
-            except Exception as exc:
-                print(f'{image_path} generated an exception: {exc}')
-            finally:
+                
+                # Update the progress bar
                 progress_bar.update_progress()
 
-        progress_bar.stop_progress()
-        progress_bar.close()
+        except Exception as exc:
+            print(f'{image_path} generated an exception: {exc}')
+            
+        finally:
+            # Restor the cursor
+            QApplication.restoreOverrideCursor()                
+            progress_bar.stop_progress()
+            progress_bar.close()
         
     def batch_inference(self):
         """
@@ -127,22 +136,30 @@ class Classify(Base):
         self.loaded_model = self.deploy_model_dialog.loaded_model
         
         # Make predictions on each image's annotations
-        progress_bar = ProgressBar(self, title="Batch Inference")
+        progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
-
+        
         if self.loaded_model is not None:
             # Group annotations by image path
-            groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')), key=attrgetter('image_path'))
+            groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')), 
+                             key=attrgetter('image_path'))
 
-            # Make predictions on each image's annotations
-            for path, patches in groups:
-                self.deploy_model_dialog.predict(inputs=list(patches))
-                progress_bar.update_progress()
+            try:
+                # Make predictions on each image's annotations
+                for path, patches in groups:
+                    self.deploy_model_dialog.predict(inputs=list(patches))
+                    progress_bar.update_progress()
+            
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+                
+            finally:
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()
 
-        progress_bar.stop_progress()
-        progress_bar.close()
-        
         # Clear the list of annotations
         self.annotations = []
         self.prepared_patches = []
