@@ -228,8 +228,7 @@ class ImportViscoreAnnotations(QDialog):
                 subset = subset[(reprojection_error >= lower_bound) & (reprojection_error <= upper_bound)]
 
                 # Sort and get top N views
-                subset = subset.sort_values(['ReprojectionError', 'ViewIndex'],
-                                            ascending=[True, True])
+                subset = subset.sort_values(['ReprojectionError', 'ViewIndex'], ascending=[True, True])
                 subset = subset.head(views)
                 filtered.append(subset)
 
@@ -320,5 +319,6 @@ class ImportViscoreAnnotations(QDialog):
             self.annotation_window.load_annotations()
 
         except Exception as e:
-            QMessageBox.critical(self, "Critical Error",
+            QMessageBox.critical(self, 
+                                 "Critical Error",
                                  f"Failed to process annotations: {str(e)}")

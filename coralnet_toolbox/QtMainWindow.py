@@ -160,13 +160,13 @@ class MainWindow(QMainWindow):
         self.import_taglab_labels = ImportTagLabLabels(self)
         self.import_annotations = ImportAnnotations(self)
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
-        self.import_viscore_annotations = ImportViscoreAnnotations(self)
+        self.import_viscore_annotations_dialog = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
-        self.export_viscore_annotations = ExportViscoreAnnotations(self)
+        self.export_viscore_annotations_dialog = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
         self.import_frames_dialog = ImportFrames(self)
 
@@ -294,7 +294,7 @@ class MainWindow(QMainWindow):
 
         # Import Viscore Annotations
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.import_viscore_annotations_action.triggered.connect(self.import_viscore_annotations.import_annotations)
+        self.import_viscore_annotations_action.triggered.connect(self.open_import_viscore_annotations_dialog)
         self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
 
         # Import TagLab Annotations
@@ -346,7 +346,7 @@ class MainWindow(QMainWindow):
 
         # Export Viscore Annotations
         self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.export_viscore_annotations_action.triggered.connect(self.export_viscore_annotations.export_annotations)
+        self.export_viscore_annotations_action.triggered.connect(self.open_export_viscore_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
 
         # Export TagLab Annotations
@@ -1156,6 +1156,20 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.import_frames_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_import_viscore_annotations_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.import_viscore_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_export_viscore_annotations_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.export_viscore_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
