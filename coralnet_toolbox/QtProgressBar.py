@@ -44,6 +44,15 @@ class ProgressBar(QDialog):
             if self.value >= self.max_value:
                 self.stop_progress()
             QApplication.processEvents()
+            
+    def update_progress_percentage(self, percentage):
+        if not self.canceled:
+            if not 0 <= percentage <= 100:
+                return
+
+            new_value = int((percentage / 100.0) * self.max_value)
+            self.set_value(new_value)
+            QApplication.processEvents()
 
     def start_progress(self, max_value):
         self.value = 0

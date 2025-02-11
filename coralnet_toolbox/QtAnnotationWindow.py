@@ -274,7 +274,7 @@ class AnnotationWindow(QGraphicsView):
 
         # Clean up
         self.clear_scene()
-        
+
         # Check that the image path is valid
         if image_path not in self.main_window.image_window.images:
             return
@@ -448,46 +448,41 @@ class AnnotationWindow(QGraphicsView):
         annotation.annotationDeleted.connect(self.delete_annotation)
         self.viewport().update()
 
-    def load_annotations(self):
-        # Initialize the progress bar
+    def load_annotations(self, image_path=None, annotations=None):
+        """
+        Loads annotations for the current image by default or for a given image and annotations.
+        """
+        # Crop annotations (if image_path and annotations are provided, they are used)
+        annotations = self.crop_annotations(image_path, annotations)
+        total = len(annotations)
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, title="Loading Annotations")
         progress_bar.show()
+        progress_bar.start_progress(total)
+        
+        try:
+            # Load each annotation and update progress
+            for idx, annotation in enumerate(annotations):
+                if progress_bar.wasCanceled():
+                    break
+                
+                # Load the annotation
+                self.load_annotation(annotation)
 
-        # Crop all the annotations for current image (if not already cropped)
-        annotations = self.crop_image_annotations(return_annotations=True)
-        progress_bar.start_progress(len(annotations))
-
-        # Connect update signals for all the annotations
-        for idx, annotation in enumerate(annotations):
-            if progress_bar.wasCanceled():
-                break
-            self.load_annotation(annotation)
-            progress_bar.update_progress()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-        QApplication.processEvents()
-        self.viewport().update()
-
-    def load_these_annotations(self, image_path, annotations):
-        # Initialize the progress bar
-        progress_bar = ProgressBar(self, title="Loading Annotations")
-        progress_bar.show()
-
-        # Crop all the annotations for current image (if not already cropped)
-        annotations = self.crop_these_image_annotations(image_path, annotations)
-        progress_bar.start_progress(len(annotations))
-
-        # Connect update signals for all the annotations
-        for annotation in annotations:
-            if progress_bar.wasCanceled():
-                break
-            self.load_annotation(annotation)
-            progress_bar.update_progress()
-
-        progress_bar.stop_progress()
-        progress_bar.close()
+                # Update every 10% of the annotations
+                if idx % (total // 10) == 0:
+                    progress_bar.update_progress_percentage((idx / total) * 100)
+                    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            
+        finally:
+            # Restore the cursor
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
         QApplication.processEvents()
         self.viewport().update()
@@ -495,7 +490,7 @@ class AnnotationWindow(QGraphicsView):
     def get_image_annotations(self, image_path=None):
         if not image_path:
             image_path = self.current_image_path
-        
+
         return self.image_annotations_dict.get(image_path, [])
 
     def get_image_review_annotations(self, image_path=None):
@@ -509,81 +504,47 @@ class AnnotationWindow(QGraphicsView):
 
         return annotations
 
-    def crop_image_annotations(self, image_path=None, return_annotations=False):
+    def crop_annotations(self, image_path=None, annotations=None, return_annotations=True, verbose=True):
+        """
+        Crop annotations for the specified image.
+
+        If annotations is None, crop all annotations associated with the image (using self.get_image_annotations).
+        If return_annotations is True, returns the list of annotations after cropping.
+        """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         if not image_path:
-            # Set the image path if not provided
             image_path = self.current_image_path
-        # Get the annotations for the image
-        annotations = self.get_image_annotations(image_path)
-        self._crop_annotations_batch(image_path, annotations)
-        # Return the annotations if flag is set
-        if return_annotations:
-            return annotations
 
-    def crop_these_image_annotations(self, image_path, annotations, linear=False, verbose=True):
-        if linear:
-            self._crop_annotations_batch_linear(image_path, annotations, verbose)
-        else:
-            self._crop_annotations_batch(image_path, annotations, verbose)
-        return annotations
+        if annotations is None:
+            annotations = self.get_image_annotations(image_path)
 
-    def _crop_annotations_batch_linear(self, image_path, annotations, verbose=True):
+        progress_bar = None
         if verbose:
-            # Create a progress bar
             progress_bar = ProgressBar(self, title="Cropping Annotations")
             progress_bar.show()
             progress_bar.start_progress(len(annotations))
-            
+
         try:
-            # Get the rasterio representation
             rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-            # Loop through the annotations, crop the image if not already cropped
             for annotation in annotations:
-                if not annotation.cropped_image:
+                if not getattr(annotation, "cropped_image", False):
                     annotation.create_cropped_image(rasterio_image)
-                    
                 if verbose:
                     progress_bar.update_progress()
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             
-        finally:    
+        finally:
+            QApplication.restoreOverrideCursor()
             if verbose:
                 progress_bar.stop_progress()
                 progress_bar.close()
 
-    def _crop_annotations_batch(self, image_path, annotations, verbose=True): 
-        if verbose:
-            # Create a progress bar
-            progress_bar = ProgressBar(self, title="Cropping Annotations")
-            progress_bar.show()
-            progress_bar.start_progress(len(annotations))
-
-        # Create a lock for thread-safe access to the rasterio dataset
-        lock = threading.Lock()
-
-        # Get the rasterio representation
-        rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-
-        def crop_annotation(annotation):
-            with lock:
-                if not annotation.cropped_image:
-                    annotation.create_cropped_image(rasterio_image)
-            return annotation
-
-        # Use ThreadPoolExecutor to crop images in parallel
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(crop_annotation, annotation) for annotation in annotations]
-            for future in as_completed(futures):
-                future.result()  # Ensure any exceptions are raised
-                
-                if verbose:
-                    progress_bar.update_progress()
-
-        if verbose:
-            progress_bar.stop_progress()
-            progress_bar.close()
+        if return_annotations:
+            return annotations
 
     def add_annotation(self, scene_pos: QPointF = None):
         if not self.selected_label:
@@ -618,10 +579,10 @@ class AnnotationWindow(QGraphicsView):
 
         # Add to annotation dict
         self.add_annotation_to_dict(annotation)
-        
+
         self.main_window.confidence_window.display_cropped_image(annotation)
         self.annotationCreated.emit(annotation.id)
-        
+
     def add_annotation_to_dict(self, annotation):
         # Add to annotation dict
         self.annotations_dict[annotation.id] = annotation
@@ -640,7 +601,7 @@ class AnnotationWindow(QGraphicsView):
                 self.image_annotations_dict[annotation.image_path].remove(annotation)
                 if not self.image_annotations_dict[annotation.image_path]:
                     del self.image_annotations_dict[annotation.image_path]
-            
+
             # Delete the annotation
             annotation.delete()
             del self.annotations_dict[annotation_id]
@@ -672,9 +633,9 @@ class AnnotationWindow(QGraphicsView):
                 annotation.delete()
                 del self.annotations_dict[annotation.id]
                 self.annotationDeleted.emit(annotation.id)
-            
+
             del self.image_annotations_dict[image_path]
-            
+
             # Clear confidence window if needed
             if self.current_image_path == image_path:
                 self.main_window.confidence_window.clear_display()
@@ -689,8 +650,8 @@ class AnnotationWindow(QGraphicsView):
             self.current_image_path = None
             self.image_pixmap = None
             self.rasterio_image = None
-            self.active_image = False 
-            
+            self.active_image = False
+
     def clear_scene(self):
         # Clean up
         self.unselect_annotations()

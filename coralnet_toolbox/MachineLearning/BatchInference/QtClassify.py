@@ -24,9 +24,9 @@ class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Classify Batch Inference")
-        
+
         self.deploy_model_dialog = main_window.classify_deploy_model_dialog
-        
+
     def setup_task_specific_layout(self):
         """
         Set up the layout with both generic and classification-specific options.
@@ -62,7 +62,7 @@ class Classify(Base):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-        
+
             # Get the Review Annotations
             if self.review_checkbox.isChecked():
                 for image_path in self.get_selected_image_paths():
@@ -75,19 +75,19 @@ class Classify(Base):
             # Crop them, if not already cropped
             self.preprocess_patch_annotations()
             self.batch_inference()
-        
+
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
-            
+
         finally:
             # Restore the cursor
             QApplication.restoreOverrideCursor()
             self.annotations = []
             self.prepared_patches = []
             self.image_paths = []
-        
+
         self.accept()
-        
+
     def preprocess_patch_annotations(self):
         """
         Preprocess patch annotations by cropping the images based on the annotations.
@@ -102,47 +102,48 @@ class Classify(Base):
         progress_bar = ProgressBar(self.annotation_window, title="Cropping Annotations")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
-        
+
         # Group annotations by image path
-        grouped_annotations = groupby(sorted(self.annotations, key=attrgetter('image_path')), 
+        grouped_annotations = groupby(sorted(self.annotations, key=attrgetter('image_path')),
                                    key=attrgetter('image_path'))
-        
+
         try:
             # Crop the annotations
             for idx, (image_path, group) in enumerate(grouped_annotations):
                 # Process image annotations
                 image_annotations = list(group)
-                image_annotations = self.annotation_window.crop_these_image_annotations(image_path, 
-                                                                                        image_annotations,
-                                                                                        verbose=False)
+                image_annotations = self.annotation_window.crop_annotations(image_path, 
+                                                                            image_annotations, 
+                                                                            verbose=False)
+                # Add the cropped annotations to the list of prepared patches
                 self.prepared_patches.extend(image_annotations)
-                
+
                 # Update the progress bar
                 progress_bar.update_progress()
 
         except Exception as exc:
             print(f'{image_path} generated an exception: {exc}')
-            
+
         finally:
             # Restor the cursor
-            QApplication.restoreOverrideCursor()                
+            QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-        
+
     def batch_inference(self):
         """
         Perform batch inference on the selected images and annotations.
         """
         self.loaded_model = self.deploy_model_dialog.loaded_model
-        
+
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
-        
+
         if self.loaded_model is not None:
             # Group annotations by image path
-            groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')), 
+            groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')),
                              key=attrgetter('image_path'))
 
             try:
@@ -150,10 +151,10 @@ class Classify(Base):
                 for path, patches in groups:
                     self.deploy_model_dialog.predict(inputs=list(patches))
                     progress_bar.update_progress()
-            
+
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
-                
+
             finally:
                 # Restore the cursor
                 QApplication.restoreOverrideCursor()

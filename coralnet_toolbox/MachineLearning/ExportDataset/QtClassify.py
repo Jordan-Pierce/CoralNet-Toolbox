@@ -25,23 +25,23 @@ class Classify(Base):
         super(Classify, self).__init__(parent)
         self.setWindowTitle("Export Classification Dataset")
         self.setWindowIcon(get_icon("coral"))
-        
+
     def setup_info_layout(self):
         """Setup the info layout"""
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_text = "Export Patches, Rectangles, and Polygons to create a YOLO-formatted Classification dataset."
         info_label = QLabel(info_text)
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def update_annotation_type_checkboxes(self):
         """
         Update the state of annotation type checkboxes based on the selected dataset type.
@@ -84,7 +84,7 @@ class Classify(Base):
             df.append(annotation.to_coralnet())
 
         pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
-        
+
     def process_annotations(self, annotations, split_dir, split):
         # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
@@ -96,14 +96,16 @@ class Classify(Base):
         progress_bar.start_progress(len(image_paths))
 
         # Group annotations by image path
-        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')), 
+        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')),
                                    key=attrgetter('image_path'))
 
         for image_path, group in grouped_annotations:
             try:
                 # Process image annotations
                 image_annotations = list(group)
-                image_annotations = self.annotation_window.crop_these_image_annotations(image_path, image_annotations)
+                image_annotations = self.annotation_window.crop_annotations(image_path,
+                                                                            image_annotations,
+                                                                            verbose=False)
 
                 # Save each cropped annotation
                 for annotation in image_annotations:
