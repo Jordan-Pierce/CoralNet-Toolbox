@@ -1,6 +1,6 @@
 import warnings
 
-import pandas as pd
+import polars as pl
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 
@@ -47,8 +47,8 @@ class ExportCoralNetAnnotations:
                     df.append(annotation.to_coralnet())
                     progress_bar.update_progress()
 
-                df = pd.DataFrame(df)
-                df.to_csv(file_path, index=False)
+                df = pl.DataFrame(df)
+                df.write_csv(file_path)
 
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Exported",

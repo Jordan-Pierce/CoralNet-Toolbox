@@ -6,7 +6,7 @@ import os
 import random
 import uuid
 
-import pandas as pd
+import polars as pl
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialog)
@@ -61,11 +61,11 @@ class ImportCoralNetAnnotations:
         try:
             all_data = []
             for file_path in file_paths:
-                df = pd.read_csv(file_path)
+                df = pl.read_csv(file_path)
                 all_data.append(df)
 
             # Concatenate all the data
-            df = pd.concat(all_data, ignore_index=True)
+            df = pl.concat(all_data)
 
             required_columns = ['Name', 'Row', 'Column', 'Label']
             if not all(col in df.columns for col in required_columns):
@@ -73,13 +73,13 @@ class ImportCoralNetAnnotations:
 
             # Filter out rows with missing values
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
-            df['Name'] = df['Name'].apply(lambda x: os.path.basename(x))
-            df = df[df['Name'].isin(image_path_map.keys())]
-            df = df.dropna(how='any', subset=['Row', 'Column', 'Label'])
-            df = df.assign(Row=df['Row'].astype(int))
-            df = df.assign(Column=df['Column'].astype(int))
+            df = df.with_column(pl.col('Name').apply(lambda x: os.path.basename(x)))
+            df = df.filter(pl.col('Name').is_in(list(image_path_map.keys())))
+            df = df.drop_nulls(subset=['Row', 'Column', 'Label'])
+            df = df.with_column(pl.col('Row').cast(pl.Int32))
+            df = df.with_column(pl.col('Column').cast(pl.Int32))
 
-            if df.empty:
+            if df.is_empty():
                 raise Exception("No annotations found for loaded images.")
 
         except Exception as e:
@@ -102,12 +102,12 @@ class ImportCoralNetAnnotations:
             # Pre-create all required labels
             all_labels = set(df['Label'].unique())
             machine_suggestions = [col for col in df.columns if 'Machine suggestion' in col]
-            all_labels.update(df[machine_suggestions].values.flatten())
+            all_labels.update(df.select(machine_suggestions).to_numpy().flatten())
             
             progress_bar.start_progress(len(all_labels))
                 
             for label_code in all_labels:
-                if pd.notna(label_code):
+                if label_code is not None:
                     short_label_code = long_label_code = str(label_code)
                     if not self.label_window.get_label_by_codes(short_label_code, long_label_code):
                         
@@ -164,7 +164,7 @@ class ImportCoralNetAnnotations:
                     valid_pairs = {
                         (str(row[sug]), float(row[conf]))
                         for conf, sug in zip(confidence_cols, suggestion_cols)
-                        if pd.notna(row[conf]) and pd.notna(row[sug])
+                        if row[conf] is not None and row[sug] is not None
                     }
                     
                     # Process all valid pairs at once

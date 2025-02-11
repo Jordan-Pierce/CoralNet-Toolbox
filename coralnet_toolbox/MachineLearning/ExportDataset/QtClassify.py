@@ -7,7 +7,7 @@ import os
 from operator import attrgetter
 from itertools import groupby
 
-import pandas as pd
+import polars as pl
 
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel)
 
@@ -83,7 +83,7 @@ class Classify(Base):
         for annotation in self.selected_annotations:
             df.append(annotation.to_coralnet())
 
-        pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
+        pl.DataFrame(df).write_csv(f"{output_dir_path}/dataset.csv")
         
     def process_annotations(self, annotations, split_dir, split):
         # Get unique image paths

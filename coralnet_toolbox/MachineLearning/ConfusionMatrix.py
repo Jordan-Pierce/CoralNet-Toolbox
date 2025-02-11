@@ -4,7 +4,7 @@ import seaborn as sns
 from matplotlib.ticker import FuncFormatter
 import os
 import json
-import pandas as pd
+import polars as pl
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -300,8 +300,8 @@ class ConfusionMatrixMetrics:
             'Class Distribution (%)': self.class_distributions * 100,
         }
 
-        df = pd.DataFrame(metrics_dict)
-        df.to_csv(os.path.join(directory, filename), index=False, float_format='%.4f')
+        df = pl.DataFrame(metrics_dict)
+        df.write_csv(os.path.join(directory, filename))
 
     def save_results(self, directory):
         """

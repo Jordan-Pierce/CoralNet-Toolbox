@@ -2,7 +2,7 @@ import os
 import shutil
 import argparse
 import matplotlib.pyplot as plt
-import pandas as pd
+import polars as pl
 from tqdm import tqdm
 
 
@@ -59,7 +59,7 @@ def plot_distribution(dst_dir, dataset_type):
         dataset_type (str): Type of dataset (e.g., 'train', 'valid', 'test').
     """
     class_counts = count_images_per_class(os.path.join(dst_dir, dataset_type))
-    df = pd.DataFrame(list(class_counts.items()), columns=['Class', 'Count'])
+    df = pl.DataFrame(list(class_counts.items()), columns=['Class', 'Count'])
 
     plt.figure(figsize=(10, 6))
     colors = plt.cm.tab20.colors  # Use a colormap with discrete colors

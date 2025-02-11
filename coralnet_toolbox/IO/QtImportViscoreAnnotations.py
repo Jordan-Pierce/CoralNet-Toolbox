@@ -5,7 +5,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import os
 import uuid
 import random
-import pandas as pd
+import polars as pl
 
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QPointF
@@ -148,7 +148,7 @@ class ImportViscoreAnnotations(QDialog):
 
         try:
             # Make cursor busy
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+            QApplication.setOverrideOverrideCursor(Qt.WaitCursor)
             progress_bar = ProgressBar(self, title="Reading CSV File")
             progress_bar.show()
 
@@ -178,9 +178,9 @@ class ImportViscoreAnnotations(QDialog):
     def read_and_validate_csv(self, csv_path):
         """Read and validate the CSV file."""
         try:
-            df = pd.read_csv(csv_path, index_col=False)
+            df = pl.read_csv(csv_path)
 
-            if df.empty:
+            if df.is_empty():
                 QMessageBox.warning(self, 
                                     "Empty CSV",
                                     "The CSV file is empty.")
@@ -194,7 +194,7 @@ class ImportViscoreAnnotations(QDialog):
                                     "The selected CSV file does not match the expected Viscore format.")
                 return None
 
-            return df[required_columns]
+            return df.select(required_columns)
 
         except Exception as e:
             QMessageBox.warning(self, "Error Reading CSV",
@@ -211,12 +211,12 @@ class ImportViscoreAnnotations(QDialog):
             views = self.views_spinbox.value()
 
             for dot in df['Dot'].unique():
-                subset = df[df['Dot'] == dot]
+                subset = df.filter(pl.col('Dot') == dot)
                 reprojection_error = subset['ReprojectionError']
 
                 # Calculate mean and filter by it
                 mean = reprojection_error.mean()
-                subset = subset[reprojection_error <= mean]
+                subset = subset.filter(pl.col('ReprojectionError') <= mean)
 
                 # Calculate new mean and std
                 std = reprojection_error.std()
@@ -225,18 +225,17 @@ class ImportViscoreAnnotations(QDialog):
                 # Filter within +/- one standard deviation
                 lower_bound = mean - std
                 upper_bound = mean + std
-                subset = subset[(reprojection_error >= lower_bound) & (reprojection_error <= upper_bound)]
+                subset = subset.filter((pl.col('ReprojectionError') >= lower_bound) & (pl.col('ReprojectionError') <= upper_bound))
 
                 # Sort and get top N views
-                subset = subset.sort_values(['ReprojectionError', 'ViewIndex'], ascending=[True, True])
+                subset = subset.sort(['ReprojectionError', 'ViewIndex'])
                 subset = subset.head(views)
                 filtered.append(subset)
 
                 progress_bar.update_progress()
 
-            df = pd.concat(filtered)
-            df.dropna(inplace=True)
-            df.reset_index(drop=True, inplace=True)
+            df = pl.concat(filtered)
+            df = df.drop_nulls()
 
             return df
 

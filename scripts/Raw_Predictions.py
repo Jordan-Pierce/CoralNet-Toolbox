@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-import pandas as pd
+import polars as pl
 from ultralytics import YOLO
 from tqdm import tqdm
 from datetime import datetime
@@ -85,11 +85,11 @@ def main():
         results_data.append(row_data)
     
     # Create DataFrame
-    df = pd.DataFrame(results_data)
+    df = pl.DataFrame(results_data)
     
     # Save results
     output_path = f"{args.output_dir}/{get_now()}_predictions.csv"
-    df.to_csv(output_path, index=False)
+    df.write_csv(output_path)
     print(f"Results saved to {output_path}")
 
 
