@@ -105,7 +105,8 @@ class PatchSamplingDialog(QDialog):
         self.label_combo = QComboBox()
         for label in self.label_window.labels:
             self.label_combo.addItem(label.short_label_code, label.id)
-        self.label_combo.setCurrentIndex(0) # Default to first label Review
+        self.label_combo.setCurrentIndex(0) 
+        self.label_combo.currentIndexChanged.connect(self.preview_annotations)
         layout.addRow("Select Label:", self.label_combo)
 
         group_box.setLayout(layout)

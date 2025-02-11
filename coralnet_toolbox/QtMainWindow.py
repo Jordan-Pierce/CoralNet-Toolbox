@@ -548,12 +548,12 @@ class MainWindow(QMainWindow):
         
         # Check for updates
         self.check_for_updates_action = QAction("Check for Updates", self)
-        self.check_for_updates_action.triggered.connect(self.check_for_updates)
+        self.check_for_updates_action.triggered.connect(self.open_check_for_updates_dialog)
         self.help_menu.addAction(self.check_for_updates_action)
         
         # Issues / Feature Requests
         self.create_issue_action = QAction("Issues / Feature Requests", self)
-        self.create_issue_action.triggered.connect(self.create_new_issue)
+        self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
         self.help_menu.addAction(self.create_issue_action)
         
         # Create Break Time submenu
@@ -837,64 +837,6 @@ class MainWindow(QMainWindow):
             else:
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
-            
-    def check_for_updates(self):
-        """
-        Checks if package version is up to date with PyPI.
-        """
-        try:
-            # Get package info from PyPI
-            response = requests.get("https://pypi.org/pypi/coralnet-toolbox/json", timeout=5)
-            response.raise_for_status()
-            
-            # Extract latest version
-            package_info = response.json()
-            latest_version = package_info["info"]["version"]
-            
-            # Compare versions
-            needs_update = version.parse(latest_version) > version.parse(self.version)
-            
-            if needs_update:
-                pip_command = "pip install coralnet-toolbox=={}".format(latest_version)
-                QMessageBox.information(self,
-                                        "Hey, there's an update available!",
-                                        f"A new version ({latest_version}) is available.\n\n"
-                                        f"To update, run the following command in your terminal:\n\n{pip_command}")
-            else:
-                QMessageBox.information(self,
-                                        "Nope, you're good!",
-                                        f"You are using the most current version ({self.version}).")
-            
-        except (requests.RequestException, KeyError, ValueError) as e:
-            QMessageBox.warning(self,
-                                "Update Check Failed",
-                                f"Could not check for updates.\nError: {e}")
-            
-    def create_new_issue(self):
-        """Display QMessageBox with link to create new issue on GitHub."""
-        try:
-            self.untoggle_all_tools()
-            # URL to create a new issue
-            here = '<a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues/new/choose">here</a>'
-            msg = QMessageBox()
-            msg.setWindowIcon(self.coral_icon)
-            msg.setWindowTitle("Issues / Feature Requests")
-            msg.setText(f'Click {here} to create a new issue or feature request.')
-            msg.setTextFormat(Qt.RichText)
-            msg.setStandardButtons(QMessageBox.Ok)
-            msg.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-        
-    def open_snake_game_dialog(self):
-        """
-        Open the QtSnakeGame in a new window.
-        """
-        try:
-            self.untoggle_all_tools()
-            self.snake_game_dialog.start_game()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def toggle_tool(self, state):
         # Unlock the label lock
@@ -1569,6 +1511,64 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.auto_distill_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_check_for_updates_dialog(self):
+        """
+        Checks if package version is up to date with PyPI.
+        """
+        try:
+            # Get package info from PyPI
+            response = requests.get("https://pypi.org/pypi/coralnet-toolbox/json", timeout=5)
+            response.raise_for_status()
+            
+            # Extract latest version
+            package_info = response.json()
+            latest_version = package_info["info"]["version"]
+            
+            # Compare versions
+            needs_update = version.parse(latest_version) > version.parse(self.version)
+            
+            if needs_update:
+                pip_command = "pip install coralnet-toolbox=={}".format(latest_version)
+                QMessageBox.information(self,
+                                        "Hey, there's an update available!",
+                                        f"A new version ({latest_version}) is available.\n\n"
+                                        f"To update, run the following command in your terminal:\n\n{pip_command}")
+            else:
+                QMessageBox.information(self,
+                                        "Nope, you're good!",
+                                        f"You are using the most current version ({self.version}).")
+            
+        except (requests.RequestException, KeyError, ValueError) as e:
+            QMessageBox.warning(self,
+                                "Update Check Failed",
+                                f"Could not check for updates.\nError: {e}")
+            
+    def open_create_new_issue_dialog(self):
+        """Display QMessageBox with link to create new issue on GitHub."""
+        try:
+            self.untoggle_all_tools()
+            # URL to create a new issue
+            here = '<a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues/new/choose">here</a>'
+            msg = QMessageBox()
+            msg.setWindowIcon(self.coral_icon)
+            msg.setWindowTitle("Issues / Feature Requests")
+            msg.setText(f'Click {here} to create a new issue or feature request.')
+            msg.setTextFormat(Qt.RichText)
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+        
+    def open_snake_game_dialog(self):
+        """
+        Open the QtSnakeGame in a new window.
+        """
+        try:
+            self.untoggle_all_tools()
+            self.snake_game_dialog.start_game()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
