@@ -31,7 +31,7 @@ class ExportViscoreAnnotations(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Export Viscore Annotations")
-        self.resize(400, 300)
+        self.resize(400, 400)
 
         # Create the main layout
         self.layout = QVBoxLayout(self)
@@ -79,19 +79,36 @@ class ExportViscoreAnnotations(QDialog):
         group_box = QGroupBox("Voting Options")
         layout = QVBoxLayout()
 
-        self.single_voting = QRadioButton("Single Voting")
-        self.multi_voting = QRadioButton("Multi Voting")
+        # Create horizontal layout for radio buttons
+        radio_layout = QHBoxLayout()
+        
+        # Create vertical layouts for each option
+        single_layout = QVBoxLayout()
+        multi_layout = QVBoxLayout()
+
+        # Create and add info labels
+        single_info = QLabel("Export annotations as-is")
+        single_info.setWordWrap(True)
+        multi_info = QLabel("Calculate consensus label for each dot")
+        multi_info.setWordWrap(True)
+
+        # Create radio buttons
+        self.single_voting = QRadioButton("SingleVoting")
+        self.multi_voting = QRadioButton("MultiVoting")
         self.single_voting.setChecked(True)
 
-        voting_info = QLabel(
-            "Single Voting: Export annotations as-is\n"
-            "Multi Voting: Calculate consensus label for each dot"
-        )
-        voting_info.setWordWrap(True)
+        # Add widgets to their respective vertical layouts
+        single_layout.addWidget(single_info)
+        single_layout.addWidget(self.single_voting)
+        multi_layout.addWidget(multi_info)
+        multi_layout.addWidget(self.multi_voting)
 
-        layout.addWidget(self.single_voting)
-        layout.addWidget(self.multi_voting)
-        layout.addWidget(voting_info)
+        # Add vertical layouts to horizontal layout
+        radio_layout.addLayout(single_layout)
+        radio_layout.addLayout(multi_layout)
+
+        # Add horizontal layout to main layout
+        layout.addLayout(radio_layout)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)

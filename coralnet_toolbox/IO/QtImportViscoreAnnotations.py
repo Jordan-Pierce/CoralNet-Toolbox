@@ -35,7 +35,7 @@ class ImportViscoreAnnotations(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Import Viscore Annotations")
-        self.resize(400, 300)
+        self.resize(400, 400)
 
         # Create the main layout
         self.layout = QVBoxLayout(self)
