@@ -11,7 +11,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit, 
                              QDialog, QApplication, QMessageBox, QCheckBox, QGroupBox,
                              QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider,
-                             QStyle)
+                             QStyle, QFrame)
+from PyQt5.QtGui import QImage, QPixmap
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -31,7 +32,7 @@ class ImportFrames(QDialog):
         
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Import Frames from Video")
-        self.resize(400, 300)
+        self.resize(800, 600)
 
         self.video_file = ""
         self.output_dir = ""
@@ -41,24 +42,32 @@ class ImportFrames(QDialog):
         
         self.frame_paths = []
         
-        # Create the layout
-        self.layout = QVBoxLayout(self)
+        # Main horizontal layout to hold controls and preview
+        main_layout = QHBoxLayout()
         
-        # Setup the info layout
-        self.setup_info_layout()
-        # Setup the import layout
-        self.setup_import_layout()
-        # Setup the output layout
-        self.setup_output_layout()
-        # Setup the sample layout
-        self.setup_sample_layout()
-        # Setup the buttons layout
-        self.setup_buttons_layout()
+        # Left side - Controls
+        controls_layout = QVBoxLayout()
         
-    def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
+        # Move existing layouts to controls
+        controls_layout.addWidget(self.create_info_group())
+        controls_layout.addWidget(self.create_import_group())
+        controls_layout.addWidget(self.create_output_group())
+        controls_layout.addWidget(self.create_sample_group())
+        controls_layout.addLayout(self.create_buttons_layout())
+        
+        # Right side - Preview
+        preview_layout = self.setup_preview_layout()
+        
+        # Add both sides to main layout
+        main_layout.addLayout(controls_layout, stretch=60)
+        main_layout.addLayout(preview_layout, stretch=40)
+        
+        self.setLayout(main_layout)
+        
+        self.cap = None
+        self.current_frame_idx = 0
+        
+    def create_info_group(self):
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
         
@@ -70,10 +79,9 @@ class ImportFrames(QDialog):
         layout.addWidget(info_label)
         
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        return group_box
 
-    def setup_import_layout(self):
-        """Set up the layout and widgets for the import layout."""
+    def create_import_group(self):
         group_box = QGroupBox("Import")
         layout = QFormLayout()
         
@@ -87,10 +95,9 @@ class ImportFrames(QDialog):
         layout.addRow("Video File:", video_layout)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        return group_box
 
-    def setup_output_layout(self):
-        """Set up the layout and widgets for the output layout."""
+    def create_output_group(self):
         group_box = QGroupBox("Output")
         layout = QFormLayout()
 
@@ -119,10 +126,9 @@ class ImportFrames(QDialog):
         layout.addRow("Frame Extension:", ext_layout)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        return group_box
         
-    def setup_sample_layout(self):
-        """Set up the layout and widgets for the sample layout."""
+    def create_sample_group(self):
         group_box = QGroupBox("Sample Frames")
         layout = QFormLayout()
         
@@ -165,10 +171,9 @@ class ImportFrames(QDialog):
         layout.addRow("Calculated Frames:", self.calculated_frames_edit)
         
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        return group_box
     
-    def setup_buttons_layout(self):
-        """Set up the layout and widgets for the buttons layout."""
+    def create_buttons_layout(self):
         buttons_layout = QHBoxLayout()
         
         self.extract_button = QPushButton("Extract")
@@ -183,7 +188,129 @@ class ImportFrames(QDialog):
         buttons_layout.addWidget(self.extract_import_button)
         buttons_layout.addWidget(self.cancel_button)
         
-        self.layout.addLayout(buttons_layout)
+        return buttons_layout
+
+    def setup_preview_layout(self):
+        """Set up the video preview panel"""
+        preview_layout = QVBoxLayout()
+        
+        # Preview group box
+        preview_group = QGroupBox("Video Preview")
+        preview_inner_layout = QVBoxLayout()
+        
+        # Frame display
+        self.preview_label = QLabel()
+        self.preview_label.setMinimumSize(320, 240)
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setStyleSheet("QLabel { background-color: black; }")
+        preview_inner_layout.addWidget(self.preview_label)
+        
+        # Frame navigation
+        nav_layout = QHBoxLayout()
+        
+        self.prev_frame_btn = QPushButton("←")
+        self.prev_frame_btn.clicked.connect(self.prev_frame)
+        
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setEnabled(False)
+        self.frame_slider.valueChanged.connect(self.slider_changed)
+        
+        self.next_frame_btn = QPushButton("→")
+        self.next_frame_btn.clicked.connect(self.next_frame)
+        
+        nav_layout.addWidget(self.prev_frame_btn)
+        nav_layout.addWidget(self.frame_slider)
+        nav_layout.addWidget(self.next_frame_btn)
+        
+        preview_inner_layout.addLayout(nav_layout)
+        preview_group.setLayout(preview_inner_layout)
+        preview_layout.addWidget(preview_group)
+        
+        # Frame info group box
+        info_group = QGroupBox("Frame Information")
+        info_layout = QVBoxLayout()
+        
+        # Frame counter and timestamp with some styling
+        self.frame_counter = QLabel("Frame: 0 / 0")
+        self.frame_counter.setAlignment(Qt.AlignCenter)
+        self.frame_counter.setStyleSheet("QLabel { font-size: 11pt; }")
+        
+        self.frame_timestamp = QLabel("Time: 00:00")
+        self.frame_timestamp.setAlignment(Qt.AlignCenter)
+        self.frame_timestamp.setStyleSheet("QLabel { font-size: 11pt; }")
+        
+        # Add a separator line
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        
+        info_layout.addWidget(self.frame_counter)
+        info_layout.addWidget(line)
+        info_layout.addWidget(self.frame_timestamp)
+        
+        info_group.setLayout(info_layout)
+        preview_layout.addWidget(info_group)
+        
+        return preview_layout
+
+    def update_preview(self, frame_idx):
+        """Update the preview with the specified frame"""
+        if self.cap is None:
+            return
+            
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = self.cap.read()
+        
+        if ret:
+            # Convert frame to RGB
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Scale frame to fit preview area while maintaining aspect ratio
+            preview_size = self.preview_label.size()
+            h, w = rgb_frame.shape[:2]
+            aspect = w / h
+            
+            if preview_size.width() / preview_size.height() > aspect:
+                new_h = preview_size.height()
+                new_w = int(new_h * aspect)
+            else:
+                new_w = preview_size.width()
+                new_h = int(new_w / aspect)
+                
+            scaled_frame = cv2.resize(rgb_frame, (new_w, new_h))
+            
+            # Convert to QImage and display
+            h, w = scaled_frame.shape[:2]
+            q_img = QImage(scaled_frame.data, w, h, scaled_frame.strides[0], QImage.Format_RGB888)
+            self.preview_label.setPixmap(QPixmap.fromImage(q_img))
+            
+            # Update counter and timestamp
+            total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = self.cap.get(cv2.CAP_PROP_FPS)
+            time_in_seconds = frame_idx / fps
+            minutes = int(time_in_seconds // 60)
+            seconds = int(time_in_seconds % 60)
+            
+            self.frame_counter.setText(f"Frame: {frame_idx} / {total_frames}")
+            self.frame_timestamp.setText(f"Time: {minutes:02d}:{seconds:02d}")
+
+    def slider_changed(self, value):
+        """Handle frame slider value changes"""
+        self.current_frame_idx = value
+        self.update_preview(value)
+
+    def next_frame(self):
+        """Show next frame"""
+        if self.cap is not None:
+            self.current_frame_idx = min(self.current_frame_idx + 1, 
+                                       int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1))
+            self.frame_slider.setValue(self.current_frame_idx)
+
+    def prev_frame(self):
+        """Show previous frame"""
+        if self.cap is not None:
+            self.current_frame_idx = max(self.current_frame_idx - 1, 0)
+            self.frame_slider.setValue(self.current_frame_idx)
 
     def browse_video_file(self):
         options = QFileDialog.Options()
@@ -196,11 +323,29 @@ class ImportFrames(QDialog):
         if file_name:
             if os.path.exists(file_name):
                 self.video_file_edit.setText(file_name)
+                
+                # Close previous capture if exists
+                if self.cap is not None:
+                    self.cap.release()
+                
+                # Open new video capture
+                self.cap = cv2.VideoCapture(file_name)
+                total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                
+                # Update frame slider
+                self.frame_slider.setEnabled(True)
+                self.frame_slider.setRange(0, total_frames - 1)
+                self.frame_slider.setValue(0)
+                self.current_frame_idx = 0
+                
+                # Update the range slider
                 self.update_range_slider()
+                
+                # Show first frame
+                self.update_preview(0)
             else:
-                QMessageBox.warning(self,
-                                    "Invalid Video File",
-                                    "Please select a valid video file.")
+                QMessageBox.warning(self, "Invalid Video File", 
+                                  "Please select a valid video file.")
 
     def browse_output_dir(self):
         options = QFileDialog.Options()
@@ -446,3 +591,9 @@ class ImportFrames(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+
+    def closeEvent(self, event):
+        """Clean up resources when dialog is closed"""
+        if self.cap is not None:
+            self.cap.release()
+        super().closeEvent(event)
