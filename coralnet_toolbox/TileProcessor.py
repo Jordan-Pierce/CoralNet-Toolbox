@@ -99,7 +99,6 @@ class TileProcessor:
                 overlap_x=self.tile_params['overlap_x'],
                 overlap_y=self.tile_params['overlap_y'],
                 marings=self.tile_params['margins'],
-                # batch_inference=True,  # self.tile_params['batch_inference'],
                 include_residuals=self.tile_params['include_residuals'],
                 show_processing_status=self.tile_params['show_processing_status'],
                 progress_callback=self.custom_progress_callback 
@@ -188,7 +187,7 @@ class TileProcessor:
         else:
             masks = None
 
-        return Results(
+        yield Results(
             orig_img=self.combined_detections.image,
             path=self.image_path,
             names=self.combined_detections.class_names,
@@ -218,8 +217,6 @@ class MakeCropsDetectThem:
         resize_initial_size (bool): Whether to resize the results to the original image size (ps: slow operation).
         model: Pre-initialized model object.
         memory_optimize (bool): Memory optimization option for segmentation (less accurate results)
-        # batch_inference (bool): Batch inference of image crops through a neural network instead of 
-        #             sequential passes of crops (ps: Faster inference, higher memory use)
         progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
         include_residuals (bool): Whether to include residuals in the crops.
         inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
@@ -243,8 +240,6 @@ class MakeCropsDetectThem:
                                     image size (ps: slow operation).
         class_names_dict (dict): Dictionary containing class names of the YOLO model.
         memory_optimize (bool): Memory optimization option for segmentation (less accurate results)
-        # batch_inference (bool): Batch inference of image crops through a neural network instead of 
-        #                             sequential passes of crops (ps: Faster inference, higher memory use)
         progress_callback (function): Optional custom callback function, (task: str, current: int, total: int)
         include_residuals (bool): Whether to include residuals in the crops.
         inference_extra_args (dict): Dictionary with extra ultralytics inference parameters
@@ -268,7 +263,6 @@ class MakeCropsDetectThem:
         model=None,
         memory_optimize=True,
         inference_extra_args=None,
-        # batch_inference=False,
         progress_callback=None,
         include_residuals=True,
     ) -> None:
@@ -320,7 +314,6 @@ class MakeCropsDetectThem:
         # dict with extra ultralytics inference parameters
         self.inference_extra_args = inference_extra_args
         # batch inference of image crops through a neural network
-        # self.batch_inference = batch_inference
         # whether to include residuals in the crops
         self.include_residuals = include_residuals
 
@@ -398,14 +391,10 @@ class MakeCropsDetectThem:
                 )
                 
                 data_all_crops.append(crop_element)
-                # if self.batch_inference:
-                self.crops = data_all_crops, batch_of_crops
-                # else:
-                #     self.crops = data_all_crops
+                
+        self.crops = data_all_crops, batch_of_crops
 
-        # if self.batch_inference:
-        return data_all_crops, batch_of_crops
-        # return data_all_crops
+        return self.crops
 
     def get_crops(self):
         """Get list of image arrays from all crops.
@@ -416,11 +405,8 @@ class MakeCropsDetectThem:
         if self.crops is None:
             return []
 
-        # if self.batch_inference:
         crops, _ = self.crops
         return [crop.crop for crop in crops]
-
-        # return [crop.crop for crop in self.crops]
 
     def detect_them(self, predictions=None):
         """

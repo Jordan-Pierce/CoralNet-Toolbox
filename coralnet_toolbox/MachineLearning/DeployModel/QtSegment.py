@@ -153,57 +153,82 @@ class Segment(Base):
         Predict the segmentation results for the given inputs.
         """
         if self.loaded_model is None:
-            return
+            return  # Early exit if there is no model loaded
+
+        # Create a result processor
+        results_processor = ResultsProcessor(
+            self.main_window,
+            self.class_mapping,
+            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+            iou_thresh=self.main_window.get_iou_thresh(),
+            min_area_thresh=self.main_window.get_area_thresh_min(),
+            max_area_thresh=self.main_window.get_area_thresh_max()
+        )
+
+        # Use current image if image_paths is not provided.
+        if not image_paths:
+            image_paths = [self.annotation_window.current_image_path]
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Create a result processor
-        results_processor = ResultsProcessor(self.main_window,
-                                             self.class_mapping,
-                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                             iou_thresh=self.main_window.get_iou_thresh(),
-                                             min_area_thresh=self.main_window.get_area_thresh_min(),
-                                             max_area_thresh=self.main_window.get_area_thresh_max())
-
-        if not image_paths:
-            # Predict only the current image
-            image_paths = [self.annotation_window.current_image_path]
-            
-        # Loop through the image paths
-        for image_path in image_paths:
-            # Check if tile inference tool is enabled
-            if self.main_window.tile_inference_tool_action.isChecked():
-                # Get tile crops (numpy arrays)
-                inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
-                
-                if not len(inputs):
+        try:
+            # Loop through the image paths
+            for image_path in image_paths:
+                inputs = self._get_inputs(image_path)
+                if inputs is None:
                     continue
-            else:
-                # TODO - Check if this is correct
-                inputs = image_path
-            
-            # Predict the detection results
-            results = self.loaded_model(inputs,
-                                        agnostic_nms=True,
-                                        conf=self.main_window.get_uncertainty_thresh(),
-                                        iou=self.main_window.get_iou_thresh(),
-                                        device=self.main_window.device,
-                                        stream=True)
-            
-        # Check if SAM model is deployed
-        if self.use_sam_dropdown.currentText() == "True":
-            # Apply SAM to the segmentation results
-            results = self.sam_dialog.predict_from_results(results, self.class_mapping)
-        
-        # Detect on crops
-        if self.main_window.tile_inference_tool_action.isChecked():
-            # Detect on crops
-            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
 
-        # Process the segmentation results
-        results_processor.process_segmentation_results(results)
+                results = self._apply_model(inputs)
+                results = self._apply_sam(results, image_path)
+                results = self._apply_tile_postprocessing(results)
+                self._process_results(results_processor, results)
+        except Exception as e:
+            print("An error occurred during prediction:", e)
+        finally:
+            QApplication.restoreOverrideCursor()
 
-        QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
+        
+    def _get_inputs(self, image_path):
+        """Get the inputs for the model prediction."""
+        # Check if tile inference tool is enabled
+        if self.main_window.tile_inference_tool_action.isChecked():
+            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
+            if not inputs:
+                return None
+        else:
+            inputs = image_path
+        return inputs
+
+    def _apply_model(self, inputs):
+        """Apply the model to the inputs."""
+        return self.loaded_model(
+            inputs,
+            agnostic_nms=True,
+            conf=self.main_window.get_uncertainty_thresh(),
+            iou=self.main_window.get_iou_thresh(),
+            device=self.main_window.device,
+            stream=True
+        )
+
+    def _apply_sam(self, results, image_path):
+        """Apply SAM to the results if needed."""
+        # Check if SAM model is deployed
+        if self.use_sam_dropdown.currentText() == "True":
+            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
+            
+        return results
+
+    def _apply_tile_postprocessing(self, results):
+        """Apply tile postprocessing if needed."""
+        # Check if tile inference tool is enabled
+        if self.main_window.tile_inference_tool_action.isChecked():
+            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
+        return results
+
+    def _process_results(self, result_processor, results):
+        """Process the results using the result processor."""
+        # Process the segmentations
+        result_processor.process_segmentation_results(results)

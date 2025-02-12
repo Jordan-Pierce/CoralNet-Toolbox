@@ -353,7 +353,8 @@ class DeployPredictorDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Setting Image")
         progress_bar.show()
-
+        progress_bar.start_progress(1)
+        
         try:
             if self.loaded_model is not None:
                 
@@ -378,6 +379,8 @@ class DeployPredictorDialog(QDialog):
                     self.loaded_model.set_image(image)
                     # Save the resized image
                     self.resized_image = image
+                    # Update the progress bar
+                    progress_bar.update_progress()
                 except Exception as e:
                     raise Exception(f"{e}\n\n\n Tip: Try setting device to CPU instead")
                 
@@ -548,68 +551,106 @@ class DeployPredictorDialog(QDialog):
 
         return results
 
-    def predict_from_results(self, results_generator, class_mapping):
+    def predict_from_results(self, results_generator, class_mapping, image_path=None):
         """
-        Make predictions using the currently loaded model using results.
-        
+        Make predictions using the currently loaded model and grouped results.
+
         Args:
             results_generator (generator): A generator that yields Ultralytics Results.
         """
-        # Create a result processor
-        result_processor = ResultsProcessor(self.main_window, 
-                                            class_mapping=class_mapping,
-                                            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                            iou_thresh=self.main_window.get_iou_thresh(),
-                                            min_area_thresh=self.main_window.get_area_thresh_min(),
-                                            max_area_thresh=self.main_window.get_area_thresh_max())
+        # Create a result processor with current settings.
+        result_processor = ResultsProcessor(
+            self.main_window, 
+            class_mapping=class_mapping,
+            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+            iou_thresh=self.main_window.get_iou_thresh(),
+            min_area_thresh=self.main_window.get_area_thresh_min(),
+            max_area_thresh=self.main_window.get_area_thresh_max()
+        )
 
-        results_dict = {}
+        # TODO fix progress bar
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
+        progress_bar.show()
 
+        # Process each batch from the results generator.
         for results in results_generator:
+            # Apply filters to the results.
             results = result_processor.apply_filters(results)
+            # Group detections by image path along with their bounding boxes and original image data.
+            group_dict = {}
+            
+            # Start progress bar
+            progress_bar.start_progress(len(results))
+            
+            # Group the results by image path
             for result in results:
                 if result:
-                    # Extract the results
-                    image_path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
+                    # Extract the detection results
+                    path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
+                    # Get the original image
+                    orig_img = result.orig_img
 
-                    if image_path not in results_dict:
-                        results_dict[image_path] = []
+                    if path not in group_dict:
+                        group_dict[path] = {'bboxes': [], 'orig_img': orig_img}
+                    # Add the bounding box to the group dictionary
+                    group_dict[path]['bboxes'].append(np.array(bbox))
+                    
+                # Update progress bar
+                progress_bar.update_progress()
 
-                    # Add the results to the dictionary
-                    results_dict[image_path].append(np.array(bbox))
+            # Reset progress bar
+            progress_bar.start_progress(len(group_dict))
+            
+            # Process each grouped result and yield predictions.
+            for path, group in group_dict.items():
+                try:
+                    if image_path:
+                        # Override the image path if provided
+                        path = image_path
+                        
+                    # Set the image in the predictor
+                    self.set_image(image=group['orig_img'], image_path=path)
+                    bboxes = np.stack(group['bboxes'])
+                    new_results = self.predict_from_prompts(bboxes, [], [])
+                    # Optionally transfer additional properties from results if available.
+                    if hasattr(results, "names"):
+                        new_results.names = results.names
+                    if hasattr(results, "boxes"):
+                        new_results.boxes = results.boxes
 
-        # Loop through each unique image path
-        for image_path in results_dict:
-            try:
-                # Set the image
-                self.set_image(image=None, image_path=image_path)
-
-                # Unpack the results
-                bboxes = np.stack(results_dict[image_path])
-
-                # Make predictions
-                new_results = self.predict_from_prompts(bboxes, [], [])
-                new_results.names = results.names
-                new_results.boxes = results.boxes
-
-                yield new_results
-
-            except Exception as e:
-                QMessageBox.critical(self.annotation_window, 
-                                     "Prediction Error", 
-                                     f"Error predicting: {e}")
+                    yield new_results
+                
+                except Exception as e:
+                    QMessageBox.critical(self.annotation_window, 
+                                         "Prediction Error", 
+                                         f"Error predicting for image {path}: {e}")
+                finally:
+                    progress_bar.update_progress()
+            
+            # Reset progress bar
+            progress_bar.stop_progress()
+        
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        progress_bar.close()
 
     def deactivate_model(self):
         """
         Deactivate the currently loaded model.
         """
+        # Clear the model
         self.loaded_model = None
         self.model_path = None
         self.image_path = None
         self.original_image = None
         self.resized_image = None
+        # Clear the cache
         gc.collect()
         empty_cache()
+        # Untoggle all tools
         self.main_window.untoggle_all_tools()
+        # Update the status bar
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self.annotation_window, "Model Deactivated", "Model deactivated")

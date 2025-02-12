@@ -178,12 +178,18 @@ class ResultsProcessor:
         for results in results_generator:
             # Apply filtering to the results
             results = self.apply_filters(results)
+            # Start the progress bar
+            progress_bar.start_progress(len(results))
+            # Loop through the results
             for result in results:
                 try:
                     if result.boxes:
+                        # Process a single detection result
                         self.process_single_detection_result(result)
                 except Exception as e:
                     print(f"Warning: Failed to process detection result\n{e}")
+                    
+                # Update the progress bar
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()
@@ -231,12 +237,18 @@ class ResultsProcessor:
         for results in results_generator:
             # Apply filtering to the results
             results = self.apply_filters(results)
+            # Start the progress bar
+            progress_bar.start_progress(len(results))
+            # Loop through the results
             for result in results:
                 try:
                     if result.boxes:
+                        # Process a single segmentation result
                         self.process_single_segmentation_result(result)
                 except Exception as e:
                     print(f"Warning: Failed to process segmentation result\n{e}")
+                    
+                # Update the progress bar
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()

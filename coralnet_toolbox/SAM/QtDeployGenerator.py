@@ -207,6 +207,7 @@ class DeployGeneratorDialog(QDialog):
         # Task dropdown
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["Detect", "Segment"])
+        self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
         label = QLabel("Choose a task to perform")
         layout.addRow(label, self.use_task_dropdown)
         
@@ -251,6 +252,10 @@ class DeployGeneratorDialog(QDialog):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def update_task(self):
+        """Update the task based on the dropdown selection."""
+        self.task = self.use_task_dropdown.currentText().lower()
         
     def is_sam_model_deployed(self):
         """
@@ -350,12 +355,14 @@ class DeployGeneratorDialog(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Model", str(e))
-
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
+            
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Stop the progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
+            
         # Exit the dialog box
         self.accept()
         
@@ -364,6 +371,9 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz = self.imgsz_spinbox.value()
         return self.imgsz
 
+    # TODO doesn't place detetions in right location when using tile inference / or it's missing areas?
+    # TODO doesn't work when using SAM as predictor (at all), paths?
+    #   It does show that some tiles do not have detections
     def predict(self, image_paths=None):
         """
         Make predictions on the given image paths using the loaded model.
@@ -374,65 +384,89 @@ class DeployGeneratorDialog(QDialog):
         if not self.loaded_model:
             return
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
         # Create a results processor
-        results_processor = ResultsProcessor(self.main_window, 
-                                             self.class_mapping,
-                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                             iou_thresh=self.main_window.get_iou_thresh(),
-                                             min_area_thresh=self.main_window.get_area_thresh_min(),
-                                             max_area_thresh=self.main_window.get_area_thresh_max())
-    
+        results_processor = ResultsProcessor(
+            self.main_window, 
+            self.class_mapping,
+            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+            iou_thresh=self.main_window.get_iou_thresh(),
+            min_area_thresh=self.main_window.get_area_thresh_min(),
+            max_area_thresh=self.main_window.get_area_thresh_max()
+        )
+
         if not image_paths:
             # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
 
-        # Loop through the image paths
-        for image_path in image_paths:
-            # Check if tile inference tool is enabled
-            if self.main_window.tile_inference_tool_action.isChecked():
-                # Get tile crops
-                inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
-                
-                if not len(inputs):
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for image_path in image_paths:
+                inputs = self._get_inputs(image_path)
+                if inputs is None:
                     continue
-            else:
-                inputs = image_path
-            
-            # Predict the detection results
-            with torch.no_grad():
-                results = self.loaded_model(inputs)
-                gc.collect()
-                empty_cache()
-            
-            # Update the results path 
-            results[0].path = image_path
-            results[0].names = self.class_mapping
-                        
-            # Check if SAM model is deployed
-            if self.use_sam_dropdown.currentText() == "True":
-                self.task = 'segment'
-                # Apply SAM to the detection results
-                results = self.sam_dialog.predict_from_results(results, self.class_mapping)
-                
-            # Check if tile inference tool is enabled
-            if self.main_window.tile_inference_tool_action.isChecked():
-                # Detect on crops
-                results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
-            
-            if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
-                # Process the segmentation results
-                results_processor.process_segmentation_results(results)
-            else:
-                # Process the detection results
-                results_processor.process_detection_results(results)
-                        
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
+
+                results = self._apply_model(inputs)
+                results = self._update_results(results, image_path)
+                results = self._apply_sam(results, image_path)
+                results = self._apply_tile_postprocessing(results)
+                self._process_results(results_processor, results)
+        except Exception as e:
+            print("An error occurred during prediction:", e)
+        finally:
+            QApplication.restoreOverrideCursor()
+
         gc.collect()
         empty_cache()
+        
+    def _get_inputs(self, image_path):
+        """Get the inputs for the model prediction."""
+        # Check if tile inference tool is enabled
+        if self.main_window.tile_inference_tool_action.isChecked():
+            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
+            if not inputs:
+                return None
+        else:
+            inputs = image_path
+        return inputs
+
+    def _apply_model(self, inputs):
+        """Apply the model to the inputs."""
+        with torch.no_grad():
+            results = self.loaded_model(inputs)
+            gc.collect()
+            empty_cache()
+        return results
+
+    def _update_results(self, results, image_path):
+        """Update the results with the image path and class mapping."""
+        # Update the results with the image path and class mapping.
+        if results and len(results) > 0:
+            results[0].path = image_path
+            results[0].names = self.class_mapping
+        return results
+
+    def _apply_sam(self, results, image_path):
+        """Apply SAM to the results if enabled."""
+        # Check if SAM is enabled
+        if self.use_sam_dropdown.currentText() == "True":
+            self.task = 'segment'
+            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
+        return results
+
+    def _apply_tile_postprocessing(self, results):
+        """Apply tile postprocessing if needed."""
+        # Check if tile inference tool is enabled
+        if self.main_window.tile_inference_tool_action.isChecked():
+            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
+        return results
+
+    def _process_results(self, results_processor, results):
+        """Process the results using the result processor."""
+        # Process the segmentations
+        if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
+            results_processor.process_segmentation_results(results)
+        else:
+            results_processor.process_detection_results(results)
 
     def deactivate_model(self):
         """
@@ -440,8 +474,11 @@ class DeployGeneratorDialog(QDialog):
         """
         self.loaded_model = None
         self.model_path = None
+        # Clean up resources
         gc.collect()
         torch.cuda.empty_cache()
+        # Untoggle all tools
         self.main_window.untoggle_all_tools()
+        # Update status bar
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self, "Model Deactivated", "Model deactivated")

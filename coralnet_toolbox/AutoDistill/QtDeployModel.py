@@ -473,10 +473,14 @@ class DeployModelDialog(QDialog):
         """
         Deactivate the currently loaded model and clean up resources.
         """
+        # Clear the model
         self.loaded_model = None
         self.model_name = None
+        # Clear cache
         gc.collect()
         torch.cuda.empty_cache()
+        # Untoggle all tools
         self.main_window.untoggle_all_tools()
+        # Update status bar
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self, "Model Deactivated", "Model deactivated")
