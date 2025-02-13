@@ -446,6 +446,8 @@ class AnnotationWindow(QGraphicsView):
         # Connect essential update signals
         annotation.selected.connect(self.select_annotation)
         annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+        # Update the view   
         self.viewport().update()
 
     def load_annotations(self, image_path=None, annotations=None):
