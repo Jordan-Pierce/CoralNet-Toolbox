@@ -66,10 +66,16 @@ class ImportCoralNetAnnotations:
 
             # Concatenate all the data
             df = pd.concat(all_data, ignore_index=True)
+            
+            # Check if Label Code is present instead of Label
+            if 'Label code' in df.columns and 'Label' not in df.columns:
+                df = df.rename(columns={'Label code': 'Label'})
 
             required_columns = ['Name', 'Row', 'Column', 'Label']
-            if not all(col in df.columns for col in required_columns):
-                raise Exception("The selected CSV files do not match the expected CoralNet format.")
+            missing_columns = [col for col in required_columns if col not in df.columns]
+
+            if missing_columns:
+                raise Exception(f"The selected CSV file(s) are missing neccessary columns: {missing_columns}")
 
             # Filter out rows with missing values
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
@@ -169,6 +175,10 @@ class ImportCoralNetAnnotations:
                     
                     # Process all valid pairs at once
                     for suggestion, confidence in valid_pairs:
+                        # Reformat confidence value to be a float between 0 and 1, if not already
+                        if confidence > 1:
+                            confidence = confidence / 100
+                            
                         suggested_label = self.label_window.get_label_by_short_code(suggestion)
                         
                         if not suggested_label:

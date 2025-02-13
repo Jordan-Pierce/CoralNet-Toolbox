@@ -471,8 +471,11 @@ class AnnotationWindow(QGraphicsView):
                 # Load the annotation
                 self.load_annotation(annotation)
 
-                # Update every 10% of the annotations
-                if idx % (total // 10) == 0:
+                # Update every 10% of the annotations (or for each item if total is small)
+                if total > 10:
+                    if idx % (total // 10) == 0:
+                        progress_bar.update_progress_percentage((idx / total) * 100)
+                else:
                     progress_bar.update_progress_percentage((idx / total) * 100)
                     
         except Exception as e:
