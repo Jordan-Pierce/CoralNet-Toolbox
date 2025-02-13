@@ -280,6 +280,9 @@ class PatchSamplingDialog(QDialog):
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
+        
+        if not sample_label:
+            return
 
         try:
             # Validate margins before sampling
