@@ -337,6 +337,10 @@ class AnnotationWindow(QGraphicsView):
         return 0, 0
 
     def center_on_annotation(self, annotation):
+        # Create graphics item if it doesn't exist
+        if not annotation.graphics_item:
+            annotation.create_graphics_item(self.scene)
+            
         # Get the bounding rect of the annotation in scene coordinates
         annotation_rect = annotation.graphics_item.boundingRect()
         annotation_center = annotation_rect.center()
@@ -387,10 +391,11 @@ class AnnotationWindow(QGraphicsView):
                 # Select the first annotation
                 new_index = 0
 
-            # Select the new annotation
-            self.select_annotation(annotations[new_index])
-            # Center the view on the new annotation
-            self.center_on_annotation(annotations[new_index])
+            if 0 <= new_index < len(annotations):
+                # Select the new annotation
+                self.select_annotation(annotations[new_index])
+                # Center the view on the new annotation
+                self.center_on_annotation(annotations[new_index])
 
     def select_annotation(self, annotation, ctrl_pressed=False):
         if not ctrl_pressed:
