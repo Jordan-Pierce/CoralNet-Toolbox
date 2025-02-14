@@ -249,10 +249,7 @@ class SelectTool(Tool):
         new_center = selected_annotation.center_xy + delta
 
         if self.annotation_window.cursorInWindow(current_pos, mapped=True):
-            rasterio_image = self.annotation_window.rasterio_image
             self.annotation_window.set_annotation_location(selected_annotation.id, new_center)
-            selected_annotation.create_cropped_image(rasterio_image)
-            self.annotation_window.main_window.confidence_window.display_cropped_image(selected_annotation)
             self.move_start_pos = current_pos
 
     def handle_resize(self, current_pos):

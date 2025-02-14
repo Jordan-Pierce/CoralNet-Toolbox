@@ -208,6 +208,7 @@ class DeployGeneratorDialog(QDialog):
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["Detect", "Segment"])
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
+        self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
         label = QLabel("Choose a task to perform")
         layout.addRow(label, self.use_task_dropdown)
         
@@ -315,6 +316,11 @@ class DeployGeneratorDialog(QDialog):
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")  
+        
+    def get_max_detections(self):
+        """Get the maximum number of detections to return."""
+        self.max_detect = self.max_detections_spinbox.value()
+        return self.max_detect
 
     def load_model(self):
         """
@@ -328,7 +334,6 @@ class DeployGeneratorDialog(QDialog):
         try:
             # Get selected model path
             self.model_path = self.models[self.model_combo.currentText()]
-            self.max_detect = self.max_detections_spinbox.value()
             self.task = self.use_task_dropdown.currentText().lower()
 
             # Set the parameters
@@ -336,10 +341,10 @@ class DeployGeneratorDialog(QDialog):
                              task=self.task, 
                              mode='predict', 
                              save=False, 
-                             max_det=self.max_detect,
+                             max_det=self.get_max_detections(),
                              imgsz=self.get_imgsz(),
-                             conf=0.00, 
-                             iou=1.00, 
+                             conf=self.main_window.get_uncertainty_thresh(), 
+                             iou=self.main_window.get_iou_thresh(), 
                              device=self.main_window.device)
             
             # Load the model
@@ -431,18 +436,29 @@ class DeployGeneratorDialog(QDialog):
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
+        # Update the model with user parameters
+        self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
+        self.loaded_model.iou = self.main_window.get_iou_thresh()
+        self.loaded_model.max_det = self.get_max_detections()
+        
+        # Make predictions
         with torch.no_grad():
             results = self.loaded_model(inputs)
             gc.collect()
             empty_cache()
-        return results
+        
+        # Return the results
+        yield results
 
-    def _update_results(self, results, image_path):
+    def _update_results(self, results_generator, image_path):
         """Update the results with the image path and class mapping."""
         # Update the results with the image path and class mapping.
-        if results and len(results) > 0:
-            results[0].path = image_path
-            results[0].names = self.class_mapping
+        for results in results_generator:
+            for result in results:
+                if result:
+                    result.path = image_path
+                    result.names = self.class_mapping
+
         return results
 
     def _apply_sam(self, results, image_path):

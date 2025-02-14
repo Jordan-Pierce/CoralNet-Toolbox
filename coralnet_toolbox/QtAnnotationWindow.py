@@ -193,7 +193,14 @@ class AnnotationWindow(QGraphicsView):
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         if annotation_id in self.annotations_dict:
             annotation = self.annotations_dict[annotation_id]
+            # Disconnect the confidence window from the annotation, so it won't update while moving
+            annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
             annotation.update_location(new_center_xy)
+            # Connect the confidence window back to the annotation
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            # Create and display the cropped image in the confidence window
+            annotation.create_cropped_image(self.rasterio_image)
+            self.main_window.confidence_window.display_cropped_image(annotation)
 
     def set_annotation_size(self, size=None, delta=0):
         if size is not None:
@@ -207,6 +214,10 @@ class AnnotationWindow(QGraphicsView):
             annotation = self.selected_annotations[0]
             if not self.is_annotation_moveable(annotation):
                 return
+            
+            # Disconnect the confidence window from the annotation, so it won't update while resizing
+            annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+            
             if isinstance(annotation, PatchAnnotation):
                 annotation.update_annotation_size(self.annotation_size)
                 if self.cursor_annotation:
@@ -222,7 +233,11 @@ class AnnotationWindow(QGraphicsView):
                 if self.cursor_annotation:
                     self.cursor_annotation.update_annotation_size(scale_factor)
 
+            # Create and display the cropped image in the confidence window
             annotation.create_cropped_image(self.rasterio_image)
+            # Connect the confidence window back to the annotation
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            # Display the cropped image in the confidence window
             self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Only emit if 1 or no annotations are selected

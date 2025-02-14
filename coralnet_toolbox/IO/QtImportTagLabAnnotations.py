@@ -197,7 +197,7 @@ class ImportTagLabAnnotations:
                             label_id=label_id
                         )
                         # Add annotation to the dict
-                        self.annotation_window.annotations_dict.add_annotation_to_dict(polygon_annotation)
+                        self.annotation_window.add_annotation_to_dict(polygon_annotation)
 
                     except Exception as e:
                         print(f"Error importing annotation: {str(e)}\n{traceback.print_exc()}")
@@ -244,7 +244,7 @@ class ImportTagLabAnnotations:
                             label_id=label_id
                         )
                         # Add annotation to the dict
-                        self.annotation_window.annotations_dict.add_annotation_to_dict(patch_annotation)
+                        self.annotation_window.add_annotation_to_dict(patch_annotation)
 
                     except Exception as e:
                         print(f"Error importing annotation: {str(e)}\n{traceback.print_exc()}")
