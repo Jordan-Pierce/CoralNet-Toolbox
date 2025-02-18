@@ -376,9 +376,6 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz = self.imgsz_spinbox.value()
         return self.imgsz
 
-    # TODO doesn't place detetions in right location when using tile inference / or it's missing areas?
-    # TODO doesn't work when using SAM as predictor (at all), paths?
-    #   It does show that some tiles do not have detections
     def predict(self, image_paths=None):
         """
         Make predictions on the given image paths using the loaded model.

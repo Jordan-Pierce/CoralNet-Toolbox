@@ -345,7 +345,7 @@ class MainWindow(QMainWindow):
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
         # Export Viscore Annotations
-        self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
+        self.export_viscore_annotations_action = QAction("Viscore (CSV, JSON)", self)
         self.export_viscore_annotations_action.triggered.connect(self.open_export_viscore_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
 
@@ -1167,6 +1167,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_export_viscore_annotations_dialog(self):
+        # Check if there are annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Export Annotations",
+                                "No annotations are present in the project.")
+            return
+        
         try:
             self.untoggle_all_tools()
             self.export_viscore_annotations_dialog.exec_()

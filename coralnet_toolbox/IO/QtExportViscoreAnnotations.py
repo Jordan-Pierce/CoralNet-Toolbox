@@ -2,12 +2,15 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
+
+import json
 import pandas as pd
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QDialog, 
-                            QVBoxLayout, QRadioButton, QPushButton, QGroupBox,
-                            QLineEdit, QFormLayout, QHBoxLayout, QLabel)
+                             QVBoxLayout, QRadioButton, QPushButton, QGroupBox,
+                             QLineEdit, QFormLayout, QHBoxLayout, QLabel, QTabWidget,
+                             QWidget)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
@@ -31,15 +34,21 @@ class ExportViscoreAnnotations(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Export Viscore Annotations")
-        self.resize(400, 400)
+        self.resize(600, 150)
 
         # Create the main layout
         self.layout = QVBoxLayout(self)
 
-        # Setup UI components
+        # Setup info section
         self.setup_info_layout()
-        self.setup_output_layout()
-        self.setup_options_layout()
+
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        self.setup_export_csv_tab()
+        self.setup_export_json_tab()
+        self.layout.addWidget(self.tab_widget)
+
+        # Setup buttons at bottom
         self.setup_buttons_layout()
 
     def setup_info_layout(self):
@@ -48,8 +57,7 @@ class ExportViscoreAnnotations(QDialog):
         layout = QVBoxLayout()
 
         info_label = QLabel(
-            "Export annotations to a Viscore-compatible CSV file. Choose the voting "
-            "type for multi-view annotations and specify the save location."
+            "Export annotations to a Viscore-compatible CSV or JSON file."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -57,61 +65,113 @@ class ExportViscoreAnnotations(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-    def setup_output_layout(self):
-        """Set up the output file selection layout."""
-        group_box = QGroupBox("Output")
-        layout = QFormLayout()
-
-        # CSV file selection
+    def setup_export_csv_tab(self):
+        """Set up the Viscore export CSV tab."""
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        # Add output group
+        output_group = QGroupBox("Output")
+        output_layout = QFormLayout()
+        
         self.csv_file_edit = QLineEdit()
         self.csv_file_button = QPushButton("Browse...")
-        self.csv_file_button.clicked.connect(self.browse_csv_file)
+        self.csv_file_button.clicked.connect(lambda: self.save_file(self.csv_file_edit, "CSV File (*.csv)"))
         file_layout = QHBoxLayout()
         file_layout.addWidget(self.csv_file_edit)
         file_layout.addWidget(self.csv_file_button)
-        layout.addRow("Save Location:", file_layout)
+        output_layout.addRow("Export CSV:", file_layout)
+        
+        output_group.setLayout(output_layout)
+        layout.addWidget(output_group)
 
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_options_layout(self):
-        """Set up the voting options layout."""
+        # Add voting options group
+        layout.addWidget(self.create_voting_options())
+        
+        tab.setLayout(layout)
+        self.tab_widget.addTab(tab, "Export JSON")
+        
+    def create_voting_options(self):
+        """Create and return the voting options group."""
         group_box = QGroupBox("Voting Options")
         layout = QVBoxLayout()
 
-        # Create horizontal layout for radio buttons
         radio_layout = QHBoxLayout()
-        
-        # Create vertical layouts for each option
         single_layout = QVBoxLayout()
         multi_layout = QVBoxLayout()
 
-        # Create and add info labels
         single_info = QLabel("Export annotations as-is")
         single_info.setWordWrap(True)
         multi_info = QLabel("Calculate consensus label for each dot")
         multi_info.setWordWrap(True)
 
-        # Create radio buttons
         self.single_voting = QRadioButton("SingleVoting")
         self.multi_voting = QRadioButton("MultiVoting")
         self.single_voting.setChecked(True)
 
-        # Add widgets to their respective vertical layouts
         single_layout.addWidget(single_info)
         single_layout.addWidget(self.single_voting)
         multi_layout.addWidget(multi_info)
         multi_layout.addWidget(self.multi_voting)
 
-        # Add vertical layouts to horizontal layout
         radio_layout.addLayout(single_layout)
         radio_layout.addLayout(multi_layout)
-
-        # Add horizontal layout to main layout
         layout.addLayout(radio_layout)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        return group_box
+
+    def setup_export_json_tab(self):
+        """Set up the advanced options tab."""
+        tab = QWidget()
+        layout = QFormLayout()
+
+        # Create input group box
+        input_group = QGroupBox("Input")
+        input_form = QFormLayout()
+
+        # JSON file choosers
+        self.label_json_edit = QLineEdit()
+        self.label_json_button = QPushButton("Browse...")
+        self.label_json_button.clicked.connect(lambda: self.browse_file(self.label_json_edit, "JSON Files (*.json)"))
+        label_json_layout = QHBoxLayout()
+        label_json_layout.addWidget(self.label_json_edit)
+        label_json_layout.addWidget(self.label_json_button)
+        input_form.addRow("Labelset File (JSON):", label_json_layout)
+
+        self.user_json_edit = QLineEdit()
+        self.user_json_button = QPushButton("Browse...")
+        self.user_json_button.clicked.connect(lambda: self.browse_file(self.user_json_edit, "JSON Files (*.json)"))
+        user_json_layout = QHBoxLayout()
+        user_json_layout.addWidget(self.user_json_edit)
+        user_json_layout.addWidget(self.user_json_button)
+        input_form.addRow("User File (JSON):", user_json_layout)
+
+        input_group.setLayout(input_form)
+        layout.addWidget(input_group)
+
+        # Create output group box
+        output_group = QGroupBox("Output")
+        output_form = QFormLayout()
+
+        # Output directory chooser
+        self.output_dir_edit = QLineEdit()
+        self.output_dir_button = QPushButton("Browse...")
+        self.output_dir_button.clicked.connect(self.browse_directory)
+        dir_layout = QHBoxLayout()
+        dir_layout.addWidget(self.output_dir_edit)
+        dir_layout.addWidget(self.output_dir_button)
+        output_form.addRow("Output Directory:", dir_layout)
+
+        # Username field 
+        self.username_edit = QLineEdit()
+        output_form.addRow("User Name:", self.username_edit)
+
+        output_group.setLayout(output_form)
+        layout.addWidget(output_group)
+
+        tab.setLayout(layout)
+        self.tab_widget.addTab(tab, "Export JSON")
 
     def setup_buttons_layout(self):
         """Set up the bottom buttons layout."""
@@ -128,21 +188,52 @@ class ExportViscoreAnnotations(QDialog):
 
         self.layout.addLayout(buttons_layout)
 
-    def browse_csv_file(self):
-        """Open file dialog to select save location."""
+    def save_file(self, line_edit, file_filter):
+        """Generic file save for file."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Viscore Annotations",
+            "Save File",
             "",
-            "CSV Files (*.csv);;All Files (*)",
+            file_filter,
             options=options
         )
         if file_path:
-            self.csv_file_edit.setText(file_path)
+            line_edit.setText(file_path)
 
+    def browse_file(self, line_edit, file_filter):
+        """Generic file browser for files."""
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select File",
+            "",
+            file_filter,
+            options=options
+        )
+        if file_path:
+            line_edit.setText(file_path)
+
+    def browse_directory(self):
+        """Browse for output directory."""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            "",
+            QFileDialog.ShowDirsOnly
+        )
+        if directory:
+            self.output_dir_edit.setText(directory)
+            
     def export_annotations(self):
         """Handle the annotation export process."""
+        if self.tab_widget.currentIndex() == 0:
+            self.export_csv_annotations()
+        else:
+            self.export_json_annotations()
+
+    def export_csv_annotations(self):
+        """Handle the CSV annotation export process."""
         file_path = self.csv_file_edit.text()
         if not file_path:
             QMessageBox.warning(self, 
@@ -240,3 +331,143 @@ class ExportViscoreAnnotations(QDialog):
                                 "Error Calculating Consensus",
                                 f"Failed to calculate consensus: {str(e)}")
             return []
+        
+    def export_json_annotations(self):
+        """Handle the JSON annotation export process."""
+        # Extract the file paths
+        labelset_json_path = self.label_json_edit.text()
+        user_json_path = self.user_json_edit.text()
+        
+        # Check if files are selected and exist
+        if not labelset_json_path or not user_json_path:
+            QMessageBox.warning(self, 
+                                "Invalid File",
+                                "Please select all JSON files.")
+            return
+            
+        if not os.path.exists(labelset_json_path) or not os.path.exists(user_json_path):
+            QMessageBox.warning(self, 
+                                "Invalid File",
+                                "One or more selected files do not exist.")
+            return
+        
+        # Extract the output directory
+        output_dir = self.output_dir_edit.text()
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Create the output file path
+        username = self.username_edit.text()
+        output_path = os.path.join(output_dir, f"samples.cl.user.{username}.json")
+        
+        # Read the labelset file
+        with open(labelset_json_path, 'r') as f:
+            labelset_file = json.load(f)
+            
+        # Extract the classlist, create a DataFrame
+        classlist = pd.DataFrame(labelset_file['classlist'], columns=['id', 'short_name', 'long_name'])
+                
+        # Read the user file
+        with open(user_json_path, 'r') as f:
+            user_file = json.load(f)
+            
+        # Create output file
+        output_file = {
+            "cl": user_file['classlist'],
+            "savefileb": os.path.basename(output_path),
+            "savefile": output_path,
+        }
+        
+        try:
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            progress_bar = ProgressBar(self, title="Reading Annotations")
+            progress_bar.show()
+            
+            # Start progress bar
+            progress_bar.start_progress(len(self.annotation_window.annotations_dict))
+
+            # Collect annotations
+            dots_dict = {}
+
+            for annotation in self.annotation_window.annotations_dict.values():
+                if isinstance(annotation, PatchAnnotation):
+                    if 'Dot' in annotation.data:
+                        # Get the annotation data
+                        data = annotation.to_coralnet()
+                        # Get the dot ID for the annotation
+                        dot = annotation.data['Dot']
+                        if dot not in dots_dict:
+                            dots_dict[dot] = []
+                        dots_dict[dot].append(data)
+
+                        # Update the progress bar
+                        progress_bar.update_progress()
+            
+            # Update progress bar
+            progress_bar.setWindowTitle("Calculating Consensus")
+            progress_bar.start_progress(len(dots_dict))
+            
+            # Loop through each dot
+            for dot, annotations in dots_dict.items():
+                
+                votes = {}
+                
+                # Loop through each annotation associated with the dot
+                for ann in annotations:
+                    for i in range(1, 6):
+                        suggestion = ann.get(f"Machine suggestion {i}")
+                        confidence = ann.get(f"Machine confidence {i}")
+                        
+                        if suggestion is None or confidence is None:
+                            continue
+                        
+                        votes[suggestion] = votes.get(suggestion, 0) + float(confidence)
+                
+                # Calculate the consensus suggestion
+                consensus_suggestion = max(votes, key=votes.get) if votes else None
+                dot['consensus'] = consensus_suggestion
+                
+                # Update the progress bar
+                progress_bar.update_progress()
+                
+            # Update the progress bar
+            progress_bar.setWindowTitle("Writing Annotations")
+            progress_bar.start_progress(len(dots_dict))
+            
+            # Loop through each dot
+            for dot, annotations in dots_dict.items():
+                # Get the dot ID
+                dot_id = dot['id']
+                
+                # If the index is currently under Review, update
+                if output_file['cl'][dot_id] == -1:
+                    try:
+                        # Map the consensus label to the classlist ID
+                        consenus = dot['consensus']
+                        label_id = classlist[classlist['long_name'] == consenus]['id'].values[0]
+                    except Exception as e:
+                        label_id = -1
+                            
+                    output_file['cl'][dot_id] = label_id
+                        
+                # Update the progress bar
+                progress_bar.update_progress()
+
+            # Save output json file
+            with open(output_path, 'w') as f:
+                json.dump(output_file, f, indent=4)
+
+            QMessageBox.information(self, 
+                                    "Success",
+                                    "Annotations have been successfully exported.")
+            self.accept()
+
+        except Exception as e:
+            QMessageBox.critical(self, 
+                                 "Critical Error",
+                                 f"Failed to export annotations: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
+            

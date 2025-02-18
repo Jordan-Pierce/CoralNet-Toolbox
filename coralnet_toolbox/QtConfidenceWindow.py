@@ -175,13 +175,15 @@ class ConfidenceWindow(QWidget):
                 self.scene.addPixmap(cropped_image)
                 # Add the scaled annotation graphic
                 self.scene.addItem(cropped_image_graphic)
-                # Add the border color
+                # Add the border color with increased width
                 self.scene.setSceneRect(QRectF(cropped_image.rect()))
+                self.graphics_view.setStyleSheet("QGraphicsView { border: 3px solid transparent; }")
                 # Fit the view to the scene
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 # Create the bar charts
                 self.create_bar_chart()
+                # Set bolder border
 
                 # Update dimensions label with original and scaled dimensions
                 orig_height = annotation.get_cropped_image().height()

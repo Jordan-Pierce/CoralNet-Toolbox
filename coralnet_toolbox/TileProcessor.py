@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from collections import Counter
+import traceback
 
 from torchvision.ops import nms
 from ultralytics.engine.results import Results
@@ -433,9 +434,13 @@ class MakeCropsDetectThem:
         )
         for idx, crop in enumerate(self.crops):
             
-            crop.calculate_real_values()
-            if self.resize_initial_size:
-                crop.resize_results()
+            try:
+                crop.calculate_real_values()
+                if self.resize_initial_size:
+                    crop.resize_results()
+            except Exception as e:
+                print(f"Error: {e}")
+                print(traceback.format_exc())
             
             if self.progress_callback is not None:
                 self.progress_callback("Resizing Detections", idx + 1, len(self.crops))
