@@ -93,6 +93,8 @@ class Classify(Base):
     def preprocess_patch_annotations(self):
         """
         Preprocess patch annotations by cropping the images concurrently.
+        
+        Deprecated: Use bulk_preprocess_patch_annotations instead.
         """
         # Get unique image paths
         self.image_paths = list(set(a.image_path for a in self.annotations))
@@ -193,6 +195,8 @@ class Classify(Base):
     def batch_inference(self):
         """
         Perform batch inference on the selected images and annotations.
+        
+        Slower doing a for-loop over the prepared patches, but it's safer and memory efficient.
         """
         self.loaded_model = self.deploy_model_dialog.loaded_model
 

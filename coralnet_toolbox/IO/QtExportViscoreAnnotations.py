@@ -270,6 +270,11 @@ class ExportViscoreAnnotations(QDialog):
 
                         # Update the progress bar
                         progress_bar.update_progress()
+                        
+            if not df or not dots_dict:
+                QMessageBox.warning(self, 
+                                    "No Annotations",
+                                    "No annotations found in project with Viscore dot data.")
 
             # Apply voting if selected
             if self.multi_voting.isChecked():
