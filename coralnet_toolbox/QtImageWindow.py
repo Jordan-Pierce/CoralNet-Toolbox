@@ -179,7 +179,7 @@ class ImageWindow(QWidget):
         # Create and setup table widget
         self.tableWidget = QTableWidget(self)
         self.tableWidget.setColumnCount(3)
-        self.tableWidget.setHorizontalHeaderLabels(["Select", "Image Name", "Annotations"])
+        self.tableWidget.setHorizontalHeaderLabels(["✓", "Image Name", "Annotations"])
         self.tableWidget.horizontalHeader().setStretchLastSection(True)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)

@@ -357,12 +357,18 @@ class ExportViscoreAnnotations(QDialog):
         
         # Create the output file path
         username = self.username_edit.text()
-        output_path = os.path.join(output_dir, f"samples.cl.user.{username}.json")
+        output_path = f"{output_dir}/samples.cl.user.{username}.json"
         
         # Read the labelset file
         with open(labelset_json_path, 'r') as f:
             labelset_file = json.load(f)
-            
+        
+        if not 'classlist' in labelset_file:
+            QMessageBox.warning(self, 
+                                "Invalid File",
+                                "The labelset file does not contain a classlist.")
+            return
+        
         # Extract the classlist, create a DataFrame
         classlist = pd.DataFrame(labelset_file['classlist'], columns=['id', 'short_name', 'long_name'])
                 
@@ -372,7 +378,7 @@ class ExportViscoreAnnotations(QDialog):
             
         # Create output file
         output_file = {
-            "cl": user_file['classlist'],
+            "cl": user_file['cl'],
             "savefileb": os.path.basename(output_path),
             "savefile": output_path,
         }
