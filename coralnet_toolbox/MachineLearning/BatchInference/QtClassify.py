@@ -1,10 +1,12 @@
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 from itertools import groupby
 from operator import attrgetter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
@@ -73,7 +75,7 @@ class Classify(Base):
                     self.annotations.extend(self.annotation_window.get_image_annotations(image_path))
 
             # Crop them, if not already cropped
-            self.preprocess_patch_annotations()
+            self.bulk_preprocess_patch_annotations()  # TODO
             self.batch_inference()
 
         except Exception as e:
@@ -90,7 +92,7 @@ class Classify(Base):
 
     def preprocess_patch_annotations(self):
         """
-        Preprocess patch annotations by cropping the images based on the annotations.
+        Preprocess patch annotations by cropping the images concurrently.
         """
         # Get unique image paths
         self.image_paths = list(set(a.image_path for a in self.annotations))
@@ -126,6 +128,64 @@ class Classify(Base):
 
         finally:
             # Restor the cursor
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
+            
+    def bulk_preprocess_patch_annotations(self):
+        """
+        Bulk preprocess patch annotations by cropping the images concurrently.
+        """
+        # Get unique image paths
+        self.image_paths = list(set(a.image_path for a in self.annotations))
+        if not self.image_paths:
+            return
+
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Cropping Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(self.image_paths))
+
+        # Group annotations by image path
+        grouped_annotations = groupby(sorted(self.annotations, key=attrgetter('image_path')),
+                                   key=attrgetter('image_path'))
+
+        try:
+            # Use ThreadPoolExecutor for parallel processing with -4 worker threads
+            with ThreadPoolExecutor(max_workers=os.cpu_count() - 4) as executor:
+                # Dictionary to track futures and their corresponding image paths
+                futures = {}
+                
+                # Process each group of annotations by image path
+                for image_path, group in grouped_annotations:
+                    # Convert group iterator to list for reuse
+                    image_annotations = list(group)
+                    
+                    # Submit cropping task asynchronously for each image
+                    # Returns a Future object representing pending execution
+                    future = executor.submit(self.annotation_window.crop_annotations, 
+                                             image_path, 
+                                             image_annotations, 
+                                             verbose=False)
+                    
+                    # Store image path for each future for error reporting
+                    futures[future] = image_path
+
+                # Process completed futures as they finish
+                for future in as_completed(futures):
+                    # Get cropped patches from completed task
+                    cropped = future.result()
+                    # Add cropped patches to prepared patches list
+                    self.prepared_patches.extend(cropped)
+                    # Update progress bar after each image is processed
+                    progress_bar.update_progress()
+
+        except Exception as exc:
+            print(f"{futures[future]} generated an exception: {exc}")
+
+        finally:
+            # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
