@@ -1209,6 +1209,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
         
+    def save_project_as(self):
+        if self.current_project_path == "":
+            self.open_save_project_dialog()
+        else:
+            self.save_project_dialog.save_project_data(self.current_project_path)
+
     # TODO update IO classes to have dialogs
     def open_import_frames_dialog(self):
         try:
