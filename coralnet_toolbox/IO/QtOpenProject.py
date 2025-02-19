@@ -30,6 +30,8 @@ class OpenProject(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
 
+        self.current_project_path = ""
+
         self.setWindowTitle("Open Project")
         self.resize(400, 100)
 
@@ -69,8 +71,8 @@ class OpenProject(QDialog):
             self.import_images(project_data['image_paths'])
             self.import_annotations(project_data['annotations'])
 
-            # Update current project label in status bar
-            self.main_window.current_project_label.setText(f"{os.path.basename(file_path)}")
+            # Update current project path
+            self.current_project_path = file_path
 
             QMessageBox.information(self.annodation_window, "Project Loaded", "Project has been successfully loaded.")
 
@@ -208,3 +210,6 @@ class OpenProject(QDialog):
             # Close progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+
+    def get_project_path(self):
+        return self.current_project_path
