@@ -11,7 +11,7 @@ from packaging import version
 from qtrangeslider import QRangeSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame)
+from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
@@ -386,6 +386,11 @@ class MainWindow(QMainWindow):
         # Add a separator
         self.file_menu.addSeparator()
         
+        # New Project
+        self.new_project_action = QAction("New Project", self)
+        self.new_project_action.triggered.connect(self.open_new_project)
+        self.file_menu.addAction(self.new_project_action)
+        
         # Open Project
         self.open_project_action = QAction("Open Project (JSON)", self)
         self.open_project_action.triggered.connect(self.open_open_project_dialog)
@@ -687,25 +692,11 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
-        # Create a frame to hold the project label
-        self.current_project_frame = QFrame()
-        self.current_project_frame.setFrameStyle(QFrame.Panel | QFrame.Sunken)
-        self.current_project_frame.setLineWidth(2)
-        self.current_project_frame.setFixedWidth(150)
-        self.current_project_frame.setFixedHeight(30)
-        self.current_project_frame.setStyleSheet("QFrame { border: 1px dotted black; }")
-
-        # Create the label with placeholder text 
-        self.current_project_label = QLabel("")
-        self.current_project_label.setEnabled(False)  # Grey out the text
-        self.current_project_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.current_project_label.setContentsMargins(5, 0, 5, 0)  # Add some padding
-        self.current_project_label.setStyleSheet("QLabel { font-weight: bold; }")
-
-        # Add label to frame
-        project_layout = QHBoxLayout(self.current_project_frame)
-        project_layout.setContentsMargins(0, 0, 0, 0)
-        project_layout.addWidget(self.current_project_label)
+        # Create a non-editable dropdown combobox for the current project path
+        self.current_project_combobox = QComboBox()
+        self.current_project_combobox.setEditable(False)
+        self.current_project_combobox.setFixedWidth(150)
+        self.current_project_combobox.setToolTip("")  # Initially empty
 
         # Labels for project, image dimensions and mouse position
         self.image_dimensions_label = QLabel("Image: 0 x 0")
@@ -716,10 +707,7 @@ class MainWindow(QMainWindow):
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
         self.view_dimensions_label.setFixedWidth(150)
-
-        # Set the project label to non-editable
-        self.current_project_label.setEnabled(False)
-
+        
         # Slider
         transparency_layout = QHBoxLayout()
         self.transparency_slider = QSlider(Qt.Horizontal)
@@ -834,7 +822,7 @@ class MainWindow(QMainWindow):
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
         # Add widgets to status bar layout
-        self.status_bar_layout.addWidget(self.current_project_frame)
+        self.status_bar_layout.addWidget(self.current_project_combobox)
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
@@ -1092,22 +1080,14 @@ class MainWindow(QMainWindow):
         if self.current_project_path:
             text = os.path.basename(self.current_project_path)
             tooltip = self.current_project_path
-            
-            # Get the label's font metrics to calculate text width
-            metrics = self.current_project_label.fontMetrics()
-            # Get available width (accounting for margins)
-            available_width = self.current_project_label.width() - 10  # Subtract margins
-            
-            # If text is too wide, elide it with "..."
-            if metrics.horizontalAdvance(text) > available_width:
-                text = metrics.elidedText(text, Qt.ElideRight, available_width)
+            # Optionally, elide text manually if needed
         else:
             text = ""
             tooltip = ""
-
-        # Update the project label
-        self.current_project_label.setText(text)
-        self.current_project_label.setToolTip(tooltip)
+        self.current_project_combobox.clear()
+        if text:
+            self.current_project_combobox.addItem(text)
+        self.current_project_combobox.setToolTip(tooltip)
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
@@ -1220,7 +1200,21 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        
+    def open_new_project(self):
+        """Confirm user wants to create a new project before closing window."""
+        reply = QMessageBox.question(self, "New Project",
+                                     "Are you sure you want to create a new project?\n\n"
+                                     "All existing data will be deleted.",
+                                     QMessageBox.Yes | QMessageBox.No,
+                                     QMessageBox.No)
 
+        if reply == QMessageBox.Yes:
+            # Close current instance and create a new window instance
+            self.close()
+            new_window = MainWindow(self.version)
+            new_window.show()
+            
     def open_open_project_dialog(self):
         try:
             self.untoggle_all_tools()
@@ -1796,3 +1790,4 @@ class ClickableAction(QAction):
         if event.button() == Qt.LeftButton:
             self.trigger()
         super().mousePressEvent(event)
+
