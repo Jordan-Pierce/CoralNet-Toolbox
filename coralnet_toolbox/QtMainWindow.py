@@ -45,7 +45,9 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
-    ExportTagLabLabels
+    ExportTagLabLabels,
+    OpenProject,
+    SaveProject
 )
 
 from coralnet_toolbox.MachineLearning import (
@@ -141,6 +143,9 @@ class MainWindow(QMainWindow):
         # Start maximized by default
         self.showMaximized()
 
+        # Project path 
+        self.current_project_path = ""
+        
         # Set the default uncertainty threshold and IoU threshold
         self.iou_thresh = 0.50
         self.uncertainty_thresh = 0.20
@@ -169,6 +174,8 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations_dialog = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
         self.import_frames_dialog = ImportFrames(self)
+        self.open_project_dialog = OpenProject(self)
+        self.save_project_dialog = SaveProject(self)
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
@@ -250,8 +257,24 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.menu_bar = self.menuBar()
 
+        # File menu
+        self.file_menu = self.menu_bar.addMenu("File")
+
+        # Open Project
+        self.open_project_action = QAction("Open Project (JSON)", self)
+        self.open_project_action.triggered.connect(self.open_open_project_dialog)
+        self.file_menu.addAction(self.open_project_action)
+
+        # Save Project
+        self.save_project_action = QAction("Save Project (JSON)", self)
+        self.save_project_action.triggered.connect(self.open_save_project_dialog)
+        self.file_menu.addAction(self.save_project_action)
+
+        # Add a separator
+        self.file_menu.addSeparator()
+        
         # Import menu
-        self.import_menu = self.menu_bar.addMenu("Import")
+        self.import_menu = self.file_menu.addMenu("Import")
 
         # Raster submenu
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
@@ -316,7 +339,7 @@ class MainWindow(QMainWindow):
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
 
         # Export menu
-        self.export_menu = self.menu_bar.addMenu("Export")
+        self.export_menu = self.file_menu.addMenu("Export")
 
         # Labels submenu
         self.export_labels_menu = self.export_menu.addMenu("Labels")
@@ -662,15 +685,20 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
-        # Labels for image dimensions and mouse position
+        # Labels for project, image dimensions and mouse position
+        self.current_project_label = QLabel("")
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.view_dimensions_label = QLabel("View: 0 x 0")  # Add QLabel for view dimensions
+        self.view_dimensions_label = QLabel("View: 0 x 0")
 
         # Set fixed width for labels to prevent them from resizing
+        self.current_project_label.setFixedWidth(200)
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
-        self.view_dimensions_label.setFixedWidth(150)  # Set fixed width for view dimensions label
+        self.view_dimensions_label.setFixedWidth(150)
+
+        # Set the project label to non-editable
+        self.current_project_label.setEnabled(False)
 
         # Slider
         transparency_layout = QHBoxLayout()
@@ -786,6 +814,7 @@ class MainWindow(QMainWindow):
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
         # Add widgets to status bar layout
+        self.status_bar_layout.addWidget(self.current_project_label)
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
@@ -1039,6 +1068,15 @@ class MainWindow(QMainWindow):
         if self.annotation_window.selected_tool == 'sam':
             self.annotation_window.tools['sam'].cancel_working_area()
 
+    def update_project_label(self):
+        if self.current_project_path:
+            text = os.path.basename(self.current_project_path)
+        else:
+            text = ""
+
+        # Update the project label
+        self.current_project_label.setText(text)
+
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
 
@@ -1150,7 +1188,33 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+
+    def open_open_project_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.open_project_dialog.exec_()
+            # Update the current project path
+            self.current_project_path = self.open_project_dialog.get_project_path()
+            self.update_project_label()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_save_project_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.save_project_dialog.exec_()
+            # Update the current project path
+            self.current_project_path = self.save_project_dialog.get_project_path()
+            self.update_project_label()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
         
+    def save_project_as(self):
+        if self.current_project_path == "":
+            self.open_save_project_dialog()
+        else:
+            self.save_project_dialog.save_project_data(self.current_project_path)
+
     # TODO update IO classes to have dialogs
     def open_import_frames_dialog(self):
         try:

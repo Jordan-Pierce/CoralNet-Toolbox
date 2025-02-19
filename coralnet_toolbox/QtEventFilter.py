@@ -83,6 +83,11 @@ class GlobalEventFilter(QObject):
                     self.image_window.cycle_next_image()
                     return True
 
+                # Handle Ctrl + Shift + S for saving project
+                if event.key() == Qt.Key_S and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+                    self.main_window.save_project_as()
+                    return True
+
             # Select all annotations on < key press with Shift+Ctrl
             if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
                 if self.main_window.select_tool_action.isChecked():
