@@ -12,6 +12,8 @@ from .QtExportAnnotations import ExportAnnotations
 from .QtExportCoralNetAnnotations import ExportCoralNetAnnotations
 from .QtExportViscoreAnnotations import ExportViscoreAnnotations
 from .QtExportTagLabAnnotations import ExportTagLabAnnotations
+from .QtOpenProject import OpenProject
+from .QtSaveProject import SaveProject
 
 __all__ = [
     'ImportImages',
@@ -27,5 +29,7 @@ __all__ = [
     'ExportAnnotations',
     'ExportCoralNetAnnotations', 
     'ExportViscoreAnnotations',
-    'ExportTagLabAnnotations'
+    'ExportTagLabAnnotations',
+    'OpenProject',
+    'SaveProject'
 ]

@@ -45,7 +45,9 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
-    ExportTagLabLabels
+    ExportTagLabLabels,
+    OpenProject,
+    SaveProject
 )
 
 from coralnet_toolbox.MachineLearning import (
@@ -169,6 +171,8 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations_dialog = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
         self.import_frames_dialog = ImportFrames(self)
+        self.open_project_dialog = OpenProject(self)
+        self.save_project_dialog = SaveProject(self)
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
@@ -250,8 +254,23 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.menu_bar = self.menuBar()
 
+        # File menu
+        self.file_menu = self.menu_bar.addMenu("File")
+
+        # Open Project
+        self.open_project_action = QAction("Open Project (JSON)", self)
+        self.open_project_action.triggered.connect(self.open_open_project_dialog)
+        self.file_menu.addAction(self.open_project_action)
+
+        # Save Project
+        self.save_project_action = QAction("Save Project (JSON)", self)
+        self.save_project_action.triggered.connect(self.open_save_project_dialog)
+        self.file_menu.addAction(self.save_project_action)
+
+        # Add a separator
+
         # Import menu
-        self.import_menu = self.menu_bar.addMenu("Import")
+        self.import_menu = self.file_menu.addMenu("Import")
 
         # Raster submenu
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
@@ -316,7 +335,7 @@ class MainWindow(QMainWindow):
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
 
         # Export menu
-        self.export_menu = self.menu_bar.addMenu("Export")
+        self.export_menu = self.file_menu.addMenu("Export")
 
         # Labels submenu
         self.export_labels_menu = self.export_menu.addMenu("Labels")
@@ -662,15 +681,18 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
+        # Current project text
+        self.current_project_label = QLabel("No project loaded")
         # Labels for image dimensions and mouse position
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.view_dimensions_label = QLabel("View: 0 x 0")  # Add QLabel for view dimensions
+        self.view_dimensions_label = QLabel("View: 0 x 0")
 
         # Set fixed width for labels to prevent them from resizing
+        self.current_project_label.setFixedWidth(200)
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
-        self.view_dimensions_label.setFixedWidth(150)  # Set fixed width for view dimensions label
+        self.view_dimensions_label.setFixedWidth(150)
 
         # Slider
         transparency_layout = QHBoxLayout()
@@ -786,6 +808,7 @@ class MainWindow(QMainWindow):
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
         # Add widgets to status bar layout
+        self.status_bar_layout.addWidget(self.current_project_label)
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
@@ -1150,6 +1173,20 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+
+    def open_open_project_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.open_project_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_save_project_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.save_project_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
         
     # TODO update IO classes to have dialogs
     def open_import_frames_dialog(self):
