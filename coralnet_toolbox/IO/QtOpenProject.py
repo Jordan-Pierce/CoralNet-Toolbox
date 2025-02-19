@@ -106,7 +106,9 @@ class OpenProject(QDialog):
         if file_path:
             self.load_project(file_path)
         else:
-            QMessageBox.warning(self, "Error", "Please select a project file first.")
+            QMessageBox.warning(self, 
+                                "Error", 
+                                "Please select a project file first.")
 
     def open_project(self):
         options = QFileDialog.Options()

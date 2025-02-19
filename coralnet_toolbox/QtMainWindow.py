@@ -257,22 +257,9 @@ class MainWindow(QMainWindow):
         # Create the menu bar
         # ----------------------------------------
         self.menu_bar = self.menuBar()
-
+        
         # File menu
         self.file_menu = self.menu_bar.addMenu("File")
-
-        # Open Project
-        self.open_project_action = QAction("Open Project (JSON)", self)
-        self.open_project_action.triggered.connect(self.open_open_project_dialog)
-        self.file_menu.addAction(self.open_project_action)
-
-        # Save Project
-        self.save_project_action = QAction("Save Project (JSON)", self)
-        self.save_project_action.triggered.connect(self.open_save_project_dialog)
-        self.file_menu.addAction(self.save_project_action)
-
-        # Add a separator
-        self.file_menu.addSeparator()
         
         # Import menu
         self.import_menu = self.file_menu.addMenu("Import")
@@ -395,6 +382,20 @@ class MainWindow(QMainWindow):
         self.export_segment_dataset_action = QAction("Segment", self)
         self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_segment_dataset_action)
+
+        # Add a separator
+        self.file_menu.addSeparator()
+        
+        # Open Project
+        self.open_project_action = QAction("Open Project (JSON)", self)
+        self.open_project_action.triggered.connect(self.open_open_project_dialog)
+        self.file_menu.addAction(self.open_project_action)
+
+        # Save Project
+        self.save_project_action = QAction("Save Project (JSON)", self)
+        self.save_project_action.setToolTip("Ctrl + Shift + S")
+        self.save_project_action.triggered.connect(self.open_save_project_dialog)
+        self.file_menu.addAction(self.save_project_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
@@ -725,7 +726,7 @@ class MainWindow(QMainWindow):
         self.transparency_slider.setRange(0, 128)
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.setTickPosition(QSlider.TicksBelow)
-        self.transparency_slider.setTickInterval(16) # Add tick marks every 16 units
+        self.transparency_slider.setTickInterval(16)  # Add tick marks every 16 units
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # Left icon (transparent)
@@ -1090,11 +1091,23 @@ class MainWindow(QMainWindow):
     def update_project_label(self):
         if self.current_project_path:
             text = os.path.basename(self.current_project_path)
+            tooltip = self.current_project_path
+            
+            # Get the label's font metrics to calculate text width
+            metrics = self.current_project_label.fontMetrics()
+            # Get available width (accounting for margins)
+            available_width = self.current_project_label.width() - 10  # Subtract margins
+            
+            # If text is too wide, elide it with "..."
+            if metrics.horizontalAdvance(text) > available_width:
+                text = metrics.elidedText(text, Qt.ElideRight, available_width)
         else:
             text = ""
+            tooltip = ""
 
         # Update the project label
         self.current_project_label.setText(text)
+        self.current_project_label.setToolTip(tooltip)
 
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
@@ -1212,9 +1225,13 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.open_project_dialog.exec_()
+            
             # Update the current project path
-            self.current_project_path = self.open_project_dialog.get_project_path()
-            self.update_project_label()
+            path = self.open_project_dialog.get_project_path()
+            if path:
+                self.current_project_path = path
+                self.update_project_label()
+                
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -1222,9 +1239,13 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.save_project_dialog.exec_()
+            
             # Update the current project path
-            self.current_project_path = self.save_project_dialog.get_project_path()
-            self.update_project_label()
+            path = self.save_project_dialog.get_project_path()
+            if path:
+                self.current_project_path = path
+                self.update_project_label()
+                
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
         

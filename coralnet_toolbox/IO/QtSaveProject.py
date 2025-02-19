@@ -32,7 +32,7 @@ class SaveProject(QDialog):
 
         self.current_project_path = self.main_window.current_project_path
 
-        self.setWindowTitle("Save Project")
+        self.setWindowTitle("Save Project (Ctrl+Shift+S)")
         self.resize(600, 100)
 
         # Setup the save file layout
@@ -40,10 +40,6 @@ class SaveProject(QDialog):
         # Setup the buttons layout
         self.setup_buttons_layout()
         
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.file_path_edit.setText(self.current_project_path)
-
     def setup_save_layout(self):
         group_box = QGroupBox("Save Project")
         layout = QFormLayout()
@@ -86,7 +82,9 @@ class SaveProject(QDialog):
         file_path = self.file_path_edit.text()
         if file_path:
             self.save_project_data(file_path)
-
+        else:  # Keep it as is
+            self.file_path_edit.setText(self.current_project_path)
+        
     def save_project_data(self, file_path):
 
         # Make cursor busy
@@ -225,3 +223,21 @@ class SaveProject(QDialog):
 
     def get_project_path(self):
         return self.current_project_path
+
+    def showEvent(self, event):
+        """Initialize the file path when dialog is shown"""
+        super().showEvent(event)
+        if self.current_project_path:
+            self.file_path_edit.setText(self.current_project_path)
+
+    def closeEvent(self, event):
+        """Handle dialog closure"""
+        if self.current_project_path:
+            self.file_path_edit.setText(self.current_project_path)
+        super().closeEvent(event)
+    
+    def reject(self):
+        """Handle dialog rejection (Cancel or close)"""
+        if self.current_project_path:
+            self.file_path_edit.setText(self.current_project_path)
+        super().reject()
