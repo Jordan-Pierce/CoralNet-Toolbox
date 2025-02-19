@@ -1216,6 +1216,7 @@ class MainWindow(QMainWindow):
             new_window.show()
             
     def open_open_project_dialog(self):
+        """Open the Open Project dialog to select a project directory"""
         try:
             self.untoggle_all_tools()
             self.open_project_dialog.exec_()
@@ -1230,6 +1231,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_save_project_dialog(self):
+        """Open the Save Project dialog to select a project directory"""
         try:
             self.untoggle_all_tools()
             self.save_project_dialog.exec_()
@@ -1244,6 +1246,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
         
     def save_project_as(self):
+        """Save the project data to a new directory"""
         if self.current_project_path == "":
             self.open_save_project_dialog()
         else:
@@ -1251,6 +1254,7 @@ class MainWindow(QMainWindow):
 
     # TODO update IO classes to have dialogs
     def open_import_frames_dialog(self):
+        """Open the Import Frames dialog to import frames into the project"""
         try:
             self.untoggle_all_tools()
             self.import_frames_dialog.exec_()
