@@ -5,9 +5,14 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import os
 import json
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLabel, 
                              QMessageBox, QGroupBox, QFormLayout, QHBoxLayout, QLineEdit,
                              QApplication)
+
+from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -25,15 +30,19 @@ class SaveProject(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
 
-        self.current_project_path = ""
+        self.current_project_path = self.main_window.current_project_path
 
         self.setWindowTitle("Save Project")
-        self.resize(400, 100)
+        self.resize(600, 100)
 
         # Setup the save file layout
         self.setup_save_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
+        
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.file_path_edit.setText(self.current_project_path)
 
     def setup_save_layout(self):
         group_box = QGroupBox("Save Project")
@@ -54,16 +63,22 @@ class SaveProject(QDialog):
 
     def setup_buttons_layout(self):
         layout = self.layout()
+        button_layout = QHBoxLayout()
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save_project)
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
-        layout.addWidget(self.save_button)
-        layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.save_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
 
     def browse_file_path(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Project JSON", "", "JSON Files (*.json);;All Files (*)", options=options)
+        file_path, _ = QFileDialog.getSaveFileName(self, 
+                                                   "Save Project JSON", 
+                                                   "", 
+                                                   "JSON Files (*.json);;All Files (*)", 
+                                                   options=options)
         if file_path:
             self.file_path_edit.setText(file_path)
 
@@ -90,10 +105,14 @@ class SaveProject(QDialog):
             # Update current project path
             self.current_project_path = file_path
 
-            QMessageBox.information(self.annotation_window, "Project Saved", "Project has been successfully saved.")
+            QMessageBox.information(self.annotation_window, 
+                                    "Project Saved", 
+                                    "Project has been successfully saved.")
 
         except Exception as e:
-            QMessageBox.warning(self.annotation_window, "Error Saving Project", f"An error occurred while saving the project: {str(e)}")
+            QMessageBox.warning(self.annotation_window, 
+                                "Error Saving Project", 
+                                f"An error occurred while saving the project: {str(e)}")
 
         finally:
             # Restor cursor to normal
@@ -104,7 +123,7 @@ class SaveProject(QDialog):
 
     def get_images(self):
         # Start the progress bar
-        total_images = len(self.image_window.images)
+        total_images = len(self.image_window.image_paths)
         progress_bar = ProgressBar(self.label_window, "Exporting Images")
         progress_bar.show()
         progress_bar.start_progress(total_images)
@@ -113,14 +132,14 @@ class SaveProject(QDialog):
             export_images = []
             
             # Loop through all of the image paths
-            for image_path in list(self.image_window.images.keys()):
+            for image_path in self.image_window.image_paths:
                 export_images.append(image_path)
                 progress_bar.update_progress()
 
         except Exception as e:
             QMessageBox.warning(self.label_window,
-                    "Error Exporting Images",
-                    f"An error occurred while exporting images: {str(e)}")
+                                "Error Exporting Images",
+                                f"An error occurred while exporting images: {str(e)}")
         finally:
             # Stop the progress bar
             progress_bar.stop_progress()
@@ -140,7 +159,7 @@ class SaveProject(QDialog):
 
             # Loop through all the labels in label list
             for i, label in enumerate(self.label_window.labels):
-                labels_data.append(label.to_dict())
+                export_labels.append(label.to_dict())
                 progress_bar.update_progress()
 
         except Exception as e:
@@ -167,8 +186,8 @@ class SaveProject(QDialog):
             # Loop through all the annotations in the annotations dict
             for annotation in self.annotation_window.annotations_dict.values():
                 image_path = annotation.image_path
-                if image_path not in export_dict:
-                    export_dict[image_path] = []
+                if image_path not in export_annotations:
+                    export_annotations[image_path] = []
 
                 # Convert annotation to dictionary based on its type
                 if isinstance(annotation, PatchAnnotation):

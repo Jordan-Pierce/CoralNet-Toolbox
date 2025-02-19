@@ -2,6 +2,7 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+import os
 import re
 import requests
 from packaging import version
@@ -685,14 +686,32 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
-        # Labels for project, image dimensions and mouse position
+        # Create a frame to hold the project label
+        self.current_project_frame = QFrame()
+        self.current_project_frame.setFrameStyle(QFrame.Panel | QFrame.Sunken)
+        self.current_project_frame.setLineWidth(2)
+        self.current_project_frame.setFixedWidth(150)
+        self.current_project_frame.setFixedHeight(30)
+        self.current_project_frame.setStyleSheet("QFrame { border: 1px dotted black; }")
+
+        # Create the label with placeholder text 
         self.current_project_label = QLabel("")
+        self.current_project_label.setEnabled(False)  # Grey out the text
+        self.current_project_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.current_project_label.setContentsMargins(5, 0, 5, 0)  # Add some padding
+        self.current_project_label.setStyleSheet("QLabel { font-weight: bold; }")
+
+        # Add label to frame
+        project_layout = QHBoxLayout(self.current_project_frame)
+        project_layout.setContentsMargins(0, 0, 0, 0)
+        project_layout.addWidget(self.current_project_label)
+
+        # Labels for project, image dimensions and mouse position
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
         self.view_dimensions_label = QLabel("View: 0 x 0")
 
         # Set fixed width for labels to prevent them from resizing
-        self.current_project_label.setFixedWidth(200)
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
         self.view_dimensions_label.setFixedWidth(150)
@@ -814,7 +833,7 @@ class MainWindow(QMainWindow):
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
         # Add widgets to status bar layout
-        self.status_bar_layout.addWidget(self.current_project_label)
+        self.status_bar_layout.addWidget(self.current_project_frame)
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
