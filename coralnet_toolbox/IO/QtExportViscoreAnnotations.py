@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import os
 
 import json
+import numpy as np
 import pandas as pd
 
 from PyQt5.QtCore import Qt
@@ -368,7 +369,7 @@ class ExportViscoreAnnotations(QDialog):
         with open(labelset_json_path, 'r') as f:
             labelset_file = json.load(f)
         
-        if not 'classlist' in labelset_file:
+        if 'classlist' not in labelset_file:
             QMessageBox.warning(self, 
                                 "Invalid File",
                                 "The labelset file does not contain a classlist.")
@@ -383,7 +384,7 @@ class ExportViscoreAnnotations(QDialog):
             
         # Create output file
         output_file = {
-            "cl": user_file['cl'],
+            "cl": [int(x) for x in user_file['cl']],  # Convert numpy ints to Python ints
             "savefileb": os.path.basename(output_path),
             "savefile": output_path,
         }
@@ -436,34 +437,23 @@ class ExportViscoreAnnotations(QDialog):
                 
                 # Calculate the consensus suggestion
                 consensus_suggestion = max(votes, key=votes.get) if votes else None
-                dot['consensus'] = consensus_suggestion
-                
-                # Update the progress bar
-                progress_bar.update_progress()
-                
-            # Update the progress bar
-            progress_bar.setWindowTitle("Writing Annotations")
-            progress_bar.start_progress(len(dots_dict))
-            
-            # Loop through each dot
-            for dot, annotations in dots_dict.items():
-                # Get the dot ID
-                dot_id = dot['id']
                 
                 # If the index is currently under Review, update
-                if output_file['cl'][dot_id] == -1:
+                if output_file['cl'][dot] == -1:
                     try:
-                        # Map the consensus label to the classlist ID
-                        consenus = dot['consensus']
-                        label_id = classlist[classlist['long_name'] == consenus]['id'].values[0]
+                        # Map the consensus label to the classlist ID and ensure it's a regular Python int
+                        label_id = int(classlist[classlist['long_name'] == consensus_suggestion]['id'].values[0])
                     except Exception as e:
                         label_id = -1
                             
-                    output_file['cl'][dot_id] = label_id
-                        
+                    output_file['cl'][dot] = label_id
+                
                 # Update the progress bar
                 progress_bar.update_progress()
-
+                
+            # Ensure all values in cl are regular Python ints before saving
+            output_file['cl'] = [int(x) for x in output_file['cl']]
+            
             # Save output json file
             with open(output_path, 'w') as f:
                 json.dump(output_file, f, indent=4)
@@ -481,4 +471,3 @@ class ExportViscoreAnnotations(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-            
