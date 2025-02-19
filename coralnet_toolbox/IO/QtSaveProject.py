@@ -25,6 +25,8 @@ class SaveProject(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
 
+        self.current_project_path = ""
+
         self.setWindowTitle("Save Project")
         self.resize(400, 100)
 
@@ -85,8 +87,8 @@ class SaveProject(QDialog):
             with open(file_path, 'w') as file:
                 json.dump(project_data, file, indent=4)
 
-            # Update current project label in status bar
-            self.main_window.current_project_label.setText(f"{os.path.basename(file_path)}")
+            # Update current project path
+            self.current_project_path = file_path
 
             QMessageBox.information(self.annotation_window, "Project Saved", "Project has been successfully saved.")
 
@@ -201,3 +203,6 @@ class SaveProject(QDialog):
             progress_bar.close()
 
         return export_annotations
+
+    def get_project_path(self):
+        return self.current_project_path

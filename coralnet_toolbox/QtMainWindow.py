@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         self.file_menu.addAction(self.save_project_action)
 
         # Add a separator
-        # TODO 
+        self.file_menu.addSeparator()
         
         # Import menu
         self.import_menu = self.file_menu.addMenu("Import")
@@ -1070,7 +1070,7 @@ class MainWindow(QMainWindow):
 
     def update_project_label(self):
         if self.current_project_path:
-            text = os.path.basename(self.curent_project_path)
+            text = os.path.basename(self.current_project_path)
         else:
             text = ""
 
@@ -1204,7 +1204,7 @@ class MainWindow(QMainWindow):
             self.untoggle_all_tools()
             self.save_project_dialog.exec_()
             # Update the current project path
-            self.current_project_path = self.open_save_project_dialog.get_project_path()
+            self.current_project_path = self.save_project_dialog.get_project_path()
             self.update_project_label()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
