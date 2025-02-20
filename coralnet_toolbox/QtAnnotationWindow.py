@@ -594,6 +594,11 @@ class AnnotationWindow(QGraphicsView):
             self.toggle_cursor_annotation()
             return
 
+        # Connect update signals
+        annotation.selected.connect(self.select_annotation)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+        
         # Create the graphics item
         annotation.create_graphics_item(self.scene)
         annotation.create_cropped_image(self.rasterio_image)
@@ -607,12 +612,7 @@ class AnnotationWindow(QGraphicsView):
         # Update the table in ImageWindow
         self.annotationCreated.emit(annotation.id)
 
-    def add_annotation_to_dict(self, annotation):
-        # Connect update signals
-        annotation.selected.connect(self.select_annotation)
-        annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-        
+    def add_annotation_to_dict(self, annotation):       
         # Add to annotation dict
         self.annotations_dict[annotation.id] = annotation
         # Add to image annotations dict (if not already present)

@@ -15,7 +15,7 @@ from coralnet_toolbox import __version__
 def run():
     try:
         app = QApplication([])
-        app.setStyle('WindowsXP')
+        app.setStyle('Fusion')
         main_window = MainWindow(__version__)
         main_window.show()
         app.exec_()
