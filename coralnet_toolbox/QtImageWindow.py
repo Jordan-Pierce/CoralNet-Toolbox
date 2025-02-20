@@ -244,7 +244,6 @@ class ImageWindow(QWidget):
 
         self.checkbox_states = {}  # Store checkbox states for each image path
 
-        # TODO add a dict mapping tableWidget row to image path, faster
         # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)

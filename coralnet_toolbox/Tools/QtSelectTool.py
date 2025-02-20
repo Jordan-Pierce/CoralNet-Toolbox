@@ -201,7 +201,6 @@ class SelectTool(Tool):
         locked_label = self.get_locked_label()
         ctrl_pressed = modifiers & Qt.ControlModifier
 
-        # TODO this keeping the rectangle selection from *adding* all
         if selected_annotation in self.annotation_window.selected_annotations:
             if ctrl_pressed:
                 # Toggle selection when Ctrl is pressed

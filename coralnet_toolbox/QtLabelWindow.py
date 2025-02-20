@@ -143,8 +143,10 @@ class Label(QWidget):
 
     @classmethod
     def from_dict(cls, data):
-        color = QColor(*data['color'])
-        return cls(data['short_label_code'], data['long_label_code'], color)
+        return cls(data['short_label_code'], 
+                   data['long_label_code'], 
+                   QColor(*data['color']),
+                   data['id'])
 
     def __repr__(self):
         return (f"Label(id={self.id}, "
