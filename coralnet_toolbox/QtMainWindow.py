@@ -2,12 +2,16 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+import os
 import re
+import requests
+from packaging import version
 
-from qtrangeslider import QRangeSlider
+
+from superqt import QRangeSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
-from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame)
+from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
                              QSpinBox, QSlider, QDialog, QPushButton, QToolButton,
@@ -27,8 +31,10 @@ from coralnet_toolbox.Tile import (
     TileInference as TileInferenceDialog,
 )
 
+# TODO update IO classes to have dialogs
 from coralnet_toolbox.IO import (
     ImportImages,
+    ImportFrames,
     ImportLabels,
     ImportTagLabLabels,
     ImportAnnotations,
@@ -40,7 +46,9 @@ from coralnet_toolbox.IO import (
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
-    ExportTagLabLabels
+    ExportTagLabLabels,
+    OpenProject,
+    SaveProject
 )
 
 from coralnet_toolbox.MachineLearning import (
@@ -78,6 +86,8 @@ from coralnet_toolbox.AutoDistill import (
 
 from coralnet_toolbox.TileProcessor import TileProcessor
 
+from coralnet_toolbox.BreakTime import SnakeGame
+
 from coralnet_toolbox.Icons import get_icon
 
 from coralnet_toolbox.utilities import get_available_device
@@ -94,7 +104,7 @@ class MainWindow(QMainWindow):
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
 
-    def __init__(self, version):
+    def __init__(self, __version__):
         super().__init__()
 
         # Define icons
@@ -119,8 +129,16 @@ class MainWindow(QMainWindow):
         self.lock_icon = get_icon("lock.png")
         self.unlock_icon = get_icon("unlock.png")
 
-        # Set the title and icon for the main window
-        self.setWindowTitle(f"CoralNet-Toolbox v{version}")
+        # Set the version
+        self.version = __version__
+        
+        # Project path 
+        self.current_project_path = ""
+        
+        # Update the project label
+        self.update_project_label()
+        
+        # Set icon
         self.setWindowIcon(self.coral_icon)
 
         # Set window flags for resizing, minimize, maximize, and customizing
@@ -132,12 +150,12 @@ class MainWindow(QMainWindow):
         
         # Start maximized by default
         self.showMaximized()
-
+        
         # Set the default uncertainty threshold and IoU threshold
-        self.iou_thresh = 0.20
-        self.uncertainty_thresh = 0.30
+        self.iou_thresh = 0.50
+        self.uncertainty_thresh = 0.20
         self.area_thresh_min = 0.00
-        self.area_thresh_max = 0.40
+        self.area_thresh_max = 0.70
 
         # Create windows
         self.annotation_window = AnnotationWindow(self)
@@ -145,20 +163,24 @@ class MainWindow(QMainWindow):
         self.label_window = LabelWindow(self)
         self.confidence_window = ConfidenceWindow(self)
 
+        # TODO update IO classes to have dialogs
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
         self.import_annotations = ImportAnnotations(self)
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
-        self.import_viscore_annotations = ImportViscoreAnnotations(self)
+        self.import_viscore_annotations_dialog = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
         self.export_labels = ExportLabels(self)
         self.export_taglab_labels = ExportTagLabLabels(self)
         self.export_annotations = ExportAnnotations(self)
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
-        self.export_viscore_annotations = ExportViscoreAnnotations(self)
+        self.export_viscore_annotations_dialog = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
+        self.import_frames_dialog = ImportFrames(self)
+        self.open_project_dialog = OpenProject(self)
+        self.save_project_dialog = SaveProject(self)
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
@@ -200,6 +222,9 @@ class MainWindow(QMainWindow):
         
         # Create the tile processor
         self.tile_processor = TileProcessor(self)
+        
+        # Create dialogs (Break Time)
+        self.snake_game_dialog = SnakeGame(self)
 
         # Connect signals to update status bar
         self.annotation_window.imageLoaded.connect(self.update_image_dimensions)
@@ -236,9 +261,12 @@ class MainWindow(QMainWindow):
         # Create the menu bar
         # ----------------------------------------
         self.menu_bar = self.menuBar()
-
+        
+        # File menu
+        self.file_menu = self.menu_bar.addMenu("File")
+        
         # Import menu
-        self.import_menu = self.menu_bar.addMenu("Import")
+        self.import_menu = self.file_menu.addMenu("Import")
 
         # Raster submenu
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
@@ -247,6 +275,11 @@ class MainWindow(QMainWindow):
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
+        
+        # Import Frames
+        self.import_frames_action = QAction("Frames from Video", self)
+        self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
+        self.import_rasters_menu.addAction(self.import_frames_action)
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
@@ -276,7 +309,7 @@ class MainWindow(QMainWindow):
 
         # Import Viscore Annotations
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.import_viscore_annotations_action.triggered.connect(self.import_viscore_annotations.import_annotations)
+        self.import_viscore_annotations_action.triggered.connect(self.open_import_viscore_annotations_dialog)
         self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
 
         # Import TagLab Annotations
@@ -298,7 +331,7 @@ class MainWindow(QMainWindow):
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
 
         # Export menu
-        self.export_menu = self.menu_bar.addMenu("Export")
+        self.export_menu = self.file_menu.addMenu("Export")
 
         # Labels submenu
         self.export_labels_menu = self.export_menu.addMenu("Labels")
@@ -327,8 +360,8 @@ class MainWindow(QMainWindow):
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
 
         # Export Viscore Annotations
-        self.export_viscore_annotations_action = QAction("Viscore (CSV)", self)
-        self.export_viscore_annotations_action.triggered.connect(self.export_viscore_annotations.export_annotations)
+        self.export_viscore_annotations_action = QAction("Viscore (CSV, JSON)", self)
+        self.export_viscore_annotations_action.triggered.connect(self.open_export_viscore_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
 
         # Export TagLab Annotations
@@ -353,6 +386,25 @@ class MainWindow(QMainWindow):
         self.export_segment_dataset_action = QAction("Segment", self)
         self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_segment_dataset_action)
+
+        # Add a separator
+        self.file_menu.addSeparator()
+        
+        # New Project
+        self.new_project_action = QAction("New Project", self)
+        self.new_project_action.triggered.connect(self.open_new_project)
+        self.file_menu.addAction(self.new_project_action)
+        
+        # Open Project
+        self.open_project_action = QAction("Open Project (JSON)", self)
+        self.open_project_action.triggered.connect(self.open_open_project_dialog)
+        self.file_menu.addAction(self.open_project_action)
+
+        # Save Project
+        self.save_project_action = QAction("Save Project (JSON)", self)
+        self.save_project_action.setToolTip("Ctrl + Shift + S")
+        self.save_project_action.triggered.connect(self.open_save_project_dialog)
+        self.file_menu.addAction(self.save_project_action)
 
         # Sampling Annotations menu
         self.annotation_sampling_action = QAction("Sample", self)
@@ -524,6 +576,27 @@ class MainWindow(QMainWindow):
         self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
         self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
+        
+        # Help menu
+        self.help_menu = self.menu_bar.addMenu("Help")
+        
+        # Check for updates
+        self.check_for_updates_action = QAction("Check for Updates", self)
+        self.check_for_updates_action.triggered.connect(self.open_check_for_updates_dialog)
+        self.help_menu.addAction(self.check_for_updates_action)
+        
+        # Issues / Feature Requests
+        self.create_issue_action = QAction("Issues / Feature Requests", self)
+        self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
+        self.help_menu.addAction(self.create_issue_action)
+        
+        # Create Break Time submenu
+        break_time_menu = self.help_menu.addMenu("Take a Break")
+        
+        # Snake Game
+        snake_game_action = QAction("Snake Game", self)
+        snake_game_action.triggered.connect(self.open_snake_game_dialog)
+        break_time_menu.addAction(snake_game_action)
 
         # ----------------------------------------
         # Create and add the toolbar
@@ -623,23 +696,23 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
-        # Labels for image dimensions and mouse position
+        # Labels for project, image dimensions and mouse position
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
-        self.view_dimensions_label = QLabel("View: 0 x 0")  # Add QLabel for view dimensions
+        self.view_dimensions_label = QLabel("View: 0 x 0")
 
         # Set fixed width for labels to prevent them from resizing
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
-        self.view_dimensions_label.setFixedWidth(150)  # Set fixed width for view dimensions label
-
+        self.view_dimensions_label.setFixedWidth(150)
+        
         # Slider
         transparency_layout = QHBoxLayout()
         self.transparency_slider = QSlider(Qt.Horizontal)
         self.transparency_slider.setRange(0, 128)
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.setTickPosition(QSlider.TicksBelow)
-        self.transparency_slider.setTickInterval(16) # Add tick marks every 16 units
+        self.transparency_slider.setTickInterval(16)  # Add tick marks every 16 units
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
 
         # Left icon (transparent)
@@ -1000,6 +1073,16 @@ class MainWindow(QMainWindow):
         if self.annotation_window.selected_tool == 'sam':
             self.annotation_window.tools['sam'].cancel_working_area()
 
+    def update_project_label(self):
+        """Update the project label in the status bar"""
+        
+        text = f"CoralNet-Toolbox v{self.version} "
+        if self.current_project_path:
+            text += f"[Project: {self.current_project_path}]"
+            
+        # Update the window title
+        self.setWindowTitle(text)
+        
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
 
@@ -1111,6 +1194,87 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        
+    def open_new_project(self):
+        """Confirm user wants to create a new project before closing window."""
+        reply = QMessageBox.question(self, "New Project",
+                                     "Are you sure you want to create a new project?\n\n"
+                                     "All existing data will be deleted.",
+                                     QMessageBox.Yes | QMessageBox.No,
+                                     QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            # Close current instance and create a new window instance
+            self.close()
+            new_window = MainWindow(self.version)
+            new_window.show()
+            
+    def open_open_project_dialog(self):
+        """Open the Open Project dialog to select a project directory"""
+        try:
+            self.untoggle_all_tools()
+            self.open_project_dialog.exec_()
+            
+            # Update the current project path
+            path = self.open_project_dialog.get_project_path()
+            if path:
+                self.current_project_path = path
+                self.update_project_label()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_save_project_dialog(self):
+        """Open the Save Project dialog to select a project directory"""
+        try:
+            self.untoggle_all_tools()
+            self.save_project_dialog.exec_()
+            
+            # Update the current project path
+            path = self.save_project_dialog.get_project_path()
+            if path:
+                self.current_project_path = path
+                self.update_project_label()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+        
+    def save_project_as(self):
+        """Save the project data to a new directory"""
+        if self.current_project_path == "":
+            self.open_save_project_dialog()
+        else:
+            self.save_project_dialog.save_project_data(self.current_project_path)
+
+    # TODO update IO classes to have dialogs
+    def open_import_frames_dialog(self):
+        """Open the Import Frames dialog to import frames into the project"""
+        try:
+            self.untoggle_all_tools()
+            self.import_frames_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_import_viscore_annotations_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.import_viscore_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_export_viscore_annotations_dialog(self):
+        # Check if there are annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Export Annotations",
+                                "No annotations are present in the project.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+            self.export_viscore_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_patch_annotation_sampling_dialog(self):
 
@@ -1127,9 +1291,6 @@ class MainWindow(QMainWindow):
             self.patch_annotation_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
-        self.patch_annotation_sampling_dialog = None
-        self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
 
     def open_import_dataset_dialog(self):
         try:
@@ -1469,6 +1630,64 @@ class MainWindow(QMainWindow):
             self.auto_distill_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_check_for_updates_dialog(self):
+        """
+        Checks if package version is up to date with PyPI.
+        """
+        try:
+            # Get package info from PyPI
+            response = requests.get("https://pypi.org/pypi/coralnet-toolbox/json", timeout=5)
+            response.raise_for_status()
+            
+            # Extract latest version
+            package_info = response.json()
+            latest_version = package_info["info"]["version"]
+            
+            # Compare versions
+            needs_update = version.parse(latest_version) > version.parse(self.version)
+            
+            if needs_update:
+                pip_command = "pip install coralnet-toolbox=={}".format(latest_version)
+                QMessageBox.information(self,
+                                        "Hey, there's an update available!",
+                                        f"A new version ({latest_version}) is available.\n\n"
+                                        f"To update, run the following command in your terminal:\n\n{pip_command}")
+            else:
+                QMessageBox.information(self,
+                                        "Nope, you're good!",
+                                        f"You are using the most current version ({self.version}).")
+            
+        except (requests.RequestException, KeyError, ValueError) as e:
+            QMessageBox.warning(self,
+                                "Update Check Failed",
+                                f"Could not check for updates.\nError: {e}")
+            
+    def open_create_new_issue_dialog(self):
+        """Display QMessageBox with link to create new issue on GitHub."""
+        try:
+            self.untoggle_all_tools()
+            # URL to create a new issue
+            here = '<a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues/new/choose">here</a>'
+            msg = QMessageBox()
+            msg.setWindowIcon(self.coral_icon)
+            msg.setWindowTitle("Issues / Feature Requests")
+            msg.setText(f'Click {here} to create a new issue or feature request.')
+            msg.setTextFormat(Qt.RichText)
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+        
+    def open_snake_game_dialog(self):
+        """
+        Open the QtSnakeGame in a new window.
+        """
+        try:
+            self.untoggle_all_tools()
+            self.snake_game_dialog.start_game()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
 
 class CollapsibleSection(QWidget):
@@ -1569,3 +1788,4 @@ class ClickableAction(QAction):
         if event.button() == Qt.LeftButton:
             self.trigger()
         super().mousePressEvent(event)
+

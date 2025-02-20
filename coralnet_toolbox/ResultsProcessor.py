@@ -178,9 +178,18 @@ class ResultsProcessor:
         for results in results_generator:
             # Apply filtering to the results
             results = self.apply_filters(results)
+            # Start the progress bar
+            progress_bar.start_progress(len(results))
+            # Loop through the results
             for result in results:
-                if result:
-                    self.process_single_detection_result(result)
+                try:
+                    if result.boxes:
+                        # Process a single detection result
+                        self.process_single_detection_result(result)
+                except Exception as e:
+                    print(f"Warning: Failed to process detection result\n{e}")
+                    
+                # Update the progress bar
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()
@@ -228,9 +237,18 @@ class ResultsProcessor:
         for results in results_generator:
             # Apply filtering to the results
             results = self.apply_filters(results)
+            # Start the progress bar
+            progress_bar.start_progress(len(results))
+            # Loop through the results
             for result in results:
-                if result:
-                    self.process_single_segmentation_result(result)
+                try:
+                    if result.boxes:
+                        # Process a single segmentation result
+                        self.process_single_segmentation_result(result)
+                except Exception as e:
+                    print(f"Warning: Failed to process segmentation result\n{e}")
+                    
+                # Update the progress bar
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()
@@ -310,7 +328,7 @@ class ResultsProcessor:
         :param predictions: Dictionary containing class predictions
         """
         # Add the annotation to the annotation window
-        self.annotation_window.annotations_dict[annotation.id] = annotation
+        self.annotation_window.add_annotation_to_dict(annotation)
 
         # Connect signals
         annotation.selected.connect(self.annotation_window.select_annotation)
@@ -326,7 +344,7 @@ class ResultsProcessor:
         # If the confidence is below the threshold, set the label to review
         if conf < self.uncertainty_thresh:
             review_label = self.label_window.get_label_by_id('-1')
-            annotation.update_label(review_label)
+            annotation.update_label(review_label, set_review=True)
 
         # If the image is currently displayed in the annotation window, update the graphics item
         if image_path == self.annotation_window.current_image_path:
@@ -401,66 +419,70 @@ class ResultsProcessor:
         
         return results
     
-    def from_supervision(self, detections, image, image_path, names):
+    def from_supervision(self, detections, images, image_paths=None, names=None):
         """
-        Convert Supervision Detections to Ultralytics Results format with proper mask handling.
+        Convert Supervision Detections to Ultralytics Results format.
+        Handles both single detection/image and lists of detections/images.
 
         Args:
-            detections (Detections): Supervision detection object
-            image (np.ndarray): Original image array
-            image_path (str, optional): Path to the image file
-            names (dict, optional): Dictionary mapping class ids to class names
+            detections: Single Detections object or list of Detections objects
+            images: Single image array or list of image arrays
+            image_paths: Single image path or list of image paths (optional)
+            names: Dictionary mapping class ids to class names (optional)
 
         Returns:
-            results_generator (generator): A generator that yields Ultralytics Results.
+            generator: Yields Ultralytics Results objects
         """
-        # Ensure original image is numpy array
-        if torch.is_tensor(image):
-            image = image.cpu().numpy()
+        # Convert single inputs to lists
+        if not isinstance(detections, list):
+            detections = [detections]
+        if not isinstance(images, list):
+            images = [images]
+        if image_paths and not isinstance(image_paths, list):
+            image_paths = [image_paths]
+        
+        # Ensure image_paths exists
+        if not image_paths:
+            image_paths = [None] * len(images)
 
-        # Create default names if not provided
-        if names is None:
-            names = {i: str(i) for i in range(len(detections))} if len(detections) > 0 else {}
+        for detection, image, path in zip(detections, images, image_paths):
+            # Ensure image is numpy array
+            if torch.is_tensor(image):
+                image = image.cpu().numpy()
 
-        if len(detections) == 0:
-            return Results(orig_img=image, path=image_path, names=names)
+            # Create default names if not provided
+            if names is None:
+                names = {i: str(i) for i in range(len(detection))} if len(detection) > 0 else {}
 
-        # Handle masks if present
-        if hasattr(detections, 'mask') and detections.mask is not None:
-            # Convert masks to torch tensor if needed
-            masks = torch.as_tensor(detections.mask, dtype=torch.float32)
+            if len(detection) == 0:
+                yield Results(orig_img=image, path=path, names=names)
+                continue
 
-            # Ensure masks have shape (N, 1, H, W)
-            if masks.ndim == 3:
-                masks = masks.unsqueeze(1)
+            # Handle masks if present
+            if hasattr(detection, 'mask') and detection.mask is not None:
+                masks = torch.as_tensor(detection.mask, dtype=torch.float32)
+                if masks.ndim == 3:
+                    masks = masks.unsqueeze(1)
+                scaled_masks = scale_masks(masks, image.shape[:2], padding=False)
+                scaled_masks = scaled_masks > 0.5
+                if scaled_masks.ndim == 4:
+                    scaled_masks = scaled_masks.squeeze(1)
+            else:
+                scaled_masks = None
 
-            # Scale masks to match original image size
-            scaled_masks = scale_masks(masks, image.shape[:2], padding=False)
-            scaled_masks = scaled_masks > 0.5  # Apply threshold
+            # Convert boxes and scores
+            scaled_boxes = torch.as_tensor(detection.xyxy, dtype=torch.float32)
+            scores = torch.as_tensor(detection.confidence, dtype=torch.float32).view(-1, 1)
+            cls = torch.as_tensor(detection.class_id, dtype=torch.int32).view(-1, 1)
 
-            # Ensure scaled_masks is 3D (N, H, W)
-            if scaled_masks.ndim == 4:
-                scaled_masks = scaled_masks.squeeze(1)
-        else:
-            scaled_masks = None
+            # Combine boxes, scores, and class IDs
+            if scaled_boxes.ndim == 1:
+                scaled_boxes = scaled_boxes.unsqueeze(0)
+            scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
 
-        # Convert boxes and scores to torch tensors
-        scaled_boxes = torch.as_tensor(detections.xyxy, dtype=torch.float32)
-        scores = torch.as_tensor(detections.confidence, dtype=torch.float32).view(-1, 1)
-
-        # Convert class IDs to torch tensor
-        cls = torch.as_tensor(detections.class_id, dtype=torch.int32).view(-1, 1)
-
-        # Combine boxes, scores, and class IDs
-        if scaled_boxes.ndim == 1:
-            scaled_boxes = scaled_boxes.unsqueeze(0)
-        scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
-
-        # Create Results object
-        results = Results(image,
-                          path=image_path,
+            # Create and yield Results object
+            yield Results(image,
+                          path=path,
                           names=names,
                           boxes=scaled_boxes, 
                           masks=scaled_masks)
-
-        yield results

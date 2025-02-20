@@ -36,7 +36,7 @@ class ImportLabels:
             try:
                 # Open the file
                 with open(file_path, 'r') as file:
-                    labels_data = json.load(file)
+                    labels = json.load(file)
 
             except Exception as e:
                 QMessageBox.warning(self.label_window,
@@ -45,25 +45,24 @@ class ImportLabels:
                 return
 
             # Create a progress bar
-            total_labels = len(labels_data)
+            total_labels = len(labels)
             progress_bar = ProgressBar(self.label_window, "Importing Labels")
             progress_bar.show()
             progress_bar.start_progress(total_labels)
 
             try:
                 # Import the labels
-                for label_data in labels_data:
-                    label = Label.from_dict(label_data)
-                    if not self.label_window.label_exists(label.short_label_code, label.long_label_code):
-                        self.label_window.add_label(label.short_label_code,
-                                                    label.long_label_code,
-                                                    label.color,
-                                                    label.id)
+                for label in labels:
+                    # Create a new label object
+                    label = Label.from_dict(label)
+                    
+                    # Create a new label if it doesn't already exist
+                    self.label_window.add_label_if_not_exists(label.short_label_code,
+                                                              label.long_label_code,
+                                                              label.color,
+                                                              label.id)
                     # Update the progress bar
                     progress_bar.update_progress()
-
-                # Set the Review label as active
-                self.label_window.set_active_label(self.label_window.get_label_by_long_code("Review"))
 
                 QMessageBox.information(self.label_window,
                                         "Labels Imported",

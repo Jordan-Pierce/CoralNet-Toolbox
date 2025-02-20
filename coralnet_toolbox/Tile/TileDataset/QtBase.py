@@ -255,31 +255,6 @@ class Base(QDialog):
             return False
         return True
 
-    def validate_slice_wh(self, slice_wh):
-        """
-        Validate the slice_wh parameter to ensure it is a tuple of two integers.
-
-        :param slice_wh: Slice width and height
-        :return: True if valid, False otherwise
-        """
-        if not isinstance(slice_wh, tuple) or len(slice_wh) != 2 or not all(isinstance(i, int) for i in slice_wh):
-            QMessageBox.warning(self, "Invalid Tile Size", "The tile size must be a tuple of two integers.")
-            return False
-        return True
-
-    def validate_overlap_wh(self, overlap_wh):
-        """
-        Validate the overlap_wh parameter to ensure it is a tuple of two floats.
-
-        :param overlap_wh: Overlap width and height
-        :return: True if valid, False otherwise
-        """
-        correct_type = all(isinstance(i, (int, float)) for i in overlap_wh)
-        if not isinstance(overlap_wh, tuple) or len(overlap_wh) != 2 or not correct_type:
-            QMessageBox.warning(self, "Invalid Overlap", "The overlap must be a tuple of two floats.")
-            return False
-        return True
-
     def validate_ext(self, ext):
         """
         Validate the ext parameter to ensure it is a string and starts with a dot.
@@ -345,33 +320,6 @@ class Base(QDialog):
             return False
         return True
 
-    def validate_margins(self, margins):
-        """
-        Validate the margins parameter to ensure it is a valid type and value.
-
-        :param margins: Margins
-        :return: True if valid, False otherwise
-        """
-        if isinstance(margins, (int, float)):
-            if isinstance(margins, float) and not (0.0 <= margins <= 1.0):
-                QMessageBox.warning(self,
-                                    "Invalid Margins",
-                                    "The margin percentage must be between 0 and 1.")
-                return False
-            return True
-        elif isinstance(margins, tuple) and len(margins) == 4:
-            if all(isinstance(i, (int, float)) for i in margins):
-                if all(isinstance(i, float) for i in margins) and not all(0.0 <= i <= 1.0 for i in margins):
-                    QMessageBox.warning(self,
-                                        "Invalid Margins",
-                                        "All margin percentages must be between 0 and 1.")
-                    return False
-                return True
-        QMessageBox.warning(self,
-                            "Invalid Margins",
-                            "The margins must be a single integer, float, or a tuple of four integers/floats.")
-        return False
-
     def copy_class_mapping(self):
         """Checks to see if a class_mapping.json file exists in the source directory
         and copies it to the destination directory."""
@@ -411,9 +359,9 @@ class Base(QDialog):
         dst = os.path.join(self.dst_edit.text(), self.dst_name_edit.text())
 
         # Extract values
-        margins = self.margins_input.get_value()
-        slice_wh = self.tile_size_input.get_value()
-        overlap_wh = self.overlap_input.get_value(slice_wh[0], slice_wh[1])
+        margins = self.margins_input.get_margins(validate=False)
+        slice_wh = self.tile_size_input.get_sizes(validate=False)
+        overlap_wh = self.overlap_input.get_overlap(validate=False, return_pixels=True)
 
         input_ext = self.input_ext_combo.currentText()
         output_ext = self.output_ext_combo.currentText()
@@ -429,14 +377,11 @@ class Base(QDialog):
         # Perform all validation checks
         validation_checks = [
             (self.validate_source_directory(src), "Source directory validation failed"),
-            (self.validate_slice_wh(slice_wh), "Slice width/height validation failed"),
-            (self.validate_overlap_wh(overlap_wh), "Overlap width/height validation failed"),
             (self.validate_ext(input_ext), "Input extension validation failed"),
             (self.validate_ext(output_ext), "Output extension validation failed"),
             (self.validate_densify_factor(densify_factor), "Densify factor validation failed"),
             (self.validate_smoothing_tolerance(smoothing_tolerance), "Smoothing tolerance validation failed"),
             (self.validate_ratios(train_ratio, valid_ratio, test_ratio), "Dataset split ratios validation failed"),
-            (self.validate_margins(margins), "Margins validation failed")
         ]
 
         # Check if any validation failed

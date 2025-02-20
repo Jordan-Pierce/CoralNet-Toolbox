@@ -7,7 +7,6 @@ from coralnet_toolbox.utilities import console_user
 
 from coralnet_toolbox import __version__
 
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Main Function
 # ----------------------------------------------------------------------------------------------------------------------
@@ -17,7 +16,7 @@ def run():
     try:
         app = QApplication([])
         app.setStyle('WindowsXP')
-        main_window = MainWindow(version=__version__)
+        main_window = MainWindow(__version__)
         main_window.show()
         app.exec_()
 

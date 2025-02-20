@@ -8,7 +8,7 @@ import os
 import numpy as np
 import torch
 
-from qtrangeslider import QRangeSlider
+from superqt import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
@@ -42,7 +42,7 @@ class DeployPredictorDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("sam.png"))
-        self.setWindowTitle("SAM Deploy Model") 
+        self.setWindowTitle("SAM Deploy Model")
         self.resize(400, 325)
 
         # Initialize instance variables
@@ -59,7 +59,7 @@ class DeployPredictorDialog(QDialog):
 
         # Create the layout
         self.layout = QVBoxLayout(self)
-        
+
         # Setup the info layout
         self.setup_info_layout()
         # Setup the model layout
@@ -70,7 +70,7 @@ class DeployPredictorDialog(QDialog):
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
-        
+
     def showEvent(self, event):
         """
         Handle the show event to update label options and sync uncertainty threshold.
@@ -82,34 +82,34 @@ class DeployPredictorDialog(QDialog):
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Choose a Predictor to deploy and use interactively with the SAM tool and others.")
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_models_layout(self):
         """
         Setup the models layout.
         """
         group_box = QGroupBox("Models")
         layout = QVBoxLayout()
-        
+
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        
+
         # Define available models
         self.models = {
             "RepViT-SAM": "repvit.pt",
@@ -127,24 +127,24 @@ class DeployPredictorDialog(QDialog):
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_parameters_layout(self):
         """
         Setup parameter control section in a group box.
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
-        
+
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
         layout.addRow("Resize Image:", self.resize_image_dropdown)
-        
+
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 65536)
@@ -163,7 +163,7 @@ class DeployPredictorDialog(QDialog):
         self.uncertainty_threshold_label = QLabel(f"{self.uncertainty_thresh:.2f}")
         layout.addRow("Uncertainty Threshold", self.uncertainty_threshold_slider)
         layout.addRow("", self.uncertainty_threshold_label)
-        
+
         # IoU threshold controls
         self.iou_thresh = self.main_window.get_iou_thresh()
         self.iou_threshold_slider = QSlider(Qt.Horizontal)
@@ -175,7 +175,7 @@ class DeployPredictorDialog(QDialog):
         self.iou_threshold_label = QLabel(f"{self.iou_thresh:.2f}")
         layout.addRow("IoU Threshold", self.iou_threshold_slider)
         layout.addRow("", self.iou_threshold_label)
-        
+
         # Area threshold controls
         min_val, max_val = self.main_window.get_area_thresh()
         self.area_thresh_min = int(min_val * 100)
@@ -189,41 +189,41 @@ class DeployPredictorDialog(QDialog):
         self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
         layout.addRow("Area Threshold", self.area_threshold_slider)
         layout.addRow("", self.area_threshold_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_buttons_layout(self):
         """
         Setup action buttons in a group box.
         """
         group_box = QGroupBox("Actions")
         layout = QHBoxLayout()
-        
+
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
         layout.addWidget(load_button)
-        
+
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
         layout.addWidget(deactivate_button)
-        
+
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)        
-        
+        self.layout.addWidget(group_box)
+
     def setup_status_layout(self):
         """
         Setup status display in a group box.
         """
         group_box = QGroupBox("Status")
         layout = QVBoxLayout()
-        
+
         self.status_bar = QLabel("No model loaded")
         layout.addWidget(self.status_bar)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
         current_value = self.main_window.get_uncertainty_thresh()
@@ -235,7 +235,7 @@ class DeployPredictorDialog(QDialog):
         current_value = self.main_window.get_iou_thresh()
         self.iou_threshold_slider.setValue(int(current_value * 100))
         self.iou_thresh = current_value
-        
+
     def initialize_area_threshold(self):
         """Initialize the area threshold range slider"""
         current_min, current_max = self.main_window.get_area_thresh()
@@ -253,7 +253,7 @@ class DeployPredictorDialog(QDialog):
     def update_iou_label(self, value):
         """Update IoU threshold and label"""
         value = value / 100.0
-        self.iou_thresh = value 
+        self.iou_thresh = value
         self.main_window.update_iou_thresh(value)
         self.iou_threshold_label.setText(f"{value:.2f}")
 
@@ -264,7 +264,7 @@ class DeployPredictorDialog(QDialog):
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        
+
     def download_model_weights(self, model_path):
         """
         Download the model weights if they are not present.
@@ -316,7 +316,7 @@ class DeployPredictorDialog(QDialog):
             # Move to device and set eval mode
             self.loaded_model.model.to(device=self.main_window.device)
             self.loaded_model.model.eval()
-            
+
             self.status_bar.setText("Model loaded")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
@@ -353,15 +353,16 @@ class DeployPredictorDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Setting Image")
         progress_bar.show()
+        progress_bar.start_progress(1)
 
         try:
             if self.loaded_model is not None:
-                
+
                 if image is None and image_path is not None:
                     # Open the image using rasterio
                     image = self.main_window.image_window.rasterio_open(image_path)
                     image = rasterio_to_numpy(image)
-                    
+
                 # Preprocess the image
                 image = preprocess_image(image)
 
@@ -378,9 +379,11 @@ class DeployPredictorDialog(QDialog):
                     self.loaded_model.set_image(image)
                     # Save the resized image
                     self.resized_image = image
+                    # Update the progress bar
+                    progress_bar.update_progress()
                 except Exception as e:
                     raise Exception(f"{e}\n\n\n Tip: Try setting device to CPU instead")
-                
+
             else:
                 raise Exception("You must load a SAM Predictor model first")
 
@@ -389,10 +392,10 @@ class DeployPredictorDialog(QDialog):
             # Deactivate the SAM tool if it is active, clearing the scene
             if self.annotation_window.tools["sam"].is_active:
                 self.annotation_window.tools["sam"].deactivate()
-                
+
             # Deactivate the model
             self.deactivate_model()
-            
+
         finally:
             # Ensure cleanup happens even if an error occurs
             progress_bar.stop_progress()
@@ -451,7 +454,7 @@ class DeployPredictorDialog(QDialog):
         # Return in original shape if it was a single box
         if len(original_shape) == 1:
             bbox_coords = bbox_coords.squeeze(0)
-            
+
         return bbox_coords
 
     def transform_points(self, points, labels):
@@ -486,7 +489,7 @@ class DeployPredictorDialog(QDialog):
         """
         input_bbox = torch.as_tensor(bboxes, dtype=torch.int64)
         input_bbox = input_bbox.to(self.main_window.device)
-        
+
         # Scale the bounding boxes
         bbox_coords = self.scale_boxes(input_bbox)
 
@@ -498,18 +501,18 @@ class DeployPredictorDialog(QDialog):
     def predict_from_prompts(self, bbox, points, labels):
         """
         Make predictions using the currently loaded model using prompts.
-        
+
         Args:
             bbox (np.ndarray): The bounding boxes to use as prompts.
             points (np.ndarray): The points to use as prompts.
             labels (list): The labels for each point.
-            
+
         Returns:
             results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
-            QMessageBox.critical(self.annotation_window, 
-                                 "Model Not Loaded", 
+            QMessageBox.critical(self.annotation_window,
+                                 "Model Not Loaded",
                                  "Model not loaded, cannot make predictions")
             return None
 
@@ -528,9 +531,9 @@ class DeployPredictorDialog(QDialog):
                                                                point_coords=point_coords,
                                                                point_labels=point_labels,
                                                                num_multimask_outputs=1)
-            
+
             # Create a results processor
-            results_processor = ResultsProcessor(self.main_window, 
+            results_processor = ResultsProcessor(self.main_window,
                                                  class_mapping=None,
                                                  uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
                                                  iou_thresh=self.main_window.get_iou_thresh(),
@@ -541,75 +544,113 @@ class DeployPredictorDialog(QDialog):
             results = results_processor.from_sam(masks, scores, self.original_image, self.image_path)
 
         except Exception as e:
-            QMessageBox.critical(self.annotation_window, 
-                                 "Prediction Error", 
+            QMessageBox.critical(self.annotation_window,
+                                 "Prediction Error",
                                  f"Error predicting: {e}")
             return None
 
         return results
 
-    def predict_from_results(self, results_generator, class_mapping):
+    def predict_from_results(self, results_generator, class_mapping, image_path=None):
         """
-        Make predictions using the currently loaded model using results.
-        
+        Make predictions using the currently loaded model and grouped results.
+
         Args:
             results_generator (generator): A generator that yields Ultralytics Results.
         """
-        # Create a result processor
-        result_processor = ResultsProcessor(self.main_window, 
-                                            class_mapping=class_mapping,
-                                            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                            iou_thresh=self.main_window.get_iou_thresh(),
-                                            min_area_thresh=self.main_window.get_area_thresh_min(),
-                                            max_area_thresh=self.main_window.get_area_thresh_max())
+        # Create a result processor with current settings.
+        result_processor = ResultsProcessor(
+            self.main_window,
+            class_mapping=class_mapping,
+            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+            iou_thresh=self.main_window.get_iou_thresh(),
+            min_area_thresh=self.main_window.get_area_thresh_min(),
+            max_area_thresh=self.main_window.get_area_thresh_max()
+        )
 
-        results_dict = {}
+        # TODO fix progress bar
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
+        progress_bar.show()
 
+        # Process each batch from the results generator.
         for results in results_generator:
+            # Apply filters to the results.
             results = result_processor.apply_filters(results)
+            # Group detections by image path along with their bounding boxes and original image data.
+            group_dict = {}
+
+            # Start progress bar
+            progress_bar.start_progress(len(results))
+
+            # Group the results by image path
             for result in results:
                 if result:
-                    # Extract the results
-                    image_path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
+                    # Extract the detection results
+                    path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
+                    # Get the original image
+                    orig_img = result.orig_img
 
-                    if image_path not in results_dict:
-                        results_dict[image_path] = []
+                    if path not in group_dict:
+                        group_dict[path] = {'bboxes': [], 'orig_img': orig_img}
+                    # Add the bounding box to the group dictionary
+                    group_dict[path]['bboxes'].append(np.array(bbox))
 
-                    # Add the results to the dictionary
-                    results_dict[image_path].append(np.array(bbox))
+                # Update progress bar
+                progress_bar.update_progress()
 
-        # Loop through each unique image path
-        for image_path in results_dict:
-            try:
-                # Set the image
-                self.set_image(image=None, image_path=image_path)
+            # Reset progress bar
+            progress_bar.start_progress(len(group_dict))
 
-                # Unpack the results
-                bboxes = np.stack(results_dict[image_path])
+            # Process each grouped result and yield predictions.
+            for path, group in group_dict.items():
+                try:
+                    if image_path:
+                        # Override the image path if provided
+                        path = image_path
 
-                # Make predictions
-                new_results = self.predict_from_prompts(bboxes, [], [])
-                new_results.names = results.names
-                new_results.boxes = results.boxes
+                    # Set the image in the predictor
+                    self.set_image(image=group['orig_img'], image_path=path)
+                    bboxes = np.stack(group['bboxes'])
+                    new_results = self.predict_from_prompts(bboxes, [], [])
+                    # Optionally transfer additional properties from results if available.
+                    if hasattr(results, "names"):
+                        new_results.names = results.names
+                    if hasattr(results, "boxes"):
+                        new_results.boxes = results.boxes
 
-                yield new_results
+                    yield new_results
 
-            except Exception as e:
-                QMessageBox.critical(self.annotation_window, 
-                                     "Prediction Error", 
-                                     f"Error predicting: {e}")
+                except Exception as e:
+                    QMessageBox.critical(self.annotation_window,
+                                         "Prediction Error",
+                                         f"Error predicting for image {path}: {e}")
+                finally:
+                    progress_bar.update_progress()
+
+            # Reset progress bar
+            progress_bar.stop_progress()
+
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        progress_bar.close()
 
     def deactivate_model(self):
         """
         Deactivate the currently loaded model.
         """
+        # Clear the model
         self.loaded_model = None
         self.model_path = None
         self.image_path = None
         self.original_image = None
         self.resized_image = None
+        # Clear the cache
         gc.collect()
         empty_cache()
+        # Untoggle all tools
         self.main_window.untoggle_all_tools()
+        # Update the status bar
         self.status_bar.setText("No model loaded")
         QMessageBox.information(self.annotation_window, "Model Deactivated", "Model deactivated")

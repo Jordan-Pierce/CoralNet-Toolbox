@@ -235,10 +235,11 @@ class PolygonAnnotation(Annotation):
         cropped_polygon = QPolygonF(cropped_points)
         cropped_image_graphic = QGraphicsPolygonItem(cropped_polygon)
 
+        # Create dotted line pen with label color
         color = QColor(self.label.color)
-        color.setAlpha(64)
-        brush = QBrush(color)
-        cropped_image_graphic.setBrush(brush)
+        pen = QPen(color, 3, Qt.DotLine)
+        cropped_image_graphic.setPen(pen)
+        cropped_image_graphic.setBrush(QBrush(Qt.NoBrush)) 
         cropped_image_graphic.update()
 
         return cropped_image_graphic

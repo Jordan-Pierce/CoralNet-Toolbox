@@ -95,17 +95,17 @@ class RectangleAnnotation(Annotation):
         if self.cropped_image is None:
             return None
 
-        # Create a graphic item (perimeter) for the cropped image, transform the points
+        # Create a graphic item (perimeter) for the cropped image, transform the points 
         cropped_image_graphic = QGraphicsRectItem(self.top_left.x() - self.cropped_bbox[0],
                                                   self.top_left.y() - self.cropped_bbox[1],
                                                   self.bottom_right.x() - self.cropped_bbox[0],
                                                   self.bottom_right.y() - self.cropped_bbox[1])
 
         color = QColor(self.label.color)
-        color.setAlpha(64)
-        pen = QPen(color, 4, Qt.SolidLine)
+        color.setAlpha(128)
+        pen = QPen(color, 3, Qt.DashLine)
         cropped_image_graphic.setPen(pen)
-        cropped_image_graphic.setBrush(QBrush(color))
+        cropped_image_graphic.setBrush(QBrush(Qt.NoBrush))
         cropped_image_graphic.update()
 
         return cropped_image_graphic

@@ -134,22 +134,36 @@ class Classify(Base):
             # If no annotations are available, return
             return
 
+        # Create lists to store valid images and their corresponding annotations
         images_np = []
+        valid_inputs = []
+        
+        # Only add images and inputs that have valid cropped images
         for annotation in inputs:
-            images_np.append(pixmap_to_numpy(annotation.cropped_image))
+            if hasattr(annotation, 'cropped_image') and annotation.cropped_image:
+                try:
+                    img = pixmap_to_numpy(annotation.cropped_image)
+                    images_np.append(img)
+                    valid_inputs.append(annotation)
+                except Exception as e:
+                    print(f"Error converting pixmap to numpy: {str(e)}")
+                    continue
 
-        # Predict the classification results
-        results = self.loaded_model(images_np,
-                                    conf=self.main_window.get_uncertainty_thresh(),
-                                    device=self.main_window.device,
-                                    stream=True)
-        # Create a result processor
-        results_processor = ResultsProcessor(self.main_window,
-                                             self.class_mapping,
-                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh())
+        # Only proceed if we have valid images to process
+        if images_np:
+            # Predict the classification results
+            results = self.loaded_model(images_np,
+                                        conf=self.main_window.get_uncertainty_thresh(),
+                                        device=self.main_window.device,
+                                        stream=True)
+            
+            # Create a result processor
+            results_processor = ResultsProcessor(self.main_window,
+                                                 self.class_mapping,
+                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh())
 
-        # Process the classification results
-        results_processor.process_classification_results(results, inputs)
+            # Process the classification results using the valid inputs
+            results_processor.process_classification_results(results, valid_inputs)
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()

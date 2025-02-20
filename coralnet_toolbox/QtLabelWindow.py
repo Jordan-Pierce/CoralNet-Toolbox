@@ -143,8 +143,10 @@ class Label(QWidget):
 
     @classmethod
     def from_dict(cls, data):
-        color = QColor(*data['color'])
-        return cls(data['short_label_code'], data['long_label_code'], color)
+        return cls(data['short_label_code'], 
+                   data['long_label_code'], 
+                   QColor(*data['color']),
+                   data['id'])
 
     def __repr__(self):
         return (f"Label(id={self.id}, "
@@ -465,14 +467,18 @@ class LabelWindow(QWidget):
         self.update_labels_per_row()
         self.reorganize_labels()
 
-        # Refresh the scene with the new label
-        self.annotation_window.set_image(self.annotation_window.current_image_path)
+        # Refresh the scene with the new label (if applicable)
+        current_image_path = self.annotation_window.current_image_path
+        if current_image_path:
+            self.annotation_window.set_image(current_image_path)
 
     def delete_label(self, label):
         if (label.short_label_code == "Review" and
                 label.long_label_code == "Review" and
                 label.color == QColor(255, 255, 255)):
-            QMessageBox.warning(self, "Cannot Delete Label", "The 'Review' label cannot be deleted.")
+            QMessageBox.warning(self, 
+                                "Cannot Delete Label", 
+                                "The 'Review' label cannot be deleted.")
             return
 
         if self.show_confirmation_dialog:
@@ -741,7 +747,9 @@ class EditLabelDialog(QDialog):
     def validate_and_accept(self):
         # Cannot edit Review
         if self.label.short_label_code == 'Review' and self.label.long_label_code == 'Review':
-            QMessageBox.warning(self, "Cannot Edit Label", "The 'Review' label cannot be edited.")
+            QMessageBox.warning(self, 
+                                "Cannot Edit Label", 
+                                "The 'Review' label cannot be edited.")
             return
 
         # Can map other labels to Review
@@ -749,7 +757,9 @@ class EditLabelDialog(QDialog):
         long_label_code = self.long_label_input.text().strip()
 
         if not short_label_code or not long_label_code:
-            QMessageBox.warning(self, "Input Error", "Both short and long label codes are required.")
+            QMessageBox.warning(self, 
+                                "Input Error", 
+                                "Both short and long label codes are required.")
             return
 
         existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
@@ -770,13 +780,20 @@ class EditLabelDialog(QDialog):
             if result == QMessageBox.Yes:
                 self.label_window.edit_labels(self.label, existing_label, delete_old=True)
                 self.accept()
-
-            return
         else:
+            # Update the label itself
             self.label.short_label_code = short_label_code
             self.label.long_label_code = long_label_code
             self.label.color = self.color
             self.label.update_label_color(self.color)
-            self.accept()
+            self.label.update()
 
+            # Force a refresh of the label window grid
+            self.label_window.update_labels_per_row()
+            self.label_window.reorganize_labels()
+            self.label_window.scroll_area.viewport().update()
+
+            # Update annotation window
             self.label_window.edit_labels(self.label, self.label, delete_old=False)
+            
+            self.accept()

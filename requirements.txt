@@ -1,5 +1,5 @@
 PyQt5>=5.15.11
-QtRangeSlider>=0.1.5
+superqt>=0.7.1
 ultralytics==8.3.0
 supervision>=0.24.0
 scikit-learn

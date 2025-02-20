@@ -79,9 +79,8 @@ class PatchAnnotation(Annotation):
 
         cropped_image_graphic = QGraphicsRectItem(cropped_rect)
         color = QColor(self.label.color)
-        color.setAlpha(64)
-        brush = QBrush(color)
-        cropped_image_graphic.setBrush(brush)
+        pen = QPen(color, 3, Qt.DotLine)  # Create dotted line pen with label color
+        cropped_image_graphic.setPen(pen)  # Set the pen for the outline
         cropped_image_graphic.update()
 
         return cropped_image_graphic

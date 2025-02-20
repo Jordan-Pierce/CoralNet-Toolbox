@@ -83,3 +83,13 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 # Run
 coralnet-toolbox
 ```
+
+Or, if you want to simply install from the `toolbox` from the GitHub repo directly you can do the following:
+
+```bash
+# cmd
+
+pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main
+
+# replace @main with a different branch if you want to test out experimental code
+```

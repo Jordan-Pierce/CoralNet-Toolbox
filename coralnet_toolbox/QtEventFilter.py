@@ -29,7 +29,7 @@ class GlobalEventFilter(QObject):
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
-            if event.modifiers() & Qt.ControlModifier:
+            if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
                 # Handle WASD keys for selecting Label
                 if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
@@ -82,6 +82,11 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Down:
                     self.image_window.cycle_next_image()
                     return True
+
+            # Handle Ctrl + Shift + S for saving project
+            if event.key() == Qt.Key_S and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
+                self.main_window.save_project_as()
+                return True
 
             # Select all annotations on < key press with Shift+Ctrl
             if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):

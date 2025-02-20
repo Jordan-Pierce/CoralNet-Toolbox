@@ -179,7 +179,7 @@ class ImageWindow(QWidget):
         # Create and setup table widget
         self.tableWidget = QTableWidget(self)
         self.tableWidget.setColumnCount(3)
-        self.tableWidget.setHorizontalHeaderLabels(["Select", "Image Name", "Annotations"])
+        self.tableWidget.setHorizontalHeaderLabels(["✓", "Image Name", "Annotations"])
         self.tableWidget.horizontalHeader().setStretchLastSection(True)
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
@@ -242,7 +242,8 @@ class ImageWindow(QWidget):
         self.current_workers = []  # List to keep track of running workers
         self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
 
-        # TODO add a dict mapping tableWidget row to image path, faster
+        self.checkbox_states = {}  # Store checkbox states for each image path
+
         # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
@@ -269,30 +270,43 @@ class ImageWindow(QWidget):
         # Center align the column headers
         self.tableWidget.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
 
-        for path in self.filtered_image_paths:
-            row_position = self.tableWidget.rowCount()
-            self.tableWidget.insertRow(row_position)
+        # First create all rows
+        for _ in self.filtered_image_paths:
+            self.tableWidget.insertRow(self.tableWidget.rowCount())
 
-            # Add checkbox
+        # Then update each row using update_table_row
+        for path in self.filtered_image_paths:
+            self.update_table_row(path)
+
+        self.update_table_selection()
+        
+    def update_table_row(self, path):
+        if path in self.filtered_image_paths:
+            row = self.filtered_image_paths.index(path)
+
+            # Update checkbox
             checkbox = QCheckBox()
             checkbox.setStyleSheet("margin-left:10px;")
-            self.tableWidget.setCellWidget(row_position, 0, checkbox)
+            if path in self.checkbox_states:
+                checkbox.setChecked(self.checkbox_states[path])
+            self.tableWidget.setCellWidget(row, 0, checkbox)
+            checkbox.stateChanged.connect(lambda state, p=path: self.checkbox_states.update({p: bool(state)}))
 
+            # Update filename
             item_text = f"{self.image_dict[path]['filename']}"
             item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
             item = QTableWidgetItem(item_text)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setToolTip(os.path.basename(path))
-            item.setTextAlignment(Qt.AlignCenter)  # Center align the text
-            self.tableWidget.setItem(row_position, 1, item)
+            item.setTextAlignment(Qt.AlignCenter)
+            self.tableWidget.setItem(row, 1, item)
 
+            # Update annotation count
             annotation_count = self.image_dict[path]['annotation_count']
             annotation_item = QTableWidgetItem(str(annotation_count))
             annotation_item.setFlags(annotation_item.flags() & ~Qt.ItemIsEditable)
-            annotation_item.setTextAlignment(Qt.AlignCenter)  # Center align the text
-            self.tableWidget.setItem(row_position, 2, annotation_item)
-
-        self.update_table_selection()
+            annotation_item.setTextAlignment(Qt.AlignCenter)
+            self.tableWidget.setItem(row, 2, annotation_item)
 
     def update_table_selection(self):
         if self.selected_image_path in self.filtered_image_paths:
@@ -345,7 +359,8 @@ class ImageWindow(QWidget):
             self.image_dict[image_path]['has_predictions'] = len(predictions)
             self.image_dict[image_path]['labels'] = labels
             self.image_dict[image_path]['annotation_count'] = len(annotations)
-            self.update_table_widget()
+            # Update the table row
+            self.update_table_row(image_path)
             
     def update_current_image_annotations(self):
         if self.selected_image_path:
@@ -369,9 +384,13 @@ class ImageWindow(QWidget):
         if row < 0 or row >= len(self.filtered_image_paths):
             return
 
-        # Get the image path associated with the selected row
+        # Get the image path associated with the selected row  
         image_path = self.filtered_image_paths[row]
+        
+        # Load the image without clearing selections
         self.load_image_by_path(image_path)
+
+        # No need to update checkbox states here since they're preserved
 
     def load_image_by_path(self, image_path, update=False):
         current_time = QDateTime.currentMSecsSinceEpoch()
@@ -880,10 +899,11 @@ class ImageWindow(QWidget):
         self.search_bar_images.clear()
         self.search_bar_labels.clear()
 
-        image_names = [self.image_dict[path]['filename'] for path in self.image_paths]
-        label_names = set()
-        for path in self.image_paths:
-            label_names.update(self.image_dict[path]['labels'])
+        try:
+            image_names = set([self.image_dict[path]['filename'] for path in self.image_paths])
+            label_names = set([label.short_label_code for label in self.main_window.label_window.labels])
+        except Exception as e:
+            return
 
         # Only add items if there are any to add
         if image_names:
