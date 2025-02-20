@@ -308,7 +308,7 @@ class MakeCropsDetectThem:
         self.show_crops = show_crops
         # slow operation !
         self.resize_initial_size = resize_initial_size
-        # memory opimization option for segmentation
+        # memory necessary option for segmentation
         self.memory_optimize = memory_optimize
         # dict with human-readable class names
         self.class_names_dict = self.model.names

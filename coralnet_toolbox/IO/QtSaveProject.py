@@ -113,7 +113,7 @@ class SaveProject(QDialog):
                                 f"An error occurred while saving the project: {str(e)}")
 
         finally:
-            # Restor cursor to normal
+            # Restore cursor to normal
             QApplication.restoreOverrideCursor()
 
         # Exit

@@ -129,7 +129,7 @@ class Classify(Base):
             print(f'{image_path} generated an exception: {exc}')
 
         finally:
-            # Restor the cursor
+            # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()

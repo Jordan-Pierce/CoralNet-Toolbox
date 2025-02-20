@@ -75,7 +75,7 @@ class ImportCoralNetAnnotations:
             missing_columns = [col for col in required_columns if col not in df.columns]
 
             if missing_columns:
-                raise Exception(f"The selected CSV file(s) are missing neccessary columns: {missing_columns}")
+                raise Exception(f"The selected CSV file(s) are missing necessary columns: {missing_columns}")
 
             # Filter out rows with missing values
             image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
