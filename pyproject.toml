@@ -29,10 +29,6 @@ all = [
     "coralnet-toolbox[extra]",
 ]
 
-dependencies = [
-    "superqt @ git+https://github.com/Jordan-Pierce/superqt.git@fix-themes"
-]
-
 [tool]
 [tool.setuptools.packages.find]
 include = ["coralnet_toolbox*"]
