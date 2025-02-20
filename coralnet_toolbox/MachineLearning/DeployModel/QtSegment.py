@@ -7,7 +7,7 @@ import os
 
 import numpy as np
 
-from qtrangeslider import QRangeSlider
+from superqt import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout,
                              QComboBox, QSlider)
@@ -171,7 +171,7 @@ class Segment(Base):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         try:
             # Loop through the image paths
             for image_path in image_paths:
@@ -190,7 +190,7 @@ class Segment(Base):
 
         gc.collect()
         empty_cache()
-        
+
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
         # Check if tile inference tool is enabled
@@ -218,7 +218,7 @@ class Segment(Base):
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() == "True":
             results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
-            
+
         return results
 
     def _apply_tile_postprocessing(self, results):

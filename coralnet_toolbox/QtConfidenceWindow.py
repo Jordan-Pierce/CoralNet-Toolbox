@@ -224,12 +224,23 @@ class ConfidenceWindow(QWidget):
         bar_layout = QHBoxLayout(bar_widget)
         bar_layout.setContentsMargins(5, 2, 5, 2)
 
+        # Calculate inverse color
+        inverse_color = QColor(
+            255 - label.color.red(),
+            255 - label.color.green(),
+            255 - label.color.blue()
+        )
+
+        # Create and style the class label
         class_label = QLabel(label.short_label_code, bar_widget)
         class_label.setAlignment(Qt.AlignCenter)
+        class_label.setStyleSheet(f"color: {inverse_color.name()}")
         bar_layout.addWidget(class_label)
 
+        # Create and style the percentage label
         percentage_label = QLabel(f"{confidence:.2f}%", bar_widget)
         percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        percentage_label.setStyleSheet(f"color: {inverse_color.name()}")
         bar_layout.addWidget(percentage_label)
 
         self.bar_chart_layout.addWidget(bar_widget)

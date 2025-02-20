@@ -129,8 +129,8 @@ class OpenProject(QDialog):
                 project_data = json.load(file)
 
             # Update main window with loaded project data
-            self.import_labels(project_data['labels'])
             self.import_images(project_data['image_paths'])
+            self.import_labels(project_data['labels'])
             self.import_annotations(project_data['annotations'])
 
             # Update current project path
@@ -201,19 +201,17 @@ class OpenProject(QDialog):
         try:
             # Import the labels
             for label in labels:
+                # Create a new label object
                 label = Label.from_dict(label)
+                
                 # Create a new label if it doesn't already exist
-                if not self.label_window.label_exists(label.short_label_code, label.long_label_code):
-                    self.label_window.add_label(label.short_label_code,
-                                                label.long_label_code,
-                                                label.color,
-                                                label.id)
+                self.label_window.add_label_if_not_exists(label.short_label_code,
+                                                          label.long_label_code,
+                                                          label.color,
+                                                          label.id)
                 # Update the progress bar
                 progress_bar.update_progress()
-
-            # Set the Review label as active
-            self.label_window.set_active_label(self.label_window.get_label_by_long_code("Review"))
-
+                
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Labels",
@@ -263,7 +261,7 @@ class OpenProject(QDialog):
                     # Update the progress bar
                     progress_bar.update_progress()
                     
-                 # Update the image window's image dict
+                # Update the image window's image dict
                 self.image_window.update_image_annotations(image_path)
 
             # Load the annotations for current image

@@ -97,29 +97,29 @@ class ImportAnnotations:
 
         try:
             # Load the labels
-            for image_path, annotations in filtered_annotations.items():
-                for annotation_data in annotations:
+            for image_path, image_annotations in filtered_annotations.items():
+                for annotation in image_annotations:
                     # Skip if missing required keys
-                    if not all(key in annotation_data for key in keys):
+                    if not all(key in annotation for key in keys):
                         continue
 
                     # Extract label data
-                    short_label = annotation_data['label_short_code']
-                    long_label = annotation_data['label_long_code']
-                    color = QColor(*annotation_data['annotation_color'])
-                    label_id = annotation_data['label_id']
+                    short_label = annotation['label_short_code']
+                    long_label = annotation['label_long_code']
+                    color = QColor(*annotation['annotation_color'])
+                    label_id = annotation['label_id']
 
                     # Add label and handle color matching
                     self.label_window.add_label_if_not_exists(short_label, long_label, color, label_id)
                     existing_color = self.label_window.get_label_color(label_id)
 
                     if existing_color != color:
-                        annotation_data['annotation_color'] = existing_color.getRgb()
+                        annotation['annotation_color'] = existing_color.getRgb()
                         updated_annotations = True
 
                     # Update progress
                     progress_bar.update_progress()
-
+                    
         except Exception as e:
             print(f"Error loading label: {str(e)}")
             
@@ -145,18 +145,18 @@ class ImportAnnotations:
 
         try:
             # Load the annotations
-            for image_path, annotations in filtered_annotations.items():
-                for annotation_data in annotations:
-                    if not all(key in annotation_data for key in keys):
+            for image_path, image_annotations in filtered_annotations.items():
+                for annotation in image_annotations:
+                    if not all(key in annotation for key in keys):
                         continue
 
-                    annotation_type = annotation_data.get('type')
+                    annotation_type = annotation.get('type')
                     if annotation_type == 'PatchAnnotation':
-                        annotation = PatchAnnotation.from_dict(annotation_data, self.label_window)
+                        annotation = PatchAnnotation.from_dict(annotation, self.label_window)
                     elif annotation_type == 'PolygonAnnotation':
-                        annotation = PolygonAnnotation.from_dict(annotation_data, self.label_window)
+                        annotation = PolygonAnnotation.from_dict(annotation, self.label_window)
                     elif annotation_type == 'RectangleAnnotation':
-                        annotation = RectangleAnnotation.from_dict(annotation_data, self.label_window)
+                        annotation = RectangleAnnotation.from_dict(annotation, self.label_window)
                     else:
                         raise ValueError(f"Unknown annotation type: {annotation_type}")
 

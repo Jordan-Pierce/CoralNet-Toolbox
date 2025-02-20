@@ -53,17 +53,16 @@ class ImportLabels:
             try:
                 # Import the labels
                 for label_data in labels_data:
+                    # Create a new label object
                     label = Label.from_dict(label_data)
-                    if not self.label_window.label_exists(label.short_label_code, label.long_label_code):
-                        self.label_window.add_label(label.short_label_code,
-                                                    label.long_label_code,
-                                                    label.color,
-                                                    label.id)
+                    
+                    # Create a new label if it doesn't already exist
+                    self.label_window.add_label_if_not_exists(label.short_label_code,
+                                                              label.long_label_code,
+                                                              label.color,
+                                                              label.id)
                     # Update the progress bar
                     progress_bar.update_progress()
-
-                # Set the Review label as active
-                self.label_window.set_active_label(self.label_window.get_label_by_long_code("Review"))
 
                 QMessageBox.information(self.label_window,
                                         "Labels Imported",

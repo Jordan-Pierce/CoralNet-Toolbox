@@ -239,7 +239,7 @@ class PolygonAnnotation(Annotation):
         color = QColor(self.label.color)
         pen = QPen(color, 3, Qt.DotLine)
         cropped_image_graphic.setPen(pen)
-        cropped_image_graphic.setBrush(QBrush(Qt.NoBrush))  # Remove fill
+        cropped_image_graphic.setBrush(QBrush(Qt.NoBrush)) 
         cropped_image_graphic.update()
 
         return cropped_image_graphic

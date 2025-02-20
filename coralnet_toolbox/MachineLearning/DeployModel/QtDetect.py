@@ -7,7 +7,7 @@ import os
 
 import numpy as np
 
-from qtrangeslider import QRangeSlider
+from superqt import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout,
                              QComboBox, QSlider)
@@ -171,7 +171,7 @@ class Detect(Base):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         try:
             # Loop through the image paths
             for image_path in image_paths:
@@ -190,7 +190,7 @@ class Detect(Base):
 
         gc.collect()
         empty_cache()  # Assuming this function is defined elsewhere
-        
+
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
         # Check if tile inference tool is enabled
@@ -221,7 +221,7 @@ class Detect(Base):
             results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
         else:
             self.task = 'detect'
-            
+
         return results
 
     def _apply_tile_postprocessing(self, results):
@@ -238,4 +238,3 @@ class Detect(Base):
             result_processor.process_segmentation_results(results)
         else:
             result_processor.process_detection_results(results)
-

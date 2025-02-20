@@ -129,9 +129,16 @@ class MainWindow(QMainWindow):
         self.lock_icon = get_icon("lock.png")
         self.unlock_icon = get_icon("unlock.png")
 
-        # Set the title and icon for the main window
+        # Set the version
         self.version = __version__
-        self.setWindowTitle(f"CoralNet-Toolbox v{self.version}")
+        
+        # Project path 
+        self.current_project_path = ""
+        
+        # Update the project label
+        self.update_project_label()
+        
+        # Set icon
         self.setWindowIcon(self.coral_icon)
 
         # Set window flags for resizing, minimize, maximize, and customizing
@@ -143,9 +150,6 @@ class MainWindow(QMainWindow):
         
         # Start maximized by default
         self.showMaximized()
-
-        # Project path 
-        self.current_project_path = ""
         
         # Set the default uncertainty threshold and IoU threshold
         self.iou_thresh = 0.50
@@ -692,12 +696,6 @@ class MainWindow(QMainWindow):
         # ----------------------------------------
         self.status_bar_layout = QHBoxLayout()
 
-        # Create a non-editable dropdown combobox for the current project path
-        self.current_project_combobox = QComboBox()
-        self.current_project_combobox.setEditable(False)
-        self.current_project_combobox.setFixedWidth(150)
-        self.current_project_combobox.setToolTip("")  # Initially empty
-
         # Labels for project, image dimensions and mouse position
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
@@ -822,7 +820,6 @@ class MainWindow(QMainWindow):
         self.parameters_section.add_widget(area_thresh_widget, "Area Threshold")
 
         # Add widgets to status bar layout
-        self.status_bar_layout.addWidget(self.current_project_combobox)
         self.status_bar_layout.addWidget(self.image_dimensions_label)
         self.status_bar_layout.addWidget(self.mouse_position_label)
         self.status_bar_layout.addWidget(self.view_dimensions_label)
@@ -1077,18 +1074,15 @@ class MainWindow(QMainWindow):
             self.annotation_window.tools['sam'].cancel_working_area()
 
     def update_project_label(self):
+        """Update the project label in the status bar"""
+        
+        text = f"CoralNet-Toolbox v{self.version} "
         if self.current_project_path:
-            text = os.path.basename(self.current_project_path)
-            tooltip = self.current_project_path
-            # Optionally, elide text manually if needed
-        else:
-            text = ""
-            tooltip = ""
-        self.current_project_combobox.clear()
-        if text:
-            self.current_project_combobox.addItem(text)
-        self.current_project_combobox.setToolTip(tooltip)
-
+            text += f"[Project: {self.current_project_path}]"
+            
+        # Update the window title
+        self.setWindowTitle(text)
+        
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
 

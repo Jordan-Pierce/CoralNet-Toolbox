@@ -778,13 +778,20 @@ class EditLabelDialog(QDialog):
             if result == QMessageBox.Yes:
                 self.label_window.edit_labels(self.label, existing_label, delete_old=True)
                 self.accept()
-
-            return
         else:
+            # Update the label itself
             self.label.short_label_code = short_label_code
             self.label.long_label_code = long_label_code
             self.label.color = self.color
             self.label.update_label_color(self.color)
-            self.accept()
+            self.label.update()
 
+            # Force a refresh of the label window grid
+            self.label_window.update_labels_per_row()
+            self.label_window.reorganize_labels()
+            self.label_window.scroll_area.viewport().update()
+
+            # Update annotation window
             self.label_window.edit_labels(self.label, self.label, delete_old=False)
+            
+            self.accept()
