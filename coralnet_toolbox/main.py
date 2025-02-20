@@ -1,5 +1,6 @@
 import traceback
 
+import qdarktheme
 from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtMainWindow import MainWindow
@@ -15,7 +16,7 @@ from coralnet_toolbox import __version__
 def run():
     try:
         app = QApplication([])
-        app.setStyle('WindowsXP')
+        qdarktheme.setup_theme('light')
         main_window = MainWindow(__version__)
         main_window.show()
         app.exec_()
