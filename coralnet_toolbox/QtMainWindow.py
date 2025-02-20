@@ -8,7 +8,7 @@ import requests
 from packaging import version
 
 
-from qtrangeslider import QRangeSlider
+from superqt import QRangeSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
