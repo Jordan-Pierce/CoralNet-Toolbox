@@ -397,6 +397,8 @@ class PolygonAnnotation(Annotation):
         base_dict = super().to_dict()
         base_dict.update({
             'points': [(point.x(), point.y()) for point in self.points],
+            'area': self.calculate_area(),
+            'perimeter': self.calculate_perimeter()
         })
         return base_dict
 
