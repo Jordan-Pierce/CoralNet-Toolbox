@@ -3,12 +3,14 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
+import gc
 import requests
 
 import torch
 import numpy as np
 
-from PyQt5.QtGui import QImage
+from PyQt5.QtGui import QImage, QPixmap, QColor
+from PyQt5.QtCore import Qt, QBuffer, QByteArray
 from PyQt5.QtWidgets import QMessageBox
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -171,21 +173,37 @@ def pixmap_to_numpy(pixmap):
     :param pixmap:
     :return:
     """
-    # Convert QPixmap to QImage
-    image = pixmap.toImage()
-    # Get image dimensions
-    width = image.width()
-    height = image.height()
+    # Initialize a blank numpy array
+    numpy_array = np.zeros((256, 256, 3), dtype=np.uint8)
+    
+    try:
+        # Convert QPixmap to QImage
+        image = pixmap.toImage()
+        
+    except Exception as e:
+        print(f"Error converting QPixmap to QImage: {e}")
+        # Handle error by returning a blank numpy array
+        return numpy_array
 
-    # Convert QImage to numpy array
-    byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
-    numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
+    try:
+        # Get image dimensions
+        width = image.width()
+        height = image.height()
 
-    # If the image format is ARGB32, swap the first and last channels (A and B)
-    if format == QImage.Format_ARGB32:
-        numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+        # Convert QImage to numpy array
+        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
+        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
 
-    return numpy_array[:, :, :3]
+        # If the image format is ARGB32, swap the first and last channels (A and B)
+        if format == QImage.Format_ARGB32:
+            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+            
+        numpy_array = numpy_array[:, :, :3]  # Remove the alpha channel if present
+        
+    except Exception as e:
+        print(f"Error converting QImage to numpy: {e}")
+
+    return numpy_array
 
 
 def qimage_to_numpy(qimage):

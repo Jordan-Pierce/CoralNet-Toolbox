@@ -213,6 +213,7 @@ class Classify(Base):
             try:
                 # Make predictions on each image's annotations
                 for path, patches in groups:
+                    print(f"\nMaking predictions on {path}")
                     self.deploy_model_dialog.predict(inputs=list(patches))
                     progress_bar.update_progress()
 

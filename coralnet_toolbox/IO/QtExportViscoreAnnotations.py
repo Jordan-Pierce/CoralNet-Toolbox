@@ -400,6 +400,7 @@ class ExportViscoreAnnotations(QDialog):
 
             # Collect annotations
             dots_dict = {}
+            missing_labels = set()
 
             for annotation in self.annotation_window.annotations_dict.values():
                 if isinstance(annotation, PatchAnnotation):
@@ -439,11 +440,17 @@ class ExportViscoreAnnotations(QDialog):
                 consensus_suggestion = max(votes, key=votes.get) if votes else None
                 
                 # If the index is currently under Review, update
-                if output_file['cl'][dot] == -1:
+                if output_file['cl'][dot] == -1 and consensus_suggestion:
                     try:
-                        # Map the consensus label to the classlist ID and ensure it's a regular Python int
-                        label_id = int(classlist[classlist['long_name'] == consensus_suggestion]['id'].values[0])
+                        # Check if label exists in classlist
+                        label_exists = classlist['long_name'].eq(consensus_suggestion).any()
+                        if not label_exists:
+                            missing_labels.add(consensus_suggestion)
+                            label_id = -1
+                        else:
+                            label_id = int(classlist[classlist['long_name'] == consensus_suggestion]['id'].values[0])
                     except Exception as e:
+                        missing_labels.add(consensus_suggestion)
                         label_id = -1
                             
                     output_file['cl'][dot] = label_id
@@ -457,6 +464,14 @@ class ExportViscoreAnnotations(QDialog):
             # Save output json file
             with open(output_path, 'w') as f:
                 json.dump(output_file, f, indent=4)
+
+            if missing_labels:
+                # Sort the missing labels
+                sorted_set = ', '.join(sorted(missing_labels))
+                
+                QMessageBox.warning(self,
+                                    "Warning",
+                                    f"The following labels were not found in the classlist:\n{sorted_set}")
 
             QMessageBox.information(self, 
                                     "Success",
