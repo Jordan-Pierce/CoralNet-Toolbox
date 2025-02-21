@@ -236,6 +236,8 @@ class RectangleAnnotation(Annotation):
         base_dict.update({
             'top_left': (self.top_left.x(), self.top_left.y()),
             'bottom_right': (self.bottom_right.x(), self.bottom_right.y()),
+            'area': self.calculate_area(),
+            'perimeter': self.calculate_perimeter()
         })
         return base_dict
 
