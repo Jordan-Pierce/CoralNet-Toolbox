@@ -24,19 +24,30 @@ class ConfidenceBar(QFrame):
         self.confidence = confidence
         self.color = label.color
         self.setFixedHeight(20)  # Set a fixed height for the bars
+        
+        # # Add tooltip showing both short and long labels
+        # tooltip_text = f"{label.short_label_code} - {label.label_name}"
+        # self.setToolTip(tooltip_text)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw the border
-        painter.setPen(self.color)
-        painter.drawRect(0, 0, self.width() - 1, self.height() - 1)
+        # Calculate the middle point
+        mid_width = self.width() // 2
 
-        # Draw the filled part of the bar
-        filled_width = int(self.width() * (self.confidence / 100))
+        # Draw the border for both halves
+        painter.setPen(self.color)
+        painter.drawRect(0, 0, mid_width - 1, self.height() - 1)  # Left half
+        painter.drawRect(mid_width, 0, self.width() - mid_width - 1, self.height() - 1)  # Right half
+
+        # Draw the filled part of the bar from middle to confidence width
+        filled_width = int((self.width() - mid_width) * (self.confidence / 100))
         painter.setBrush(QColor(self.color.red(), self.color.green(), self.color.blue(), 192))  # 75% transparency
-        painter.drawRect(0, 0, filled_width, self.height() - 1)
+        painter.drawRect(mid_width, 0, filled_width, self.height() - 1)
+
+        # Set text color to black
+        painter.setPen(Qt.black)
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
@@ -224,23 +235,14 @@ class ConfidenceWindow(QWidget):
         bar_layout = QHBoxLayout(bar_widget)
         bar_layout.setContentsMargins(5, 2, 5, 2)
 
-        # Calculate inverse color
-        inverse_color = QColor(
-            255 - label.color.red(),
-            255 - label.color.green(),
-            255 - label.color.blue()
-        )
-
         # Create and style the class label
         class_label = QLabel(label.short_label_code, bar_widget)
         class_label.setAlignment(Qt.AlignCenter)
-        class_label.setStyleSheet(f"color: {inverse_color.name()}")
         bar_layout.addWidget(class_label)
 
         # Create and style the percentage label
         percentage_label = QLabel(f"{confidence:.2f}%", bar_widget)
         percentage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        percentage_label.setStyleSheet(f"color: {inverse_color.name()}")
         bar_layout.addWidget(percentage_label)
 
         self.bar_chart_layout.addWidget(bar_widget)
