@@ -25,9 +25,9 @@ class ConfidenceBar(QFrame):
         self.color = label.color
         self.setFixedHeight(20)  # Set a fixed height for the bars
         
-        # # Add tooltip showing both short and long labels
-        # tooltip_text = f"{label.short_label_code} - {label.label_name}"
-        # self.setToolTip(tooltip_text)
+        # Add tooltip showing both short and long labels
+        tooltip_text = f"{label.short_label_code} - {label.label_name}"
+        self.setToolTip(tooltip_text)
 
     def paintEvent(self, event):
         painter = QPainter(self)

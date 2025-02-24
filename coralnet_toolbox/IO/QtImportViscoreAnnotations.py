@@ -84,7 +84,7 @@ class ImportViscoreAnnotations(QDialog):
         group_box = QGroupBox("Options")
         layout = QFormLayout()
 
-        # Views per dot
+        # Views per dot spinbox
         self.views_spinbox = QSpinBox()
         self.views_spinbox.setMinimum(-1)
         self.views_spinbox.setMaximum(1000)
@@ -92,16 +92,64 @@ class ImportViscoreAnnotations(QDialog):
         self.views_spinbox.setToolTip("Number of best views to keep per dot")
         layout.addRow("Views per Dot:", self.views_spinbox)
 
-        # Annotation size
-        self.size_spinbox = QSpinBox()
-        self.size_spinbox.setMinimum(1)
-        self.size_spinbox.setMaximum(10000)
-        self.size_spinbox.setValue(224)
-        self.size_spinbox.setToolTip("Size of annotation patches in pixels")
-        layout.addRow("Annotation Size:", self.size_spinbox)
+        # Size selection layout with +/- buttons
+        size_layout = QHBoxLayout()
+        
+        # Main size spinbox
+        size_box = QSpinBox()
+        size_box.setMinimum(1)
+        size_box.setMaximum(10000)
+        size_box.setValue(224)
+        size_box.setToolTip("Size of annotation patches in pixels")
+        self.size_spinboxes = [size_box]
+        size_layout.addWidget(size_box)
+        
+        # Button container for text updates
+        button_layout = QHBoxLayout()
+        add_size_button = QPushButton("+")
+        remove_size_button = QPushButton("-")
+        add_size_button.setFixedWidth(30)
+        remove_size_button.setFixedWidth(30)
+        add_size_button.clicked.connect(self.add_size)
+        remove_size_button.clicked.connect(self.remove_size)
+        button_layout.addWidget(add_size_button)
+        button_layout.addWidget(remove_size_button)
+        size_layout.addLayout(button_layout)
+        size_layout.addStretch()
+        
+        layout.addRow("Patch Size:", size_layout)
+
+        # Size display
+        self.sizes_display = QLineEdit()
+        self.sizes_display.setReadOnly(True)
+        self.sizes_display.setPlaceholderText("Current annotation sizes")
+        self.sizes_display.setStyleSheet("QLineEdit { color: gray; }")
+        layout.addRow("MultiPatch Sizes:", self.sizes_display)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+    def update_sizes_display(self):
+        """Update the sizes display text."""
+        current_text = self.sizes_display.text()
+        sizes = [int(x.strip()) for x in current_text.split(",") if x.strip()]
+        self.sizes_display.setText(", ".join(map(str, sizes)))
+
+    def add_size(self):
+        """Add a new size to the display."""
+        current_size = self.size_spinboxes[0].value()
+        current_text = self.sizes_display.text()
+        sizes = [int(x.strip()) for x in current_text.split(",") if x.strip()]
+        sizes.append(current_size)
+        self.sizes_display.setText(", ".join(map(str, sizes)))
+
+    def remove_size(self):
+        """Remove the last size from the display."""
+        current_text = self.sizes_display.text()
+        sizes = [int(x.strip()) for x in current_text.split(",") if x.strip()]
+        if len(sizes) > 1:
+            sizes.pop()
+            self.sizes_display.setText(", ".join(map(str, sizes)))
 
     def setup_buttons_layout(self):
         """Set up the bottom buttons layout."""
@@ -275,7 +323,7 @@ class ImportViscoreAnnotations(QDialog):
             progress_bar.setWindowTitle("Importing Annotations")
             progress_bar.start_progress(len(df['Name'].unique()))
 
-            annotation_size = self.size_spinbox.value()
+            annotation_sizes = [spinbox.value() for spinbox in self.size_spinboxes]
 
             for image_name, group in df.groupby('Name'):
                 image_path = image_path_map.get(os.path.basename(image_name))
@@ -290,27 +338,28 @@ class ImportViscoreAnnotations(QDialog):
 
                     existing_label = self.label_window.get_label_by_codes(label_code, label_code)
 
-                    annotation = PatchAnnotation(
-                        QPointF(col_coord, row_coord),
-                        annotation_size,
-                        label_code,
-                        label_code,
-                        existing_label.color,
-                        image_path,
-                        existing_label.id
-                    )
+                    for size in annotation_sizes:
+                        annotation = PatchAnnotation(
+                            QPointF(col_coord, row_coord),
+                            size,  # Use the current size
+                            label_code,
+                            label_code,
+                            existing_label.color,
+                            image_path,
+                            existing_label.id
+                        )
 
-                    annotation.data = {
-                        'Dot': row['Dot'],
-                        'X': row['X'],
-                        'Y': row['Y'],
-                        'Z': row['Z'],
-                        'ReprojectionError': row['ReprojectionError'],
-                        'ViewIndex': row['ViewIndex'],
-                        'ViewCount': row['ViewCount']
-                    }
+                        annotation.data = {
+                            'Dot': row['Dot'],
+                            'X': row['X'],
+                            'Y': row['Y'],
+                            'Z': row['Z'],
+                            'ReprojectionError': row['ReprojectionError'],
+                            'ViewIndex': row['ViewIndex'],
+                            'ViewCount': row['ViewCount']
+                        }
 
-                    self.annotation_window.add_annotation_to_dict(annotation)
+                        self.annotation_window.add_annotation_to_dict(annotation)
 
                 self.image_window.update_image_annotations(image_path)
                 progress_bar.update_progress()
