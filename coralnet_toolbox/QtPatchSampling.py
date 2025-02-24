@@ -132,9 +132,9 @@ class PatchSamplingDialog(QDialog):
         layout = QVBoxLayout()
 
         self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("Apply to next images")
-        self.apply_all_checkbox = QCheckBox("Apply to all images")
+        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
+        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
+        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
 
         layout.addWidget(self.apply_filtered_checkbox)
         layout.addWidget(self.apply_prev_checkbox)

@@ -13,7 +13,7 @@ from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
-                             QGroupBox, QPushButton)
+                             QGroupBox, QPushButton, QStyle, QFormLayout)
 
 from rasterio.windows import Window
 
@@ -111,45 +111,54 @@ class ImageWindow(QWidget):
         self.checkbox_row2.addWidget(self.has_annotations_checkbox)
         self.checkbox_group.addButton(self.has_annotations_checkbox)
 
-        # Create a vertical layout for the search bars
-        self.search_layout = QVBoxLayout()
+        # Create a form layout for the search bars
+        self.search_layout = QFormLayout()
         self.filter_layout.addLayout(self.search_layout)
 
         fixed_width = 250
 
-        # Create a horizontal layout for images search
-        self.image_search_layout = QHBoxLayout()
-        self.search_layout.addLayout(self.image_search_layout)
+        # Create containers for search bars and buttons
+        self.image_search_container = QWidget()
+        self.image_search_layout = QHBoxLayout(self.image_search_container)
+        self.image_search_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Add label and search bar for images
-        self.image_search_label = QLabel("Search Images:", self)
-        self.image_search_layout.addWidget(self.image_search_label)
+        self.label_search_container = QWidget()  
+        self.label_search_layout = QHBoxLayout(self.label_search_container)
+        self.label_search_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Setup image search
         self.search_bar_images = QComboBox(self)
         self.search_bar_images.setEditable(True)
         self.search_bar_images.setPlaceholderText("Type to search images")
         self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_images.lineEdit().textChanged.connect(self.filter_images)
         self.search_bar_images.setFixedWidth(fixed_width)
         self.image_search_layout.addWidget(self.search_bar_images)
 
-        # Create a horizontal layout for labels search
-        self.label_search_layout = QHBoxLayout()
-        self.search_layout.addLayout(self.label_search_layout)
+        self.image_search_button = QPushButton(self)
+        self.image_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.image_search_button.clicked.connect(self.filter_images)
+        self.image_search_layout.addWidget(self.image_search_button)
 
-        # Add label and search bar for labels
-        self.label_search_label = QLabel("Search Labels:", self)
-        self.label_search_layout.addWidget(self.label_search_label)
+        # Setup label search
         self.search_bar_labels = QComboBox(self)
         self.search_bar_labels.setEditable(True)
         self.search_bar_labels.setPlaceholderText("Type to search labels")
         self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_labels.lineEdit().textChanged.connect(self.filter_images)
         self.search_bar_labels.setFixedWidth(fixed_width)
         self.label_search_layout.addWidget(self.search_bar_labels)
 
-        # Add the group box to the main layout
+        self.label_search_button = QPushButton(self)
+        self.label_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.label_search_button.clicked.connect(self.filter_images)
+        self.label_search_layout.addWidget(self.label_search_button)
+
+        # Add rows to form layout
+        self.search_layout.addRow("Search Images:", self.image_search_container)
+        self.search_layout.addRow("Search Labels:", self.label_search_container)
+
+        # Add the group box to the main layout  
         self.layout.addWidget(self.filter_group)
 
         # -------------------------------------------
@@ -235,8 +244,6 @@ class ImageWindow(QWidget):
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.filter_images)
-        self.search_bar_images.lineEdit().textChanged.connect(self.debounce_search)
-        self.search_bar_labels.lineEdit().textChanged.connect(self.debounce_search)
 
         self.image_load_queue = Queue()
         self.current_workers = []  # List to keep track of running workers
@@ -751,9 +758,6 @@ class ImageWindow(QWidget):
         current_index = self.filtered_image_paths.index(self.selected_image_path)
         new_index = (current_index + 1) % len(self.filtered_image_paths)
         self.load_image_by_path(self.filtered_image_paths[new_index])
-
-    def debounce_search(self):
-        self.search_timer.start(10000)
 
     def filter_images(self):
         # Store the currently selected image path before filtering
