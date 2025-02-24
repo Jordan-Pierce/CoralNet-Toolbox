@@ -467,7 +467,7 @@ class ExportViscoreAnnotations(QDialog):
 
             if missing_labels:
                 # Sort the missing labels
-                sorted_set = ', '.join(sorted(missing_labels))
+                sorted_set = ', '.join(sorted([str(label) for label in missing_labels]))
                 
                 QMessageBox.warning(self,
                                     "Warning",
