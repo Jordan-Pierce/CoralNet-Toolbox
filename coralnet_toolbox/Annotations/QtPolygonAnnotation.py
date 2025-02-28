@@ -271,14 +271,13 @@ class PolygonAnnotation(Annotation):
             color.setAlpha(self.transparency)
 
             if self.is_selected:
-                pen = QPen(color, 6, Qt.DotLine)  # Use label color and dotted line
-                brush = QBrush(color)
-                brush.setStyle(Qt.SolidPattern)  # Ensure transparency fill is set to 100%
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                pen = QPen(inverse_color, 6, Qt.DotLine)
             else:
                 pen = QPen(color, 4, Qt.SolidLine)
-                brush = QBrush(color)
 
             self.graphics_item.setPen(pen)
+            brush = QBrush(color)
             self.graphics_item.setBrush(brush)
 
             if scene:
