@@ -146,7 +146,7 @@ class ExportViscoreAnnotations(QDialog):
         user_json_layout = QHBoxLayout()
         user_json_layout.addWidget(self.user_json_edit)
         user_json_layout.addWidget(self.user_json_button)
-        input_form.addRow("User File (JSON):", user_json_layout)
+        input_form.addRow("User File (JSON, Optional):", user_json_layout)
 
         input_group.setLayout(input_form)
         layout.addWidget(input_group)
@@ -344,17 +344,24 @@ class ExportViscoreAnnotations(QDialog):
         labelset_json_path = self.label_json_edit.text()
         user_json_path = self.user_json_edit.text()
         
-        # Check if files are selected and exist
-        if not labelset_json_path or not user_json_path:
+        # Check if labelset file is selected and exists
+        if not labelset_json_path:
             QMessageBox.warning(self, 
                                 "Invalid File",
-                                "Please select all JSON files.")
+                                "Please select a labelset JSON file.")
             return
             
-        if not os.path.exists(labelset_json_path) or not os.path.exists(user_json_path):
+        if not os.path.exists(labelset_json_path):
             QMessageBox.warning(self, 
                                 "Invalid File",
-                                "One or more selected files do not exist.")
+                                "Labelset file does not exist.")
+            return
+        
+        # Check if user file exists if provided
+        if user_json_path and not os.path.exists(user_json_path):
+            QMessageBox.warning(self, 
+                                "Invalid File",
+                                "User file does not exist.")
             return
         
         # Extract the output directory
@@ -377,17 +384,18 @@ class ExportViscoreAnnotations(QDialog):
         
         # Extract the classlist, create a DataFrame
         classlist = pd.DataFrame(labelset_file['classlist'], columns=['id', 'short_name', 'long_name'])
-                
-        # Read the user file
-        with open(user_json_path, 'r') as f:
-            user_file = json.load(f)
-            
-        # Create output file
+        
+        # Initialize output file structure
         output_file = {
-            "cl": [int(x) for x in user_file['cl']],  # Convert numpy ints to Python ints
             "savefileb": os.path.basename(output_path),
             "savefile": output_path,
         }
+        
+        # Read the user file if provided, otherwise we'll fill cl later
+        if user_json_path:
+            with open(user_json_path, 'r') as f:
+                user_file = json.load(f)
+            output_file["cl"] = [int(x) for x in user_file['cl']]
         
         try:
             # Make cursor busy
@@ -416,13 +424,17 @@ class ExportViscoreAnnotations(QDialog):
                         # Update the progress bar
                         progress_bar.update_progress()
             
+            # If user file wasn't provided, initialize cl with -1 for each dot
+            if not user_json_path:
+                max_dot_id = max(dots_dict.keys()) if dots_dict else -1
+                output_file["cl"] = [-1] * (max_dot_id + 1)
+            
             # Update progress bar
             progress_bar.setWindowTitle("Calculating Consensus")
             progress_bar.start_progress(len(dots_dict))
             
             # Loop through each dot
             for dot, annotations in dots_dict.items():
-                
                 votes = {}
                 
                 # Loop through each annotation associated with the dot
@@ -480,8 +492,8 @@ class ExportViscoreAnnotations(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self, 
-                                 "Critical Error",
-                                 f"Failed to export annotations: {e}")
+                                "Critical Error",
+                                f"Failed to export annotations: {e}")
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
