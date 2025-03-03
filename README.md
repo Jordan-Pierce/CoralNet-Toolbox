@@ -150,7 +150,7 @@ Enhance your CoralNet experience with these tools:
 - 🔍 API: Get predictions from any CoralNet source model
 - 📥 Download: Retrieve source data from CoralNet
 - 📤 Upload: Add images and annotations to CoralNet
-- 📦 Toolshed: Access tools from the old repository
+- 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 
 ## **How to Install**
