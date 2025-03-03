@@ -1,5 +1,7 @@
 # CoralNet-Toolbox
 
+[NOAA website](https://www.noaa.gov/)
+
 <div align="center">
   <p>
     <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/CoralNet_Toolbox.png" alt="CoralNet-Toolbox">
@@ -259,8 +261,7 @@ specific commercial products, processes, or services by service mark, trademark,
 otherwise, does not constitute or imply their endorsement, recommendation or favoring by the
 Department of Commerce. The Department of Commerce seal and logo, or the seal and logo of a DOC
 bureau, shall not be used in any manner to imply endorsement of any commercial product or activity
-by DOC or the United States Government.
-
+by DOC or the United States Government. For more information, visit the [NOAA website](https://www.noaa.gov/).
 
 ## License
 
@@ -269,4 +270,4 @@ Software code created by U.S. Government employees is not subject to copyright i
 copyright protection in countries other than the United States for Software authored in its
 entirety by the Department of Commerce. To this end, the Department of Commerce hereby grants to
 Recipient a royalty-free, nonexclusive license to use, copy, and create derivative works of the
-Software outside of the United States.
+Software outside of the United States. For more information, visit the [NOAA website](https://www.noaa.gov/).
