@@ -1,5 +1,5 @@
 ---
-name: 🤔 General Question
+name: General Question
 about: Ask a general question about our project
 labels: General Question
 ---
