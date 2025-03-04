@@ -155,6 +155,7 @@ class Classify(Base):
             results = self.loaded_model(images_np,
                                         conf=self.main_window.get_uncertainty_thresh(),
                                         device=self.main_window.device,
+                                        half=True,
                                         stream=True)
             
             # Create a result processor

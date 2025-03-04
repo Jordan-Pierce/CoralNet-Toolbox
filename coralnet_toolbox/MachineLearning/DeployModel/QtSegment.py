@@ -210,6 +210,7 @@ class Segment(Base):
             conf=self.main_window.get_uncertainty_thresh(),
             iou=self.main_window.get_iou_thresh(),
             device=self.main_window.device,
+            half=True,
             stream=True
         )
 
