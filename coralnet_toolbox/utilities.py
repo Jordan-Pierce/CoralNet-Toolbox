@@ -11,7 +11,7 @@ import numpy as np
 
 from PyQt5.QtGui import QImage, QPixmap, QColor
 from PyQt5.QtCore import Qt, QBuffer, QByteArray
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QApplication
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -224,17 +224,33 @@ def qimage_to_numpy(qimage):
     return image[:, :, :3]  # Remove the alpha channel if present
 
 
-def console_user(error_msg):
+def console_user(error_msg, parent=None):
     """
+    Display an error message to the user via both terminal and GUI dialog.
 
-    :param error_msg:
-    :return:
+    :param error_msg: The error message to display
+    :param parent: Parent widget for the QMessageBox (optional)
+    :return: None
     """
     url = "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
 
+    # Show error in terminal
     print(f"\n\n\nUh oh! It looks like something went wrong!")
     print(f"{'∨' * 60}")
     print(f"\n{error_msg}\n")
     print(f"{'^' * 60}")
-    print(f"Please, create a ticket and copy this error so we can get this fixed:")
+    print(f"Please create a ticket and copy this error so we can get this fixed:")
     print(f"{url}")
+    
+    # Show error in GUI message box
+    if QApplication.instance():  # Check if Qt application exists
+        
+        message = f"An unexpected error has occurred that caused the application to crash.\n\n" \
+            f"Please check the console for the full error message and report this issue at:\n{url}"
+              
+        msg_box = QMessageBox(parent=parent)
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setWindowTitle("Error")
+        msg_box.setText(message)
+        msg_box.setDetailedText(str(error_msg))
+        msg_box.exec_()

@@ -1,4 +1,4 @@
-# CoralNet-Toolbox
+# CoralNet-Toolbox 🪸🧰
 
 <div align="center">
   <p>
