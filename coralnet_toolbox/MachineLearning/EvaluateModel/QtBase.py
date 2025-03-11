@@ -194,7 +194,6 @@ class Base(QDialog):
         params['task'] = self.task
         params['model'] = self.model_edit.text()
         params['data'] = self.data_edit.text()
-        params['task'] = self.task
         params['save_dir'] = self.save_dir_edit.text()
         params['name'] = self.name_edit.text()
         params['split'] = self.split_combo.currentText()
