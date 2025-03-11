@@ -26,6 +26,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 
 from coralnet_toolbox.Tile import (
+    TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
     TileInference as TileInferenceDialog,
@@ -216,6 +217,7 @@ class MainWindow(QMainWindow):
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
         
         # Create dialogs (Tile)
+        self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.tile_inference_dialog = TileInferenceDialog(self)
@@ -416,6 +418,11 @@ class MainWindow(QMainWindow):
 
         # Tile Dataset submenu
         self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
+        
+        # Tile Classify Dataset
+        self.classify_tile_dataset_action = QAction("Classify", self)
+        self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
         
         # Tile Detect Dataset
         self.detect_tile_dataset_action = QAction("Detect", self)
@@ -1368,7 +1375,14 @@ class MainWindow(QMainWindow):
             self.classify_merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
+    
+    def open_classify_tile_dataset_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.classify_tile_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+    
     def open_detect_tile_dataset_dialog(self):
         try:
             self.untoggle_all_tools()
