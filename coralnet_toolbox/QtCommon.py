@@ -72,6 +72,10 @@ class OverlapInput(QGroupBox):
             tuple: (width, height) in pixels or percentages if valid
             None: if invalid when validation enabled
         """
+        # Cannot return pixel values if image dimensions not provided
+        if not image_width and not image_height:
+            return_pixels = False
+            
         try:
             # Get current values
             is_percentage = self.value_type.currentIndex() == 1
