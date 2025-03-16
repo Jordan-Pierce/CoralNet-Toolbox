@@ -8,7 +8,6 @@ import torch
 from torch.cuda import empty_cache
 from autodistill.detection import CaptionOntology
 
-from superqt import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog,
                              QFormLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -182,14 +181,21 @@ class DeployModelDialog(QDialog):
         min_val, max_val = self.main_window.get_area_thresh()
         self.area_thresh_min = int(min_val * 100)
         self.area_thresh_max = int(max_val * 100)
-        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
-        self.area_threshold_slider.setRange(0, 100)
-        self.area_threshold_slider.setValue((self.area_thresh_min, self.area_thresh_max))
-        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_slider.setTickInterval(10)
-        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_min_slider.setRange(0, 100)
+        self.area_threshold_min_slider.setValue(self.area_thresh_min)
+        self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_min_slider.setTickInterval(10)
+        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_max_slider.setRange(0, 100)
+        self.area_threshold_max_slider.setValue(self.area_thresh_max)
+        self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_max_slider.setTickInterval(10)
+        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
         self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        layout.addRow("Area Threshold", self.area_threshold_slider)
+        layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
+        layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
 
         # SAM dropdown
@@ -247,7 +253,8 @@ class DeployModelDialog(QDialog):
     def initialize_area_threshold(self):
         """Initialize the area threshold range slider"""
         current_min, current_max = self.main_window.get_area_thresh()
-        self.area_threshold_slider.setValue((int(current_min * 100), int(current_max * 100)))
+        self.area_threshold_min_slider.setValue(int(current_min * 100))
+        self.area_threshold_max_slider.setValue(int(current_max * 100))
         self.area_thresh_min = current_min
         self.area_thresh_max = current_max
 
@@ -267,7 +274,11 @@ class DeployModelDialog(QDialog):
 
     def update_area_label(self):
         """Handle changes to area threshold range slider"""
-        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        min_val = self.area_threshold_min_slider.value()
+        max_val = self.area_threshold_max_slider.value()
+        if min_val > max_val:
+            min_val = max_val
+            self.area_threshold_min_slider.setValue(min_val)
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)

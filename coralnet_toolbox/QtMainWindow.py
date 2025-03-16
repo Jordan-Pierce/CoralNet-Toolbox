@@ -5,10 +5,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import os
 import re
 import requests
-from packaging import version
 
 
-from superqt import QRangeSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
@@ -811,16 +809,24 @@ class MainWindow(QMainWindow):
         # Area threshold controls
         min_val = self.area_thresh_min
         max_val = self.area_thresh_max
-        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
-        self.area_threshold_slider.setMinimum(0)
-        self.area_threshold_slider.setMaximum(100)
-        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_slider.setTickInterval(10)
-        self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
+        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_min_slider.setMinimum(0)
+        self.area_threshold_min_slider.setMaximum(100)
+        self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_min_slider.setTickInterval(10)
+        self.area_threshold_min_slider.setValue(int(min_val * 100))
+        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_max_slider.setMinimum(0)
+        self.area_threshold_max_slider.setMaximum(100)
+        self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_max_slider.setTickInterval(10)
+        self.area_threshold_max_slider.setValue(int(max_val * 100))
+        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
         self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
-        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
         area_thresh_layout = QVBoxLayout()
-        area_thresh_layout.addWidget(self.area_threshold_slider)
+        area_thresh_layout.addWidget(self.area_threshold_min_slider)
+        area_thresh_layout.addWidget(self.area_threshold_max_slider)
         area_thresh_layout.addWidget(self.area_threshold_label)
         area_thresh_widget = QWidget()
         area_thresh_widget.setLayout(area_thresh_layout)
@@ -1192,12 +1198,17 @@ class MainWindow(QMainWindow):
         if self.area_thresh_min != min_val or self.area_thresh_max != max_val:
             self.area_thresh_min = min_val
             self.area_thresh_max = max_val
-            self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
+            self.area_threshold_min_slider.setValue(int(min_val * 100))
+            self.area_threshold_max_slider.setValue(int(max_val * 100))
             self.areaChanged.emit(min_val, max_val)
 
-    def update_area_label(self, value):
+    def update_area_label(self):
         """Handle changes to area threshold range slider"""
-        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        min_val = self.area_threshold_min_slider.value()
+        max_val = self.area_threshold_max_slider.value()
+        if min_val > max_val:
+            min_val = max_val
+            self.area_threshold_min_slider.setValue(min_val)
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
