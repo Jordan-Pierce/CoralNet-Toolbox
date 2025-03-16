@@ -143,13 +143,12 @@ Enhance your CoralNet experience with these tools:
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
-- 🏁 Tile Inference: Perform Tile Inference on large images
-  - Uses [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 
 ### TODO
 - 🔍 API: Get predictions from any CoralNet source model
 - 📥 Download: Retrieve source data from CoralNet
 - 📤 Upload: Add images and annotations to CoralNet
+- 🏁 Tile Inference: Perform Tile Inference on large images using [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 
@@ -168,7 +167,20 @@ conda activate coralnet10
 
 ### Install
 
-Once this has finished, install the `toolbox`:
+Once this has finished, install the `toolbox` using `uv`: 
+
+```bash
+# cmd
+
+# Install uv first
+pip install uv
+
+# Install with uv
+uv pip install coralnet-toolbox
+```
+
+Although fast, `uv` is still relatively new; if this fails, simply fall back to using `pip`:
+
 ```bash
 # cmd
 

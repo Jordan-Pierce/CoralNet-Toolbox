@@ -13,7 +13,20 @@ conda activate coralnet10
 
 ### Install
 
-Once this has finished, install the `toolbox`:
+Once this has finished, install the `toolbox` using `uv`: 
+
+```bash
+# cmd
+
+# Install uv first
+pip install uv
+
+# Install with uv
+uv pip install coralnet-toolbox
+```
+
+Although fast, `uv` is still relatively new; if this fails, simply fall back to using `pip`:
+
 ```bash
 # cmd
 
@@ -26,6 +39,7 @@ pip install coralnet-toolbox
 If you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you
 need, and then install the corresponding versions of `torch` and `torchvision`. Below is an example of how that can be
 done using `CUDA` version 11.8:
+
 ```bash
 # cmd
 
@@ -46,8 +60,10 @@ See here for more details on versions for the following:
 - [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit)
 - [`torch`](https://pytorch.org/get-started/locally/)
 
+
 ### Run
 Finally, you can run the `toolbox` from the command line:
+
 ```bash
 # cmd
 

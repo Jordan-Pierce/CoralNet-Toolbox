@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         # Tile Inference action
         self.tile_inference_action = QAction("Tile Inference", self)
         self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
-        self.tile_menu.addAction(self.tile_inference_action)
+        # self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
         # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -662,7 +662,7 @@ class MainWindow(QMainWindow):
         self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
         self.tile_inference_tool_action.setCheckable(True)
         self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.tile_inference_tool_action)
+        # self.toolbar.addAction(self.tile_inference_tool_action)
 
         self.toolbar.addSeparator()
 

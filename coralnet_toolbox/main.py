@@ -1,6 +1,7 @@
 import sys
 import traceback
 
+import qdarktheme
 from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from coralnet_toolbox.QtMainWindow import MainWindow
@@ -42,9 +43,8 @@ def run():
     try:
         # Install the exception hook
         sys.excepthook = execept_hook
-        
         app = QApplication(sys.argv)
-        app.setStyle('Fusion')
+        qdarktheme.setup_theme("light")
         main_window = MainWindow(__version__)
         main_window.show()
         sys.exit(app.exec_())
