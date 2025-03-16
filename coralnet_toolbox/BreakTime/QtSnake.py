@@ -297,8 +297,8 @@ class SnakeGame(QMainWindow):
         Set up the user interface dimensions and appearance.
         """
         # Calculate dimensions and disable resizing/minimization.
-        width = self.column * self.size
-        height = self.row * self.size
+        width = int(self.column * self.size * 1.05)
+        height = int(self.row * self.size * 1.05)
         self.resize(width, height)
         self.setFixedSize(width, height)  # Prevent resizing/minimization.
         self.setWindowTitle(self.title)

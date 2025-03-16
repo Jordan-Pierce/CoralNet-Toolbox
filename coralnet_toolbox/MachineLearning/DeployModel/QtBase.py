@@ -167,7 +167,8 @@ class Base(QDialog):
     def initialize_area_threshold(self):
         """Initialize the area threshold range slider"""
         current_min, current_max = self.main_window.get_area_thresh()
-        self.area_threshold_slider.setValue((int(current_min * 100), int(current_max * 100)))
+        self.area_threshold_min_slider.setValue(int(current_min * 100))
+        self.area_threshold_max_slider.setValue(int(current_max * 100))
         self.area_thresh_min = current_min
         self.area_thresh_max = current_max
 
@@ -187,7 +188,11 @@ class Base(QDialog):
 
     def update_area_label(self):
         """Handle changes to area threshold range slider"""
-        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        min_val = self.area_threshold_min_slider.value()
+        max_val = self.area_threshold_max_slider.value()
+        if min_val > max_val:
+            min_val = max_val
+            self.area_threshold_min_slider.setValue(min_val)
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)

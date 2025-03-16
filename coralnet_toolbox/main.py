@@ -60,6 +60,8 @@ def run():
         error_dialog.setWindowTitle("Unexpected Error")
         error_dialog.setText("An unexpected error has occurred.")
         error_dialog.setDetailedText(error_message)
+        # Resize the error_dialog to fit the detailed text
+        error_dialog.resize(400, 300)
         
         # Only attempt to use main_window if it exists and is a valid object
         if main_window is not None:

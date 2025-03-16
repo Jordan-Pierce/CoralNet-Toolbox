@@ -182,8 +182,8 @@ class ImportFrames(QDialog):
         self.every_n_frames_spinbox.valueChanged.connect(self.update_calculated_frames)
 
         range_layout.addRow("Sample Every N Frames:", self.every_n_frames_spinbox)
-        range_layout.addRow("Select Frame Range:", self.range_start_slider)
-        range_layout.addRow("Select Frame Range:", self.range_end_slider)
+        range_layout.addRow("Select Start Frame:", self.range_start_slider)
+        range_layout.addRow("Select End Frame:", self.range_end_slider)
         range_layout.addRow("", range_input_layout)
         range_layout.addRow("", self.time_range_label)
         range_tab.setLayout(range_layout)
