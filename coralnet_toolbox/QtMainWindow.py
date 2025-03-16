@@ -84,7 +84,8 @@ from coralnet_toolbox.AutoDistill import (
 )
 
 from coralnet_toolbox.CoralNet import ( 
-    AuthenticateDialog as CoralNetAuthenticateDialog
+    AuthenticateDialog as CoralNetAuthenticateDialog,
+    DownloadDialog as CoralNetDownloadDialog
 )
 
 from coralnet_toolbox.TileProcessor import TileProcessor
@@ -190,7 +191,8 @@ class MainWindow(QMainWindow):
         
         # Create dialogs (CoralNet)
         self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
-                
+        self.coralnet_download_dialog = CoralNetDownloadDialog(self)
+        
         # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
@@ -456,10 +458,9 @@ class MainWindow(QMainWindow):
         #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         # self.coralnet_menu.addAction(self.coralnet_upload_action)
 
-        # self.coralnet_download_action = QAction("Download", self)
-        # self.coralnet_download_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.coralnet_menu.addAction(self.coralnet_download_action)
+        self.coralnet_download_action = QAction("Download", self)
+        self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
+        self.coralnet_menu.addAction(self.coralnet_download_action)
 
         # self.coralnet_model_api_action = QAction("Model API", self)
         # self.coralnet_model_api_action.triggered.connect(
@@ -1317,9 +1318,23 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
     
     def open_coralnet_authenticate_dialog(self):
+        """Open the CoralNet Authenticate dialog to authenticate with CoralNet"""
         try:
             self.untoggle_all_tools()
             self.coralnet_authenticate_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_coralnet_download_dialog(self):
+        """Open the CoralNet Download dialog to download datasets from CoralNet"""
+        if not self.coralnet_authenticate_dialog.authenticated:
+            QMessageBox.warning(self,
+                                "CoralNet Download",
+                                "You must authenticate with CoralNet before downloading datasets.")
+            return
+        try:
+            self.untoggle_all_tools()
+            self.coralnet_download_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

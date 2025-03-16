@@ -57,11 +57,11 @@ def run():
         # Show a detailed error message box
         error_dialog = QMessageBox()
         error_dialog.setIcon(QMessageBox.Critical)
-        error_dialog.setWindowTitle("Unexpected Error")
+        error_dialog.setWindowTitle("Error")
         error_dialog.setText("An unexpected error has occurred.")
         error_dialog.setDetailedText(error_message)
-        # Resize the error_dialog to fit the detailed text
-        error_dialog.resize(400, 300)
+        # Make the dialog box bigger
+        error_dialog.setStyleSheet("QTextEdit { min-width: 600px; min-height: 400px; }")
         
         # Only attempt to use main_window if it exists and is a valid object
         if main_window is not None:

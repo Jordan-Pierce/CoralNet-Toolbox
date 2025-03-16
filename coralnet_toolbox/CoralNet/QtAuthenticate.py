@@ -67,6 +67,9 @@ class AuthenticateDialog(QDialog):
         # Setup buttons layout
         self.setup_buttons_layout()
         
+        # Load saved credentials if available
+        self.load_saved_credentials()
+        
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
@@ -205,6 +208,10 @@ class AuthenticateDialog(QDialog):
             # Then get the token
             self.token, self.headers = self.get_token(username, password)
             
+            # Store credentials in environment variables
+            os.environ['CORALNET_USERNAME'] = username
+            os.environ['CORALNET_PASSWORD'] = password
+            
             # Update UI
             self.token_display.setText(self.token)
             self.token_display.setEchoMode(QLineEdit.Password)  # Start in hidden mode
@@ -342,3 +349,13 @@ class AuthenticateDialog(QDialog):
         Returns True if the user is authenticated, False otherwise.
         """
         return self.authenticated
+    
+    def load_saved_credentials(self):
+        """Load saved credentials from environment variables if available."""
+        username = os.environ.get('CORALNET_USERNAME', '')
+        password = os.environ.get('CORALNET_PASSWORD', '')
+        
+        if username:
+            self.username_input.setText(username)
+        if password:
+            self.password_input.setText(password)
