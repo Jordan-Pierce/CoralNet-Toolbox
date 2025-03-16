@@ -83,6 +83,10 @@ from coralnet_toolbox.AutoDistill import (
     BatchInferenceDialog as AutoDistillBatchInferenceDialog
 )
 
+from coralnet_toolbox.CoralNet import ( 
+    AuthenticateDialog as CoralNetAuthenticateDialog
+)
+
 from coralnet_toolbox.TileProcessor import TileProcessor
 
 from coralnet_toolbox.BreakTime import SnakeGame
@@ -183,6 +187,9 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
+        
+        # Create dialogs (CoralNet)
+        self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
                 
         # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
@@ -438,12 +445,11 @@ class MainWindow(QMainWindow):
         # self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
-        # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
 
-        # self.coralnet_authenticate_action = QAction("Authenticate", self)
-        # self.coralnet_authenticate_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.coralnet_menu.addAction(self.coralnet_authenticate_action)
+        self.coralnet_authenticate_action = QAction("Authenticate", self)
+        self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
+        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
 
         # self.coralnet_upload_action = QAction("Upload", self)
         # self.coralnet_upload_action.triggered.connect(
@@ -1307,6 +1313,13 @@ class MainWindow(QMainWindow):
             # Proceed to open the dialog if images are loaded
             self.untoggle_all_tools()
             self.patch_annotation_sampling_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+    
+    def open_coralnet_authenticate_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.coralnet_authenticate_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
