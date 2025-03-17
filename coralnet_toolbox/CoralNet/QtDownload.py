@@ -90,7 +90,7 @@ class DownloadDialog(QDialog):
         layout = QVBoxLayout()
         
         info_label = QLabel(
-            "Download data from a CoralNet source. Specify the source ID and select which items to download."
+            "Download data from a CoralNet source. Specify the Source ID and select which items to download."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -217,7 +217,16 @@ class DownloadDialog(QDialog):
             options.add_argument('headless')
             # Needed to avoid timeouts when running in headless mode
             options.add_experimental_option('extensionLoadTimeout', 3600000)
-            
+        
+        # Modify where the downloads go
+        prefs = {
+            "download.default_directory": self.source_dir,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": False
+        }
+        options.add_experimental_option("prefs", prefs)
+        
         # Initialize progress bar
         self.progress_bar.set_title("Checking for Google Chrome")
         self.progress_bar.start_progress(100)
@@ -332,7 +341,7 @@ class DownloadDialog(QDialog):
         
         # Get inputs
         self.source_id = self.source_id_input.text().strip()
-        self.output_dir = self.output_dir_input.text().strip()
+        self.output_dir = os.path.normpath(self.output_dir_input.text().strip())
         self.download_options = self.get_download_options()
         
         # Get credentials from auth dialog
@@ -368,6 +377,10 @@ class DownloadDialog(QDialog):
     def download(self):
         """Run the download process"""
 
+        # Create source directory (normalized path needed for Selenium)
+        self.source_dir = os.path.normpath(f"{os.path.abspath(self.output_dir)}\\{str(self.source_id)}")
+        os.makedirs(self.source_dir, exist_ok=True)
+        
         # Initialize the driver
         if not self.initialize_driver():
             raise Exception("Failed to find a supported browser (see console log)")
@@ -379,10 +392,6 @@ class DownloadDialog(QDialog):
         # Check permissions
         if not self.check_permissions():
             raise Exception("Failed to permissions check (see console log)")
-            
-        # Create source directory
-        self.source_dir = f"{os.path.abspath(self.output_dir)}/{str(self.source_id)}/"
-        os.makedirs(self.source_dir, exist_ok=True)
         
         # Download metadata if selected
         if self.download_options.get('metadata', False):
@@ -547,10 +556,10 @@ class DownloadDialog(QDialog):
                                                    'Global id'])
 
                 # Save to disk
-                meta.to_csv(f"{self.source_dir}{self.source_id}_metadata.csv")
+                meta.to_csv(f"{self.source_dir}\\metadata.csv")
                 
                 # Check that it was saved
-                if os.path.exists(f"{self.source_dir}{self.source_id}_metadata.csv"):
+                if os.path.exists(f"{self.source_dir}\\metadata.csv"):
                     print("Metadata saved successfully")
                     sucess = True
                 else:
@@ -619,10 +628,10 @@ class DownloadDialog(QDialog):
                 })
 
                 # Save the labelset as a CSV file
-                labelset.to_csv(f"{self.source_dir}{self.source_id}_labelset.csv")
+                labelset.to_csv(f"{self.source_dir}\\labelset.csv")
                 
                 # Check that it was saved
-                if os.path.exists(f"{self.source_dir}{self.source_id}_labelset.csv"):
+                if os.path.exists(f"{self.source_dir}\\labelset.csv"):
                     print("Labelset saved successfully")
                     sucess = True
                 else:
@@ -684,33 +693,15 @@ class DownloadDialog(QDialog):
             
             # Find and click the Go button
             go_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.submit.red"))
+                EC.element_to_be_clickable((By.XPATH, "//form[@id='export-annotations-prep-form']//button"))
             )
             go_button.click()
             
-            # Wait for the CSV content to load
-            time.sleep(3)
-            
-            # Get the page source which now contains the CSV data
-            csv_content = self.driver.page_source
-            
-            # Remove HTML tags to get clean CSV
-            # The CSV content is typically in a <pre> tag when displayed in browser
-            soup = BeautifulSoup(csv_content, 'html.parser')
-            if soup.pre:
-                csv_content = soup.pre.text
-            else:
-                # If not in pre tag, try to extract text content directly
-                csv_content = soup.get_text()
-            
-            # Parse the CSV content
-            annotations = pd.read_csv(io.StringIO(csv_content), sep=",")
-            
-            # Save the annotations to a CSV file
-            annotations.to_csv(f"{self.source_dir}{self.source_id}_annotations.csv", index=False)
+            while "Working" in go_button.accessible_name:
+                time.sleep(3)
             
             # Check that it was saved
-            if os.path.exists(f"{self.source_dir}{self.source_id}_annotations.csv"):
+            if os.path.exists(f"{self.source_dir}\\annotations.csv"):
                 print("Annotations saved successfully")
                 success = True
             else:
@@ -1003,7 +994,7 @@ class DownloadDialog(QDialog):
         directory.
         """
         # Save the dataframe of images locally
-        csv_file = f"{self.source_dir}{self.source_id}_images.csv"
+        csv_file = f"{self.source_dir}\\images.csv"
         dataframe.to_csv(csv_file)
         
         # Check if the CSV file was saved before trying to download
