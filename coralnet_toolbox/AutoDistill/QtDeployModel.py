@@ -48,7 +48,7 @@ class DeployModelDialog(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("AutoDistill Deploy Model")
+        self.setWindowTitle("AutoDistill Deploy Model (Ctrl + 5)")
         self.resize(400, 325)
 
         # Initialize variables
@@ -420,7 +420,6 @@ class DeployModelDialog(QDialog):
                                               text_threshold=0.025,
                                               model=model)
 
-    # TODO Error: 'list' object has no attribute 'xyxy'
     def predict(self, image_paths=None):
         """
         Make Autodistill predictions on the given inputs

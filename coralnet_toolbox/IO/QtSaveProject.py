@@ -32,7 +32,7 @@ class SaveProject(QDialog):
 
         self.current_project_path = self.main_window.current_project_path
 
-        self.setWindowTitle("Save Project (Ctrl+Shift+S)")
+        self.setWindowTitle("Save Project (Ctrl + Shift + S)")
         self.resize(600, 100)
 
         # Setup the save file layout

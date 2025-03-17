@@ -52,7 +52,7 @@ class DeployGeneratorDialog(QDialog):
         self.sam_dialog = None
 
         self.setWindowIcon(get_icon("sam.png"))
-        self.setWindowTitle("FastSAM Generator")
+        self.setWindowTitle("FastSAM Generator (Ctrl + 4)")
         self.resize(400, 325)
 
         # Initialize variables

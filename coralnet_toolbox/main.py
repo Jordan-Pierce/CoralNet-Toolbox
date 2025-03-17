@@ -2,10 +2,12 @@ import sys
 import traceback
 
 import qdarktheme
-from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton
+from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton, QTextEdit
 
 from coralnet_toolbox.QtMainWindow import MainWindow
+
 from coralnet_toolbox.utilities import console_user
+from coralnet_toolbox.utilities import execept_hook
 
 from coralnet_toolbox import __version__
 
@@ -13,27 +15,6 @@ from coralnet_toolbox import __version__
 # ----------------------------------------------------------------------------------------------------------------------
 # Application
 # ----------------------------------------------------------------------------------------------------------------------
-
-
-def execept_hook(cls, exception, traceback_obj):
-    """Handle uncaught exceptions including Qt errors"""
-    error_msg = f"{cls.__name__}: {exception}\n\n"
-    error_msg += ''.join(traceback.format_tb(traceback_obj))
-    
-    # Log the error
-    print(error_msg)
-    
-    # If Qt is initialized, show error in GUI
-    if QApplication.instance() is not None:
-        msg_box = QMessageBox()
-        msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setText("An unexpected error occurred")
-        msg_box.setDetailedText(error_msg)
-        msg_box.setStandardButtons(QMessageBox.Ok)
-        msg_box.exec_()
-    
-    sys.__excepthook__(cls, exception, traceback_obj)
-    sys.exit(1)    
     
 
 def run():
@@ -52,18 +33,19 @@ def run():
     except Exception as e:
         # Log the full traceback
         error_message = f"{e}\n{traceback.format_exc()}"
+        
+        # Print to console first
         console_user(error_message)
         
-        # Show a detailed error message box
+        # Show a detailed error message box to use via the UI
         error_dialog = QMessageBox()
         error_dialog.setIcon(QMessageBox.Critical)
         error_dialog.setWindowTitle("Error")
         error_dialog.setText("An unexpected error has occurred.")
         error_dialog.setDetailedText(error_message)
-        # Make the dialog box bigger
-        error_dialog.setStyleSheet("QTextEdit { min-width: 600px; min-height: 400px; }")
         
-        # Only attempt to use main_window if it exists and is a valid object
+        # Only attempt to use main_window if it exists and is a valid object;
+        # Add the ability to save the project before exiting
         if main_window is not None:
             save_button = QPushButton("Save Project")
             error_dialog.addButton(save_button, QMessageBox.AcceptRole)

@@ -19,13 +19,13 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 CORALNET_URL = "https://coralnet.ucsd.edu"
 
 # CoralNet Source page, lists all sources
-CORALNET_SOURCE_URL = CORALNET_URL + "/source/about/"
+CORALNET_SOURCE_URL = f"{CORALNET_URL}/source/about/"
 
 # CoralNet Labelset page, lists all labelsets
-CORALNET_LABELSET_URL = CORALNET_URL + "/label/list/"
+CORALNET_LABELSET_URL = f"{CORALNET_URL}/label/list/"
 
 # URL of the login page
-LOGIN_URL = "https://coralnet.ucsd.edu/accounts/login/"
+LOGIN_URL = f"{CORALNET_URL}/accounts/login/"
 
 
 # ----------------------------------------------------------------------------------------------------------------------

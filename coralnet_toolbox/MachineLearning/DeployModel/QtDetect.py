@@ -29,7 +29,7 @@ from coralnet_toolbox.utilities import check_model_architecture
 class Detect(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        self.setWindowTitle("Deploy Detection Model")
+        self.setWindowTitle("Deploy Detection Model (Ctrl + 2)")
 
         self.task = 'detect'
 

@@ -1,157 +1,42 @@
 import os
+import io
+import time
 import json
-import requests
-from bs4 import BeautifulSoup
 import traceback
+
 import concurrent
 from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QMessageBox, QGroupBox, 
                              QFormLayout, QApplication, QComboBox, QTextEdit,
                              QFileDialog)
 
-import time
+import requests
+from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
-# ----------------------------------------------------------------------------------------------------------------------
-# Worker Thread Class
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-class DownloadWorker(QThread):
-    """Worker thread for downloading data from CoralNet"""
-    
-    # Signal to update the status text
-    update_status = pyqtSignal(str)
-    # Signal to indicate download completion
-    download_complete = pyqtSignal(bool, str)
-    
-    def __init__(self, dialog, source_id, output_dir, download_options, auth_token=None, username=None, password=None):
-        super(DownloadWorker, self).__init__()
-        self.download_dialog = dialog  # Reference to the parent dialog
-        self.source_id = source_id
-        self.output_dir = output_dir
-        self.download_options = download_options
-        self.auth_token = auth_token
-        self.username = username
-        self.password = password
-        
-    def run(self):
-        """Run the download process in a separate thread"""
-        try:
-            self.update_status.emit(f"Initializing download for Source ID: {self.source_id}...")
-            
-            # Check which browsers are available
-            browser_name = self.download_dialog.check_for_browsers()
-            if not browser_name:
-                self.update_status.emit("ERROR: No supported browser found. Please install Chrome or Firefox.")
-                self.download_complete.emit(False, "No supported browser found")
-                return
-                
-            # Create source directory
-            source_dir = f"{os.path.abspath(self.output_dir)}/{str(self.source_id)}/"
-            os.makedirs(source_dir, exist_ok=True)
-            
-            # Login to CoralNet
-            self.update_status.emit(f"Logging in to CoralNet...")
-            driver, success = self.download_dialog.login(browser_name)
-            
-            # Download based on selected options
-            results = {}
-            
-            # Download metadata if selected
-            if self.download_options.get('metadata', False):
-                self.update_status.emit(f"Downloading metadata for Source ID: {self.source_id}...")
-                try:
-                    driver, metadata = self.download_dialog.download_metadata(driver, self.source_id, source_dir)
-                    results['metadata'] = "✓ Successfully downloaded metadata"
-                except Exception as e:
-                    results['metadata'] = f"✗ Failed to download metadata: {str(e)}"
-                    self.update_status.emit(results['metadata'])
-            
-            # Download labelset if selected
-            if self.download_options.get('labelset', False):
-                self.update_status.emit(f"Downloading labelset for Source ID: {self.source_id}...")
-                try:
-                    driver, labelset = self.download_dialog.download_labelset(driver, self.source_id, source_dir)
-                    results['labelset'] = "✓ Successfully downloaded labelset"
-                except Exception as e:
-                    results['labelset'] = f"✗ Failed to download labelset: {str(e)}"
-                    self.update_status.emit(results['labelset'])
-            
-            # Download annotations if selected
-            if self.download_options.get('annotations', False):
-                self.update_status.emit(f"Downloading annotations for Source ID: {self.source_id}...")
-                try:
-                    driver, annotations = self.download_dialog.download_annotations(driver, self.source_id, source_dir)
-                    results['annotations'] = "✓ Successfully downloaded annotations"
-                except Exception as e:
-                    results['annotations'] = f"✗ Failed to download annotations: {str(e)}"
-                    self.update_status.emit(results['annotations'])
-            
-            # Download images if selected
-            if self.download_options.get('images', False):
-                self.update_status.emit(f"Getting image information for Source ID: {self.source_id}...")
-                try:
-                    # Get images metadata
-                    driver, images = self.download_dialog.get_images(driver, self.source_id)
-                    
-                    if images is not None and not images.empty:
-                        # Get image URLs
-                        self.update_status.emit(f"Retrieving image URLs...")
-                        image_pages = images['Image Page'].tolist()
-                        driver, images['Image URL'] = self.download_dialog.get_image_urls(driver, image_pages)
-                        
-                        # Download images
-                        self.update_status.emit(f"Downloading {len(images)} images...")
-                        self.download_dialog.download_images(images, source_dir)
-                        results['images'] = f"✓ Successfully downloaded {len(images)} images"
-                    else:
-                        results['images'] = "✗ No images found for this source"
-                except Exception as e:
-                    results['images'] = f"✗ Failed to download images: {str(e)}"
-                    self.update_status.emit(results['images'])
-            
-            # Close the driver
-            if driver:
-                driver.quit()
-                
-            # Summarize results
-            summary = f"Download Summary for Source ID {self.source_id}:\n\n"
-            for key, value in results.items():
-                summary += f"{value}\n"
-                
-            self.update_status.emit(summary)
-            self.download_complete.emit(True, source_dir)
-            
-        except Exception as e:
-            error_msg = f"ERROR: {str(e)}\n{traceback.format_exc()}"
-            self.update_status.emit(error_msg)
-            self.download_complete.emit(False, error_msg)
-            
-            # Ensure driver is closed on exception
-            try:
-                if 'driver' in locals() and driver:
-                    driver.quit()
-            except:
-                pass
+from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Download Dialog
+# Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+# TODO consider the use of prefix to filter the search space
 class DownloadDialog(QDialog):
     """
     QDialog for downloading data from CoralNet sources.
@@ -165,11 +50,25 @@ class DownloadDialog(QDialog):
         self.main_window = main_window
         self.authentication_dialog = self.main_window.coralnet_authenticate_dialog
         
-        # Initialize download worker to None
-        self.download_worker = None
+        # Initialize progress bar
+        self.progress_bar = None
         
+        # Initialize worker thread variables
+        self.output_dir = None
+        self.source_id = None
+        self.source_dir = None
+        self.download_options = None
+        self.auth_token = None
+        self.username = None
+        self.password = None
+        
+        # Initialize driver
+        self.driver = None
+        self.headless = True
+        
+        # Setup UI
         self.setWindowTitle("Download from CoralNet")
-        self.resize(600, 500)  # Width, height
+        self.resize(600, 400)  # Width, height reduced since we removed status section
         
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -180,8 +79,6 @@ class DownloadDialog(QDialog):
         self.setup_source_layout()
         # Setup the options layout
         self.setup_options_layout()
-        # Setup the status layout
-        self.setup_status_layout()
         # Setup buttons layout
         self.setup_buttons_layout()
         
@@ -243,10 +140,10 @@ class DownloadDialog(QDialog):
         options_group = QGroupBox("Download Options")
         form_layout = QFormLayout()
         
-        # Dropdown for images
-        self.images_dropdown = QComboBox()
-        self.images_dropdown.addItems(["True", "False"])
-        form_layout.addRow("Download Images:", self.images_dropdown)
+        # Dropdown for metadata
+        self.metadata_dropdown = QComboBox()
+        self.metadata_dropdown.addItems(["True", "False"])
+        form_layout.addRow("Download Metadata:", self.metadata_dropdown)
         
         # Dropdown for labelset
         self.labelset_dropdown = QComboBox()
@@ -258,10 +155,10 @@ class DownloadDialog(QDialog):
         self.annotations_dropdown.addItems(["True", "False"])
         form_layout.addRow("Download Annotations:", self.annotations_dropdown)
         
-        # Dropdown for metadata
-        self.metadata_dropdown = QComboBox()
-        self.metadata_dropdown.addItems(["True", "False"])
-        form_layout.addRow("Download Metadata:", self.metadata_dropdown)
+        # Dropdown for images
+        self.images_dropdown = QComboBox()
+        self.images_dropdown.addItems(["True", "False"])
+        form_layout.addRow("Download Images:", self.images_dropdown)
         
         # Set the form layout to the group box
         options_group.setLayout(form_layout)
@@ -269,23 +166,18 @@ class DownloadDialog(QDialog):
         # Add the group box to the main layout
         self.layout.addWidget(options_group)
     
-    def setup_status_layout(self):
-        """Setup the status display section"""
-        status_group = QGroupBox("Download Status")
-        status_layout = QVBoxLayout()
-        
-        # Status text area
-        self.status_text = QTextEdit()
-        self.status_text.setReadOnly(True)
-        self.status_text.setPlaceholderText("Download status will appear here...")
-        status_layout.addWidget(self.status_text)
-        
-        status_group.setLayout(status_layout)
-        self.layout.addWidget(status_group)
-    
     def setup_buttons_layout(self):
         """Setup the download and exit buttons"""
         button_layout = QHBoxLayout()
+        
+        # Add debug toggle button with bug icon
+        self.debug_button = QPushButton()
+        self.debug_button.setIcon(get_icon("www.png"))
+        self.debug_button.setToolTip("Toggle Headless Mode")
+        self.debug_button.setCheckable(True)
+        self.debug_button.setMaximumWidth(30)
+        self.debug_button.toggled.connect(lambda checked: setattr(self, 'headless', not checked))
+        button_layout.addWidget(self.debug_button)
         
         self.download_button = QPushButton("Download")
         self.download_button.clicked.connect(self.start_download)
@@ -310,6 +202,82 @@ class DownloadDialog(QDialog):
             return False
         return True
     
+    def initialize_driver(self):
+        """
+        Check if Chrome browser is installed.
+        """        
+        success = False
+        
+        options = Options()
+        # Silence, please.
+        options.add_argument("--log-level=3")
+
+        if self.headless:
+            # Add headless argument
+            options.add_argument('headless')
+            # Needed to avoid timeouts when running in headless mode
+            options.add_experimental_option('extensionLoadTimeout', 3600000)
+            
+        # Initialize progress bar
+        self.progress_bar.set_title("Checking for Google Chrome")
+        self.progress_bar.start_progress(100)
+
+        try:
+            # Check if ChromeDriver path is already in PATH
+            chrome_driver_path = "chromedriver.exe"  # Adjust the name if needed
+            if not any(
+                os.path.exists(os.path.join(directory, chrome_driver_path))
+                for directory in os.environ["PATH"].split(os.pathsep)
+            ):
+                # If it's not in PATH, attempt to install it
+                chrome_driver_path = ChromeDriverManager().install()
+
+                if not chrome_driver_path:
+                    raise Exception("ERROR: ChromeDriver installation failed.")
+                else:
+                    # Add the ChromeDriver directory to the PATH environment variable
+                    os.environ["PATH"] += os.pathsep + os.path.dirname(chrome_driver_path)
+                    
+            # Attempt to open a browser
+            self.driver = webdriver.Chrome(options=options)
+            success = True
+            
+        except Exception as e:
+            print(f"WARNING: Google Chrome could not be used\n{str(e)}")
+            
+        finally:
+            self.progress_bar.finish_progress()
+        
+        return success            
+
+    def check_permissions(self):
+        """
+        Check the permissions of the current page.
+        Returns the driver and status element if successful, raises exception otherwise.
+        """
+        status = None
+        
+        try:
+            # Find the content container element
+            path = "content-container"
+            status = WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.ID, path)))
+            
+            # Check if status element has text
+            if not status.text:
+                raise Exception("Unable to access page information: element found but contains no text")
+            
+            # Check for specific error conditions
+            if "Page could not be found" in status.text:
+                raise Exception("Page could not be found: The requested source does not exist")
+            elif "don't have permission" in status.text:
+                raise Exception("Permission denied: You don't have permission to access this source")
+            
+        except Exception as e:
+            # Propagate the exception with its original message
+            raise Exception(f"Permission check failed: {str(e)}")
+    
+        return status
+    
     def get_download_options(self):
         """Get the download options from the dropdowns"""
         options = {
@@ -322,13 +290,13 @@ class DownloadDialog(QDialog):
     
     def validate_inputs(self):
         """Validate the user inputs"""
-        source_id = self.source_id_input.text().strip()
-        if not source_id:
+        self.source_id = self.source_id_input.text().strip()
+        if not self.source_id:
             QMessageBox.warning(self, "Input Error", "Source ID is required.")
             return False
         
         try:
-            int(source_id)  # Check if it's a valid number
+            int(self.source_id)  # Check if it's a valid number
         except ValueError:
             QMessageBox.warning(self, "Input Error", "Source ID must be a number.")
             return False
@@ -363,94 +331,171 @@ class DownloadDialog(QDialog):
             return
         
         # Get inputs
-        source_id = self.source_id_input.text().strip()
-        output_dir = self.output_dir_input.text().strip()
-        download_options = self.get_download_options()
+        self.source_id = self.source_id_input.text().strip()
+        self.output_dir = self.output_dir_input.text().strip()
+        self.download_options = self.get_download_options()
         
         # Get credentials from auth dialog
-        auth_token = self.authentication_dialog.get_auth_token()
+        self.auth_token = self.authentication_dialog.get_auth_token()
+        self.username = self.authentication_dialog.username_input.text()
+        self.password = self.authentication_dialog.password_input.text()
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.progress_bar = ProgressBar(self, f"Downloading from Source: {self.source_id}")
+        self.progress_bar.show()
+        
+        try:
+            # Start the download process in a separate thread
+            self.download()
+            
+            QMessageBox.information(self, "Download Complete", "Download completed successfully.")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Download Error", f"{str(e)}")
+            
+        finally:
+            # Make cursor not busy
+            QApplication.restoreOverrideCursor()
+            self.progress_bar.finish_progress()
+            self.progress_bar.close()
+            self.progress_bar = None
+            
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+
+    def download(self):
+        """Run the download process"""
+
+        # Initialize the driver
+        if not self.initialize_driver():
+            raise Exception("Failed to find a supported browser (see console log)")
+                   
+        # Login to CoralNet
+        if not self.login():
+            raise Exception("Failed to login to CoralNet (see console log)")
+            
+        # Check permissions
+        if not self.check_permissions():
+            raise Exception("Failed to permissions check (see console log)")
+            
+        # Create source directory
+        self.source_dir = f"{os.path.abspath(self.output_dir)}/{str(self.source_id)}/"
+        os.makedirs(self.source_dir, exist_ok=True)
+        
+        # Download metadata if selected
+        if self.download_options.get('metadata', False):
+            if not self.download_metadata():
+                raise Exception("Failed to download metadata (see console log)")
+        
+        # Download labelset if selected
+        if self.download_options.get('labelset', False):
+            if not self.download_labelset():
+                raise Exception("Failed to download labelset (see console log)")
+        
+        # Download annotations if selected
+        if self.download_options.get('annotations', False):
+            if not self.download_annotations():
+                raise Exception("Failed to download annotations (see console log)")
+            
+        # Download images if selected
+        if self.download_options.get('images', False):
+            images, success = self.get_images()
+            
+            if not success:
+                raise Exception("Failed while scanning for images (see console log)")
+            
+            if len(images):            
+                # Get image URLs for each of the images
+                images['Image URL'] = self.get_image_urls(images['Image Page'].tolist())
+                # Download images
+                self.download_images(images)
+        
+    def login(self):
+        """
+        Log in to CoralNet using Selenium.
+        """
+        # Create a variable for success
+        success = False
+
+        # Get auth info from the authentication dialog
         username = self.authentication_dialog.username_input.text()
         password = self.authentication_dialog.password_input.text()
         
-        # Clear status text
-        self.status_text.clear()
-        self.status_text.append(f"Starting download for Source ID: {source_id}...")
-        
-        # Disable download button during the process
-        self.download_button.setEnabled(False)
-        
-        # Create and start the download worker thread
-        self.download_worker = DownloadWorker(
-            self,  # Pass reference to this dialog 
-            source_id, 
-            output_dir, 
-            download_options,
-            auth_token,
-            username,
-            password
-        )
-        
-        # Connect signals
-        self.download_worker.update_status.connect(self.update_status)
-        self.download_worker.download_complete.connect(self.on_download_complete)
-        
-        # Start the worker
-        self.download_worker.start()
-    
-    def update_status(self, message):
-        """Update the status text area with a message"""
-        self.status_text.append(message)
-        # Scroll to the bottom
-        self.status_text.verticalScrollBar().setValue(
-            self.status_text.verticalScrollBar().maximum()
-        )
-    
-    def on_download_complete(self, success, message):
-        """Handle download completion"""
-        self.download_button.setEnabled(True)
-        
-        if success:
-            self.update_status("\nDownload completed successfully!")
-            QMessageBox.information(
-                self,
-                "Download Complete",
-                f"Download completed successfully.\nFiles saved to: {message}"
-            )
-        else:
-            self.update_status("\nDownload failed!")
-            QMessageBox.critical(
-                self,
-                "Download Failed",
-                f"Download failed: {message}"
-            )
+        # Add credentials to driver capabilities for later use
+        self.driver.capabilities['credentials'] = {
+            'username': username,
+            'password': password
+        }
 
-    def download_metadata(self, driver, source_id, source_dir=None):
+        # Initialize progress bar
+        self.progress_bar.set_title("Logging into CoralNet")
+        self.progress_bar.start_progress(100)
+        
+        try:
+            # Navigate to the page to login
+            self.driver.get(self.authentication_dialog.CORALNET_URL + "/accounts/login/")
+
+            # Find the username button
+            path = "id_username"
+            username_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.ID, path)))
+
+            # Find the password button
+            path = "id_password"
+            password_input = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.ID, path)))
+
+            # Find the login button
+            path = "//input[@type='submit'][@value='Sign in']"
+            login_button = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, path)))
+
+            # Enter the username and password
+            username_input.send_keys(self.driver.capabilities['credentials']['username'])
+            password_input.send_keys(self.driver.capabilities['credentials']['password'])
+
+            # Click the login button
+            time.sleep(3)
+            login_button.click()
+
+            # Confirm login was successful; after 10 seconds, throw an error.
+            path = "//button[text()='Sign out']"
+
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, path)))
+
+            # Login was successful
+            success = True
+
+        except Exception as e:
+            print(f"ERROR: Could not login with {username}\n{str(e)}")
+        
+        finally:
+            self.progress_bar.finish_progress()
+
+        return success
+
+    def download_metadata(self):
         """
         Given a source ID, download the labelset.
         """
+        sucess = False
+        
         # To hold the metadata
         meta = []
 
-        # Go to the meta page
-        driver.get(self.authentication_dialog.CORALNET_URL + f"/source/{source_id}/")
-
-        # First check that this is existing source the user has access to
-        try:
-            # Check the permissions
-            driver, status = self.check_permissions(driver)
-
-            # Check the status
-            if "Page could not be found" in status.text or "don't have permission" in status.text:
-                raise Exception(status.text.split('.')[0])
-
-        except Exception as e:
-            raise Exception(f"ERROR: {e} or you do not have permission to access it")
-
-        self.update_status(f"Downloading model metadata for {source_id}")
+        # Initialize progress bar
+        self.progress_bar.set_title("Downloading Metadata")
+        self.progress_bar.start_progress(100)
 
         try:
+            # Go to the meta page
+            self.driver.get(self.authentication_dialog.CORALNET_URL + f"/source/{self.source_id}/")
+        
             # Convert the page to soup
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
 
             script = None
 
@@ -459,216 +504,339 @@ class DownloadDialog(QDialog):
                 if "Classifier overview" in script.text:
                     script = script.text
                     break
-
-            # If the page doesn't have model metadata, then return None early
+                
             if not script:
-                raise Exception("NOTE: No model metadata found")
+                sucess = True  # Nothing to download, exit early
 
-            # Parse the data when represented as a string, convert to dict
-            start_index = script.find("let classifierPlotData = ") + len("let classifierPlotData = ")
-            end_index = script.find("];", start_index) + 1  # Adding 1 to include the closing bracket
+            else:
+                # Parse the data when represented as a string, convert to dict
+                start_index = script.find("let classifierPlotData = ") + len("let classifierPlotData = ")
+                end_index = script.find("];", start_index) + 1  # Adding 1 to include the closing bracket
 
-            # Extract the substring containing the data
-            classifier_plot_data_str = script[start_index:end_index]
+                # Extract the substring containing the data
+                classifier_plot_data_str = script[start_index:end_index]
 
-            # Convert single quotes to double quotes for JSON compatibility
-            classifier_plot_data_str = classifier_plot_data_str.replace("'", '"')
+                # Convert single quotes to double quotes for JSON compatibility
+                classifier_plot_data_str = classifier_plot_data_str.replace("'", '"')
 
-            # Parse the string into a Python list of dictionaries
-            data = json.loads(classifier_plot_data_str)
+                # Parse the string into a Python list of dictionaries
+                data = json.loads(classifier_plot_data_str)
 
-            # Loop through and collect meta from each model instance, store
-            for idx, point in enumerate(data):
-                classifier_nbr = point["x"]
-                score = point["y"]
-                nimages = point["nimages"]
-                traintime = point["traintime"]
-                date = point["date"]
-                src_id = point["pk"]
+                # Loop through and collect meta from each model instance, store
+                for idx, point in enumerate(data):
+                    classifier_nbr = point["x"]
+                    score = point["y"]
+                    nimages = point["nimages"]
+                    traintime = point["traintime"]
+                    date = point["date"]
+                    src_id = point["pk"]
 
-                meta.append([classifier_nbr,
-                             score,
-                             nimages,
-                             traintime,
-                             date,
-                             src_id])
+                    meta.append([classifier_nbr,
+                                score,
+                                nimages,
+                                traintime,
+                                date,
+                                src_id])
 
-            # Convert list to dataframe
-            meta = pd.DataFrame(meta, columns=['Classifier nbr',
-                                               'Accuracy',
-                                               'Trained on',
-                                               'Date',
-                                               'Traintime',
-                                               'Global id'])
+                # Convert list to dataframe
+                meta = pd.DataFrame(meta, columns=['Classifier nbr',
+                                                   'Accuracy',
+                                                   'Trained on',
+                                                   'Date',
+                                                   'Traintime',
+                                                   'Global id'])
 
-            # Save if user provided an output directory
-            if source_dir:
-                # Just in case
-                os.makedirs(source_dir, exist_ok=True)
-                # Save the meta as a CSV file
-                meta.to_csv(f"{source_dir}{source_id}_metadata.csv")
+                # Save to disk
+                meta.to_csv(f"{self.source_dir}{self.source_id}_metadata.csv")
+                
                 # Check that it was saved
-                if os.path.exists(f"{source_dir}{source_id}_metadata.csv"):
-                    self.update_status("Metadata saved successfully")
+                if os.path.exists(f"{self.source_dir}{self.source_id}_metadata.csv"):
+                    print("Metadata saved successfully")
+                    sucess = True
                 else:
                     raise Exception("WARNING: Metadata could not be saved")
 
         except Exception as e:
-            self.update_status(f"ERROR: Issue with downloading metadata: {str(e)}")
-            meta = None
+            print(f"ERROR: Issue with downloading metadata: {str(e)}")
+            
+        finally:
+            self.progress_bar.finish_progress()
 
-        return driver, meta
+        return sucess
 
-    def download_labelset(self, driver, source_id, source_dir=None):
+    def download_labelset(self):
         """
         Given a source ID, download the labelset.
         """
+        sucess = False
+        
         # To hold the labelset
         labelset = None
-
-        # Go to the images page
-        driver.get(self.authentication_dialog.CORALNET_URL + f"/source/{source_id}/labelset/")
-
-        # First check that this is existing source the user has access to
-        try:
-            # Check the permissions
-            driver, status = self.check_permissions(driver)
-
-            # Check the status
-            if "Page could not be found" in status.text or "don't have permission" in status.text:
-                raise Exception(status.text.split('.')[0])
-
-        except Exception as e:
-            raise Exception(f"ERROR: {e} or you do not have permission to access it")
-
-        self.update_status(f"Downloading labelset for {source_id}")
+        
+        # Initialize progress bar
+        self.progress_bar.set_title("Downloading Labelset")
+        self.progress_bar.start_progress(100)
 
         try:
+            # Go to the images page
+            self.driver.get(self.authentication_dialog.CORALNET_URL + f"/source/{self.source_id}/labelset/")
+            
             # Get the page source HTML
-            html_content = driver.page_source
+            html_content = self.driver.page_source
             # Parse the HTML content
             soup = BeautifulSoup(html_content, 'html.parser')
-
             # Find the table with id 'label-table'
             table = soup.find('table', {'id': 'label-table'})
-            # Initialize lists to store data
-            label_ids = []
-            names = []
-            short_codes = []
+            
+            if not table.find_all('tr'):
+                sucess = True  # Nothing to download, exit early
+            
+            else:
+                # Initialize lists to store data
+                label_ids = []
+                names = []
+                short_codes = []
 
-            # Loop through each row in the table
-            for idx, row in enumerate(table.find_all('tr')):
-                # Skip the header row
-                if not row.find('th'):
-                    # Extract label ID from href attribute of the anchor tag
-                    label_id = row.find('a')['href'].split('/')[-2]
-                    label_ids.append(label_id)
-                    # Extract Name from the anchor tag
-                    name = row.find('a').text.strip()
-                    names.append(name)
-                    # Extract Short Code from the second td tag
-                    short_code = row.find_all('td')[1].text.strip()
-                    short_codes.append(short_code)
+                # Loop through each row in the table
+                for idx, row in enumerate(table.find_all('tr')):
+                    # Skip the header row
+                    if not row.find('th'):
+                        # Extract label ID from href attribute of the anchor tag
+                        label_id = row.find('a')['href'].split('/')[-2]
+                        label_ids.append(label_id)
+                        # Extract Name from the anchor tag
+                        name = row.find('a').text.strip()
+                        names.append(name)
+                        # Extract Short Code from the second td tag
+                        short_code = row.find_all('td')[1].text.strip()
+                        short_codes.append(short_code)
+                    
+                # Create a pandas DataFrame
+                labelset = pd.DataFrame({
+                    'Label ID': label_ids,
+                    'Name': names,
+                    'Short Code': short_codes
+                })
 
-            # Create a pandas DataFrame
-            labelset = pd.DataFrame({
-                'Label ID': label_ids,
-                'Name': names,
-                'Short Code': short_codes
-            })
-
-            # Save if user provided an output directory
-            if source_dir:
-                # Just in case
-                os.makedirs(source_dir, exist_ok=True)
                 # Save the labelset as a CSV file
-                labelset.to_csv(f"{source_dir}{source_id}_labelset.csv")
+                labelset.to_csv(f"{self.source_dir}{self.source_id}_labelset.csv")
+                
                 # Check that it was saved
-                if os.path.exists(f"{source_dir}{source_id}_labelset.csv"):
-                    self.update_status("Labelset saved successfully")
+                if os.path.exists(f"{self.source_dir}{self.source_id}_labelset.csv"):
+                    print("Labelset saved successfully")
+                    sucess = True
                 else:
                     raise Exception("WARNING: Labelset could not be saved")
 
         except Exception as e:
-            self.update_status(f"ERROR: Issue with downloading labelset: {str(e)}")
-            labelset = None
+            print(f"ERROR: Issue with downloading labelset: {str(e)}")
+            
+        finally:
+            self.progress_bar.finish_progress()
 
-        return driver, labelset
+        return sucess
 
-    def download_image(self, image_url, image_path):
+    def download_annotations(self):
         """
-        Download an image from a URL and save it to a directory. Return the path
-        to the downloaded image if download was successful, otherwise return None.
+        This function downloads the annotations from a CoralNet source.
         """
-        # Do not re-download images that already exist
-        if os.path.exists(image_path):
-            return image_path, True
+        success = False
+        
+        # Initialize progress bar
+        self.progress_bar.set_title("Downloading Annotations")
+        self.progress_bar.start_progress(100)
+        
+        try:
+            # Navigate to the source browse images page
+            self.driver.get(self.authentication_dialog.CORALNET_URL + f"/source/{self.source_id}/browse/images/")
+            
+            # Find and interact with the export dropdown
+            browse_action_dropdown = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "browse_action"))
+            )
 
-        # Send a GET request to the image URL
-        response = requests.get(image_url)
-
-        # Check if the response was successful
-        if response.status_code == 200:
-            # Save the image to the specified path
-            with open(image_path, 'wb') as f:
-                f.write(response.content)
-            return image_path, True
-        else:
-            return image_path, False
-
-    def download_images(self, dataframe, source_dir):
+            # Select the "Export Annotations, CSV" option from the dropdown
+            select = Select(browse_action_dropdown)
+            select.select_by_value("export_annotations")
+            
+            # Select "All images" from the dropdown
+            image_select_dropdown = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "image_select_type"))
+            )
+            select = Select(image_select_dropdown)
+            select.select_by_value("all")
+            
+            # Select "Both" for the label format
+            both_option = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='label_format'][value='both']"))
+            )
+            both_option.click()
+            
+            # Select all optional columns
+            optional_columns = self.driver.find_elements(By.CSS_SELECTOR, "input[name='optional_columns']")
+            for checkbox in optional_columns:
+                # Current critiera for finding the right checkboxes
+                if checkbox.accessible_name and checkbox.aria_role != 'none':
+                    checkbox.click()
+                    
+            # Wait for the options to be selected
+            time.sleep(1)
+            
+            # Find and click the Go button
+            go_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button.submit.red"))
+            )
+            go_button.click()
+            
+            # Wait for the CSV content to load
+            time.sleep(3)
+            
+            # Get the page source which now contains the CSV data
+            csv_content = self.driver.page_source
+            
+            # Remove HTML tags to get clean CSV
+            # The CSV content is typically in a <pre> tag when displayed in browser
+            soup = BeautifulSoup(csv_content, 'html.parser')
+            if soup.pre:
+                csv_content = soup.pre.text
+            else:
+                # If not in pre tag, try to extract text content directly
+                csv_content = soup.get_text()
+            
+            # Parse the CSV content
+            annotations = pd.read_csv(io.StringIO(csv_content), sep=",")
+            
+            # Save the annotations to a CSV file
+            annotations.to_csv(f"{self.source_dir}{self.source_id}_annotations.csv", index=False)
+            
+            # Check that it was saved
+            if os.path.exists(f"{self.source_dir}{self.source_id}_annotations.csv"):
+                print("Annotations saved successfully")
+                success = True
+            else:
+                raise Exception("WARNING: Annotations could not be saved")
+                
+        except Exception as e:
+            print(f"ERROR: Issue with downloading annotations: {str(e)}")
+            
+        finally:
+            self.progress_bar.finish_progress()
+            
+        return success
+    
+    def get_images(self):
         """
-        Download images from URLs in a pandas dataframe and save them to a
-        directory.
-        """
-        # Extract source id from path
-        source_id = os.path.basename(os.path.normpath(source_dir))
-        # Save the dataframe of images locally
-        csv_file = f"{source_dir}{source_id}_images.csv"
-        dataframe.to_csv(csv_file)
-        # Check if the CSV file was saved before trying to download
-        if os.path.exists(csv_file):
-            self.update_status("Saved image dataframe as CSV file")
-        else:
-            raise Exception("ERROR: Unable to save image CSV file")
+        Given a source ID, retrieve the image names and page URLs.
+        Returns a DataFrame containing image names and their page URLs.
+        """        
+        # Initialize result variables
+        images = []
+        success = False
+        
+        # Initialize progress bar
+        self.progress_bar.set_title("Accessing Source Images")
+        self.progress_bar.start_progress(100)
+        
+        try:
+            # Go to the images page
+            self.driver.get(self.authentication_dialog.CORALNET_URL + f"/source/{self.source_id}/browse/images/")
+            # Get the page source HTML, and the total number of pages
+            page_element = self.driver.find_element(By.CSS_SELECTOR, 'div.line')
+            total_pages = int(page_element.text.split(" ")[-1]) // 20 + 1
+            print(f"Found {total_pages} pages of images")
+                
+        except Exception:
+            raise Exception("Could not determine total amount of images; please report this issue")
+        
+        finally:
+            # Update progress bar
+            self.progress_bar.finish_progress()
+            
+        # Initialize progress bar
+        self.progress_bar.set_title("Scanning Source Images")
+        self.progress_bar.start_progress(100)
+        
+        # Create lists to store the URLs and titles
+        image_page_urls = []
+        image_names = []
+            
+        try:
+            current_page = 1
+            has_next_page = True
 
-        # Create the image directory if it doesn't exist (it should)
-        image_dir = f"{source_dir}/images/"
-        os.makedirs(image_dir, exist_ok=True)
+            # Loop through all pages
+            while has_next_page and current_page <= total_pages:
 
-        self.update_status(f"Downloading {len(dataframe)} images")
+                # Find all the image elements
+                url_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
+                name_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
 
-        # To hold the expired images
-        expired_images = []
+                # Iterate over the image elements
+                for url_element, name_element in zip(url_elements, name_elements):
+                    # Extract the href attribute (URL)
+                    image_page_url = url_element.get_attribute('href')
+                    image_page_urls.append(image_page_url)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = []
+                    # Extract the title attribute (image name)
+                    image_name = name_element.get_attribute('alt')
+                    image_names.append(image_name)
 
-            for index, row in dataframe.iterrows():
-                # Get the image name and URL from the dataframe
-                name = row['Name']
-                url = row['Image URL']
-                path = image_dir + name
-                # Add the download task to the executor
-                results.append(executor.submit(self.download_image, url, path))
+                try:
+                    # Check if there is a next page button and it's enabled
+                    element_text = 'form.no-padding [type="submit"][value=">"]'
+                    
+                    try:
+                        next_button = self.driver.find_element(By.CSS_SELECTOR, element_text)
+                        button_exists = True
+                    except:
+                        # Element not found, no more pages
+                        button_exists = False
+                        has_next_page = False
+                    
+                    if button_exists and next_button.is_displayed() and next_button.is_enabled():
+                        # Store current page identifier to verify page change
+                        current_page_identifier = self.driver.find_element(By.CSS_SELECTOR, '.line')
+                        
+                        if not current_page_identifier.text:
+                            raise Exception("Could not determine current page number")
+                        
+                        # Click the next button
+                        next_button.click()
+                        # Increase page count
+                        current_page += 1
+                        # Let page elements fully load
+                        time.sleep(2)
+                        
+                except Exception as e:
+                    print(f"Error navigating to next page: {str(e)}")
+                    has_next_page = False
+                    
+                # Update progress bar given total_pages                    
+                progress_percent = int((current_page / total_pages) * 100)
+                self.progress_bar.update_progress_percentage(progress_percent)
+                    
+            # Create a pandas DataFrame
+            if image_names and image_page_urls:
+                images = pd.DataFrame({
+                    'Name': image_names,
+                    'Image Page': image_page_urls
+                })
+                print(f"Retrieved {len(images)} images from source {self.source_id}")
+                success = True
+            else:
+                print(f"No images found for source {self.source_id}")
+                images = []
+                success = False
 
-            # Wait for all tasks to complete and collect the results
-            for idx, result in enumerate(concurrent.futures.as_completed(results)):
-                # Get the downloaded image path
-                downloaded_image_path, downloaded = result.result()
-                # Get the image name from the downloaded image path
-                basename = os.path.basename(downloaded_image_path)
-                if not downloaded:
-                    expired_images.append(basename)
-                # Update progress every 10 images
-                if idx % 10 == 0:
-                    self.update_status(f"Downloaded {idx+1}/{len(dataframe)} images")
+        except Exception as e:
+            print(f"ERROR: Issue retrieving images: {str(e)}")
+            images = []
+            success = False
+            
+        finally:
+            self.progress_bar.finish_progress()
 
-        if expired_images:
-            self.update_status(f"{len(expired_images)} images had expired before being downloaded")
-            self.update_status(f"Saving list of expired images to {source_dir} expired_images.csv")
-            expired_images = pd.DataFrame(expired_images, columns=['image_path'])
-            expired_images.to_csv(f"{source_dir}{source_id}_expired_images.csv")
+        return images, success
 
     def get_image_url(self, session, image_page_url):
         """
@@ -686,278 +854,198 @@ class DownloadDialog(QDialog):
             image_container = soup.find('div', id='original_image_container', style='display:none;')
 
             # Find the img element within the div and get the toolbox attribute
-            image_url = image_container.find('img').get('toolbox')
+            image_url = image_container.find('img').get('src')
 
             return image_url
 
         except Exception as e:
-            self.update_status(f"ERROR: Unable to get image URL from image page: {e}")
+            print(f"ERROR: Unable to get image URL from image page: {e}")
             return None
 
-    def get_image_urls(self, driver, image_page_urls):
+    def get_image_urls(self, image_page_urls):
         """
         Given a list of image page URLs, retrieve the image URLs for each image page.
         This function uses requests to authenticate with the website and retrieve
         the image URLs, because it is thread-safe, unlike Selenium.
         """
-        self.update_status("Retrieving image URLs")
-        
-        # CoralNet login URL
-        LOGIN_URL = self.authentication_dialog.LOGIN_URL
-
         # List to hold all the image URLs
         image_urls = []
-
+        
+        # Initialize progress bar
+        self.progress_bar.set_title(f"Retrieving URLs for {len(image_page_urls)} Images")
+        self.progress_bar.start_progress(100)
+        
         try:
             # Send a GET request to the login page to retrieve the login form
-            response = requests.get(LOGIN_URL, timeout=30)
-
+            response = requests.get(self.authentication_dialog.LOGIN_URL, timeout=30)
+            
+            # Pass along the cookies
+            cookies = response.cookies
+            
+            # Parse the HTML of the response using BeautifulSoup
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Extract the CSRF token from the HTML of the login page
+            csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+            
+            # Create a dictionary with the login form fields and their values
+            data = {
+                "username": self.username,
+                "password": self.password,
+                "csrfmiddlewaretoken": csrf_token["value"],
+            }
+            
+            # Include the "Referer" header in the request
+            headers = {
+                "Referer": self.authentication_dialog.LOGIN_URL,
+            }
+            
+            # Use requests.Session to create a session that will maintain your login state
+            session = requests.Session()
+            
+            # Use session.post() to submit the login form
+            session.post(self.authentication_dialog.LOGIN_URL, data=data, headers=headers, cookies=cookies)
+            
+            # Use a thread pool with a reasonable number of workers
+            with ThreadPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
+                # Submit the image_url retrieval tasks to the thread pool
+                future_to_url = {
+                    executor.submit(self.get_image_url, session, url): url 
+                    for url in image_page_urls
+                }
+                
+                # Retrieve the completed results as they become available
+                total_urls = len(future_to_url)
+                for idx, future in enumerate(concurrent.futures.as_completed(future_to_url)):
+                    url = future_to_url[future]
+                    try:
+                        image_url = future.result()
+                        
+                        if image_url:
+                            image_urls.append(image_url)
+                        else:
+                            raise Exception(f"Failed to retrieve image URL for {url}")
+                        
+                    except Exception as e:
+                        image_urls.append(None)
+                        print(f"ERROR: {e}")
+                    
+                    # Update progress bar
+                    progress_percent = int((idx + 1) / total_urls * 100)
+                    self.progress_bar.update_progress_percentage(progress_percent)
+                        
         except Exception as e:
-            raise Exception(f"ERROR: CoralNet timed out after 30 seconds.\n{e}")
+            raise Exception(f"ERROR: Failed to retrieve image URLs: {str(e)}")
+        
+        finally:
+            self.progress_bar.finish_progress()
+        
+        return image_urls
 
-        # Pass along the cookies
-        cookies = response.cookies
+    @staticmethod
+    def download_image(url, path, timeout=30):
+        """
+        Download an image from a URL and save it to a directory.
+        
+        Args:
+            url (str): URL of the image to download
+            path (str): Local path where the image should be saved
+            timeout (int): Timeout for the request in seconds
+            
+        Returns:
+            tuple: (image_path, success_flag)
+                - image_path: Path where the image should be saved
+                - success_flag: True if download was successful, False otherwise
+        """
+        # Do not re-download images that already exist
+        if os.path.exists(path):
+            return path, True
+            
+        try:
+            # Send a GET request to the image URL with timeout
+            response = requests.get(url, timeout=timeout, stream=True)
+            
+            # Check if the response was successful
+            if response.status_code == 200:
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                
+                # Save the image to the specified path
+                with open(path, 'wb') as f:
+                    # Use stream mode for large files
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                # Verify the file was created and has content
+                if os.path.exists(path) and os.path.getsize(path) > 0:
+                    return path, True
+                else:
+                    print(f"Warning: Downloaded file {path} is empty or doesn't exist")
+                    return path, False
+            else:
+                print(f"Warning: Failed to download {url}, status code: {response.status_code}")
+                return path, False
+                
+        except requests.exceptions.Timeout:
+            print(f"Warning: Timeout while downloading {url}")
+            return path, False
+        except requests.exceptions.ConnectionError:
+            print(f"Warning: Connection error while downloading {url}")
+            return path, False
+        except Exception as e:
+            print(f"Warning: Failed to download {url} - {str(e)}")
+            return path, False
 
-        # Parse the HTML of the response using BeautifulSoup
-        soup = BeautifulSoup(response.text, "html.parser")
+    def download_images(self, dataframe):
+        """
+        Download images from URLs in a pandas dataframe and save them to a
+        directory.
+        """
+        # Save the dataframe of images locally
+        csv_file = f"{self.source_dir}{self.source_id}_images.csv"
+        dataframe.to_csv(csv_file)
+        
+        # Check if the CSV file was saved before trying to download
+        if os.path.exists(csv_file):
+            print("Saved image dataframe as CSV file")
+        else:
+            raise Exception("ERROR: Unable to save image CSV file")
+        
+        # Initialize progress bar
+        self.progress_bar.set_title(f"Downloading {len(dataframe)} Images")
+        self.progress_bar.start_progress(100)
 
-        # Extract the CSRF token from the HTML of the login page
-        csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
+        # Create the image directory if it doesn't exist (it should)
+        image_dir = f"{self.source_dir}/images/"
 
-        # Create a dictionary with the login form fields and their values
-        data = {
-            "username": driver.capabilities['credentials']['username'],
-            "password": driver.capabilities['credentials']['password'],
-            "csrfmiddlewaretoken": csrf_token["value"],
-        }
+        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
+            results = []
 
-        # Include the "Referer" header in the request
-        headers = {
-            "Referer": LOGIN_URL,
-        }
+            for index, row in dataframe.iterrows():
+                # Get the image name and URL from the dataframe
+                name = row['Name']
+                url = row['Image URL']
+                path = image_dir + name
+                # Add the download task to the executor
+                results.append(executor.submit(self.download_image, url, path))
 
-        # Use requests.Session to create a session that will maintain your login state
-        session = requests.Session()
-
-        # Use session.post() to submit the login form
-        session.post(LOGIN_URL, data=data, headers=headers, cookies=cookies)
-
-        with ThreadPoolExecutor() as executor:
-            # Submit the image_url retrieval tasks to the thread pool
-            future_to_url = {executor.submit(self.get_image_url, session, url): url for url in image_page_urls}
-
-            # Retrieve the completed results as they become available
-            count = 0
-            for future in concurrent.futures.as_completed(future_to_url):
-                url = future_to_url[future]
+            # Wait for all tasks to complete and collect the results
+            for idx, result in enumerate(concurrent.futures.as_completed(results)):
+                
                 try:
-                    image_url = future.result()
-                    if image_url:
-                        image_urls.append(image_url)
-                    count += 1
-                    # Update status every 10 images
-                    if count % 10 == 0:
-                        self.update_status(f"Retrieved {count}/{len(image_page_urls)} image URLs")
+                    # Get the downloaded image path
+                    downloaded_image_path, downloaded = result.result()
+
+                    if not downloaded:
+                        raise Exception(f"Failed to download image {os.path.basename(downloaded_image_path)}")
+                    
                 except Exception as e:
-                    self.update_status(f"ERROR: issue retrieving image URL for {url}\n{e}")
-
-        self.update_status(f"Retrieved {len(image_urls)} image URLs for {len(image_page_urls)} images")
-
-        return driver, image_urls
-
-    def get_images(self, driver, source_id, prefix="", image_list=None):
-        """
-        Given a source ID, retrieve the image names, and page URLs.
-        """
-        from selenium.webdriver.common.by import By
-        
-        # Go to the images page
-        driver.get(self.authentication_dialog.CORALNET_URL + f"/source/{source_id}/browse/images/")
-
-        # First check that this is existing source the user has access to
-        try:
-            # Check the permissions
-            driver, status = self.check_permissions(driver)
-
-            # Check the status
-            if "Page could not be found" in status.text or "don't have permission" in status.text:
-                raise Exception(status.text.split('.')[0])
-
-        except Exception as e:
-            raise Exception(f"ERROR: {e} or you do not have permission to access it")
-
-        # If provided, will limit the search space on CoralNet
-        if prefix != "":
-            self.update_status(f"Filtering search space using '{prefix}'")
-            input_element = driver.find_element(By.CSS_SELECTOR, "#id_image_name")
-            input_element.clear()
-            input_element.send_keys(prefix)
-
-            # Click submit
-            submit_button = driver.find_element(By.CSS_SELECTOR, ".submit_button_wrapper_center input[type='submit']")
-            submit_button.click()
-
-        self.update_status(f"Crawling all pages for source {source_id}")
-
-        # Create lists to store the URLs and titles
-        image_page_urls = []
-        image_names = []
-
-        try:
-            # Find the element with the page number
-            page_element = driver.find_element(By.CSS_SELECTOR, 'div.line')
-            num_pages = int(page_element.text.split(" ")[-1]) // 20 + 1
-            page_num = 0
-
-            while True:
-                # Find all the image elements
-                url_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
-                name_elements = driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
-
-                # Iterate over the image elements
-                for url_element, name_element in list(zip(url_elements, name_elements)):
-                    # Extract the href attribute (URL)
-                    image_page_url = url_element.get_attribute('href')
-                    image_page_urls.append(image_page_url)
-
-                    # Extract the title attribute (image name)
-                    image_name = name_element.get_attribute('title')
-                    image_names.append(image_name)
-
-                # Check if there is a next page
-                next_button = driver.find_element(By.CSS_SELECTOR, 'a.next')
-                if next_button and page_num < num_pages:
-                    next_button.click()
-                    page_num += 1
-                else:
-                    break
-
-            # Create a pandas DataFrame
-            images = pd.DataFrame({
-                'Name': image_names,
-                'Image Page': image_page_urls
-            })
-
-        except Exception as e:
-            self.update_status(f"ERROR: Issue with retrieving images: {str(e)}")
-            images = None
-
-        return driver, images
-
-    def check_permissions(self, driver):
-        """
-        Check the permissions of the current page.
-        """
-        # Convert the page to soup
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-
-        # Find the status element
-        status = soup.find('div', {'class': 'status'})
-
-        return driver, status
-
-    def check_for_browsers(self, headless=True):
-        """
-        Check if Chrome browser is installed.
-        """
-        self.update_status("Checking for available browsers...")
-        
-        options = Options()
-        # Silence, please.
-        options.add_argument("--log-level=3")
-
-        if headless:
-            # Add headless argument
-            options.add_argument('headless')
-            # Needed to avoid timeouts when running in headless mode
-            options.add_experimental_option('extensionLoadTimeout', 3600000)
-
-        try:
-            # Check if ChromeDriver path is already in PATH
-            chrome_driver_path = "chromedriver.exe"  # Adjust the name if needed
-            if not any(
-                os.path.exists(os.path.join(directory, chrome_driver_path))
-                for directory in os.environ["PATH"].split(os.pathsep)
-            ):
-                # If it's not in PATH, attempt to install it
-                chrome_driver_path = ChromeDriverManager().install()
-
-                if not chrome_driver_path:
-                    raise Exception("ERROR: ChromeDriver installation failed.")
-                else:
-                    # Add the ChromeDriver directory to the PATH environment variable
-                    os.environ["PATH"] += os.pathsep + os.path.dirname(chrome_driver_path)
-                    self.update_status("NOTE: ChromeDriver added to PATH")
-
-            # Attempt to open a browser
-            browser = webdriver.Chrome(options=options)
-
-            self.update_status("NOTE: Using Google Chrome")
-            return browser
-
-        except Exception as e:
-            self.update_status(f"WARNING: Google Chrome could not be used\n{str(e)}")
-
-        raise Exception("ERROR: Issue with getting browser. Exiting")
-
-    def login(self, driver):
-        """
-        Log in to CoralNet using Selenium.
-        """
-        self.update_status("Logging in to CoralNet...")
-
-        # Create a variable for success
-        success = False
-
-        # Get auth info from the authentication dialog
-        username = self.authentication_dialog.username_input.text()
-        password = self.authentication_dialog.password_input.text()
-        
-        # Add credentials to driver capabilities for later use
-        driver.capabilities['credentials'] = {
-            'username': username,
-            'password': password
-        }
-
-        # Navigate to the page to login
-        driver.get(self.authentication_dialog.CORALNET_URL + "/accounts/login/")
-
-        # Find the username button
-        path = "id_username"
-        username_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, path)))
-
-        # Find the password button
-        path = "id_password"
-        password_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, path)))
-
-        # Find the login button
-        path = "//input[@type='submit'][@value='Sign in']"
-        login_button = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, path)))
-
-        # Enter the username and password
-        username_input.send_keys(driver.capabilities['credentials']['username'])
-        password_input.send_keys(driver.capabilities['credentials']['password'])
-
-        # Click the login button
-        time.sleep(3)
-        login_button.click()
-
-        # Confirm login was successful; after 10 seconds, throw an error.
-        try:
-            path = "//button[text()='Sign out']"
-
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, path)))
-
-            # Login was successful
-            success = True
-
-            self.update_status(f"NOTE: Successfully logged in as {driver.capabilities['credentials']['username']}")
-
-        except Exception as e:
-            raise ValueError(f"ERROR: Could not login with {driver.capabilities['credentials']['username']}\n{str(e)}")
-
-        return driver, success
+                    print(f"ERROR: {str(e)}")
+                
+                # Update progress bar
+                progress_percent = int((idx + 1) / len(dataframe) * 100)
+                self.progress_bar.update_progress_percentage(progress_percent)
+                
+        # Finish the progress bar
+        self.progress_bar.finish_progress()
