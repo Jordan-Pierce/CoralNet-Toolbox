@@ -173,12 +173,12 @@ class ImportCoralNetAnnotations:
                         if pd.notna(row[conf]) and pd.notna(row[sug])
                     }
                     
+                    # Check if the sum of all valid confidences is greater than 1
+                    if sum([conf for sug, conf in valid_pairs]) > 1:
+                        valid_pairs = [(sug, conf / 100) for sug, conf in valid_pairs]
+                        
                     # Process all valid pairs at once
                     for suggestion, confidence in valid_pairs:
-                        # Reformat confidence value to be a float between 0 and 1, if not already
-                        if confidence > 1:
-                            confidence = confidence / 100
-                            
                         suggested_label = self.label_window.get_label_by_short_code(suggestion)
                         
                         if not suggested_label:
@@ -187,6 +187,9 @@ class ImportCoralNetAnnotations:
                             suggested_label = self.label_window.get_label_by_short_code(suggestion)
                             
                         machine_confidence[suggested_label] = confidence
+                        
+                    # Sort the machine confidence dict by confidence (greater to lesser)
+                    machine_confidence = dict(sorted(machine_confidence.items(), key=lambda x: x[1], reverse=True))
 
                     # Update the machine confidence
                     annotation.update_machine_confidence(machine_confidence)
