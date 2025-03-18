@@ -384,7 +384,7 @@ class DownloadDialog(QDialog):
                 raise Exception("Failed to find a supported browser (see console log)")
                    
         # Login to CoralNet
-        if not self.logged_in
+        if not self.logged_in:
             if not self.login():
                 raise Exception("Failed to login to CoralNet (see console log)")
             
