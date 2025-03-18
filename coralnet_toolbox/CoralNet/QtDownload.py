@@ -490,7 +490,7 @@ class DownloadDialog(QDialog):
         """
         Given a source ID, download the labelset.
         """
-        sucess = False
+        success = False
         
         # To hold the metadata
         meta = []
@@ -515,7 +515,7 @@ class DownloadDialog(QDialog):
                     break
                 
             if not script:
-                sucess = True  # Nothing to download, exit early
+                success = True  # Nothing to download, exit early
 
             else:
                 # Parse the data when represented as a string, convert to dict
@@ -561,7 +561,7 @@ class DownloadDialog(QDialog):
                 # Check that it was saved
                 if os.path.exists(f"{self.source_dir}\\metadata.csv"):
                     print("Metadata saved successfully")
-                    sucess = True
+                    success = True
                 else:
                     raise Exception("WARNING: Metadata could not be saved")
 
@@ -571,13 +571,13 @@ class DownloadDialog(QDialog):
         finally:
             self.progress_bar.finish_progress()
 
-        return sucess
+        return success
 
     def download_labelset(self):
         """
         Given a source ID, download the labelset.
         """
-        sucess = False
+        success = False
         
         # To hold the labelset
         labelset = None
@@ -598,7 +598,7 @@ class DownloadDialog(QDialog):
             table = soup.find('table', {'id': 'label-table'})
             
             if not table.find_all('tr'):
-                sucess = True  # Nothing to download, exit early
+                success = True  # Nothing to download, exit early
             
             else:
                 # Initialize lists to store data
@@ -633,7 +633,7 @@ class DownloadDialog(QDialog):
                 # Check that it was saved
                 if os.path.exists(f"{self.source_dir}\\labelset.csv"):
                     print("Labelset saved successfully")
-                    sucess = True
+                    success = True
                 else:
                     raise Exception("WARNING: Labelset could not be saved")
 
@@ -643,7 +643,7 @@ class DownloadDialog(QDialog):
         finally:
             self.progress_bar.finish_progress()
 
-        return sucess
+        return success
 
     def download_annotations(self):
         """
@@ -684,7 +684,7 @@ class DownloadDialog(QDialog):
             # Select all optional columns
             optional_columns = self.driver.find_elements(By.CSS_SELECTOR, "input[name='optional_columns']")
             for checkbox in optional_columns:
-                # Current critiera for finding the right checkboxes
+                # Current criteria for finding the right checkboxes
                 if checkbox.accessible_name and checkbox.aria_role != 'none':
                     checkbox.click()
                     
