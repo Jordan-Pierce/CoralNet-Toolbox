@@ -13,7 +13,7 @@ import numpy as np
 
 from PyQt5.QtGui import QImage, QPixmap, QColor
 from PyQt5.QtCore import Qt, QBuffer, QByteArray
-from PyQt5.QtWidgets import QMessageBox, QApplication, QTextEdit
+from PyQt5.QtWidgets import QMessageBox, QApplication, QTextEdit, QPushButton
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -237,15 +237,15 @@ def console_user(error_msg, parent=None):
     url = "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
 
     # Show error in terminal
-    print(f"\n\n\nUh oh! It looks like something went wrong!")
+    print("\n\n\nUh oh! It looks like something went wrong!")
     print(f"{'∨' * 60}")
     print(f"\n{error_msg}\n")
     print(f"{'^' * 60}")
-    print(f"Please create a ticket and copy this error so we can get this fixed:")
+    print("Please create a ticket and copy this error so we can get this fixed:")
     print(f"{url}")
         
-        
-def execept_hook(cls, exception, traceback_obj):
+
+def except_hook(cls, exception, traceback_obj, main_window=None):
     """Handle uncaught exceptions including Qt errors"""
     error_msg = f"{cls.__name__}: {exception}\n\n"
     error_msg += ''.join(traceback.format_tb(traceback_obj))
@@ -256,20 +256,34 @@ def execept_hook(cls, exception, traceback_obj):
     # If Qt is initialized, show error in GUI
     if QApplication.instance() is not None:
         msg_box = QMessageBox()
+        msg_box.setWindowTitle("CoralNet-Toolbox Error")
         msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setText("An unexpected error occurred")
+        msg_box.setText(
+            "An unexpected error occurred! Please copy the error below and create a ticket so we can solve this problem. If possible, save your project before closing the application."
+        )
         msg_box.setDetailedText(error_msg)
-        msg_box.setStandardButtons(QMessageBox.Ok)
+        
+        # Add Save Project option if main_window exists
+        save_button = None
+        if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
+            save_button = QPushButton("Save Project")
+            msg_box.addButton(save_button, QMessageBox.AcceptRole)
+        
+        msg_box.addButton(QMessageBox.Ok)
         
         # Make the dialog bigger
-        msg_box.setMinimumSize(600, 500)
+        msg_box.resize(600, 1000)
+    
+        result = msg_box.exec_()
         
-        # Get the text edit widget that shows the detailed text
-        text_edit = msg_box.findChild(QTextEdit)
-        if text_edit:
-            text_edit.setMinimumHeight(300)
-            
-        msg_box.exec_()
+        # Handle save action if requested
+        if save_button and msg_box.clickedButton() == save_button:
+            try:
+                main_window.open_save_project_dialog()
+            except Exception as save_error:
+                QMessageBox.warning(None,
+                                    "Save Error", 
+                                    f"Could not save project: {save_error}")
     
     sys.__excepthook__(cls, exception, traceback_obj)
-    sys.exit(1)    
+    sys.exit(1) 

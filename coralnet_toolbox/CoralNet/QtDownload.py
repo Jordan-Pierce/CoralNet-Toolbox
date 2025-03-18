@@ -65,6 +65,7 @@ class DownloadDialog(QDialog):
         # Initialize driver
         self.driver = None
         self.headless = True
+        self.logged_in = False
         
         # Setup UI
         self.setWindowTitle("Download from CoralNet")
@@ -90,7 +91,7 @@ class DownloadDialog(QDialog):
         layout = QVBoxLayout()
         
         info_label = QLabel(
-            "Download data from a CoralNet source. Specify the Source ID and select which items to download."
+            "Download data from a CoralNet source. Specify the Source ID and select which items to download. To download data from multiple Sources, list them comma-separated in the Source ID field. The download will be saved to the specified Output Directory."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -299,27 +300,16 @@ class DownloadDialog(QDialog):
     
     def validate_inputs(self):
         """Validate the user inputs"""
-        self.source_id = self.source_id_input.text().strip()
-        if not self.source_id:
-            QMessageBox.warning(self, "Input Error", "Source ID is required.")
-            return False
-        
         try:
-            int(self.source_id)  # Check if it's a valid number
+            # Check if it's comma-separated list of source IDs
+            [int(s.strip()) for s in self.source_id_input.text().strip().split(',')]
         except ValueError:
-            QMessageBox.warning(self, "Input Error", "Source ID must be a number.")
+            QMessageBox.warning(self, "Input Error", "Source IDs must be a numbers.")
             return False
         
         output_dir = self.output_dir_input.text().strip()
         if not output_dir:
             QMessageBox.warning(self, "Input Error", "Output directory is required.")
-            return False
-        
-        # Create output directory if it doesn't exist
-        try:
-            os.makedirs(output_dir, exist_ok=True)
-        except Exception as e:
-            QMessageBox.warning(self, "Directory Error", f"Could not create output directory: {str(e)}")
             return False
         
         options = self.get_download_options()
@@ -328,7 +318,7 @@ class DownloadDialog(QDialog):
             return False
         
         return True
-    
+        
     def start_download(self):
         """Start the download process"""
         # Check if already authenticated
@@ -340,7 +330,7 @@ class DownloadDialog(QDialog):
             return
         
         # Get inputs
-        self.source_id = self.source_id_input.text().strip()
+        source_ids = [int(s.strip()) for s in self.source_id_input.text().strip().split(',')]
         self.output_dir = os.path.normpath(self.output_dir_input.text().strip())
         self.download_options = self.get_download_options()
         
@@ -351,13 +341,17 @@ class DownloadDialog(QDialog):
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.progress_bar = ProgressBar(self, f"Downloading from Source: {self.source_id}")
+        self.progress_bar = ProgressBar(self, "CoralNet Download")
         self.progress_bar.show()
         
         try:
-            # Start the download process in a separate thread
-            self.download()
-            
+            for source_id in source_ids:
+                self.progress_bar.set_title(f"Downloading Data from Source {source_id}")
+                self.source_id = source_id
+                
+                # Start the download process for this source ID
+                self.download()
+                
             QMessageBox.information(self, "Download Complete", "Download completed successfully.")
             
         except Exception as e:
@@ -366,28 +360,33 @@ class DownloadDialog(QDialog):
         finally:
             # Make cursor not busy
             QApplication.restoreOverrideCursor()
-            self.progress_bar.finish_progress()
-            self.progress_bar.close()
-            self.progress_bar = None
+            
+            if self.progress_bar:
+                self.progress_bar.finish_progress()
+                self.progress_bar.close()
+                self.progress_bar = None
             
             if self.driver:
                 self.driver.quit()
                 self.driver = None
+                
+            self.logged_in = False
 
     def download(self):
         """Run the download process"""
-
         # Create source directory (normalized path needed for Selenium)
         self.source_dir = os.path.normpath(f"{os.path.abspath(self.output_dir)}\\{str(self.source_id)}")
         os.makedirs(self.source_dir, exist_ok=True)
         
         # Initialize the driver
-        if not self.initialize_driver():
-            raise Exception("Failed to find a supported browser (see console log)")
+        if not self.driver:
+            if not self.initialize_driver():
+                raise Exception("Failed to find a supported browser (see console log)")
                    
         # Login to CoralNet
-        if not self.login():
-            raise Exception("Failed to login to CoralNet (see console log)")
+        if not self.logged_in
+            if not self.login():
+                raise Exception("Failed to login to CoralNet (see console log)")
             
         # Check permissions
         if not self.check_permissions():
@@ -477,6 +476,7 @@ class DownloadDialog(QDialog):
 
             # Login was successful
             success = True
+            self.logged_in = True
 
         except Exception as e:
             print(f"ERROR: Could not login with {username}\n{str(e)}")

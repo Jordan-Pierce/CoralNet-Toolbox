@@ -34,7 +34,7 @@ from coralnet_toolbox.Icons import get_icon
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
-
+# TODO change default imgsz and batch based on the task
 class TrainModelWorker(QThread):
     """
     Worker thread for training a model.
