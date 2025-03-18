@@ -124,6 +124,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 
 
 Enhance your CoralNet experience with these tools:
+- 📥 Download: Retrieve Source data (images and annotations) from CoralNet
 - 🎬 Rasters: Import images, or extract frames directly from video files
 - ✏️ Annotate: Create annotations freely
 - 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
@@ -145,9 +146,6 @@ Enhance your CoralNet experience with these tools:
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 
 ### TODO
-- 🔍 API: Get predictions from any CoralNet source model
-- 📥 Download: Retrieve source data from CoralNet
-- 📤 Upload: Add images and annotations to CoralNet
 - 🏁 Tile Inference: Perform Tile Inference on large images using [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
@@ -215,7 +213,9 @@ See here for more details on versions for the following:
 
 
 ### Run
+
 Finally, you can run the `toolbox` from the command line:
+
 ```bash
 # cmd
 
@@ -224,6 +224,7 @@ coralnet-toolbox
 ```
 
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
+
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing,
 and other factors. CoralNet is a platform designed to aid researchers and scientists in studying
@@ -238,6 +239,7 @@ use CoralNet and Coral Point Count (CPCe).
 
 
 ## **Conclusion**
+
 In summary, this repository provides a range of tools that can assist with interacting with
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be
 useful for researchers and scientists working with coral reefs, as well as for students and
