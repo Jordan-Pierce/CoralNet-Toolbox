@@ -180,6 +180,12 @@ class DownloadDialog(QDialog):
         self.image_fetch_rate_input.setValue(5)
         form_layout.addRow("Image Fetch Rate (sec):", self.image_fetch_rate_input)
         
+        # Image break time input
+        self.fetch_break_time_input = QSpinBox()
+        self.fetch_break_time_input.setMinimum(3)
+        self.fetch_break_time_input.setValue(5)
+        form_layout.addRow("Image Fetch Break Time (sec):", self.fetch_break_time_input)
+        
         # Set the form layout to the group box
         parameters_group.setLayout(form_layout)
         
@@ -337,6 +343,7 @@ class DownloadDialog(QDialog):
             return False
         
         self.image_fetch_rate = self.image_fetch_rate_input.value()
+        self.fetch_break_time = self.fetch_break_time_input.value()
         
         return True
         
@@ -787,9 +794,8 @@ class DownloadDialog(QDialog):
                     url_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
                     name_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
                 except Exception as e:
-                    print("Warning: Fetching too fast, slowing down")
-                    self.image_fetch_rate += 3
-                    time.sleep(15)
+                    print(f"Warning: Fetching too fast, taking a {self.fetch_break_time} second break")
+                    time.sleep(self.fetch_break_time)
                     continue
 
                 # Iterate over the image elements

@@ -147,6 +147,7 @@ Enhance your CoralNet experience with these tools:
 
 ### TODO
 - 🏁 Tile Inference: Perform Tile Inference on large images using [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
+- 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 
@@ -199,7 +200,7 @@ conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
 conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
 
 # Example for torch w/ CUDA 11.8
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
 ```
 
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the
