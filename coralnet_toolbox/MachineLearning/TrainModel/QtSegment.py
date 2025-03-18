@@ -19,6 +19,8 @@ class Segment(Base):
         self.setWindowTitle("Train Segmentation Model")
 
         self.task = "segment"
+        self.imgsz = 640
+        self.batch = 4
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""

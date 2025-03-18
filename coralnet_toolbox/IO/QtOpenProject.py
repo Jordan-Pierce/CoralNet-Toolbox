@@ -16,6 +16,8 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
+from coralnet_toolbox.QtCommon import QtUpdateImagePaths
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -33,6 +35,8 @@ class OpenProject(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.current_project_path = self.main_window.current_project_path
+        
+        self.updated_paths = {}
 
         self.setWindowTitle("Open Project")
         self.resize(600, 100)
@@ -156,6 +160,9 @@ class OpenProject(QDialog):
         if not image_paths:
             return
         
+        if not all([os.path.exists(path) for path in image_paths]):
+            image_paths, self.updated_paths = QtUpdateImagePaths.update_paths(image_paths)
+        
         # Start progress bar
         total_images = len(image_paths)
         progress_bar = ProgressBar(self.image_window, title="Importing Images")
@@ -238,11 +245,28 @@ class OpenProject(QDialog):
         try:
             # Loop through the annotations
             for image_path, image_annotations in annotations.items():
+                
+                # Checking if the image path is updated (moved)
+                updated_path = False
+                
+                if image_path not in set(self.image_window.image_paths):
+                    # Check if the path was updated
+                    if image_path in self.updated_paths:
+                        image_path = self.updated_paths[image_path]
+                        updated_path = True
+                    else:
+                        print(f"Warning: Image not found: {image_path}")
+                        continue
+                
                 for annotation in image_annotations:
                     # Check if all required keys are present
                     if not all(key in annotation for key in keys):
                         print(f"Warning: Missing required keys in annotation: {annotation}")
                         continue
+                    
+                    # Check if the image path was updated
+                    if updated_path:
+                        annotation['image_path'] = image_path
                     
                     # Get the annotation type
                     annotation_type = annotation.get('type')

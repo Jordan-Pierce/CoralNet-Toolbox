@@ -98,6 +98,8 @@ class Annotation(QObject):
             return
         # Set user confidence to None
         self.user_confidence = {}
+        # Sort the prediction by confidence (descending order)
+        prediction = {k: v for k, v in sorted(prediction.items(), key=lambda item: item[1], reverse=True)}
         # Update machine confidence
         self.machine_confidence = prediction
         # Pass the label with the largest confidence as the label

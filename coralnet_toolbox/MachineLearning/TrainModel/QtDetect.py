@@ -19,6 +19,8 @@ class Detect(Base):
         self.setWindowTitle("Train Detection Model")
 
         self.task = "detect"
+        self.imgsz = 640
+        self.batch = 4
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""

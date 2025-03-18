@@ -24,7 +24,7 @@ from coralnet_toolbox.Icons import get_icon
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
-# TODO missing 1 image in the table
+
 class Base(QDialog):
     def __init__(self, main_window, parent=None):
         """

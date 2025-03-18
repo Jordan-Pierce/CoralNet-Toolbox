@@ -187,9 +187,6 @@ class ImportCoralNetAnnotations:
                             suggested_label = self.label_window.get_label_by_short_code(suggestion)
                             
                         machine_confidence[suggested_label] = confidence
-                        
-                    # Sort the machine confidence dict by confidence (greater to lesser)
-                    machine_confidence = dict(sorted(machine_confidence.items(), key=lambda x: x[1], reverse=True))
 
                     # Update the machine confidence
                     annotation.update_machine_confidence(machine_confidence)
