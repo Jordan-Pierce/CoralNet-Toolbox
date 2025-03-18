@@ -1,6 +1,7 @@
 from .QtImportImages import ImportImages
 from .QtImportFrames import ImportFrames
 from .QtImportLabels import ImportLabels
+from .QtImportCoralNetLabels import ImportCoralNetLabels
 from .QtImportTagLabLabels import ImportTagLabLabels
 from .QtImportAnnotations import ImportAnnotations
 from .QtImportCoralNetAnnotations import ImportCoralNetAnnotations
@@ -19,6 +20,7 @@ __all__ = [
     'ImportImages',
     'ImportFrames',
     'ImportLabels',
+    'ImportCoralNetLabels',
     'ImportTagLabLabels',
     'ImportAnnotations', 
     'ImportCoralNetAnnotations',

@@ -35,6 +35,7 @@ from coralnet_toolbox.IO import (
     ImportImages,
     ImportFrames,
     ImportLabels,
+    ImportCoralNetLabels,
     ImportTagLabLabels,
     ImportAnnotations,
     ImportCoralNetAnnotations,
@@ -171,6 +172,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
+        self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
         self.import_annotations = ImportAnnotations(self)
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
@@ -297,6 +299,11 @@ class MainWindow(QMainWindow):
         self.import_labels_action = QAction("Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
+        
+        # Import CoralNet Labels
+        self.import_coralnet_labels_action = QAction("CoralNet Labels (CSV)", self)
+        self.import_coralnet_labels_action.triggered.connect(self.import_coralnet_labels.import_coralnet_labels)
+        self.import_labels_menu.addAction(self.import_coralnet_labels_action)
 
         # Import TagLab Labels
         self.import_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
