@@ -14,7 +14,7 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QMessageBox, QGroupBox, 
                              QFormLayout, QApplication, QComboBox, QTextEdit,
-                             QFileDialog)
+                             QFileDialog, QSpinBox)
 
 import requests
 from bs4 import BeautifulSoup
@@ -80,6 +80,8 @@ class DownloadDialog(QDialog):
         self.setup_source_layout()
         # Setup the options layout
         self.setup_options_layout()
+        # Setup parameters layout
+        self.setup_parameters_layout()
         # Setup buttons layout
         self.setup_buttons_layout()
         
@@ -166,6 +168,23 @@ class DownloadDialog(QDialog):
         
         # Add the group box to the main layout
         self.layout.addWidget(options_group)
+        
+    def setup_parameters_layout(self):
+        """Setup the parameters section."""
+        parameters_group = QGroupBox("Parameters")
+        form_layout = QFormLayout()
+        
+        # Image fetch rate input
+        self.image_fetch_rate_input = QSpinBox()
+        self.image_fetch_rate_input.setMinimum(3)
+        self.image_fetch_rate_input.setValue(5)
+        form_layout.addRow("Image Fetch Rate (sec):", self.image_fetch_rate_input)
+        
+        # Set the form layout to the group box
+        parameters_group.setLayout(form_layout)
+        
+        # Add the group box to the main layout
+        self.layout.addWidget(parameters_group)
     
     def setup_buttons_layout(self):
         """Setup the download and exit buttons"""
@@ -317,6 +336,8 @@ class DownloadDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "Please select at least one download option.")
             return False
         
+        self.image_fetch_rate = self.image_fetch_rate_input.value()
+        
         return True
         
     def start_download(self):
@@ -395,17 +416,17 @@ class DownloadDialog(QDialog):
         # Download metadata if selected
         if self.download_options.get('metadata', False):
             if not self.download_metadata():
-                raise Exception("Failed to download metadata (see console log)")
+                print("Failed to download metadata (see console log)")
         
         # Download labelset if selected
         if self.download_options.get('labelset', False):
             if not self.download_labelset():
-                raise Exception("Failed to download labelset (see console log)")
+                print("Failed to download labelset (see console log)")
         
         # Download annotations if selected
         if self.download_options.get('annotations', False):
             if not self.download_annotations():
-                raise Exception("Failed to download annotations (see console log)")
+                print("Failed to download annotations (see console log)")
             
         # Download images if selected
         if self.download_options.get('images', False):
@@ -757,10 +778,19 @@ class DownloadDialog(QDialog):
 
             # Loop through all pages
             while has_next_page and current_page <= total_pages:
+                
+                # Let page elements fully load
+                time.sleep(self.image_fetch_rate)
 
-                # Find all the image elements
-                url_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
-                name_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
+                try:
+                    # Find all the image elements
+                    url_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper a')
+                    name_elements = self.driver.find_elements(By.CSS_SELECTOR, '.thumb_wrapper img')
+                except Exception as e:
+                    print("Warning: Fetching too fast, slowing down")
+                    self.image_fetch_rate += 3
+                    time.sleep(15)
+                    continue
 
                 # Iterate over the image elements
                 for url_element, name_element in zip(url_elements, name_elements):
@@ -795,8 +825,6 @@ class DownloadDialog(QDialog):
                         next_button.click()
                         # Increase page count
                         current_page += 1
-                        # Let page elements fully load
-                        time.sleep(2)
                         
                 except Exception as e:
                     print(f"Error navigating to next page: {str(e)}")
@@ -1010,7 +1038,7 @@ class DownloadDialog(QDialog):
         # Create the image directory if it doesn't exist (it should)
         image_dir = f"{self.source_dir}/images/"
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() - 2) as executor:
             results = []
 
             for index, row in dataframe.iterrows():
