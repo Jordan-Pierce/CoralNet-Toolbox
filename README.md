@@ -124,7 +124,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 
 
 Enhance your CoralNet experience with these tools:
-- 📥 Download: Retrieve Source data (images and annotations) from CoralNet
+- 📥 [Download](https://www.youtube.com/watch?v=Ds9JZATmCmw): Retrieve Source data (images and annotations) from CoralNet
 - 🎬 Rasters: Import images, or extract frames directly from video files
 - ✏️ Annotate: Create annotations freely
 - 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
