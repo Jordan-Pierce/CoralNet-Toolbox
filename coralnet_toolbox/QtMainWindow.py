@@ -5,10 +5,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import os
 import re
 import requests
-from packaging import version
 
 
-from superqt import QRangeSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
 from PyQt5.QtWidgets import (QListWidget, QCheckBox, QFrame, QComboBox)
@@ -26,6 +24,7 @@ from coralnet_toolbox.QtLabelWindow import LabelWindow
 from coralnet_toolbox.QtPatchSampling import PatchSamplingDialog
 
 from coralnet_toolbox.Tile import (
+    TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
     TileInference as TileInferenceDialog,
@@ -36,6 +35,7 @@ from coralnet_toolbox.IO import (
     ImportImages,
     ImportFrames,
     ImportLabels,
+    ImportCoralNetLabels,
     ImportTagLabLabels,
     ImportAnnotations,
     ImportCoralNetAnnotations,
@@ -82,6 +82,11 @@ from coralnet_toolbox.SAM import (
 from coralnet_toolbox.AutoDistill import (
     DeployModelDialog as AutoDistillDeployModelDialog,
     BatchInferenceDialog as AutoDistillBatchInferenceDialog
+)
+
+from coralnet_toolbox.CoralNet import ( 
+    AuthenticateDialog as CoralNetAuthenticateDialog,
+    DownloadDialog as CoralNetDownloadDialog
 )
 
 from coralnet_toolbox.TileProcessor import TileProcessor
@@ -167,6 +172,7 @@ class MainWindow(QMainWindow):
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
+        self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
         self.import_annotations = ImportAnnotations(self)
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
@@ -184,7 +190,11 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
-                
+        
+        # Create dialogs (CoralNet)
+        self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
+        self.coralnet_download_dialog = CoralNetDownloadDialog(self)
+        
         # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
@@ -216,6 +226,7 @@ class MainWindow(QMainWindow):
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
         
         # Create dialogs (Tile)
+        self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.tile_inference_dialog = TileInferenceDialog(self)
@@ -288,6 +299,11 @@ class MainWindow(QMainWindow):
         self.import_labels_action = QAction("Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
+        
+        # Import CoralNet Labels
+        self.import_coralnet_labels_action = QAction("CoralNet Labels (CSV)", self)
+        self.import_coralnet_labels_action.triggered.connect(self.import_coralnet_labels.import_coralnet_labels)
+        self.import_labels_menu.addAction(self.import_coralnet_labels_action)
 
         # Import TagLab Labels
         self.import_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
@@ -417,6 +433,11 @@ class MainWindow(QMainWindow):
         # Tile Dataset submenu
         self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
         
+        # Tile Classify Dataset
+        self.classify_tile_dataset_action = QAction("Classify", self)
+        self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
+        self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
+        
         # Tile Detect Dataset
         self.detect_tile_dataset_action = QAction("Detect", self)
         self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
@@ -430,25 +451,23 @@ class MainWindow(QMainWindow):
         # Tile Inference action
         self.tile_inference_action = QAction("Tile Inference", self)
         self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
-        self.tile_menu.addAction(self.tile_inference_action)
+        # self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
-        # self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
+        self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
 
-        # self.coralnet_authenticate_action = QAction("Authenticate", self)
-        # self.coralnet_authenticate_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.coralnet_menu.addAction(self.coralnet_authenticate_action)
+        self.coralnet_authenticate_action = QAction("Authenticate", self)
+        self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
+        self.coralnet_menu.addAction(self.coralnet_authenticate_action)
 
         # self.coralnet_upload_action = QAction("Upload", self)
         # self.coralnet_upload_action.triggered.connect(
         #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
         # self.coralnet_menu.addAction(self.coralnet_upload_action)
 
-        # self.coralnet_download_action = QAction("Download", self)
-        # self.coralnet_download_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.coralnet_menu.addAction(self.coralnet_download_action)
+        self.coralnet_download_action = QAction("Download", self)
+        self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
+        self.coralnet_menu.addAction(self.coralnet_download_action)
 
         # self.coralnet_model_api_action = QAction("Model API", self)
         # self.coralnet_model_api_action.triggered.connect(
@@ -655,7 +674,7 @@ class MainWindow(QMainWindow):
         self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
         self.tile_inference_tool_action.setCheckable(True)
         self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
-        self.toolbar.addAction(self.tile_inference_tool_action)
+        # self.toolbar.addAction(self.tile_inference_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -804,16 +823,24 @@ class MainWindow(QMainWindow):
         # Area threshold controls
         min_val = self.area_thresh_min
         max_val = self.area_thresh_max
-        self.area_threshold_slider = QRangeSlider(Qt.Horizontal)
-        self.area_threshold_slider.setMinimum(0)
-        self.area_threshold_slider.setMaximum(100)
-        self.area_threshold_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_slider.setTickInterval(10)
-        self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
+        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_min_slider.setMinimum(0)
+        self.area_threshold_min_slider.setMaximum(100)
+        self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_min_slider.setTickInterval(10)
+        self.area_threshold_min_slider.setValue(int(min_val * 100))
+        self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
+        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_max_slider.setMinimum(0)
+        self.area_threshold_max_slider.setMaximum(100)
+        self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
+        self.area_threshold_max_slider.setTickInterval(10)
+        self.area_threshold_max_slider.setValue(int(max_val * 100))
+        self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
         self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
-        self.area_threshold_slider.valueChanged.connect(self.update_area_label)
         area_thresh_layout = QVBoxLayout()
-        area_thresh_layout.addWidget(self.area_threshold_slider)
+        area_thresh_layout.addWidget(self.area_threshold_min_slider)
+        area_thresh_layout.addWidget(self.area_threshold_max_slider)
         area_thresh_layout.addWidget(self.area_threshold_label)
         area_thresh_widget = QWidget()
         area_thresh_widget.setLayout(area_thresh_layout)
@@ -1185,12 +1212,17 @@ class MainWindow(QMainWindow):
         if self.area_thresh_min != min_val or self.area_thresh_max != max_val:
             self.area_thresh_min = min_val
             self.area_thresh_max = max_val
-            self.area_threshold_slider.setValue((int(min_val * 100), int(max_val * 100)))
+            self.area_threshold_min_slider.setValue(int(min_val * 100))
+            self.area_threshold_max_slider.setValue(int(max_val * 100))
             self.areaChanged.emit(min_val, max_val)
 
-    def update_area_label(self, value):
+    def update_area_label(self):
         """Handle changes to area threshold range slider"""
-        min_val, max_val = self.area_threshold_slider.value()  # Returns tuple of values
+        min_val = self.area_threshold_min_slider.value()
+        max_val = self.area_threshold_max_slider.value()
+        if min_val > max_val:
+            min_val = max_val
+            self.area_threshold_min_slider.setValue(min_val)
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
@@ -1291,6 +1323,27 @@ class MainWindow(QMainWindow):
             self.patch_annotation_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+    
+    def open_coralnet_authenticate_dialog(self):
+        """Open the CoralNet Authenticate dialog to authenticate with CoralNet"""
+        try:
+            self.untoggle_all_tools()
+            self.coralnet_authenticate_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_coralnet_download_dialog(self):
+        """Open the CoralNet Download dialog to download datasets from CoralNet"""
+        if not self.coralnet_authenticate_dialog.authenticated:
+            QMessageBox.warning(self,
+                                "CoralNet Download",
+                                "You must authenticate with CoralNet before downloading datasets.")
+            return
+        try:
+            self.untoggle_all_tools()
+            self.coralnet_download_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_import_dataset_dialog(self):
         try:
@@ -1368,7 +1421,14 @@ class MainWindow(QMainWindow):
             self.classify_merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-
+    
+    def open_classify_tile_dataset_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.classify_tile_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+    
     def open_detect_tile_dataset_dialog(self):
         try:
             self.untoggle_all_tools()

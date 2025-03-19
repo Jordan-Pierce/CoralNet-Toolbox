@@ -1,4 +1,4 @@
-# CoralNet-Toolbox
+# CoralNet-Toolbox 🪸🧰
 
 <div align="center">
   <p>
@@ -124,6 +124,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 
 
 Enhance your CoralNet experience with these tools:
+- 📥 Download: Retrieve Source data (images and annotations) from CoralNet
 - 🎬 Rasters: Import images, or extract frames directly from video files
 - ✏️ Annotate: Create annotations freely
 - 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
@@ -143,14 +144,11 @@ Enhance your CoralNet experience with these tools:
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
-- 🏁 Tile Inference: Perform Tile Inference on large images
-  - Uses [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 
 ### TODO
-- 🔍 API: Get predictions from any CoralNet source model
-- 📥 Download: Retrieve source data from CoralNet
-- 📤 Upload: Add images and annotations to CoralNet
-- 📦 Toolshed: Access tools from the old repository
+- 🏁 Tile Inference: Perform Tile Inference on large images using [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
+- 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
+- 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 
 ## **How to Install**
@@ -168,7 +166,20 @@ conda activate coralnet10
 
 ### Install
 
-Once this has finished, install the `toolbox`:
+Once this has finished, install the `toolbox` using `uv`: 
+
+```bash
+# cmd
+
+# Install uv first
+pip install uv
+
+# Install with uv
+uv pip install coralnet-toolbox
+```
+
+Although fast, `uv` is still relatively new; if this fails, simply fall back to using `pip`:
+
 ```bash
 # cmd
 
@@ -189,7 +200,7 @@ conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
 conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
 
 # Example for torch w/ CUDA 11.8
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
 ```
 
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the
@@ -203,7 +214,9 @@ See here for more details on versions for the following:
 
 
 ### Run
+
 Finally, you can run the `toolbox` from the command line:
+
 ```bash
 # cmd
 
@@ -212,6 +225,7 @@ coralnet-toolbox
 ```
 
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
+
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing,
 and other factors. CoralNet is a platform designed to aid researchers and scientists in studying
@@ -226,6 +240,7 @@ use CoralNet and Coral Point Count (CPCe).
 
 
 ## **Conclusion**
+
 In summary, this repository provides a range of tools that can assist with interacting with
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be
 useful for researchers and scientists working with coral reefs, as well as for students and

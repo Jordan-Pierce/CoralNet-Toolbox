@@ -4,14 +4,16 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
 import gc
+import sys
 import requests
+import traceback
 
 import torch
 import numpy as np
 
 from PyQt5.QtGui import QImage, QPixmap, QColor
 from PyQt5.QtCore import Qt, QBuffer, QByteArray
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QApplication, QTextEdit, QPushButton
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -224,17 +226,64 @@ def qimage_to_numpy(qimage):
     return image[:, :, :3]  # Remove the alpha channel if present
 
 
-def console_user(error_msg):
+def console_user(error_msg, parent=None):
     """
+    Display an error message to the user via both terminal and GUI dialog.
 
-    :param error_msg:
-    :return:
+    :param error_msg: The error message to display
+    :param parent: Parent widget for the QMessageBox (optional)
+    :return: None
     """
     url = "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
 
-    print(f"\n\n\nUh oh! It looks like something went wrong!")
+    # Show error in terminal
+    print("\n\n\nUh oh! It looks like something went wrong!")
     print(f"{'∨' * 60}")
     print(f"\n{error_msg}\n")
     print(f"{'^' * 60}")
-    print(f"Please, create a ticket and copy this error so we can get this fixed:")
+    print("Please create a ticket and copy this error so we can get this fixed:")
     print(f"{url}")
+        
+
+def except_hook(cls, exception, traceback_obj, main_window=None):
+    """Handle uncaught exceptions including Qt errors"""
+    error_msg = f"{cls.__name__}: {exception}\n\n"
+    error_msg += ''.join(traceback.format_tb(traceback_obj))
+    
+    # Log the error
+    print(error_msg)
+    
+    # If Qt is initialized, show error in GUI
+    if QApplication.instance() is not None:
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("CoralNet-Toolbox Error")
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setText(
+            "An unexpected error occurred! Please copy the error below and create a ticket so we can solve this problem. If possible, save your project before closing the application."
+        )
+        msg_box.setDetailedText(error_msg)
+        
+        # Add Save Project option if main_window exists
+        save_button = None
+        if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
+            save_button = QPushButton("Save Project")
+            msg_box.addButton(save_button, QMessageBox.AcceptRole)
+        
+        msg_box.addButton(QMessageBox.Ok)
+        
+        # Make the dialog bigger
+        msg_box.resize(600, 1000)
+    
+        result = msg_box.exec_()
+        
+        # Handle save action if requested
+        if save_button and msg_box.clickedButton() == save_button:
+            try:
+                main_window.open_save_project_dialog()
+            except Exception as save_error:
+                QMessageBox.warning(None,
+                                    "Save Error", 
+                                    f"Could not save project: {save_error}")
+    
+    sys.__excepthook__(cls, exception, traceback_obj)
+    sys.exit(1) 

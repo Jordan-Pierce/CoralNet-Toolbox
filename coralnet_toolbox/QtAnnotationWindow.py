@@ -551,22 +551,21 @@ class AnnotationWindow(QGraphicsView):
             progress_bar.show()
             progress_bar.start_progress(len(annotations))
 
-        try:
-            rasterio_image = self.main_window.image_window.rasterio_open(image_path)
-            for annotation in annotations:
-                if not getattr(annotation, "cropped_image", False):
+        rasterio_image = self.main_window.image_window.rasterio_open(image_path)
+        for annotation in annotations:
+            try:
+                if not annotation.cropped_image:
                     annotation.create_cropped_image(rasterio_image)
                 if verbose:
                     progress_bar.update_progress()
                     
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            except Exception as e:
+                print(f"Error cropping annotation {annotation.id}: {e}")
             
-        finally:
-            QApplication.restoreOverrideCursor()
-            if verbose:
-                progress_bar.stop_progress()
-                progress_bar.close()
+        QApplication.restoreOverrideCursor()
+        if verbose:
+            progress_bar.stop_progress()
+            progress_bar.close()
 
         if return_annotations:
             return annotations

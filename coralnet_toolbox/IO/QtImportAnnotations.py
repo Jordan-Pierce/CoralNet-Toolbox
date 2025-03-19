@@ -81,6 +81,7 @@ class ImportAnnotations:
         
         # Check if the annotations are in the correct format
         keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
+        
         # Reformat the data
         filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.image_paths}
         total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
@@ -98,6 +99,7 @@ class ImportAnnotations:
         try:
             # Load the labels
             for image_path, image_annotations in filtered_annotations.items():
+                
                 for annotation in image_annotations:
                     # Skip if missing required keys
                     if not all(key in annotation for key in keys):

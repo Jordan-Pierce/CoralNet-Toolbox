@@ -361,7 +361,7 @@ class Base(QDialog):
         # Extract values
         margins = self.margins_input.get_margins(validate=False)
         slice_wh = self.tile_size_input.get_sizes(validate=False)
-        overlap_wh = self.overlap_input.get_overlap(validate=False, return_pixels=True)
+        overlap_wh = self.overlap_input.get_overlap(validate=False)
 
         input_ext = self.input_ext_combo.currentText()
         output_ext = self.output_ext_combo.currentText()

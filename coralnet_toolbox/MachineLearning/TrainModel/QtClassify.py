@@ -18,6 +18,8 @@ class Classify(Base):
         self.setWindowTitle("Train Classification Model")
 
         self.task = "classify"
+        self.imgsz = 256
+        self.batch = 64
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""

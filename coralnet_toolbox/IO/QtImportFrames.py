@@ -6,7 +6,6 @@ import os
 
 import cv2
 
-from superqt import QRangeSlider
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit,
@@ -144,13 +143,19 @@ class ImportFrames(QDialog):
         self.time_range_label = QLabel("Time Range: No video loaded")
 
         # Range slider for selecting frames
-        self.range_slider = QRangeSlider(Qt.Horizontal)
-        self.range_slider.setEnabled(False)
-        self.range_slider.setValue((0, 0))
-        self.range_slider.setTickPosition(QSlider.TicksBelow)
-        self.range_slider.setTickInterval(10)
-        self.range_slider.valueChanged.connect(self.update_range_slider_label)
-        self.range_slider.valueChanged.connect(self.update_calculated_frames)
+        self.range_start_slider = QSlider(Qt.Horizontal)
+        self.range_start_slider.setEnabled(False)
+        self.range_start_slider.setTickPosition(QSlider.TicksBelow)
+        self.range_start_slider.setTickInterval(10)
+        self.range_start_slider.valueChanged.connect(self.update_range_slider_label)
+        self.range_start_slider.valueChanged.connect(self.update_calculated_frames)
+
+        self.range_end_slider = QSlider(Qt.Horizontal)
+        self.range_end_slider.setEnabled(False)
+        self.range_end_slider.setTickPosition(QSlider.TicksBelow)
+        self.range_end_slider.setTickInterval(10)
+        self.range_end_slider.valueChanged.connect(self.update_range_slider_label)
+        self.range_end_slider.valueChanged.connect(self.update_calculated_frames)
 
         # Create range input layout using spinboxes instead of line edits
         range_input_layout = QHBoxLayout()
@@ -177,7 +182,8 @@ class ImportFrames(QDialog):
         self.every_n_frames_spinbox.valueChanged.connect(self.update_calculated_frames)
 
         range_layout.addRow("Sample Every N Frames:", self.every_n_frames_spinbox)
-        range_layout.addRow("Select Frame Range:", self.range_slider)
+        range_layout.addRow("Select Start Frame:", self.range_start_slider)
+        range_layout.addRow("Select End Frame:", self.range_end_slider)
         range_layout.addRow("", range_input_layout)
         range_layout.addRow("", self.time_range_label)
         range_tab.setLayout(range_layout)
@@ -438,7 +444,8 @@ class ImportFrames(QDialog):
 
     def update_range_slider_label(self):
         """Update the range spinboxes with current values."""
-        start, end = self.range_slider.value()
+        start = self.range_start_slider.value()
+        end = self.range_end_slider.value()
         self.range_start_spinbox.setValue(start)
         self.range_end_spinbox.setValue(end)
         self.update_time_label()
@@ -452,7 +459,8 @@ class ImportFrames(QDialog):
                 self.fps = cap.get(cv2.CAP_PROP_FPS)
 
                 # Enable the slider and set its range
-                self.range_slider.setEnabled(True)
+                self.range_start_slider.setEnabled(True)
+                self.range_end_slider.setEnabled(True)
                 self.range_start_spinbox.setEnabled(True)
                 self.range_end_spinbox.setEnabled(True)
 
@@ -462,9 +470,12 @@ class ImportFrames(QDialog):
                 self.frame_number_spinbox.setRange(0, total_frames - 1)
 
                 tick_interval = max(1, total_frames // 10)
-                self.range_slider.setRange(0, total_frames)
-                self.range_slider.setTickInterval(tick_interval)
-                self.range_slider.setValue((0, total_frames))
+                self.range_start_slider.setRange(0, total_frames)
+                self.range_end_slider.setRange(0, total_frames)
+                self.range_start_slider.setTickInterval(tick_interval)
+                self.range_end_slider.setTickInterval(tick_interval)
+                self.range_start_slider.setValue(0)
+                self.range_end_slider.setValue(total_frames)
 
                 # Update the spinbox values
                 self.range_start_spinbox.setValue(0)
@@ -478,8 +489,10 @@ class ImportFrames(QDialog):
             except Exception as e:
                 # Handle potential errors
                 print(f"Error reading video file: {e}")
-                self.range_slider.setValue((0, 0))
-                self.range_slider.setEnabled(False)
+                self.range_start_slider.setValue(0)
+                self.range_end_slider.setValue(0)
+                self.range_start_slider.setEnabled(False)
+                self.range_end_slider.setEnabled(False)
                 self.range_start_spinbox.setEnabled(False)
                 self.range_end_spinbox.setEnabled(False)
                 self.range_start_spinbox.setValue(0)
@@ -489,7 +502,7 @@ class ImportFrames(QDialog):
 
     def range_spinbox_changed(self):
         """Handle manual frame range spinbox changes"""
-        if not self.range_slider.isEnabled():
+        if not self.range_start_slider.isEnabled() or not self.range_end_slider.isEnabled():
             return
 
         # Get current values
@@ -506,12 +519,14 @@ class ImportFrames(QDialog):
                 self.range_end_spinbox.setValue(end)
 
         # Update the slider with new values
-        self.range_slider.setValue((start, end))
+        self.range_start_slider.setValue(start)
+        self.range_end_slider.setValue(end)
 
     def update_time_label(self):
         """Update the time range label based on fps and selected range."""
         try:
-            start, end = self.range_slider.value()
+            start = self.range_start_slider.value()
+            end = self.range_end_slider.value()
             start_time = start / self.fps
             end_time = end / self.fps
 
@@ -531,9 +546,10 @@ class ImportFrames(QDialog):
             frame_count = 0
 
             if self.current_tab == "range":
-                if self.range_slider.isEnabled():
+                if self.range_start_slider.isEnabled() and self.range_end_slider.isEnabled():
                     # Get range slider frames
-                    start, end = self.range_slider.value()
+                    start = self.range_start_slider.value()
+                    end = self.range_end_slider.value()
                     every_n = self.every_n_frames_spinbox.value()
                     frame_count = len(range(start, end, every_n))
             else:  # specific frames tab
@@ -583,7 +599,8 @@ class ImportFrames(QDialog):
         # Get the frame extension, and other values
         self.ext = self.frame_ext_combo.currentText().replace(".", "").lower()
         self.every_n_frames = self.every_n_frames_spinbox.value()
-        self.start_frame, self.end_frame = self.range_slider.value()
+        self.start_frame = self.range_start_slider.value()
+        self.end_frame = self.range_end_slider.value()
 
         if not self.video_file or not self.output_dir:
             QMessageBox.warning(self,

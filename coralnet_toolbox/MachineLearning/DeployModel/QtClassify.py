@@ -30,7 +30,7 @@ from coralnet_toolbox.utilities import check_model_architecture
 class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        self.setWindowTitle("Deploy Classification Model")
+        self.setWindowTitle("Deploy Classification Model (Ctrl + 1)")
 
         self.task = 'classify'
 
@@ -155,6 +155,7 @@ class Classify(Base):
             results = self.loaded_model(images_np,
                                         conf=self.main_window.get_uncertainty_thresh(),
                                         device=self.main_window.device,
+                                        half=True,
                                         stream=True)
             
             # Create a result processor

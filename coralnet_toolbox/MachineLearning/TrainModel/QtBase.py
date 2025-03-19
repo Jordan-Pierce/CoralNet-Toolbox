@@ -188,6 +188,10 @@ class Base(QDialog):
         self.model_path = None
         # Class mapping
         self.class_mapping = {}
+        
+        # Task specific parameters
+        self.imgsz = 640
+        self.batch = 4
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -291,7 +295,7 @@ class Base(QDialog):
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(256)
+        self.imgsz_spinbox.setValue(self.imgsz)
         form_layout.addRow("Image Size:", self.imgsz_spinbox)
 
         # Multi Scale
@@ -302,7 +306,7 @@ class Base(QDialog):
         self.batch_spinbox = QSpinBox()
         self.batch_spinbox.setMinimum(1)
         self.batch_spinbox.setMaximum(1024)
-        self.batch_spinbox.setValue(512)
+        self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
 
         # Workers
