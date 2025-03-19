@@ -67,7 +67,8 @@ class ImportCoralNetAnnotations:
             # Concatenate all the data
             df = pd.concat(all_data, ignore_index=True)
             
-            # Check if Label Code is present instead of Label
+            # Check if Label Code is present instead of Label; 
+            # in the CoralNet Annotation file, 'Label code' refers 'Shot Code' in Labelset file.
             if 'Label code' in df.columns and 'Label' not in df.columns:
                 df = df.rename(columns={'Label code': 'Label'})
 
@@ -101,43 +102,21 @@ class ImportCoralNetAnnotations:
             
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Labels")
+        progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
+        progress_bar.start_progress(len(df['Name'].unique()))
         progress_bar.show()
-
+        
+        # Import the annotations
         try:
-            # Pre-create all required labels
-            all_labels = set(df['Label'].unique())
-            machine_suggestions = [col for col in df.columns if 'Machine suggestion' in col]
-            all_labels.update(df[machine_suggestions].values.flatten())
-            
-            progress_bar.start_progress(len(all_labels))
-                
-            for label_code in all_labels:
-                if pd.notna(label_code):
-                    short_label_code = long_label_code = str(label_code)
-                    if not self.label_window.get_label_by_codes(short_label_code, long_label_code):
-                        
-                        label_id = str(uuid.uuid4())
-                        color = QColor(random.randint(0, 255),
-                                       random.randint(0, 255),
-                                       random.randint(0, 255))
-                        
-                        self.label_window.add_label_if_not_exists(short_label_code,
-                                                                  long_label_code,
-                                                                  color,
-                                                                  label_id)
-                progress_bar.update_progress()
-                
-            # Start the progress bar
-            progress_bar.setWindowTitle("Importing CoralNet Annotations")
-            progress_bar.start_progress(len(df['Name'].unique()))
-                    
-            # Iterate over the rows
+            # Iterate over the rows of annotations by image basename
             for image_name, group in df.groupby('Name'):
+                
+                # Check that the image exists (using basename)
                 image_path = image_path_map.get(image_name)
                 if not image_path:
                     continue
-
+                
+                # Iterate over the rows of annotations (for this image)
                 for index, row in group.iterrows():
                     # Read from the row
                     row_coord = row['Row']
@@ -146,12 +125,33 @@ class ImportCoralNetAnnotations:
                     
                     # Get the label codes
                     short_label_code = label_code
+                    # If the user previously exported from the Toolbox, the 'Long Label' column will be present
                     long_label_code = row['Long Label'] if 'Long Label' in row else label_code
                     
-                    existing_label = self.label_window.get_label_by_codes(label_code, label_code)
-                    color = existing_label.color
-                    label_id = existing_label.id
-
+                    # The label should already exist from the previous loop?
+                    existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
+                    
+                    if existing_label:
+                        # Use the existing label's color and ID
+                        color = existing_label.color
+                        label_id = existing_label.id
+                        
+                    else:
+                        # Create a new label
+                        label_id = str(uuid.uuid4())
+                            
+                        # Generate a random color for the label    
+                        color = QColor(random.randint(0, 255),
+                                       random.randint(0, 255),
+                                       random.randint(0, 255))
+                        
+                        # Create the label
+                        self.label_window.add_label_if_not_exists(short_label_code,
+                                                                  long_label_code,
+                                                                  color,
+                                                                  label_id)
+                            
+                    # Create the annotation
                     annotation = PatchAnnotation(QPointF(col_coord, row_coord),
                                                  row['Patch Size'] if "Patch Size" in row else annotation_size,
                                                  short_label_code,
@@ -179,6 +179,7 @@ class ImportCoralNetAnnotations:
                         
                     # Process all valid pairs at once
                     for suggestion, confidence in valid_pairs:
+                        # Get the label object using the short code (because that's all that's available)
                         suggested_label = self.label_window.get_label_by_short_code(suggestion)
                         
                         if not suggested_label:

@@ -7,7 +7,8 @@ import os
 import yaml
 import shutil
 
-from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel)
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -106,7 +107,9 @@ class Detect(Base):
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
             return
-
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title=f"Creating {split} Dataset")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
@@ -136,5 +139,7 @@ class Detect(Base):
 
             progress_bar.update_progress()
 
+        # Reset cursor
+        QApplication.restoreOverrideCursor
         progress_bar.stop_progress()
         progress_bar.close()

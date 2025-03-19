@@ -6,7 +6,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
 from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, QWidget,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
-                             QPushButton, QApplication, QGroupBox)
+                             QPushButton, QApplication, QGroupBox, QLabel)
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -205,12 +205,18 @@ class LabelWindow(QWidget):
 
         self.top_bar.addStretch()  # Add stretch to the right side
         
-        # Search bar for labels
-        self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Search Labels")
-        self.search_bar.textChanged.connect(self.filter_labels)
-        self.search_bar.setFixedWidth(150)
-        self.top_bar.addWidget(self.search_bar)
+        # Add label count display
+        self.label_count_display = QLineEdit("")
+        self.label_count_display.setReadOnly(True)  # Make it uneditable
+        self.label_count_display.setFixedWidth(100)  # Set a reasonable fixed width
+        self.top_bar.addWidget(self.label_count_display)
+    
+        # Filter bar for labels
+        self.filter_bar = QLineEdit()
+        self.filter_bar.setPlaceholderText("Filter Labels")
+        self.filter_bar.textChanged.connect(self.filter_labels)
+        self.filter_bar.setFixedWidth(150)
+        self.top_bar.addWidget(self.filter_bar)
 
         # Lock button
         self.label_lock_button = QPushButton()
@@ -252,12 +258,18 @@ class LabelWindow(QWidget):
         default_long_label_code = "Review"
         default_color = QColor(255, 255, 255)  # White color
         self.add_label(default_short_label_code, default_long_label_code, default_color, label_id="-1")
+        
         # Deselect at first
         self.active_label.deselect()
 
         self.show_confirmation_dialog = True
         self.setAcceptDrops(True)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_labels_per_row()
+        self.reorganize_labels()
+        
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
             event.acceptProposedAction()
@@ -275,10 +287,9 @@ class LabelWindow(QWidget):
         col = pos.x() // self.label_width
         return row * self.labels_per_row + col
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update_labels_per_row()
-        self.reorganize_labels()
+    def update_label_count(self):
+        count = len(self.labels)
+        self.label_count_display.setText(f"# Labels: {count}")
 
     def update_labels_per_row(self):
         available_width = self.scroll_area.width() - self.scroll_area.verticalScrollBar().width()
@@ -323,7 +334,8 @@ class LabelWindow(QWidget):
         self.update_labels_per_row()
         self.reorganize_labels()
         self.set_active_label(label)
-        # Update search bars
+        # Update filter bars and label count
+        self.update_label_count()
         self.main_window.image_window.update_search_bars()
         QApplication.processEvents()
 
@@ -459,6 +471,7 @@ class LabelWindow(QWidget):
             # Remove the old label
             self.labels.remove(old_label)
             old_label.deleteLater()
+            self.update_label_count()
 
         # Update the active label if necessary
         if self.active_label == old_label:
@@ -516,6 +529,7 @@ class LabelWindow(QWidget):
         # Update the LabelWindow
         self.update_labels_per_row()
         self.reorganize_labels()
+        self.update_label_count()
 
     def handle_wasd_key(self, key):
         if not self.active_label or self.label_locked:
@@ -586,15 +600,15 @@ class LabelWindow(QWidget):
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
         
-    def filter_labels(self, search_text):
-        """Filter labels based on the search text and rebuild the grid with matching labels"""
+    def filter_labels(self, filter_text):
+        """Filter labels based on the filter text and rebuild the grid with matching labels"""
         # Unselect the selected annotation
         self.annotation_window.unselect_annotations()
         # Unselect the active label
         self.deselect_active_label()
         
-        # Get the search text in lowercase
-        search_text = search_text.lower()
+        # Get the filter text in lowercase
+        filter_text = filter_text.lower()
         
         # Clear all widgets from the grid layout
         while self.grid_layout.count():
@@ -602,11 +616,11 @@ class LabelWindow(QWidget):
             if item.widget():
                 item.widget().setParent(None)
         
-        # Filter labels that match the search criteria
+        # Filter labels that match the filter criteria
         filtered_labels = [
             label for label in self.labels 
-            if search_text in label.short_label_code.lower() 
-            or search_text in label.long_label_code.lower()
+            if filter_text in label.short_label_code.lower() 
+            or filter_text in label.long_label_code.lower()
         ]
         
         # Add matching labels to the grid

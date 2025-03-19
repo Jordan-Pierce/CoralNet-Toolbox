@@ -22,7 +22,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
-
+# TODO Crash might be due to multithreading?
 class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
@@ -235,8 +235,8 @@ class Classify(Base):
                                    key=attrgetter('image_path'))
 
         try:
-            # Use ThreadPoolExecutor for parallel processing with -4 worker threads
-            with ThreadPoolExecutor(max_workers=os.cpu_count() - 4) as executor:
+            # Use ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
                 # Dictionary to track futures and their corresponding image paths
                 futures = {}
                 
@@ -257,15 +257,19 @@ class Classify(Base):
 
                 # Process completed futures as they finish
                 for future in as_completed(futures):
-                    # Get cropped patches from completed task
-                    cropped = future.result()
-                    # Add cropped patches to prepared patches list
-                    self.prepared_patches.extend(cropped)
-                    # Update progress bar after each image is processed
-                    progress_bar.update_progress()
+                    try:
+                        # Get cropped patches from completed task
+                        cropped = future.result()
+                        # Add cropped patches to prepared patches list
+                        self.prepared_patches.extend(cropped)
+                    except Exception as exc:
+                        print(f"{futures[future]} generated an exception: {exc}")
+                    finally:
+                        # Update progress bar after each image is processed
+                        progress_bar.update_progress()
 
-        except Exception as exc:
-            print(f"{futures[future]} generated an exception: {exc}")
+        except Exception as e:
+            print(f"{futures[future]} generated an exception: {e}")
 
         finally:
             # Restore the cursor
@@ -295,18 +299,20 @@ class Classify(Base):
         groups = groupby(sorted(self.prepared_patches, key=attrgetter('image_path')),
                         key=attrgetter('image_path'))
 
-        try:
-            # Make predictions on each image's annotations
-            for path, patches in groups:
+        # Make predictions on each image's annotations
+        for path, patches in groups:
+            try:
                 print(f"\nMaking predictions on {path}")
                 self.deploy_model_dialog.predict(inputs=list(patches))
+                
+            except Exception as e:
+                print(f"Failed to make predictions on {path}: {e}")
+                continue
+            
+            finally: 
                 progress_bar.update_progress()
 
-        except Exception as e:
-            raise e
-
-        finally:
-            # Restore the cursor
-            QApplication.restoreOverrideCursor()
-            progress_bar.stop_progress()
-            progress_bar.close()
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()

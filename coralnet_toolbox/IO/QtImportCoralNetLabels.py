@@ -1,6 +1,7 @@
 import warnings
 
-import rand
+import uuid
+import random
 import pandas as pd
 
 from PyQt5.QtCore import Qt
@@ -59,12 +60,14 @@ class ImportCoralNetLabels:
                 # Import the labels
                 for i, r in data.iterrows():
                     try:
-                        short_label_code = r['Short Code'].strip()
-                        long_label_code = r['Name'].strip()
-                        label_id = r['Label ID']
+                        # CoralNet is inconsistent with label names in Labeset vs Annotations; drop Name
+                        short_label_code = long_label_code = r['Short Code'].strip()
+                        
+                        # Generate a random UUID for the label ID
+                        label_id = str(uuid.uuid4())
 
                         # Generate a random color for the label, using rand
-                        color = QColor(rand.randint(0, 255), rand.randint(0, 255), rand.randint(0, 255))
+                        color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
                         
                         # Create a QtColor object from the color string
                         self.label_window.add_label_if_not_exists(short_label_code, long_label_code, color, label_id)

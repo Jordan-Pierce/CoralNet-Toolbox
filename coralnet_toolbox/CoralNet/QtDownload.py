@@ -249,7 +249,10 @@ class DownloadDialog(QDialog):
             "download.default_directory": self.source_dir,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
-            "safebrowsing.enabled": False
+            "safebrowsing.enabled": False,
+            "profile.managed_default_content_settings.images": 2,
+            "profile.managed_default_content_settings.stylesheet": 2,
+            "profile.managed_default_content_settings.fonts": 2,
         }
         options.add_experimental_option("prefs", prefs)
         
