@@ -3,9 +3,10 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-from PyQt5.QtWidgets import (QFormLayout, QHBoxLayout, QLineEdit, QPushButton, QGroupBox)
+from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QGroupBox)
 
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base
+from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -18,12 +19,13 @@ class Segment(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Train Segmentation Model")
 
+    def setup_dataset_layout(self):
+        """Setup the dataset layout."""
+        
         self.task = "segment"
         self.imgsz = 640
         self.batch = 4
-
-    def setup_dataset_layout(self):
-        """Setup the dataset layout."""
+        
         group_box = QGroupBox("Dataset")
         layout = QFormLayout()
 
@@ -54,20 +56,29 @@ class Segment(Base):
         """Load the model combobox with the available models."""
         self.model_combo.clear()
         self.model_combo.setEditable(True)
-        self.model_combo.addItems(['yolov5n-seg.pt',
-                                   'yolov5s-seg.pt',
-                                   'yolov5m-seg.pt',
-                                   'yolov5l-seg.pt',
-                                   'yolov5x-seg.pt',
-                                   'yolov8n-seg.pt',
-                                   'yolov8s-seg.pt',
-                                   'yolov8m-seg.pt',
-                                   'yolov8l-seg.pt',
-                                   'yolov8x-seg.pt',
-                                   'yolov9c-seg.pt',
-                                   'yolov9e-seg.pt',
-                                   'yolo11n-seg.pt',
-                                   'yolo11s-seg.pt',
-                                   'yolo11m-seg.pt',
-                                   'yolo11l-seg.pt',
-                                   'yolo11x-seg.pt'])
+
+        standard_models = ['yolov5n-seg.pt',
+                           'yolov5s-seg.pt',
+                           'yolov5m-seg.pt',
+                           'yolov5l-seg.pt',
+                           'yolov5x-seg.pt',
+                           'yolov8n-seg.pt',
+                           'yolov8s-seg.pt',
+                           'yolov8m-seg.pt',
+                           'yolov8l-seg.pt',
+                           'yolov8x-seg.pt',
+                           'yolov9c-seg.pt',
+                           'yolov9e-seg.pt',
+                           'yolo11n-seg.pt',
+                           'yolo11s-seg.pt',
+                           'yolo11m-seg.pt',
+                           'yolo11l-seg.pt',
+                           'yolo11x-seg.pt']
+        
+        self.model_combo.addItems(standard_models)
+                
+        # Add community models
+        community_configs = get_available_configs(task=self.task)
+        if community_configs:
+            self.model_combo.insertSeparator(len(standard_models))
+            self.model_combo.addItems(list(community_configs.keys()))

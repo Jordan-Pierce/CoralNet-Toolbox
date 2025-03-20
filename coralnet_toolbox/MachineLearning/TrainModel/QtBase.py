@@ -2,10 +2,11 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-import datetime
+import os
 import gc
 import json
-import os
+import datetime
+import traceback
 from pathlib import Path
 
 import ultralytics.data.build as build
@@ -21,6 +22,8 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO, RTDETR
+
+from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
@@ -65,14 +68,27 @@ class TrainModelWorker(QThread):
         """
         Run the training process in a separate thread.
         """
-        try:
+        try:            
             # Emit signal to indicate training has started
             self.training_started.emit()
 
-            # Extract parameters
+            # Extract model path
             model_path = self.params.pop('model', None)
-            weighted = self.params.pop('weighted', False)
+            
+            # Whether to use YOLO or RTDETR
+            yolo_model = True if 'yolo' in model_path.lower() else False
+            
+            # Determine if ultralytics or community
+            if model_path in get_available_configs(task=self.params['task']):
+                model_path = get_available_configs(task=self.params['task'])[model_path]
+                # Cannot use weighted sampling with community models
+                self.params['weighted'] = False
+                # Mark as YOLO model
+                yolo_model = True
 
+            # Get the weighted flag
+            weighted = self.params.pop('weighted', False)
+            
             # Use the custom dataset class for weighted sampling
             if weighted and self.params['task'] == 'classify':
                 train_build.ClassificationDataset = WeightedClassificationDataset
@@ -80,7 +96,7 @@ class TrainModelWorker(QThread):
                 build.YOLODataset = WeightedInstanceDataset
 
             # Load the model, train, and save the best weights
-            if 'yolo' in model_path.lower():
+            if yolo_model:
                 self.model = YOLO(model_path)
             else:
                 self.model = RTDETR(model_path)
@@ -100,7 +116,8 @@ class TrainModelWorker(QThread):
             self.training_completed.emit()
 
         except Exception as e:
-            self.training_error.emit(str(e))
+            print(f"Error: {e}\n\nTraceback:\n{traceback.format_exc()}")
+            self.training_error.emit(f"Error: {e} (see console log)")
         finally:
             self._cleanup()
 
@@ -124,7 +141,8 @@ class TrainModelWorker(QThread):
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
             eval_worker.run()  # Run the evaluation synchronously (same thread)
         except Exception as e:
-            self.training_error.emit(str(e))
+            print(f"Error: {e}\n\nTraceback:\n{traceback.format_exc()}")
+            self.training_error.emit(f"Error: {e} (see console log)")
 
     def on_evaluation_started(self):
         """
