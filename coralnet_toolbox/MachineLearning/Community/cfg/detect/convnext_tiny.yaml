@@ -1,0 +1,21 @@
+# Metadata
+author: Y-T-G
+task: detect
+keywords: [cnn, convnext]
+description: ConvNeXt-Tiny pretrained backbone with Detect head.
+flops: 89.1
+parameters: 32037235
+min_version: 8.3.59
+discussion: https://github.com/Y-T-G/community/discussions/22
+
+# Model
+nc: 1
+strides: [8, 16, 32]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]]
+  - [0, 1, Index, [192, 4]]  # (1, 192, 80, 80) - 1
+  - [0, 1, Index, [384, 6]]  # (1, 384, 40, 40) - 2
+  - [0, 1, Index, [768, 8]]  # (1, 768, 20, 20) - 3
+head:
+  - [[1, 2, 3], 1, Detect, [nc]]

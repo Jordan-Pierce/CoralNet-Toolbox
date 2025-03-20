@@ -1,0 +1,22 @@
+# Metadata
+author: Y-T-G
+task: detect
+keywords: [cnn, resnet]
+description: ResNet-101 pretrained backbone with detect head.
+flops: 236.8
+parameters: 70698259
+min_version: 8.3.59
+discussion: https://github.com/Y-T-G/community/discussions/17
+
+# Model
+nc: 1
+strides: [8, 16, 32]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [768, resnet101, DEFAULT, True, 2, True]]
+  - [0, 1, Index, [512, 6]]     # (1, 512, 80, 80)  - 1
+  - [0, 1, Index, [1024, 7]]    # (1, 1024, 40, 40) - 2
+  - [0, 1, Index, [2048, 8]]    # (1, 2048, 20, 20) - 3
+
+head:
+  - [[1, 2, 3], 1, Detect, [nc]]

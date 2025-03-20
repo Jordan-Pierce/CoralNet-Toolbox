@@ -1,0 +1,24 @@
+# Metadata
+author: Y-T-G
+task: detect
+keywords: [transformer, swin]
+description: Swin-T pretrained backbone with Detect head.
+flops: 64.8
+parameters: 31736461
+min_version: 8.3.64
+discussion: https://github.com/Y-T-G/community/discussions/30
+
+# Model
+nc: 1
+strides: [8, 16, 32]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [768, swin_t, DEFAULT, True, 5, True]]
+  - [0, 1, Index, [192, 4]]               # (1, 80, 80, 192) - 1
+  - [-1, 1, torchvision.ops.Permute, [[0, 3, 1, 2]]]  # (1, 192, 80, 80) - 2
+  - [0, 1, Index, [384, 6]]               # (1, 40, 40, 384) - 3
+  - [-1, 1, torchvision.ops.Permute, [[0, 3, 1, 2]]]  # (1, 384, 40, 40) - 4
+  - [0, 1, Index, [768, 8]]               # (1, 20, 20, 768) - 5
+  - [-1, 1, torchvision.ops.Permute, [[0, 3, 1, 2]]]  # (1, 768, 20, 20) - 6
+head:
+  - [[2, 4, 6], 1, Detect, [nc]]

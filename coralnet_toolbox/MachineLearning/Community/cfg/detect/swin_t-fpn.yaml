@@ -1,0 +1,40 @@
+# Metadata
+author: Y-T-G
+task: detect
+keywords: [transformer, swin, fpn]
+description: Swin-T pretrained backbone with YOLO11 FPN neck and Detect head.
+flops: 73.7
+parameters: 40200397
+min_version: 8.3.64
+discussion: https://github.com/Y-T-G/community/discussions/41
+
+# Model
+nc: 1
+strides: [8, 16, 32]
+scales:
+  # [depth, width, max_channels]
+  default: [1.00, 1.00, 1024]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [768, swin_t, DEFAULT, True, 5, True]]    #  0
+  - [0, 1, Index, [192, 4]]                                        #  (1, 80, 80, 192) - 1
+  - [-1, 1, torchvision.ops.Permute, [[0, 3, 1, 2]]]               #  (1, 192, 80, 80) - 2
+  - [0, 1, Index, [384, 6]]                                        #  (1, 40, 40, 384) - 3
+  - [-1, 1, torchvision.ops.Permute, [[0, 3, 1, 2]]]               #  (1, 384, 40, 40) - 4
+  - [0, 1, Index, [768, 8]]                                        #  (1, 20, 20, 768) - 5
+  - [-1, 1, torchvision.ops.Permute, [[0, 3, 1, 2]]]               #  (1, 768, 20, 20) - 6
+  - [-1, 1, SPPF, [768, 5]]                                        #  (1, 768, 20, 20) - 7
+head:
+  - [-1, 1, nn.Upsample, [None, 2, nearest]]                       #  (1, 768, 40, 40) - 8
+  - [[-1, 4], 1, Concat, [1]]                                      #  (1, 1152, 40, 40) - 9
+  - [-1, 2, C3k2, [384, False]]                                    #  (1, 384, 40, 40) - 10
+  - [-1, 1, nn.Upsample, [None, 2, nearest]]                       #  (1, 384, 80, 80) - 11
+  - [[-1, 2], 1, Concat, [1]]                                      #  (1, 576, 80, 80) - 12
+  - [-1, 2, C3k2, [192, False]]                                    #  (1, 192, 80, 80) - 13
+  - [-1, 1, Conv, [192, 3, 2]]                                     #  (1, 192, 40, 40) - 14
+  - [[-1, -5], 1, Concat, [1]]                                     #  (1, 576, 40, 40) - 15
+  - [-1, 2, C3k2, [384, False]]                                    #  (1, 384, 40, 40) - 16
+  - [-1, 1, Conv, [384, 3, 2]]                                     #  (1, 384, 20, 20) - 17
+  - [[-1, -11], 1, Concat, [1]]                                    #  (1, 1152, 20, 20) - 18
+  - [-1, 2, C3k2, [768, True]]                                     #  (1, 768, 20, 20) - 19
+  - [[-7, -4, -1], 1, Detect, [nc]]                                #  20
