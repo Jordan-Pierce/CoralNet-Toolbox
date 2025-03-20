@@ -98,8 +98,12 @@ def check_model_architecture(weights_file):
         model = torch.load(weights_file)
         if 'model' not in model:
             return "", ""
-
-        decoder = model["model"].model[-1]
+        
+        if model['model'] is not None:
+            decoder = model["model"].model[-1]
+        else:
+            decoder = model["ema"].model[-1]
+            
         decoder_name = decoder.__class__.__name__
 
         if decoder_name == "RTDETRDecoder":
