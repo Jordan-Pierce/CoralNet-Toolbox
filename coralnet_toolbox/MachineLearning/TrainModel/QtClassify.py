@@ -75,3 +75,7 @@ class Classify(Base):
         if community_configs:
             self.model_combo.insertSeparator(len(standard_models))
             self.model_combo.addItems(list(community_configs.keys()))
+            
+        # Add CoralNet model
+        self.model_combo.insertSeparator(len(standard_models) + len(community_configs) + 1)
+        self.model_combo.addItem("efficientnet_b0.yaml (CoralNet)")

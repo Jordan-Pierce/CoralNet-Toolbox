@@ -9,9 +9,9 @@ import datetime
 import traceback
 from pathlib import Path
 
+from ultralytics import YOLO, RTDETR
 import ultralytics.data.build as build
 import ultralytics.models.yolo.classify.train as train_build
-
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.dataset import ClassificationDataset
 
@@ -20,8 +20,9 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
 
+import torch
 from torch.cuda import empty_cache
-from ultralytics import YOLO, RTDETR
+from torchvision.models import efficientnet_b0
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
@@ -62,7 +63,80 @@ class TrainModelWorker(QThread):
         super().__init__()
         self.params = params
         self.device = device
+        
+        self.is_yolo = False
+        
         self.model = None
+        self.backbone = None
+        self.model_path = None
+        
+        self.weighted = False
+        
+    def load_coralnet_backbone(self, model_path, pretrained_weights):
+        """
+        Load the CoralNet backbone with the pretrained weights.
+        
+        Args:
+            model_path: The model architecture to use
+            pretrained_weights: Path to pretrained weights file
+            
+        Returns:
+            The loaded backbone model
+        """
+        if not os.path.exists(pretrained_weights):
+            raise FileNotFoundError(f"Pretrained weights file not found: {pretrained_weights}")
+        
+        return efficientnet_b0(torch.load(pretrained_weights, map_location='cpu'))
+        
+    def pre_run(self):
+        """
+        Set up the model and prepare parameters for training.
+        """
+        try:
+            # Extract model path
+            self.model_path = self.params.pop('model', None)
+            # Get the weighted flag
+            self.weighted = self.params.pop('weighted', False)
+            # Whether to use YOLO or RTDETR
+            self.is_yolo = True if 'yolo' in self.model_path.lower() else False
+            
+            # Check if CoralNet model is selected
+            if 'CoralNet' in self.model_path:
+                # Get the pretrained weights
+                pretrained_weights = self.params.pop('pretrained', None)
+                # Load the weights into efficientnet model
+                self.backbone = self.load_coralnet_backbone('efficientnet_b0', pretrained_weights)
+                # Update the model path
+                self.model_path = 'efficientnet_b0.yaml'
+            
+            # Determine if ultralytics or community
+            if self.model_path in get_available_configs(task=self.params['task']):
+                self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
+                # Cannot use weighted sampling with community models
+                self.weighted = False
+                # Mark as YOLO model
+                self.is_yolo = True
+            
+            # Use the custom dataset class for weighted sampling
+            if self.weighted and self.params['task'] == 'classify':
+                train_build.ClassificationDataset = WeightedClassificationDataset
+            elif self.weighted and self.params['task'] in ['detect', 'segment']:
+                build.YOLODataset = WeightedInstanceDataset
+                
+            # Load the model
+            if self.is_yolo:
+                self.model = YOLO(self.model_path)
+            else:
+                self.model = RTDETR(self.model_path)
+                
+            if self.backbone:
+                # Add the backbone model if CoralNet
+                self.model.model.model[0].m = self.backbone.features
+                
+        except Exception as e:
+            print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
+            self.training_error.emit(f"Error during setup: {e} (see console log)")
+            raise
 
     def run(self):
         """
@@ -71,55 +145,37 @@ class TrainModelWorker(QThread):
         try:            
             # Emit signal to indicate training has started
             self.training_started.emit()
-
-            # Extract model path
-            model_path = self.params.pop('model', None)
             
-            # Whether to use YOLO or RTDETR
-            yolo_model = True if 'yolo' in model_path.lower() else False
-            
-            # Determine if ultralytics or community
-            if model_path in get_available_configs(task=self.params['task']):
-                model_path = get_available_configs(task=self.params['task'])[model_path]
-                # Cannot use weighted sampling with community models
-                self.params['weighted'] = False
-                # Mark as YOLO model
-                yolo_model = True
-
-            # Get the weighted flag
-            weighted = self.params.pop('weighted', False)
-            
-            # Use the custom dataset class for weighted sampling
-            if weighted and self.params['task'] == 'classify':
-                train_build.ClassificationDataset = WeightedClassificationDataset
-            elif weighted and self.params['task'] in ['detect', 'segment']:
-                build.YOLODataset = WeightedInstanceDataset
-
-            # Load the model, train, and save the best weights
-            if yolo_model:
-                self.model = YOLO(model_path)
-            else:
-                self.model = RTDETR(model_path)
+            # Set up the model and parameters
+            self.pre_run()
 
             # Train the model
             self.model.train(**self.params, device=self.device)
-
-            # Revert to the original dataset class without weighted sampling
-            if weighted and self.params['task'] == 'classify':
-                train_build.ClassificationDataset = ClassificationDataset
-            elif weighted and self.params['task'] in ['detect', 'segment']:
-                build.YOLODataset = YOLODataset
+            
+            # Post-run cleanup
+            self.post_run()
 
             # Evaluate the model after training
             self.evaluate_model()
+            
             # Emit signal to indicate training has completed
             self.training_completed.emit()
 
         except Exception as e:
-            print(f"Error: {e}\n\nTraceback:\n{traceback.format_exc()}")
-            self.training_error.emit(f"Error: {e} (see console log)")
+            print(f"Error during training: {e}\n\nTraceback:\n{traceback.format_exc()}")
+            self.training_error.emit(f"Error during training: {e} (see console log)")
         finally:
             self._cleanup()
+            
+    def post_run(self):
+        """
+        Clean up resources after training.
+        """
+        # Revert to the original dataset class without weighted sampling
+        if self.weighted and self.params['task'] == 'classify':
+            train_build.ClassificationDataset = ClassificationDataset
+        elif self.weighted and self.params['task'] in ['detect', 'segment']:
+            build.YOLODataset = YOLODataset
 
     def evaluate_model(self):
         """
@@ -141,8 +197,8 @@ class TrainModelWorker(QThread):
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
             eval_worker.run()  # Run the evaluation synchronously (same thread)
         except Exception as e:
-            print(f"Error: {e}\n\nTraceback:\n{traceback.format_exc()}")
-            self.training_error.emit(f"Error: {e} (see console log)")
+            print(f"Error during evaluation: {e}\n\nTraceback:\n{traceback.format_exc()}")
+            self.training_error.emit(f"Error during evaluation: {e} (see console log)")
 
     def on_evaluation_started(self):
         """
@@ -502,6 +558,16 @@ class Base(QDialog):
         """
         Handle the OK button click event.
         """
+        # Check if CoralNet model is selected but no pretrained weights are provided
+        if self.model_combo.currentText() == "efficientnet_b0 (CoralNet)": 
+            if not self.model_edit.text().strip():
+                QMessageBox.critical(
+                    self, 
+                    "Error", 
+                    "When using 'efficientnet_b0 (CoralNet)', you must specify an existing model file path."
+                )
+                return
+                        
         self.train_model()
         super().accept()
 
