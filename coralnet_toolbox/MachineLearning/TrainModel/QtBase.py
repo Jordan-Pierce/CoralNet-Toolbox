@@ -22,14 +22,13 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
 
 import torch
 from torch.cuda import empty_cache
-from torchvision.models import efficientnet_b0
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
-
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
-
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
+
+from coralnet_toolbox.CoralNet.FeatureExtractor import FeatureExtractor
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -86,7 +85,9 @@ class TrainModelWorker(QThread):
         if not os.path.exists(pretrained_weights):
             raise FileNotFoundError(f"Pretrained weights file not found: {pretrained_weights}")
         
-        return efficientnet_b0(torch.load(pretrained_weights, map_location='cpu'))
+        # Create the backbone via the feature extractor class
+        backbone = FeatureExtractor(model_name='efficientnet-b0', weights_file=pretrained_weights).model
+        return backbone.to_sequential()
         
     def pre_run(self):
         """
@@ -131,7 +132,7 @@ class TrainModelWorker(QThread):
                 
             if self.backbone:
                 # Add the backbone model if CoralNet
-                self.model.model.model[0].m = self.backbone.features
+                self.model.model.model[0].m = self.backbone
                 
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
