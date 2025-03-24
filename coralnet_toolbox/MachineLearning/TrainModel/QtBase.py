@@ -134,24 +134,34 @@ class TrainModelWorker(QThread):
                 # Add the backbone model if CoralNet
                 self.model.model.model[0].m = self.backbone
                 
-            # Freeze layers if specified
-            freeze_layers = self.params.pop('freeze', None)
+            # Freeze layers, freeze encoder
+            freeze_layers = self.params.pop('freeze_layers', None)
+            freeze_encoder = self.params.pop('freeze_encoder', False)
             
-            if freeze_layers:
-                trainable_params = 0
+            if freeze_encoder:
+                # Freeze the encoder portion of the model (everything but the last part)
+                for idx, param in enumerate(self.model.model.model[0: -1].parameters()):
+                    if param.dtype.is_floating_point:
+                        param.requires_grad = False
+                print("Encoder layers frozen")
                 
-                for idx, param in enumerate(self.model.model.parameters()):
+            elif freeze_layers:
+                # Find the amount of layers in the encoder tha can be frozen
+                trainable_params = 0
+                for idx, param in enumerate(self.model.model.model[0: -1].parameters()):
                     if not param.requires_grad and param.dtype.is_floating_point:
                         trainable_params += 1
-                        
-                for idx, param in enumerate(self.model.model.parameters()):
-                    if idx < trainable_params * float(freeze_layers):
+                
+                # Calculate the number of layers to freeze
+                freeze_layers = int(freeze_layers * trainable_params)
+                
+                # Freeze the specified number of layers
+                for idx, param in enumerate(self.model.model.model[0: -1].parameters()):
+                    if idx < freeze_layers:
                         if not param.requires_grad and param.dtype.is_floating_point:
                             param.requires_grad = False
                             
-                freeze_layers = int(freeze_layers * trainable_params)
-                
-            print(f"Trainable parameters: {trainable_params}, Frozen parameters: {freeze_layers}")
+                print(f"Trainable parameters: {trainable_params}, Frozen parameters: {freeze_layers}")
             
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
@@ -425,13 +435,17 @@ class Base(QDialog):
         self.pretrained_combo = create_bool_combo()
         form_layout.addRow("Pretrained:", self.pretrained_combo)
 
-        # Freeze
-        self.freeze_spinbox = QDoubleSpinBox()
-        self.freeze_spinbox.setMinimum(0.0)
-        self.freeze_spinbox.setMaximum(1.0)
-        self.freeze_spinbox.setSingleStep(0.01)
-        self.freeze_spinbox.setValue(0.0)
-        form_layout.addRow("Freeze Layers:", self.freeze_spinbox)
+        # Freeze Layers
+        self.freeze_layers_spinbox = QDoubleSpinBox()
+        self.freeze_layers_spinbox.setMinimum(0.0)
+        self.freeze_layers_spinbox.setMaximum(1.0)
+        self.freeze_layers_spinbox.setSingleStep(0.01)
+        self.freeze_layers_spinbox.setValue(0.0)
+        form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
+        
+        # Freeze encoder combobox (True / False)
+        self.freeze_encoder_combo = create_bool_combo()
+        form_layout.addRow("Freeze Encoder:", self.freeze_encoder_combo)
 
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
@@ -621,7 +635,8 @@ class Base(QDialog):
             'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_combo.currentText() == "True",
             'fraction': self.fraction_spinbox.value(),
-            'freeze': self.freeze_spinbox.value(),
+            'freeze_layers': self.freeze_layers_spinbox.value(),
+            'freeze_encoder': self.freeze_encoder_combo.currentText() == "True",
             'lr0': self.lr0_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
