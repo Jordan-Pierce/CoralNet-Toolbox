@@ -131,9 +131,20 @@ class TrainModelWorker(QThread):
                 self.model = RTDETR(self.model_path)
                 
             if self.backbone:
-                # Add the backbone model if CoralNet
-                self.model.model.model[0].m = self.backbone
-                print("CoralNet backbone loaded")
+                # Add the backbone model if CoralNet, transfer weights
+                src_state_dict = self.backbone.state_dict()
+                dst_state_dict = self.model.model.model.state_dict()
+                
+                # Transfer the weights
+                for (src_k, src_v), (dst_k, dst_v) in zip(src_state_dict.items(), dst_state_dict.items()):
+                    if src_v.shape != dst_v.shape:
+                        print(src_k, src_v.shape, dst_k, dst_v.shape)
+                    else:
+                        dst_state_dict[dst_k] = src_v
+                        
+                # Load the state dict
+                self.model.model.model.load_state_dict(dst_state_dict)
+                print("CoralNet backbone loaded!")
                 
             # Freeze layers, freeze encoder
             freeze_layers_percentage = self.params.pop('freeze_layers', None)
