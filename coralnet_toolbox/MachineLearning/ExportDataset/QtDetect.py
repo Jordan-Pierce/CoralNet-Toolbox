@@ -19,6 +19,7 @@ from coralnet_toolbox.Icons import get_icon
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class Detect(Base):
     def __init__(self, parent=None):
         super(Detect, self).__init__(parent)

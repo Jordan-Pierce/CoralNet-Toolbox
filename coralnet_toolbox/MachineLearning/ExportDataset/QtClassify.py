@@ -4,6 +4,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
+import gc
 from itertools import groupby
 from operator import attrgetter
 
@@ -22,6 +23,7 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class Classify(Base):
     def __init__(self, parent=None):
@@ -216,6 +218,9 @@ class Classify(Base):
             progress_bar = None
             return
         
+        finally:
+            gc.collect()
+        
         try:
             # Update progress bar for cropping annotations
             progress_bar.set_title(f"Saving {split} Dataset")
@@ -252,3 +257,4 @@ class Classify(Base):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
+            gc.collect()
