@@ -133,36 +133,28 @@ class TrainModelWorker(QThread):
             if self.backbone:
                 # Add the backbone model if CoralNet
                 self.model.model.model[0].m = self.backbone
+                print("CoralNet backbone loaded")
                 
             # Freeze layers, freeze encoder
-            freeze_layers = self.params.pop('freeze_layers', None)
+            freeze_layers_percentage = self.params.pop('freeze_layers', None)
             freeze_encoder = self.params.pop('freeze_encoder', False)
             
             if freeze_encoder:
-                # Freeze the encoder portion of the model (everything but the last part)
-                for idx, param in enumerate(self.model.model.model[0: -1].parameters()):
-                    if param.dtype.is_floating_point:
-                        param.requires_grad = False
-                print("Encoder layers frozen")
+                # Freeze the encoder portion of the model (everything but the last part of model.model.model)
+                num_layers = len(self.model.model.model[0:-1])
+                freeze_layers = [_ for _ in range(0, num_layers)]
+                print(f"Encoder layers frozen ({len(freeze_layers)})")
                 
-            elif freeze_layers:
-                # Find the amount of layers in the encoder tha can be frozen
-                trainable_params = 0
-                for idx, param in enumerate(self.model.model.model[0: -1].parameters()):
-                    if not param.requires_grad and param.dtype.is_floating_point:
-                        trainable_params += 1
-                
+            elif freeze_layers_percentage:
                 # Calculate the number of layers to freeze
-                freeze_layers = int(freeze_layers * trainable_params)
-                
-                # Freeze the specified number of layers
-                for idx, param in enumerate(self.model.model.model[0: -1].parameters()):
-                    if idx < freeze_layers:
-                        if not param.requires_grad and param.dtype.is_floating_point:
-                            param.requires_grad = False
-                            
-                print(f"Trainable parameters: {trainable_params}, Frozen parameters: {freeze_layers}")
+                num_layers = len(self.model.model.model[0:-1])
+                num_layers = int(num_layers * freeze_layers_percentage)
+                freeze_layers = [_ for _ in range(0, num_layers)]
+                print(f"Encoder layers frozen ({len(freeze_layers)})")
             
+            # Set the freeze parameter for ultralytics
+            self.params['freeze'] = freeze_layers
+
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
             self.training_error.emit(f"Error during setup: {e} (see console log)")
@@ -445,6 +437,7 @@ class Base(QDialog):
         
         # Freeze encoder combobox (True / False)
         self.freeze_encoder_combo = create_bool_combo()
+        self.freeze_encoder_combo.setCurrentText("False")
         form_layout.addRow("Freeze Encoder:", self.freeze_encoder_combo)
 
         # Weighted Dataset
@@ -631,7 +624,7 @@ class Base(QDialog):
             'save': self.save_combo.currentText() == "True",
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
-            'pretrained': self.pretrained_combo.currentText() == "True",
+            'pretrained': self.pretrained_combo.currentText() == "True",  # Only used if model_edit is empty
             'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_combo.currentText() == "True",
             'fraction': self.fraction_spinbox.value(),
@@ -651,6 +644,7 @@ class Base(QDialog):
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
+        # Ultralytics takes a string for the model path, or bool for pretrained
         params['pretrained'] = self.model_edit.text() if self.model_edit.text() else params['pretrained']
 
         # Add custom parameters (allows overriding the above parameters)
