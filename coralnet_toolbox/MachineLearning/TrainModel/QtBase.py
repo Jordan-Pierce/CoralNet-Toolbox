@@ -162,6 +162,10 @@ class TrainModelWorker(QThread):
                 num_layers = int(num_layers * freeze_layers_percentage)
                 freeze_layers = [_ for _ in range(0, num_layers)]
                 print(f"Encoder layers frozen ({len(freeze_layers)})")
+                
+            else:
+                freeze_layers = []
+                print("No encoder layers frozen")
             
             # Set the freeze parameter for ultralytics
             self.params['freeze'] = freeze_layers
