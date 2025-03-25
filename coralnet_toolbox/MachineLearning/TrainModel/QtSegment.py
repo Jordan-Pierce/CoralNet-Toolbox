@@ -82,3 +82,6 @@ class Segment(Base):
         if community_configs:
             self.model_combo.insertSeparator(len(standard_models))
             self.model_combo.addItems(list(community_configs.keys()))
+            
+        # Set the default model
+        self.model_combo.setCurrentIndex(standard_models.index('yolov8n-seg.pt'))

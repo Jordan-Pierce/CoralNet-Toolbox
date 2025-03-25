@@ -28,8 +28,6 @@ from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDat
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
-from coralnet_toolbox.CoralNet.FeatureExtractor import FeatureExtractor
-
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -63,31 +61,12 @@ class TrainModelWorker(QThread):
         self.params = params
         self.device = device
         
-        self.is_yolo = False
+        self.is_yolo = True
         
         self.model = None
-        self.backbone = None
         self.model_path = None
         
         self.weighted = False
-        
-    def load_coralnet_backbone(self, model_path, pretrained_weights):
-        """
-        Load the CoralNet backbone with the pretrained weights.
-        
-        Args:
-            model_path: The model architecture to use
-            pretrained_weights: Path to pretrained weights file
-            
-        Returns:
-            The loaded backbone model
-        """
-        if not os.path.exists(pretrained_weights):
-            raise FileNotFoundError(f"Pretrained weights file not found: {pretrained_weights}")
-        
-        # Create the backbone via the feature extractor class
-        backbone = FeatureExtractor(model_name='efficientnet-b0', weights_file=pretrained_weights).model
-        return backbone.to_sequential()
         
     def pre_run(self):
         """
@@ -99,24 +78,13 @@ class TrainModelWorker(QThread):
             # Get the weighted flag
             self.weighted = self.params.pop('weighted', False)
             # Whether to use YOLO or RTDETR
-            self.is_yolo = True if 'yolo' in self.model_path.lower() else False
-            
-            # Check if CoralNet model is selected
-            if 'CoralNet' in self.model_path:
-                # Get the pretrained weights
-                pretrained_weights = self.params.pop('pretrained', None)
-                # Load the weights into efficientnet model
-                self.backbone = self.load_coralnet_backbone('efficientnet_b0', pretrained_weights)
-                # Update the model path
-                self.model_path = 'efficientnet_b0.yaml'
+            self.is_yolo = False if 'detr' in self.model_path.lower() else True
             
             # Determine if ultralytics or community
             if self.model_path in get_available_configs(task=self.params['task']):
                 self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
                 # Cannot use weighted sampling with community models
                 self.weighted = False
-                # Mark as YOLO model
-                self.is_yolo = True
             
             # Use the custom dataset class for weighted sampling
             if self.weighted and self.params['task'] == 'classify':
@@ -130,38 +98,20 @@ class TrainModelWorker(QThread):
             else:
                 self.model = RTDETR(self.model_path)
                 
-            if self.backbone:
-                # Add the backbone model if CoralNet, transfer weights
-                src_state_dict = self.backbone.state_dict()
-                dst_state_dict = self.model.model.model.state_dict()
-                
-                # Transfer the weights
-                for (src_k, src_v), (dst_k, dst_v) in zip(src_state_dict.items(), dst_state_dict.items()):
-                    if src_v.shape != dst_v.shape:
-                        print(src_k, src_v.shape, dst_k, dst_v.shape)
-                    else:
-                        dst_state_dict[dst_k] = src_v
-                        
-                # Load the state dict
-                self.model.model.model.load_state_dict(dst_state_dict)
-                print("CoralNet backbone loaded!")
+            # Set the task in the model itself
+            self.model.task = self.params['task']
                 
             # Freeze layers, freeze encoder
-            freeze_layers_percentage = self.params.pop('freeze_layers', None)
-            freeze_encoder = self.params.pop('freeze_encoder', False)
+            freeze_layers = self.params.pop('freeze_layers', None)
             
-            if freeze_encoder:
-                # Freeze the encoder portion of the model (everything but the last part of model.model.model)
-                num_layers = len(self.model.model.model[0:-1])
-                freeze_layers = [_ for _ in range(0, num_layers)]
-                print(f"Encoder layers frozen ({len(freeze_layers)})")
-                
-            elif freeze_layers_percentage:
+            if freeze_layers:
                 # Calculate the number of layers to freeze
                 num_layers = len(self.model.model.model[0:-1])
-                num_layers = int(num_layers * freeze_layers_percentage)
+                num_layers = int(num_layers * freeze_layers)
                 freeze_layers = [_ for _ in range(0, num_layers)]
                 print(f"Encoder layers frozen ({len(freeze_layers)})")
+            else:
+                freeze_layers = []
             
             # Set the freeze parameter for ultralytics
             self.params['freeze'] = freeze_layers
@@ -307,6 +257,8 @@ class Base(QDialog):
         self.setup_info_layout()
         # Create the dataset layout
         self.setup_dataset_layout()
+        # Create the model layout (new)
+        self.setup_model_layout()
         # Create and set up the parameters layout
         self.setup_parameters_layout()
         # Create the buttons layout
@@ -333,6 +285,46 @@ class Base(QDialog):
     def setup_dataset_layout(self):
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def setup_model_layout(self):
+        """
+        Set up the layout and widgets for the model selection with a tabbed interface.
+        """
+        group_box = QGroupBox("Model Selection")
+        layout = QVBoxLayout()
+
+        # Create tabbed widget
+        tab_widget = QTabWidget()
+        
+        # Tab 1: Select model from dropdown
+        model_select_tab = QWidget()
+        model_select_layout = QFormLayout(model_select_tab)
+        
+        # Model combo box
+        self.model_combo = QComboBox()
+        self.load_model_combobox()
+        model_select_layout.addRow("Model:", self.model_combo)
+        
+        tab_widget.addTab(model_select_tab, "Select Model")
+        
+        # Tab 2: Use existing model
+        model_existing_tab = QWidget()
+        model_existing_layout = QFormLayout(model_existing_tab)
+        
+        # Existing Model
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        model_existing_layout.addRow("Existing Model:", model_layout)
+        
+        tab_widget.addTab(model_existing_tab, "Use Existing Model")
+        
+        layout.addWidget(tab_widget)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
     def setup_parameters_layout(self):
         """
         Set up the layout and widgets for the generic layout.
@@ -357,11 +349,6 @@ class Base(QDialog):
         group_layout = QVBoxLayout(group_box)
         group_layout.addWidget(scroll_area)
 
-        # Model combo box
-        self.model_combo = QComboBox()
-        self.load_model_combobox()
-        form_layout.addRow("Model:", self.model_combo)
-
         # Project
         self.project_edit = QLineEdit()
         self.project_button = QPushButton("Browse...")
@@ -374,15 +361,6 @@ class Base(QDialog):
         # Name
         self.name_edit = QLineEdit()
         form_layout.addRow("Name:", self.name_edit)
-
-        # Existing Model
-        self.model_edit = QLineEdit()
-        self.model_button = QPushButton("Browse...")
-        self.model_button.clicked.connect(self.browse_model_file)
-        model_layout = QHBoxLayout()
-        model_layout.addWidget(self.model_edit)
-        model_layout.addWidget(self.model_button)
-        form_layout.addRow("Existing Model:", model_layout)
 
         # Epochs
         self.epochs_spinbox = QSpinBox()
@@ -407,7 +385,7 @@ class Base(QDialog):
 
         # Multi Scale
         self.multi_scale_combo = create_bool_combo()
-        form_layout.addRow("Multi Scale:", self.multi_scale_combo)
+        form_layout.addRow("Multi-Scale:", self.multi_scale_combo)
 
         # Batch
         self.batch_spinbox = QSpinBox()
@@ -434,10 +412,6 @@ class Base(QDialog):
         self.save_period_spinbox.setValue(-1)
         form_layout.addRow("Save Period:", self.save_period_spinbox)
 
-        # Pretrained
-        self.pretrained_combo = create_bool_combo()
-        form_layout.addRow("Pretrained:", self.pretrained_combo)
-
         # Freeze Layers
         self.freeze_layers_spinbox = QDoubleSpinBox()
         self.freeze_layers_spinbox.setMinimum(0.0)
@@ -445,11 +419,6 @@ class Base(QDialog):
         self.freeze_layers_spinbox.setSingleStep(0.01)
         self.freeze_layers_spinbox.setValue(0.0)
         form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
-        
-        # Freeze encoder combobox (True / False)
-        self.freeze_encoder_combo = create_bool_combo()
-        self.freeze_encoder_combo.setCurrentText("False")
-        form_layout.addRow("Freeze Encoder:", self.freeze_encoder_combo)
 
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
@@ -468,24 +437,9 @@ class Base(QDialog):
         self.optimizer_combo.setCurrentText("auto")
         form_layout.addRow("Optimizer:", self.optimizer_combo)
 
-        # Lr0
-        self.lr0_spinbox = QDoubleSpinBox()
-        self.lr0_spinbox.setMinimum(0.0001)
-        self.lr0_spinbox.setMaximum(1.0000)
-        self.lr0_spinbox.setSingleStep(0.0001)
-        self.lr0_spinbox.setValue(0.0100)
-        form_layout.addRow("Learning Rate (lr0):", self.lr0_spinbox)
-
         # Val
         self.val_combo = create_bool_combo()
         form_layout.addRow("Validation:", self.val_combo)
-
-        # Fraction
-        self.fraction_spinbox = QDoubleSpinBox()
-        self.fraction_spinbox.setMinimum(0.1)
-        self.fraction_spinbox.setMaximum(1.0)
-        self.fraction_spinbox.setValue(1.0)
-        form_layout.addRow("Fraction:", self.fraction_spinbox)
 
         # Verbose
         self.verbose_combo = create_bool_combo()
@@ -600,16 +554,6 @@ class Base(QDialog):
         """
         Handle the OK button click event.
         """
-        # Check if CoralNet model is selected but no pretrained weights are provided
-        if self.model_combo.currentText() == "efficientnet_b0 (CoralNet)": 
-            if not self.model_edit.text().strip():
-                QMessageBox.critical(
-                    self, 
-                    "Error", 
-                    "When using 'efficientnet_b0 (CoralNet)', you must specify an existing model file path."
-                )
-                return
-                        
         self.train_model()
         super().accept()
 
@@ -625,7 +569,6 @@ class Base(QDialog):
             'task': self.task,
             'project': self.project_edit.text(),
             'name': self.name_edit.text(),
-            'model': self.model_combo.currentText(),
             'data': self.dataset_edit.text(),
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),
@@ -635,13 +578,9 @@ class Base(QDialog):
             'save': self.save_combo.currentText() == "True",
             'save_period': self.save_period_spinbox.value(),
             'workers': self.workers_spinbox.value(),
-            'pretrained': self.pretrained_combo.currentText() == "True",  # Only used if model_edit is empty
             'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_combo.currentText() == "True",
-            'fraction': self.fraction_spinbox.value(),
             'freeze_layers': self.freeze_layers_spinbox.value(),
-            'freeze_encoder': self.freeze_encoder_combo.currentText() == "True",
-            'lr0': self.lr0_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_combo.currentText() == "True",
@@ -655,8 +594,8 @@ class Base(QDialog):
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
-        # Ultralytics takes a string for the model path, or bool for pretrained
-        params['pretrained'] = self.model_edit.text() if self.model_edit.text() else params['pretrained']
+        # Either the model path, or the model name provided from combo box
+        params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
 
         # Add custom parameters (allows overriding the above parameters)
         for param_name, param_value in self.custom_params:
