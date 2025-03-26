@@ -61,7 +61,8 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 - [`CoralSCOP`](https://github.com/zhengziqiang/CoralSCOP)
 - [`SAM`](https://github.com/facebookresearch/segment-anything)
 - [`AutoDistill`](https://github.com/autodistill)
-  - [`GroundingDino`](https://github.com/IDEA-Research/GroundingDINO)
+  - [`Grounding Dino`](https://huggingface.co/docs/transformers/en/model_doc/grounding-dino)
+  - ['OWLViT](https://huggingface.co/docs/transformers/en/model_doc/owlvit)
 
 
 ## Tools
