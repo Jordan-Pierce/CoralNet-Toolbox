@@ -883,6 +883,9 @@ class MainWindow(QMainWindow):
         self.global_event_filter = GlobalEventFilter(self)
         QApplication.instance().installEventFilter(self.global_event_filter)
 
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+
     def showEvent(self, event):
         super().showEvent(event)
 
@@ -1748,6 +1751,24 @@ class MainWindow(QMainWindow):
             self.snake_game_dialog.start_game()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+
+        if file_names:
+            self.import_images.import_images(file_names)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        event.accept()
 
 
 class CollapsibleSection(QWidget):
