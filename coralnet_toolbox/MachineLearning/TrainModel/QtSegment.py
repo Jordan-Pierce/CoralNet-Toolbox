@@ -73,7 +73,12 @@ class Segment(Base):
                            'yolo11s-seg.pt',
                            'yolo11m-seg.pt',
                            'yolo11l-seg.pt',
-                           'yolo11x-seg.pt']
+                           'yolo11x-seg.pt',
+                           'yolo12n-seg.pt',
+                           'yolo12s-seg.pt',
+                           'yolo12m-seg.pt',
+                           'yolo12l-seg.pt',
+                           'yolo12x-seg.pt']
         
         self.model_combo.addItems(standard_models)
                 
