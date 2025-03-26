@@ -99,7 +99,8 @@ class GroundingDINOModel(DetectionBaseModel):
             for box, score, label in zip(boxes, scores, labels):
                 box = box.detach().numpy().astype(int).tolist()
 
-                if score.item() < confidence:
+                # Amplify scores
+                if score.item() * 10 < confidence:
                     continue
 
                 final_boxes.append(box)

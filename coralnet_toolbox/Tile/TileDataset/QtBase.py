@@ -38,44 +38,34 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Tile Dataset")
-        self.resize(800, 500)
+        self.resize(800, 550)
 
         # Main vertical layout
         main_layout = QVBoxLayout(self)
 
-        # Horizontal layout for columns
-        columns_layout = QHBoxLayout()
-
-        # Create containers for left and right columns
-        left_container = QWidget()
-        right_container = QWidget()
-        left_layout = QVBoxLayout(left_container)
-        right_layout = QVBoxLayout(right_container)
-
         # Create group boxes
         self.info_group = QGroupBox()
-        self.tile_config_group = QGroupBox()
         self.dataset_group = QGroupBox()
+        self.tile_config_group = QGroupBox()
         self.dataset_config_group = QGroupBox()
 
         # Setup layouts
         self.setup_info_layout()
-        self.setup_tile_config_layout()
         self.setup_dataset_layout()
+        self.setup_tile_config_layout()
         self.setup_dataset_config_layout()
 
-        # Add groups to column layouts
-        left_layout.addWidget(self.info_group)
-        left_layout.addWidget(self.tile_config_group)
-        right_layout.addWidget(self.dataset_group)
-        right_layout.addWidget(self.dataset_config_group)
-
-        # Add containers to columns layout
-        columns_layout.addWidget(left_container)
-        columns_layout.addWidget(right_container)
-
-        # Add columns to main layout
-        main_layout.addLayout(columns_layout)
+        # Add info group at the top
+        main_layout.addWidget(self.info_group)
+        
+        # Add dataset group below info
+        main_layout.addWidget(self.dataset_group)
+        
+        # Create bottom row with tile config and dataset config side by side
+        bottom_row_layout = QHBoxLayout()
+        bottom_row_layout.addWidget(self.tile_config_group)
+        bottom_row_layout.addWidget(self.dataset_config_group)
+        main_layout.addLayout(bottom_row_layout)
 
         # Add buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -146,29 +136,26 @@ class Base(QDialog):
         self.dataset_config_group.setTitle("Dataset Configuration Parameters")
         layout = QFormLayout()
 
-        # Image Extensions
-        ext_layout = QHBoxLayout()
+        # Image Extensions - Now in separate group box with vertical form layout
+        ext_group = QGroupBox("Image Extensions")
+        ext_form = QFormLayout(ext_group)
+        
         self.input_ext_combo = QComboBox()
         self.input_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
         self.input_ext_combo.setEditable(True)
+        
         self.output_ext_combo = QComboBox()
         self.output_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
         self.output_ext_combo.setEditable(True)
-        ext_layout.addWidget(QLabel("Input Ext:"))
-        ext_layout.addWidget(self.input_ext_combo)
-        ext_layout.addWidget(QLabel("Output Ext:"))
-        ext_layout.addWidget(self.output_ext_combo)
-        layout.addRow("Image Extensions:", ext_layout)
+        
+        ext_form.addRow("Input Extension:", self.input_ext_combo)
+        ext_form.addRow("Output Extension:", self.output_ext_combo)
+        
+        layout.addRow(ext_group)
 
-        # Include negative samples
-        self.include_negatives_combo = QComboBox()
-        self.include_negatives_combo.addItems(["True", "False"])
-        self.include_negatives_combo.setEditable(False)
-        self.include_negatives_combo.setCurrentIndex(0)
-        layout.addRow("Include Negative Samples:", self.include_negatives_combo)
-
-        # Train, Validation, and Test Ratios
-        ratios_layout = QHBoxLayout()
+        # Train, Validation, and Test Ratios - Now in separate group box with vertical form layout
+        ratios_group = QGroupBox("Dataset Split Ratios")
+        ratios_form = QFormLayout(ratios_group)
 
         self.train_ratio_spinbox = QDoubleSpinBox()
         self.train_ratio_spinbox.setRange(0.0, 1.0)
@@ -185,36 +172,43 @@ class Base(QDialog):
         self.test_ratio_spinbox.setSingleStep(0.1)
         self.test_ratio_spinbox.setValue(0.1)
 
-        ratios_layout.addWidget(QLabel("Train:"))
-        ratios_layout.addWidget(self.train_ratio_spinbox)
-        ratios_layout.addWidget(QLabel("Valid:"))
-        ratios_layout.addWidget(self.valid_ratio_spinbox)
-        ratios_layout.addWidget(QLabel("Test:"))
-        ratios_layout.addWidget(self.test_ratio_spinbox)
+        ratios_form.addRow("Train Ratio:", self.train_ratio_spinbox)
+        ratios_form.addRow("Validation Ratio:", self.valid_ratio_spinbox)
+        ratios_form.addRow("Test Ratio:", self.test_ratio_spinbox)
 
-        layout.addRow("Dataset Split Ratios:", ratios_layout)
+        layout.addRow(ratios_group)
 
+        # Advanced options - Now in separate group box with vertical form layout
+        advanced_group = QGroupBox("Advanced Parameters")
+        advanced_form = QFormLayout(advanced_group)
+        
+        self.densify_factor_spinbox = QDoubleSpinBox()
+        self.densify_factor_spinbox.setRange(0.0, 1.0)
+        self.densify_factor_spinbox.setSingleStep(0.1)
+        self.densify_factor_spinbox.setValue(0.5)
+        
+        self.smoothing_tolerance_spinbox = QDoubleSpinBox()
+        self.smoothing_tolerance_spinbox.setRange(0.0, 1.0)
+        self.smoothing_tolerance_spinbox.setSingleStep(0.1)
+        self.smoothing_tolerance_spinbox.setValue(0.1)
+        
+        advanced_form.addRow("Densify Factor:", self.densify_factor_spinbox)
+        advanced_form.addRow("Smoothing Tolerance:", self.smoothing_tolerance_spinbox)
+        
+        layout.addRow(advanced_group)
+        
+        # Include negative samples
+        self.include_negatives_combo = QComboBox()
+        self.include_negatives_combo.addItems(["True", "False"])
+        self.include_negatives_combo.setEditable(False)
+        self.include_negatives_combo.setCurrentIndex(0)
+        layout.addRow("Include Negative Samples:", self.include_negatives_combo)
+        
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
         self.num_viz_sample_spinbox.setRange(1, 1000)
         self.num_viz_sample_spinbox.setValue(25)
         layout.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
-
-        # Advanced options (densify factor and smoothing tolerance)
-        advanced_layout = QHBoxLayout()
-        self.densify_factor_spinbox = QDoubleSpinBox()
-        self.densify_factor_spinbox.setRange(0.0, 1.0)
-        self.densify_factor_spinbox.setSingleStep(0.1)
-        self.densify_factor_spinbox.setValue(0.5)
-        self.smoothing_tolerance_spinbox = QDoubleSpinBox()
-        self.smoothing_tolerance_spinbox.setRange(0.0, 1.0)
-        self.smoothing_tolerance_spinbox.setSingleStep(0.1)
-        self.smoothing_tolerance_spinbox.setValue(0.1)
-        advanced_layout.addWidget(QLabel("Densify:"))
-        advanced_layout.addWidget(self.densify_factor_spinbox)
-        advanced_layout.addWidget(QLabel("Smoothing:"))
-        advanced_layout.addWidget(self.smoothing_tolerance_spinbox)
-        layout.addRow("Advanced Parameters:", advanced_layout)
 
         self.dataset_config_group.setLayout(layout)
 
