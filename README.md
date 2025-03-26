@@ -62,7 +62,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 - [`SAM`](https://github.com/facebookresearch/segment-anything)
 - [`AutoDistill`](https://github.com/autodistill)
   - [`Grounding Dino`](https://huggingface.co/docs/transformers/en/model_doc/grounding-dino)
-  - ['OWLViT](https://huggingface.co/docs/transformers/en/model_doc/owlvit)
+  - [`OWLViT`](https://huggingface.co/docs/transformers/en/model_doc/owlvit)
 
 
 ## Tools
