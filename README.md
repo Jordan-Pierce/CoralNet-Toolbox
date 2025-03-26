@@ -135,7 +135,9 @@ Enhance your CoralNet experience with these tools:
 - 🟣 Polygons: Create polygons (instance masks)
 - 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
   - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
-- 🧪 AutoDistill: Use `AutoDistill` to access `GroundingDINO` for creating rectangles
+- 🧪 AutoDistill: Use `AutoDistill` to access the following for creating rectangles and polygons:
+    - `Grounding DINO` 
+    - `OWLViT`
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
