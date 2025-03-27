@@ -883,6 +883,9 @@ class MainWindow(QMainWindow):
         self.global_event_filter = GlobalEventFilter(self)
         QApplication.instance().installEventFilter(self.global_event_filter)
 
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+
     def showEvent(self, event):
         super().showEvent(event)
 
@@ -898,6 +901,42 @@ class MainWindow(QMainWindow):
             else:
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
+            
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+            
+            # Accept if any of the files is a JSON file
+            if any(file_name.lower().endswith('.json') for file_name in file_names):
+                event.acceptProposedAction()
+            else:
+                self.import_images.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+
+        if file_names:
+            # Check if a single JSON file was dropped
+            if len(file_names) == 1 and file_names[0].lower().endswith('.json'):
+                # Open as a project file
+                self.open_project_dialog.file_path_edit.setText(file_names[0])
+                self.open_project_dialog.load_selected_project()
+            else:
+                # Handle as image imports
+                self.import_images.dropEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+            
+            # Accept if any of the files is a JSON file
+            if any(file_name.lower().endswith('.json') for file_name in file_names):
+                event.acceptProposedAction()
+            else:
+                self.import_images.dragMoveEvent(event)
 
     def toggle_tool(self, state):
         # Unlock the label lock

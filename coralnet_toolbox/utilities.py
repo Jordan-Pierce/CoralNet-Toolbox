@@ -98,8 +98,12 @@ def check_model_architecture(weights_file):
         model = torch.load(weights_file)
         if 'model' not in model:
             return "", ""
-
-        decoder = model["model"].model[-1]
+        
+        if model['model'] is not None:
+            decoder = model["model"].model[-1]
+        else:
+            decoder = model["ema"].model[-1]
+            
         decoder_name = decoder.__class__.__name__
 
         if decoder_name == "RTDETRDecoder":
@@ -287,3 +291,30 @@ def except_hook(cls, exception, traceback_obj, main_window=None):
     
     sys.__excepthook__(cls, exception, traceback_obj)
     sys.exit(1) 
+    
+
+def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):
+    """Convert a PyTorch model to Ultralytics format"""
+    src_state_dict = ultralytics_model.model.model.state_dict()
+    dst_state_dict = torch.load(weights, map_location='cpu')
+    
+    try:
+    
+        for (src_key, src_val), (dst_key, dst_val) in zip(src_state_dict.items(), dst_state_dict.items()):
+            if src_val.shape == dst_val.shape:
+                src_state_dict[src_key] = dst_val
+            else:
+                print("Warning: Skipping mismatched layer ", src_key, src_val.shape, dst_key, dst_val.shape)
+                
+    except Exception as e:
+        print(f"Error converting model: {e}")
+        return
+    
+    ultralytics_model.model.model.load_state_dict(src_state_dict)
+    ultralytics_model.model.model.eval()
+    del dst_state_dict
+    gc.collect()
+    
+    torch.save(ultralytics_model.model.model, output_path)
+    print(f"Model saved to {output_path}")
+    

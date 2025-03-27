@@ -1,0 +1,19 @@
+# Metadata
+author: Y-T-G
+task: classify
+keywords: [transformer, swin]
+description: Swin-T pretrained backbone with Classify head.
+flops: 49.4
+parameters: 28506235
+min_version: 8.3.59
+discussion: https://github.com/Y-T-G/community/discussions/16
+
+# Model
+nc: 1
+strides: [32]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [768, swin_t, DEFAULT, True, 3]]  # (1, 768, 20, 20) - 0
+
+head:
+  - [-1, 1, Classify, [nc]]

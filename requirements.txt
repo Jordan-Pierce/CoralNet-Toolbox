@@ -1,12 +1,12 @@
 PyQt5>=5.15.11
 pyqtdarktheme
-ultralytics==8.3.0
+ultralytics>=8.3.96
 supervision>=0.24.0
 scikit-learn
 pycocotools
-timm==0.9.2
+timm>=0.9.2
 autodistill
-autodistill-grounding-dino
+transformers>=4.5.0
 x-segment-anything>=0.0.8
 yolo-tiling>=0.0.13
 patched_yolo_infer==1.3.8

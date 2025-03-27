@@ -4,11 +4,14 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
+import gc
 from itertools import groupby
 from operator import attrgetter
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import cv2
+import numpy as np
 import pandas as pd
 
 from PyQt5.QtCore import Qt
@@ -22,6 +25,7 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class Classify(Base):
     def __init__(self, parent=None):
@@ -68,13 +72,15 @@ class Classify(Base):
         val_dir = os.path.join(output_dir_path, 'val')
         test_dir = os.path.join(output_dir_path, 'test')
 
-        # Create a blank sample in train folder it's a test-only dataset
+        # Create a blank sample in train folder if it's a test-only dataset
         # Ultralytics bug... it doesn't like empty directories (hacky)
         for label in self.selected_labels:
             label_folder = os.path.join(train_dir, label)
             os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
-            with open(os.path.join(label_folder, 'NULL.jpg'), 'w') as f:
-                f.write("")
+            # Create blank RGB image array (224x224x3)
+            blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
+            # Save as jpg using numpy
+            cv2.imwrite(os.path.join(label_folder, 'NULL.jpg'), blank_img)
 
         self.process_annotations(self.train_annotations, train_dir, "Train")
         self.process_annotations(self.val_annotations, val_dir, "Validation")
@@ -216,6 +222,9 @@ class Classify(Base):
             progress_bar = None
             return
         
+        finally:
+            gc.collect()
+        
         try:
             # Update progress bar for cropping annotations
             progress_bar.set_title(f"Saving {split} Dataset")
@@ -252,3 +261,4 @@ class Classify(Base):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
+            gc.collect()

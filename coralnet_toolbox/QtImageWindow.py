@@ -254,6 +254,18 @@ class ImageWindow(QWidget):
         # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+        
+    def dragEnterEvent(self, event):
+        event.ignore()
+
+    def dropEvent(self, event):
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        event.ignore()
+        
+    def dragLeaveEvent(self, event):
+        event.ignore()
 
     def add_image(self, image_path):
         if image_path not in self.image_paths:

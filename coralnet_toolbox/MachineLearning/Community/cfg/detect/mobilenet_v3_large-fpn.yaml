@@ -1,0 +1,37 @@
+# Metadata
+author: Y-T-G
+task: detect
+keywords: [cnn, mobilenet, fpn]
+description: MobileNetv3-Large pretrained backbone with YOLO11 FPN neck and Detect head.
+flops: 16.3
+parameters: 14505363
+min_version: 8.3.59
+discussion: https://github.com/Y-T-G/community/discussions/51
+
+# Model
+nc: 1
+strides: [8, 16, 32]
+scales:
+  # [depth, width, max_channels]
+  default: [1.00, 1.00, 1024]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [768, mobilenet_v3_large, DEFAULT, True, 2, True]]    #  0
+  - [0, 1, Index, [40, 7]]                                                     #  (1, 40, 80, 80) - 1
+  - [0, 1, Index, [112, 13]]                                                   #  (1, 112, 40, 40) - 2
+  - [0, 1, Index, [960, 17]]                                                   #  (1, 960, 20, 20) - 3
+  - [-1, 1, SPPF, [960, 5]]                                                    #  (1, 960, 20, 20) - 4
+head:
+  - [-1, 1, nn.Upsample, [None, 2, nearest]]                                   #  (1, 960, 40, 40) - 5
+  - [[-1, 2], 1, Concat, [1]]                                                  #  (1, 1072, 40, 40) - 6
+  - [-1, 2, C3k2, [112, False]]                                                #  (1, 112, 40, 40) - 7
+  - [-1, 1, nn.Upsample, [None, 2, nearest]]                                   #  (1, 112, 80, 80) - 8
+  - [[-1, 1], 1, Concat, [1]]                                                  #  (1, 152, 80, 80) - 9
+  - [-1, 2, C3k2, [40, False]]                                                 #  (1, 40, 80, 80) - 10
+  - [-1, 1, Conv, [40, 3, 2]]                                                  #  (1, 40, 40, 40) - 11
+  - [[-1, -5], 1, Concat, [1]]                                                 #  (1, 152, 40, 40) - 12
+  - [-1, 2, C3k2, [112, False]]                                                #  (1, 112, 40, 40) - 13
+  - [-1, 1, Conv, [112, 3, 2]]                                                 #  (1, 112, 20, 20) - 14
+  - [[-1, -11], 1, Concat, [1]]                                                #  (1, 1072, 20, 20) - 15
+  - [-1, 2, C3k2, [960, True]]                                                 #  (1, 960, 20, 20) - 16
+  - [[-7, -4, -1], 1, Detect, [nc]]                                            #  17

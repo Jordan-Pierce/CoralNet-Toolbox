@@ -79,6 +79,26 @@ class Classify(Base):
 
             # Get the model architecture and task
             model_architecture, task = check_model_architecture(self.model_path)
+            
+            if not model_architecture:
+                # If architecture can't be determined, ask user to choose
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("Model Architecture Selection")
+                msg_box.setText("Model architecture could not be determined (is it still training?)\n"
+                                "Please select how to load this model:")
+                yolo_button = msg_box.addButton("Load as YOLO", QMessageBox.ActionRole)
+                rtdetr_button = msg_box.addButton("Load as RTDETR", QMessageBox.ActionRole)
+                cancel_button = msg_box.addButton(QMessageBox.Cancel)
+                
+                msg_box.exec_()
+                
+                if msg_box.clickedButton() == yolo_button:
+                    model_architecture = "yolo"
+                elif msg_box.clickedButton() == rtdetr_button:
+                    model_architecture = "rtdetr"
+                else:
+                    QApplication.restoreOverrideCursor()
+                    return
 
             # Check if the model is supported
             if model_architecture == "yolo":
@@ -86,8 +106,7 @@ class Classify(Base):
             elif model_architecture == "rtdetr":
                 self.loaded_model = RTDETR(self.model_path)
             else:
-                QMessageBox.critical(self, "Error", "Model not currently supported.")
-                return
+                raise ValueError(f"Unsupported model architecture: {model_architecture}")
 
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']

@@ -1,5 +1,9 @@
 # coralnet_toolbox/AutoDistill/Models/__init__.py
 
-from .GroundingDINOModel import GroundingDINO
+from .GroundingDINO import GroundingDINOModel
+from .OWLViT import OWLViTModel
+from .OmDetTurbo import OmDetTurboModel
 
-__all__ = ["GroundingDINO"]
+__all__ = ["GroundingDINOModel",
+           "OWLViTModel", 
+           "OmDetTurboModel"]

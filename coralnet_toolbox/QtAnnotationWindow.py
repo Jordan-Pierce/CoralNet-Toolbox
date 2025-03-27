@@ -91,6 +91,18 @@ class AnnotationWindow(QGraphicsView):
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
         }
+        
+    def dragEnterEvent(self, event):
+        event.ignore()
+
+    def dropEvent(self, event):
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        event.ignore()
+        
+    def dragLeaveEvent(self, event):
+        event.ignore()
 
     def wheelEvent(self, event: QMouseEvent):
         # Handle zooming with the mouse wheel

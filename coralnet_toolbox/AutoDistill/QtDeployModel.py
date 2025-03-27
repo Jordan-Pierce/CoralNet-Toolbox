@@ -117,7 +117,13 @@ class DeployModelDialog(QDialog):
         layout = QVBoxLayout()
 
         self.model_dropdown = QComboBox()
-        self.model_dropdown.addItems(["GroundingDINO-SwinT", "GroundingDINO-SwinB"])
+        self.model_dropdown.addItems([
+            "OWLViT",
+            "GroundingDINO-SwinT", 
+            "GroundingDINO-SwinB",
+            # "OmDetTurbo-SwinT",
+        ])
+        
         layout.addWidget(self.model_dropdown)
 
         group_box.setLayout(layout)
@@ -375,6 +381,7 @@ class DeployModelDialog(QDialog):
                 # Update the model with the new ontology
                 self.loaded_model.ontology = self.ontology
 
+            progress_bar.finish_progress()
             self.status_bar.setText(f"Model loaded: {model_name}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
@@ -411,15 +418,25 @@ class DeployModelDialog(QDialog):
             uncertainty_thresh: Threshold for uncertainty.
         """
         if "GroundingDINO" in model_name:
-            from coralnet_toolbox.AutoDistill.Models.GroundingDINOModel import GroundingDINO
+            from coralnet_toolbox.AutoDistill.Models.GroundingDINO import GroundingDINOModel
 
             model = model_name.split("-")[1].strip()
             self.model_name = model_name
-            self.loaded_model = GroundingDINO(ontology=self.ontology,
-                                              box_threshold=0.025,
-                                              text_threshold=0.025,
-                                              model=model)
+            self.loaded_model = GroundingDINOModel(ontology=self.ontology,
+                                                   model=model)
+            
+        elif "OmDetTurbo" in model_name:
+            from coralnet_toolbox.AutoDistill.Models.OmDetTurbo import OmDetTurboModel
 
+            self.model_name = model_name
+            self.loaded_model = OmDetTurboModel(ontology=self.ontology)
+            
+        elif "OWLViT" in model_name:
+            from coralnet_toolbox.AutoDistill.Models.OWLViT import OWLViTModel
+
+            self.model_name = model_name
+            self.loaded_model = OWLViTModel(ontology=self.ontology)
+        
     def predict(self, image_paths=None):
         """
         Make Autodistill predictions on the given inputs
