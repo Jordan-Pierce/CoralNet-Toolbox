@@ -334,9 +334,14 @@ class DeployPredictorDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
 
-        progress_bar.stop_progress()
-        progress_bar.close()
-        QApplication.restoreOverrideCursor()
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Stop the progress bar
+            progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
+            
         self.accept()
 
     def resize_image(self, image):

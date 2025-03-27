@@ -376,6 +376,7 @@ class DeployGeneratorDialog(QDialog):
             # Restore cursor
             QApplication.restoreOverrideCursor()
             # Stop the progress bar
+            progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
 

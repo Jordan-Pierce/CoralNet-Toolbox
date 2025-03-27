@@ -20,6 +20,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+# TODO use_fast
 
 @dataclass
 class OmDetTurboModel(DetectionBaseModel):
@@ -76,10 +77,9 @@ class OmDetTurboModel(DetectionBaseModel):
 
             results = self.processor.post_process_grounded_object_detection(
                 outputs,
-                inputs.input_ids,
-                box_threshold=confidence,
-                text_threshold=confidence,
+                threshold=confidence,
                 target_sizes=[image.shape[:2]],
+                text_labels=texts,
             )[0]
 
             boxes, scores, labels = (
