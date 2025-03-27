@@ -117,7 +117,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
       <td align="center">
         <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" height="200"/>
         <br>
-        <em>LAI Image Classification</em>
+        <em>Patch-based LAI Classification</em>
       </td>
     </tr>
   </table>
