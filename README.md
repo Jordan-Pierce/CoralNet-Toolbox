@@ -153,7 +153,7 @@ Enhance your CoralNet experience with these tools:
 ### TODO
 - 🏁 Tile Inference: Perform Tile Inference on large images using [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 - 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
-- 👀 YOLOE (See Anything): Detect similiar appearing objects using visual prompts
+- 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 
