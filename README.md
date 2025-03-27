@@ -63,6 +63,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 - [`AutoDistill`](https://github.com/autodistill)
   - [`Grounding Dino`](https://huggingface.co/docs/transformers/en/model_doc/grounding-dino)
   - [`OWLViT`](https://huggingface.co/docs/transformers/en/model_doc/owlvit)
+  - [`OmDetTurbo`](https://huggingface.co/docs/transformers/en/model_doc/omdet-turbo)
 
 
 ## Tools
@@ -138,6 +139,7 @@ Enhance your CoralNet experience with these tools:
 - 🧪 AutoDistill: Use `AutoDistill` to access the following for creating rectangles and polygons:
     - `Grounding DINO` 
     - `OWLViT`
+    - `OmDetTurbo`
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
@@ -151,6 +153,7 @@ Enhance your CoralNet experience with these tools:
 ### TODO
 - 🏁 Tile Inference: Perform Tile Inference on large images using [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 - 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
+- 👀 YOLOE (See Anything): Detect similiar appearing objects using visual prompts
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 

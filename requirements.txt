@@ -4,7 +4,7 @@ ultralytics>=8.3.96
 supervision>=0.24.0
 scikit-learn
 pycocotools
-timm>=0.9.2
+timm<=1.0.11
 autodistill
 transformers>=4.5.0
 x-segment-anything>=0.0.8

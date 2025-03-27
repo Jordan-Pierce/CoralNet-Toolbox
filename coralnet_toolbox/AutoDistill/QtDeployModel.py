@@ -118,10 +118,10 @@ class DeployModelDialog(QDialog):
 
         self.model_dropdown = QComboBox()
         self.model_dropdown.addItems([
+            "OmDetTurbo-SwinT",
             "OWLViT",
             "GroundingDINO-SwinT", 
             "GroundingDINO-SwinB",
-            # "OmDetTurbo-SwinT",
         ])
         
         layout.addWidget(self.model_dropdown)
