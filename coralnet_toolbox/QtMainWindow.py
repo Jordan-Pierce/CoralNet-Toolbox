@@ -921,8 +921,11 @@ class MainWindow(QMainWindow):
             # Check if a single JSON file was dropped
             if len(file_names) == 1 and file_names[0].lower().endswith('.json'):
                 # Open as a project file
-                self.open_project_dialog.file_path_edit.setText(file_names[0])
+                path = file_names[0]
+                self.open_project_dialog.file_path_edit.setText(path)
                 self.open_project_dialog.load_selected_project()
+                self.current_project_path = self.open_project_dialog.current_project_path
+                self.update_project_label()
             else:
                 # Handle as image imports
                 self.import_images.dropEvent(event)

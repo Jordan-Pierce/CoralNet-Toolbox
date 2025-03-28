@@ -94,7 +94,7 @@ class OmDetTurboModel(DetectionBaseModel):
                     label = class_idx_mapper[label]
                     
                     # Amplify scores
-                    if score * 10 < confidence:
+                    if score < confidence:
                         continue
 
                     final_boxes.append(box)

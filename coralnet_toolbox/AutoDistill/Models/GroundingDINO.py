@@ -100,7 +100,7 @@ class GroundingDINOModel(DetectionBaseModel):
                     label = class_idx_mapper[label.split(" ")[0]]
                     
                     # Amplify scores
-                    if score * 10 < confidence:
+                    if score < confidence:
                         continue
 
                     final_boxes.append(box)
