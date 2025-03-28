@@ -18,6 +18,8 @@ from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.utilities import check_model_architecture
 
 
@@ -197,9 +199,15 @@ class Segment(Base):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+        
         try:
             # Loop through the image paths
             for image_path in image_paths:
+                progress_bar.update_progress()
                 inputs = self._get_inputs(image_path)
                 if inputs is None:
                     continue
@@ -212,6 +220,9 @@ class Segment(Base):
             print("An error occurred during prediction:", e)
         finally:
             QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
         gc.collect()
         empty_cache()

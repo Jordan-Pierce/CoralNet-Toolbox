@@ -412,9 +412,17 @@ class DeployGeneratorDialog(QDialog):
             # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
 
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+        
         try:
             for image_path in image_paths:
+                progress_bar.update_progress()
                 inputs = self._get_inputs(image_path)
                 if inputs is None:
                     continue
@@ -428,6 +436,9 @@ class DeployGeneratorDialog(QDialog):
             print("An error occurred during prediction:", e)
         finally:
             QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
         gc.collect()
         empty_cache()

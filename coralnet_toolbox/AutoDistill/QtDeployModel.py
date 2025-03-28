@@ -131,24 +131,29 @@ class DeployModelDialog(QDialog):
 
     def setup_ontology_layout(self):
         """
-        Setup ontology mapping section in a group box.
+        Setup ontology mapping section in a group box with a single fixed pair.
         """
         group_box = QGroupBox("Ontology Mapping")
         layout = QVBoxLayout()
 
-        add_remove_layout = QHBoxLayout()
-
-        self.add_button = QPushButton("Add")
-        self.add_button.clicked.connect(self.add_ontology_pair)
-        add_remove_layout.addWidget(self.add_button)
-
-        self.remove_button = QPushButton("Remove")
-        self.remove_button.clicked.connect(self.remove_ontology_pair)
-        add_remove_layout.addWidget(self.remove_button)
-
-        layout.addLayout(add_remove_layout)
-        self.ontology_layout = layout
-
+        # Create a single pair of text input and dropdown
+        pair_layout = QHBoxLayout()
+        
+        self.text_input = QLineEdit()
+        self.text_input.setMaxLength(100)  # Cap the width at 100 characters
+        self.text_input.setPlaceholderText("Enter keyword or description")
+        
+        self.label_dropdown = QComboBox()
+        self.label_dropdown.addItems([label.short_label_code for label in self.label_window.labels])
+        
+        pair_layout.addWidget(self.text_input)
+        pair_layout.addWidget(self.label_dropdown)
+        
+        layout.addLayout(pair_layout)
+        
+        # Store the single pair for later reference
+        self.ontology_pairs = [(self.text_input, self.label_dropdown)]
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -292,45 +297,26 @@ class DeployModelDialog(QDialog):
 
     def update_label_options(self):
         """
-        Update the label options in ontology pairs based on available labels.
+        Update the label options in the single ontology pair based on available labels.
         """
         label_options = [label.short_label_code for label in self.label_window.labels]
-        for _, label_dropdown in self.ontology_pairs:
-            previous_label = label_dropdown.currentText()
-            label_dropdown.clear()
-            label_dropdown.addItems(label_options)
-            if previous_label in label_options:
-                label_dropdown.setCurrentText(previous_label)
+        previous_label = self.label_dropdown.currentText()
+        self.label_dropdown.clear()
+        self.label_dropdown.addItems(label_options)
+        if previous_label in label_options:
+            self.label_dropdown.setCurrentText(previous_label)
 
-    def add_ontology_pair(self):
+    def get_ontology_mapping(self):
         """
-        Add a new ontology pair input (text input and label dropdown).
+        Retrieve the ontology mapping from the single user input.
+
+        Returns:
+            Dictionary mapping text to label code.
         """
-        pair_layout = QHBoxLayout()
-
-        text_input = QLineEdit()
-        text_input.setMaxLength(100)  # Cap the width at 100 characters
-        label_dropdown = QComboBox()
-        label_dropdown.addItems([label.short_label_code for label in self.label_window.labels])
-
-        pair_layout.addWidget(text_input)
-        pair_layout.addWidget(label_dropdown)
-
-        self.ontology_pairs.append((text_input, label_dropdown))
-        self.ontology_layout.insertLayout(self.ontology_layout.count() - 1, pair_layout)
-
-    def remove_ontology_pair(self):
-        """
-        Remove the last ontology pair input if more than one exists.
-        """
-        if len(self.ontology_pairs) > 1:
-            pair = self.ontology_pairs.pop()
-            pair[0].deleteLater()
-            pair[1].deleteLater()
-
-            # Remove the layout
-            item = self.ontology_layout.itemAt(self.ontology_layout.count() - 2)
-            item.layout().deleteLater()
+        ontology_mapping = {}
+        if self.text_input.text() != "":
+            ontology_mapping[self.text_input.text()] = self.label_dropdown.currentText()
+        return ontology_mapping
 
     def is_sam_model_deployed(self):
         """
@@ -396,19 +382,6 @@ class DeployModelDialog(QDialog):
         # Exit the dialog box
         self.accept()
 
-    def get_ontology_mapping(self):
-        """
-        Retrieve the ontology mapping from user inputs.
-
-        Returns:
-            Dictionary mapping texts to label codes.
-        """
-        ontology_mapping = {}
-        for text_input, label_dropdown in self.ontology_pairs:
-            if text_input.text() != "":
-                ontology_mapping[text_input.text()] = label_dropdown.currentText()
-        return ontology_mapping
-
     def load_new_model(self, model_name):
         """
         Load a new model based on the selected model name.
@@ -463,10 +436,16 @@ class DeployModelDialog(QDialog):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Start a progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
 
         try:
             # Loop through the image paths
             for image_path in image_paths:
+                progress_bar.update_progress()
                 inputs = self._get_inputs(image_path)
                 if inputs is None:
                     continue
@@ -480,6 +459,9 @@ class DeployModelDialog(QDialog):
             print("An error occurred during prediction:", e)
         finally:
             QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
         gc.collect()
         empty_cache()  # Assuming this function is defined elsewhere
