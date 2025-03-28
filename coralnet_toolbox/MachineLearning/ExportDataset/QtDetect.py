@@ -70,13 +70,18 @@ class Detect(Base):
         names = self.selected_labels
         num_classes = len(self.selected_labels)
 
-        # Define the data as a dictionary
+        # Create dictionary of class names with numeric keys
+        names_dict = {i: name for i, name in enumerate(names)}
+
+        # Define the data as a dictionary with absolute paths
         data = {
-            'train': '../train/images',
-            'val': '../valid/images',
-            'test': '../test/images',
-            'nc': num_classes,  
-            'names': names  
+            'path': output_dir_path,
+            'train': train_dir,
+            'val': val_dir,
+            'test': test_dir,
+            'nc': num_classes,
+            'names': list(range(num_classes)),  # List of numeric indices
+            'names': names_dict  # Dictionary mapping from indices to class names
         }
 
         # Write the data to the YAML file
