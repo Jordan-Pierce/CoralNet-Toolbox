@@ -423,19 +423,22 @@ class DeployModelDialog(QDialog):
             model = model_name.split("-")[1].strip()
             self.model_name = model_name
             self.loaded_model = GroundingDINOModel(ontology=self.ontology,
-                                                   model=model)
+                                                   model=model,
+                                                   device=self.main_window.device)
             
         elif "OmDetTurbo" in model_name:
             from coralnet_toolbox.AutoDistill.Models.OmDetTurbo import OmDetTurboModel
 
             self.model_name = model_name
-            self.loaded_model = OmDetTurboModel(ontology=self.ontology)
+            self.loaded_model = OmDetTurboModel(ontology=self.ontology,
+                                                device=self.main_window.device)
             
         elif "OWLViT" in model_name:
             from coralnet_toolbox.AutoDistill.Models.OWLViT import OWLViTModel
 
             self.model_name = model_name
-            self.loaded_model = OWLViTModel(ontology=self.ontology)
+            self.loaded_model = OWLViTModel(ontology=self.ontology,
+                                            device=self.main_window.device)
         
     def predict(self, image_paths=None):
         """

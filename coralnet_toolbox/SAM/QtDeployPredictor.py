@@ -328,6 +328,7 @@ class DeployPredictorDialog(QDialog):
             self.loaded_model.model.to(device=self.main_window.device)
             self.loaded_model.model.eval()
 
+            progress_bar.finish_progress()
             self.status_bar.setText("Model loaded")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
@@ -338,7 +339,6 @@ class DeployPredictorDialog(QDialog):
             # Restore cursor
             QApplication.restoreOverrideCursor()
             # Stop the progress bar
-            progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
             

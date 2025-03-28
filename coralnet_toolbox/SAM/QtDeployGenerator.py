@@ -366,6 +366,7 @@ class DeployGeneratorDialog(QDialog):
                 # Run a blank through the model to initialize it
                 self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
 
+            progress_bar.finish_progress()
             self.status_bar.setText(f"Model loaded: {self.model_path}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
@@ -376,7 +377,6 @@ class DeployGeneratorDialog(QDialog):
             # Restore cursor
             QApplication.restoreOverrideCursor()
             # Stop the progress bar
-            progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
 
