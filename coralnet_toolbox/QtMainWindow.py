@@ -877,6 +877,8 @@ class MainWindow(QMainWindow):
                 pass  # Do nothing, let the OS handle the restore
             
     def dragEnterEvent(self, event):
+        self.untoggle_all_tools()
+
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
@@ -888,6 +890,8 @@ class MainWindow(QMainWindow):
                 self.import_images.dragEnterEvent(event)
 
     def dropEvent(self, event):
+        self.untoggle_all_tools()
+
         urls = event.mimeData().urls()
         file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
@@ -905,6 +909,8 @@ class MainWindow(QMainWindow):
                 self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
+        self.untoggle_all_tools()
+        
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]

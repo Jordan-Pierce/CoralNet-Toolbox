@@ -375,6 +375,23 @@ class SeeAnythingTool(Tool):
             if score < self.main_window.get_uncertainty_thresh():
                 continue
             
+            # Get the result box
+            box = result.boxes.xyxyn.detach().cpu().numpy()[0]
+            # Convert from normalized to pixel coordinates
+            box = box * np.array([self.image.shape[1], 
+                                  self.image.shape[0], 
+                                  self.image.shape[1], 
+                                  self.image.shape[0]])
+            
+            # Convert to whole image coordinates
+            box[0] += working_area_top_left.x()
+            box[1] += working_area_top_left.y()
+            box[2] += working_area_top_left.x()
+            box[3] += working_area_top_left.y()
+            
+            # Add the box to the list of rectangles (compounding automatic annotation)
+            self.rectangles.append(box)
+            
             if self.see_anything_dialog.task == "segment":
                 # Extract the results
                 mask = result.masks.xyn.detach().cpu().numpy()[0]
@@ -392,19 +409,10 @@ class SeeAnythingTool(Tool):
                                                self.annotation_window.current_image_path,
                                                self.annotation_window.selected_label.id,
                                                transparency)
-                
-            else:    
-                # Extract the results
-                box = result.boxes.xyxyn.detach().cpu().numpy()[0]
-                # Convert from normalized to pixel coordinates
-                box = box * np.array([self.image.shape[1], 
-                                      self.image.shape[0], 
-                                      self.image.shape[1], 
-                                      self.image.shape[0]])
-                
+            else:                   
                 # Update coordinates relative to the working area
-                top_left = QPointF(box[0] + working_area_top_left.x(), box[1] + working_area_top_left.y())
-                bottom_right = QPointF(box[2] + working_area_top_left.x(), box[3] + working_area_top_left.y())
+                top_left = QPointF(box[0], box[1])
+                bottom_right = QPointF(box[2], box[3])
 
                 # Create the annotation
                 annotation = RectangleAnnotation(top_left,
