@@ -6,7 +6,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -14,6 +14,8 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -24,8 +26,13 @@ from coralnet_toolbox.utilities import pixmap_to_numpy
 class SeeAnythingTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
-        self.top_left = None
+        
+        self.annotation_window = annotation_window
+        self.main_window = self.annotation_window.main_window
+        
         self.see_anything_dialog = None
+        
+        self.top_left = None
 
         self.cursor = Qt.CrossCursor
         self.annotation_graphics = None
@@ -49,6 +56,9 @@ class SeeAnythingTool(Tool):
         self.bottom_right = None
         self.drawing_rectangle = False
         self.current_rect_graphics = None  # For the rectangle currently being drawn
+        self.rectangles_processed = False  # Track if rectangles have been processed
+        
+        self.annotations = []
 
     def activate(self):
         """
@@ -56,7 +66,7 @@ class SeeAnythingTool(Tool):
         """
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
-        self.see_anything_dialog = self.annotation_window.main_window.see_anything_deploy_predictor_dialog
+        self.see_anything_dialog = self.main_window.see_anything_deploy_predictor_dialog
 
     def deactivate(self):
         """
@@ -216,6 +226,8 @@ class SeeAnythingTool(Tool):
             
             # Reset the current rectangle graphics item
             self.current_rect_graphics = None
+            # Set rectangles_processed to False since we have new rectangles
+            self.rectangles_processed = False
 
     def mousePressEvent(self, event: QMouseEvent):
         """
@@ -292,14 +304,18 @@ class SeeAnythingTool(Tool):
                 self.set_working_area()
                 self.see_anything_dialog.set_image(self.image, self.image_path)
                 
-            # If there are rectangles already made, run the predictor
-            elif len(self.rectangles) > 0:
+            # If there are rectangles already made and not processed, run the predictor
+            elif len(self.rectangles) > 0 and not self.rectangles_processed:
                 # Create annotation based on rectangles
                 self.create_annotation(None)
                 # After creating annotation, only clear the rectangle graphics but keep the data
                 self.clear_rectangle_graphics()
+                # Mark rectangles as processed
+                self.rectangles_processed = True
             else:
-                # If there's a working area but no rectangles, cancel the working area
+                # If there's a working area but no rectangles or if rectangles have been processed,
+                # confirm the annotations, and cancel the working area.
+                self.confirm_annotations()
                 self.cancel_working_area()
                 
         elif event.key() == Qt.Key_Backspace:
@@ -311,8 +327,10 @@ class SeeAnythingTool(Tool):
                     self.current_rect_graphics = None
                 self.start_point = None
                 self.end_point = None
-                
-            # If not drawing, clear all rectangles
+            # If we have a working area and annotations, clear them
+            elif self.working_area and len(self.annotations) > 0:
+                self.clear_annotations()
+            # If not drawing and no annotations to clear, clear all rectangles
             else:
                 self.clear_all_rectangles()
                 
@@ -342,7 +360,7 @@ class SeeAnythingTool(Tool):
         working_area_top_left = self.working_area.rect().topLeft()
 
         # Get the current transparency
-        transparency = self.annotation_window.main_window.label_window.active_label.transparency
+        transparency = self.main_window.label_window.active_label.transparency
 
         # Predict the mask provided prompts
         results = self.see_anything_dialog.predict_from_prompts(self.rectangles)[0]
@@ -353,8 +371,8 @@ class SeeAnythingTool(Tool):
         # Loop through the results
         for result in results:        
             # Get the score
-            score = result.boxes.conf
-            if score < self.annotation_window.main_window.get_uncertainty_thresh():
+            score = result.boxes.conf.item()
+            if score < self.main_window.get_uncertainty_thresh():
                 continue
             
             if self.see_anything_dialog.task == "segment":
@@ -397,17 +415,77 @@ class SeeAnythingTool(Tool):
                                                  self.annotation_window.current_image_path,
                                                  self.annotation_window.selected_label.id,
                                                  transparency)
+                
+            # Update the confidence score of annotation
+            annotation.update_machine_confidence({self.annotation_window.selected_label: score})
             
             # Ensure the annotation is added to the scene after creation
             annotation.create_graphics_item(self.annotation_window.scene)
-            
-            # Set the annotation graphics
-            if self.annotation_graphics:
-                self.annotation_window.scene.removeItem(self.annotation_graphics)
-            self.annotation_graphics = annotation.graphics_item
+            self.annotations.append(annotation)
 
         self.annotation_window.viewport().update()
-        return annotation
+
+    def confirm_annotations(self):
+        """
+        Confirm the annotations and clear the working area.
+        """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, "Confirming Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(self.annotations))
+        
+        # Confirm the annotations
+        for annotation in self.annotations:
+            # Connect signals needed for proper interaction
+            annotation.selected.connect(self.annotation_window.select_annotation)
+            annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            
+            # Create cropped image if not already done
+            if not annotation.cropped_image and self.annotation_window.rasterio_image:
+                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                
+            # Add to annotation dict
+            self.annotation_window.add_annotation_to_dict(annotation)
+            # Update the table in ImageWindow
+            self.annotation_window.annotationCreated.emit(annotation.id)
+            
+            # Update progress bar
+            progress_bar.update_progress()
+            
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
+        progress_bar = None
+        
+        # Clear the working area
+        self.cancel_working_area()
+        
+        # Clear the annotations list
+        self.annotations = []
+        
+    def clear_annotations(self):
+        """
+        Clear all annotations created by this tool from the scene without confirming them.
+        """
+        # Remove all annotations from the scene
+        for annotation in self.annotations:
+            if annotation.graphics_item:
+                self.annotation_window.scene.removeItem(annotation.graphics_item)
+                
+            annotation.delete()
+            annotation = None
+        
+        # Clear the annotations list
+        self.annotations = []
+        
+        # Also clear rectangles since they've been processed into annotations
+        self.clear_all_rectangles()
+        
+        self.annotation_window.viewport().update()
         
     def clear_rectangle_data(self):
         """
@@ -417,6 +495,7 @@ class SeeAnythingTool(Tool):
         self.start_point = None
         self.end_point = None
         self.drawing_rectangle = False
+        self.rectangles_processed = False
     
     def clear_rectangle_graphics(self):
         """
@@ -440,6 +519,7 @@ class SeeAnythingTool(Tool):
         """
         self.clear_rectangle_graphics()
         self.clear_rectangle_data()
+        self.rectangles_processed = False
 
     def cancel_working_area(self):
         """
@@ -459,3 +539,4 @@ class SeeAnythingTool(Tool):
         
         # Clear all rectangles when canceling the working area
         self.clear_all_rectangles()
+        self.rectangles_processed = False

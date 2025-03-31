@@ -145,12 +145,12 @@ class DeployPredictorDialog(QDialog):
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
-        self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
         layout.addRow("Resize Image:", self.resize_image_dropdown)
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 65536)
+        self.imgsz_spinbox.setSingleStep(256)
         self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
@@ -307,6 +307,7 @@ class DeployPredictorDialog(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            progress_bar = None
             
         self.accept()
         
