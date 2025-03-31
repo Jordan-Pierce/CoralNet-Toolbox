@@ -21,6 +21,7 @@ from coralnet_toolbox.Tools import (
     PolygonTool,
     RectangleTool,
     SAMTool,
+    SeeAnythingTool,
     SelectTool,
     ZoomTool
 )
@@ -90,6 +91,7 @@ class AnnotationWindow(QGraphicsView):
             "rectangle": RectangleTool(self),
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
+            "see_anything": SeeAnythingTool(self)
         }
         
     def dragEnterEvent(self, event):

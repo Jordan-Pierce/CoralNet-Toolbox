@@ -3,26 +3,31 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import gc
+import os
 
 import numpy as np
-
 import torch
-from torch.cuda import empty_cache
-from ultralytics.models.fastsam import FastSAMPredictor
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, QHBoxLayout,
-                             QLabel, QMessageBox, QPushButton, QSlider, QSpinBox,
-                             QVBoxLayout, QGroupBox)
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
+                             QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                             QSlider, QSpinBox, QVBoxLayout, QGroupBox)
 
+from ultralytics import YOLOE
+from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
+from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
+
+from torch.cuda import empty_cache
+from ultralytics.utils import ops
 
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.utilities import open_image
-
 from coralnet_toolbox.Icons import get_icon
+
+from coralnet_toolbox.utilities import preprocess_image
+from coralnet_toolbox.utilities import rasterio_to_numpy
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -30,42 +35,27 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class DeployGeneratorDialog(QDialog):
-    """
-    Dialog for deploying FastSAM.
-    Allows users to load, configure, and deactivate models, as well as make predictions on images.
-    """
-
+class DeployPredictorDialog(QDialog):
     def __init__(self, main_window, parent=None):
-        """
-        Initialize the AutoDistillDeployModelDialog.
-
-        Args:
-            main_window: The main application window.
-            parent: The parent widget, default is None.
-        """
+        """Initialize the SeeAnything Deploy Model dialog."""
         super().__init__(parent)
         self.main_window = main_window
-        self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
-        self.sam_dialog = None
 
-        self.setWindowIcon(get_icon("wizard.png"))
-        self.setWindowTitle("FastSAM Generator (Ctrl + 4)")
+        self.setWindowIcon(get_icon("eye.png"))
+        self.setWindowTitle("See Anything Deploy Model")
         self.resize(400, 325)
 
-        # Initialize variables
+        # Initialize instance variables
         self.imgsz = 1024
         self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
-
-        self.task = 'detect'
-        self.max_detect = 300
-        self.loaded_model = None
         self.model_path = None
-        self.class_mapping = {0: 'Review'}
+        self.loaded_model = None
+        self.image_path = None
+        self.task = "segment"
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -101,7 +91,7 @@ class DeployGeneratorDialog(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Choose a Generator to deploy and use.")
+        info_label = QLabel("Choose a Predictor to deploy and use interactively with the See Anything tool.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -112,7 +102,7 @@ class DeployGeneratorDialog(QDialog):
 
     def setup_models_layout(self):
         """
-        Setup model selection dropdown in a group box.
+        Setup the models layout.
         """
         group_box = QGroupBox("Models")
         layout = QVBoxLayout()
@@ -121,14 +111,17 @@ class DeployGeneratorDialog(QDialog):
         self.model_combo.setEditable(True)
 
         # Define available models
-        self.models = {
-            "FastSAM-s": "FastSAM-s.pt",
-            "FastSAM-x": "FastSAM-x.pt"
-        }
+        models = [
+            'yoloe-v8s-seg.pt',
+            'yoloe-v8m-seg.pt',
+            'yoloe-v8l-seg.pt',
+            'yoloe-11s-seg.pt',
+            'yoloe-11m-seg.pt',
+            'yoloe-11l-seg.pt',
+        ]
 
         # Add all models to combo box
-        for model_name in self.models.keys():
-            self.model_combo.addItem(model_name)
+        self.model_combo.addItems(models)
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
@@ -142,7 +135,12 @@ class DeployGeneratorDialog(QDialog):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
-
+        
+        # Task dropdown
+        self.task_dropdown = QComboBox()
+        self.task_dropdown.addItems(["detect", "segment"])
+        layout.addRow("Task:", self.task_dropdown)
+        
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
@@ -153,9 +151,7 @@ class DeployGeneratorDialog(QDialog):
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 65536)
-        self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
-        self.imgsz_spinbox.setEnabled(False)  # Grey out the dropdown
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         # Uncertainty threshold controls
@@ -203,29 +199,6 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
 
-        # Max detections spinbox
-        self.max_detections_spinbox = QSpinBox()
-        self.max_detections_spinbox.setRange(1, 10000)
-        self.max_detections_spinbox.setValue(self.max_detect)
-        label = QLabel("Max Detections")
-        layout.addRow(label, self.max_detections_spinbox)
-
-        # Task dropdown
-        self.use_task_dropdown = QComboBox()
-        self.use_task_dropdown.addItems(["Detect", "Segment"])
-        self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
-        self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
-        label = QLabel("Choose a task to perform")
-        layout.addRow(label, self.use_task_dropdown)
-
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        label = QLabel("Use Predictor for creating Polygons:")
-        label.setStyleSheet("font-weight: bold;")
-        layout.addRow(label, self.use_sam_dropdown)
-
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -259,28 +232,6 @@ class DeployGeneratorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-
-    def update_task(self):
-        """Update the task based on the dropdown selection."""
-        self.task = self.use_task_dropdown.currentText().lower()
-
-    def is_sam_model_deployed(self):
-        """
-        Check if the SAM model is deployed and update the checkbox state accordingly.
-
-        :return: Boolean indicating whether the SAM model is deployed
-        """
-        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
-            return False
-
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
-
-        if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
-            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
-            return False
-
-        return True
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -328,50 +279,27 @@ class DeployGeneratorDialog(QDialog):
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
 
-    def get_max_detections(self):
-        """Get the maximum number of detections to return."""
-        self.max_detect = self.max_detections_spinbox.value()
-        return self.max_detect
-
     def load_model(self):
         """
-        Load the selected model with the current configuration.
+        Load the selected model.
         """
-        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        # Show a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
+
         try:
-            # Get selected model path
-            self.model_path = self.models[self.model_combo.currentText()]
-            self.task = self.use_task_dropdown.currentText().lower()
+            # Get selected model path and download weights if needed
+            self.model_path = self.model_combo.currentText()
 
-            # Set the parameters
-            overrides = dict(model=self.model_path,
-                             task=self.task,
-                             mode='predict',
-                             save=False,
-                             max_det=self.get_max_detections(),
-                             imgsz=self.get_imgsz(),
-                             conf=self.main_window.get_uncertainty_thresh(),
-                             iou=self.main_window.get_iou_thresh(),
-                             device=self.main_window.device)
-
-            # Load the model
-            self.loaded_model = FastSAMPredictor(overrides=overrides)
-            self.loaded_model.names = self.class_mapping
-
-            with torch.no_grad():
-                # Run a blank through the model to initialize it
-                self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
-
+            # Load model using registry
+            self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
+            
             progress_bar.finish_progress()
-            self.status_bar.setText(f"Model loaded: {self.model_path}")
-            QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
+            self.status_bar.setText("Model loaded")
+            QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error Loading Model", str(e))
+            QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
 
         finally:
             # Restore cursor
@@ -379,142 +307,115 @@ class DeployGeneratorDialog(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-
-        # Exit the dialog box
+            
         self.accept()
-
-    def get_imgsz(self):
-        """Get the image size for the model."""
-        self.imgsz = self.imgsz_spinbox.value()
-        return self.imgsz
-
-    def predict(self, image_paths=None):
+        
+    def resize_image(self, image):
         """
-        Make predictions on the given image paths using the loaded model.
+        Resize the image to the specified size.
+        """
+        imgsz = self.imgsz_spinbox.value()
+        target_shape = self.get_target_shape(image, imgsz)
+        return ops.scale_image(image, target_shape)
+
+    def get_target_shape(self, image, imgsz):
+        """
+        Determine the target shape based on the long side.
+        """
+        h, w = image.shape[:2]
+        if h > w:
+            return imgsz, int(w * (imgsz / h))
+        else:
+            return int(h * (imgsz / w)), imgsz
+
+    def set_image(self, image, image_path):
+        """
+        Set the image in the predictor.
+        """
+        if image is None and image_path is not None:
+            # Open the image using rasterio
+            image = self.main_window.image_window.rasterio_open(image_path)
+            image = rasterio_to_numpy(image)
+
+        # Preprocess the image
+        image = preprocess_image(image)
+
+        # Save the original image
+        self.original_image = image
+        self.image_path = image_path
+
+        # Resize the image if the checkbox is checked
+        if self.resize_image_dropdown.currentText() == "True":
+            self.resized_image = self.resize_image(image)
+        else:
+            self.resized_image = image
+            
+    def predict_from_prompts(self, bboxes):
+        """
+        Make predictions using the currently loaded model using prompts.
 
         Args:
-            image_paths: List of image paths to process. If None, uses the current image.
+            bbox (np.ndarray): The bounding boxes to use as prompts.
+
+        Returns:
+            results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
-            return
-
-        # Create a results processor
-        results_processor = ResultsProcessor(
-            self.main_window,
-            self.class_mapping,
-            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-            iou_thresh=self.main_window.get_iou_thresh(),
-            min_area_thresh=self.main_window.get_area_thresh_min(),
-            max_area_thresh=self.main_window.get_area_thresh_max()
-        )
-
-        if not image_paths:
-            # Predict only the current image
-            image_paths = [self.annotation_window.current_image_path]
-
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+            QMessageBox.critical(self.annotation_window,
+                                 "Model Not Loaded",
+                                 "Model not loaded, cannot make predictions")
+            return None
         
-        # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
+        if not len(bboxes):
+            return None
+        
+        # Update the bbox coordinates to be relative to the resized image
+        bboxes = np.array(bboxes)
+        bboxes[:, 0] = (bboxes[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
+        bboxes[:, 1] = (bboxes[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
+        bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
+        bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
+        
+        # Create a visual dictionary
+        visuals = {
+            'bboxes': np.array(bboxes),
+            'cls': np.zeros(len(bboxes))  # TODO figure this out
+        }
         
         try:
-            for image_path in image_paths:
-                progress_bar.update_progress()
-                inputs = self._get_inputs(image_path)
-                if inputs is None:
-                    continue
+            # Set the predictor
+            self.task = self.task_dropdown.currentText()
+            predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
+            
+            results = self.loaded_model.predict(self.resized_image,
+                                                visual_prompts=visuals.copy(),
+                                                predictor=predictor,
+                                                conf=self.main_window.get_uncertainty_thresh(),
+                                                iou=self.main_window.get_iou_thresh())
 
-                results = self._apply_model(inputs)
-                results = self._update_results(results, image_path)
-                results = self._apply_sam(results, image_path)
-                results = self._apply_tile_postprocessing(results)
-                self._process_results(results_processor, results)
         except Exception as e:
-            print("An error occurred during prediction:", e)
-        finally:
-            QApplication.restoreOverrideCursor()
-            progress_bar.finish_progress()
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-        gc.collect()
-        empty_cache()
-
-    def _get_inputs(self, image_path):
-        """Get the inputs for the model prediction."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
-            if not inputs:
-                return None
-        else:
-            inputs = image_path
-        return inputs
-
-    def _apply_model(self, inputs):
-        """Apply the model to the inputs."""
-        # Update the model with user parameters
-        self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
-        self.loaded_model.iou = self.main_window.get_iou_thresh()
-        self.loaded_model.max_det = self.get_max_detections()
-
-        # Make predictions
-        with torch.no_grad():
-            results = self.loaded_model(inputs)
-            gc.collect()
-            empty_cache()
-
-        # Return the results
-        yield results
-
-    def _update_results(self, results_generator, image_path):
-        """Update the results with the image path and class mapping."""
-        # Update the results with the image path and class mapping.
-        for results in results_generator:
-            for result in results:
-                if result:
-                    result.path = image_path
-                    result.names = self.class_mapping
+            QMessageBox.critical(self.annotation_window,
+                                 "Prediction Error",
+                                 f"Error predicting: {e}")
+            return None
 
         return results
-
-    def _apply_sam(self, results, image_path):
-        """Apply SAM to the results if enabled."""
-        # Check if SAM is enabled
-        if self.use_sam_dropdown.currentText() == "True":
-            self.task = 'segment'
-            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
-        return results
-
-    def _apply_tile_postprocessing(self, results):
-        """Apply tile postprocessing if needed."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
-        return results
-
-    def _process_results(self, results_processor, results):
-        """Process the results using the result processor."""
-        # Process the segmentations
-        if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(results)
-        else:
-            results_processor.process_detection_results(results)
 
     def deactivate_model(self):
         """
-        Deactivate the currently loaded model and clean up resources.
+        Deactivate the currently loaded model.
         """
+        # Clear the model
         self.loaded_model = None
         self.model_path = None
-        # Clean up resources
+        self.image_path = None
+        self.original_image = None
+        self.resized_image = None
+        # Clear the cache
         gc.collect()
-        torch.cuda.empty_cache()
+        empty_cache()
         # Untoggle all tools
         self.main_window.untoggle_all_tools()
-        # Update status bar
+        # Update the status bar
         self.status_bar.setText("No model loaded")
-        QMessageBox.information(self, "Model Deactivated", "Model deactivated")
+        QMessageBox.information(self.annotation_window, "Model Deactivated", "Model deactivated")

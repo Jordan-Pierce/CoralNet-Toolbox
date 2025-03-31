@@ -17,8 +17,8 @@ from coralnet_toolbox.Icons import get_icon
 
 class BatchInferenceDialog(QDialog):
     """
-    Base class for performing batch inference on images instance segmentation.
-    
+    ...
+        
     :param main_window: MainWindow object
     :param parent: Parent widget
     """
@@ -28,7 +28,7 @@ class BatchInferenceDialog(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         
-        self.setWindowIcon(get_icon("wizard.png"))
+        self.setWindowIcon(get_icon("eye.png"))
         self.setWindowTitle("Batch Inference")
         self.resize(400, 100)
 
@@ -55,8 +55,8 @@ class BatchInferenceDialog(QDialog):
         :param event: Show event
         """
         super().showEvent(event)
-        self.deploy_generator_dialog = self.main_window.sam_deploy_generator_dialog
-        self.loaded_model = self.deploy_generator_dialog.loaded_model
+        # self.deploy_model_dialog = self.main_window.see_anything_deploy_model_dialog
+        # self.loaded_model = self.deploy_model_dialog.loaded_model
         
     def setup_info_layout(self):
         """
@@ -186,7 +186,8 @@ class BatchInferenceDialog(QDialog):
         progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
-            self.deploy_generator_dialog.predict(image_paths=self.image_paths)
+            pass
+            # self.deploy_model_dialog.predict(image_paths=self.image_paths)
 
         progress_bar.stop_progress()
         progress_bar.close()

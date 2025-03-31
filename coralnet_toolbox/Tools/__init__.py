@@ -5,6 +5,7 @@ from .QtPatchTool import PatchTool
 from .QtPolygonTool import PolygonTool
 from .QtRectangleTool import RectangleTool
 from .QtSAMTool import SAMTool
+from .QtSeeAnythingTool import SeeAnythingTool
 from .QtSelectTool import SelectTool 
 from .QtZoomTool import ZoomTool
 
@@ -14,6 +15,7 @@ __all__ = [
     'PolygonTool', 
     'RectangleTool',
     'SAMTool',
+    'SeeAnythingTool',
     'SelectTool',
     'ZoomTool'
 ]
