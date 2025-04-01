@@ -6,12 +6,13 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -22,8 +23,13 @@ from coralnet_toolbox.utilities import pixmap_to_numpy
 class SAMTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
-        self.top_left = None
+        
+        self.annotation_window = annotation_window
+        self.main_window = self.annotation_window.main_window
+        
         self.sam_dialog = None
+        
+        self.top_left = None
 
         self.cursor = Qt.CrossCursor
         self.points = []
@@ -58,6 +64,10 @@ class SAMTool(Tool):
         self.bottom_right = None
         self.drawing_rectangle = False
         self.rectangle_graphics = None
+        
+        # Store created annotations
+        self.annotations = []
+        self.preview_annotation = None
 
     def activate(self):
         """
@@ -65,16 +75,21 @@ class SAMTool(Tool):
         """
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
-        self.sam_dialog = self.annotation_window.main_window.sam_deploy_model_dialog
+        self.sam_dialog = self.main_window.sam_deploy_model_dialog
         self.hover_active = True  # Ensure hover is active when SAMTool is activated
 
     def deactivate(self):
         """
-        Deactivates the tool.
+        Deactivates the tool and cleans up all resources.
         """
         self.active = False
         self.annotation_window.setCursor(Qt.ArrowCursor)
         self.sam_dialog = None
+        
+        # Clear annotations that haven't been confirmed
+        if self.annotations:
+            self.clear_annotations()
+        
         self.cancel_annotation()
         self.cancel_working_area()
         self.hover_active = False  # Ensure hover is inactive when SAMTool is deactivated
@@ -249,25 +264,52 @@ class SAMTool(Tool):
         Args:
             event (QKeyEvent): The key press event
         """
-
-        if not event.key() == Qt.Key_Space:
-            return
-
-        # If there is no working area, set it
-        if not self.working_area:
-            self.set_working_area()
-            self.sam_dialog.set_image(self.image, self.image_path)
-        # If there is a bounding box, add the annotation
-        elif self.start_point and self.end_point and not self.drawing_rectangle:
-            self.annotation_window.add_annotation()
-        # If there are positive points, add the annotation
-        elif len(self.positive_points):
+        if event.key() == Qt.Key_Space:
+            # If there is no working area, set it
+            if not self.working_area:
+                self.set_working_area()
+                self.sam_dialog.set_image(self.image, self.image_path)
+            # If there is a bounding box, add the annotation
+            elif self.start_point and self.end_point and not self.drawing_rectangle:
+                # Create and add the annotation to our internal list
+                annotation = self.create_annotation(None)
+                if annotation:
+                    self.annotations.append(annotation)
+                # Clear rectangle and points after creating annotation
+                self.clear_drawing_state()
             # If there are positive points, add the annotation
-            self.annotation_window.add_annotation()
-        else:
-            self.cancel_working_area()
-
-        self.cancel_annotation()
+            elif len(self.positive_points) > 0:
+                # Create and add the annotation to our internal list
+                annotation = self.create_annotation(None)
+                if annotation:
+                    self.annotations.append(annotation)
+                # Clear points after creating annotation
+                self.clear_drawing_state()
+            # If there are annotations to confirm, confirm them
+            elif len(self.annotations) > 0:
+                # Confirm all annotations
+                self.confirm_annotations()
+                # Cancel working area after confirming
+                self.cancel_working_area()
+            else:
+                # Cancel working area if no annotations to confirm
+                self.cancel_working_area()
+                
+        elif event.key() == Qt.Key_Backspace:
+            # Cancel current rectangle being drawn
+            if self.drawing_rectangle:
+                self.drawing_rectangle = False
+                self.cancel_rectangle_annotation()
+            # If we have positive or negative points, clear them
+            elif len(self.positive_points) > 0 or len(self.negative_points) > 0:
+                self.clear_drawing_state()
+            # If we have a working area and annotations, clear them
+            elif self.working_area and len(self.annotations) > 0:
+                self.clear_annotations()
+            # If not drawing and no annotations to clear, cancel working area
+            else:
+                self.cancel_working_area()
+                
         self.annotation_window.viewport().update()
 
     def get_workarea_thickness(self):
@@ -366,7 +408,7 @@ class SAMTool(Tool):
             return None
 
         # Get the current transparency
-        transparency = self.annotation_window.main_window.label_window.active_label.transparency
+        transparency = self.main_window.label_window.active_label.transparency
 
         # Get the positive and negative points, bbox
         positive = [[point.x(), point.y()] for point in self.positive_points]
@@ -387,19 +429,27 @@ class SAMTool(Tool):
         labels = np.array([1] * len(positive) + [0] * len(negative))
         points = np.array(positive + negative)
 
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+            
         # Predict the mask provided prompts
         results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
 
         if not results:
+            # Make cursor normal
+            QApplication.restoreOverrideCursor()
             return None
 
-        if results.boxes.conf[0] < self.annotation_window.main_window.get_uncertainty_thresh():
+        if results.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
+            # Make cursor normal
+            QApplication.restoreOverrideCursor()
             return None
         
         # TODO use results processor
         # Get the points of the top1 mask
         top1_index = np.argmax(results.boxes.conf)
         predictions = results[top1_index].masks.xy[0]
+        confidence = float(results.boxes.conf[top1_index])
 
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect().topLeft()
@@ -414,6 +464,9 @@ class SAMTool(Tool):
                                        self.annotation_window.current_image_path,
                                        self.annotation_window.selected_label.id,
                                        transparency)
+                                       
+        # Update the confidence score of annotation
+        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
         # Ensure the PolygonAnnotation is added to the scene after creation
         annotation.create_graphics_item(self.annotation_window.scene)
@@ -426,6 +479,7 @@ class SAMTool(Tool):
         if self.hover_point:
             self.cancel_hover_annotation()
             self.hover_graphics = annotation.graphics_item
+            self.preview_annotation = annotation
         else:
             # Remove the previous annotation graphics
             if self.annotation_graphics:
@@ -433,8 +487,91 @@ class SAMTool(Tool):
             self.annotation_graphics = annotation.graphics_item
 
         self.annotation_window.viewport().update()
+        
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
 
         return annotation
+
+    def confirm_annotations(self):
+        """
+        Confirm the annotations and add them to the annotation window.
+        """
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, "Confirming Annotations")
+        progress_bar.show()
+        progress_bar.start_progress(len(self.annotations))
+        
+        # Confirm the annotations
+        for annotation in self.annotations:
+            # Connect signals needed for proper interaction
+            annotation.selected.connect(self.annotation_window.select_annotation)
+            annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
+            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+            
+            # Create cropped image if not already done
+            if not annotation.cropped_image and self.annotation_window.rasterio_image:
+                annotation.create_cropped_image(self.annotation_window.rasterio_image)
+                
+            # Add to annotation dict
+            self.annotation_window.add_annotation_to_dict(annotation)
+            # Update the table in ImageWindow
+            self.annotation_window.annotationCreated.emit(annotation.id)
+            
+            # Update progress bar
+            progress_bar.update_progress()
+            
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
+        progress_bar = None
+        
+        # Clear the annotations list after confirmation
+        self.annotations = []
+
+    def clear_annotations(self):
+        """
+        Clear all annotations created by this tool from the scene without confirming them.
+        """
+        # Remove all annotations from the scene
+        for annotation in self.annotations:
+            if annotation.graphics_item:
+                self.annotation_window.scene.removeItem(annotation.graphics_item)
+                
+            annotation.delete()
+            annotation = None
+        
+        # Clear the annotations list
+        self.annotations = []
+        
+        # Also clear drawing state
+        self.clear_drawing_state()
+        
+        self.annotation_window.viewport().update()
+        
+    def clear_drawing_state(self):
+        """
+        Clear the current drawing state (points and rectangle).
+        """
+        # Clear points
+        for point in self.point_graphics:
+            self.annotation_window.scene.removeItem(point)
+        
+        self.points = []
+        self.positive_points = []
+        self.negative_points = []
+        self.point_graphics = []
+        
+        # Clear rectangle
+        self.cancel_rectangle_annotation()
+        
+        # Clear hover
+        self.cancel_hover_annotation()
+        
+        self.annotation_window.viewport().update()
 
     def cancel_hover_annotation(self):
         """
@@ -466,26 +603,17 @@ class SAMTool(Tool):
         """
         Cancel the annotation.
         """
-        for point in self.point_graphics:
-            self.annotation_window.scene.removeItem(point)
-
+        # Clear preview annotation if it exists
+        if self.preview_annotation:
+            if self.preview_annotation.graphics_item:
+                self.annotation_window.scene.removeItem(self.preview_annotation.graphics_item)
+            self.preview_annotation = None
+                
         if self.annotation_graphics:
             self.annotation_window.scene.removeItem(self.annotation_graphics)
+            self.annotation_graphics = None
 
-        if self.hover_graphics:
-            self.annotation_window.scene.removeItem(self.hover_graphics)
-
-        if self.rectangle_graphics:
-            self.annotation_window.scene.removeItem(self.rectangle_graphics)
-
-        self.points = []
-        self.positive_points = []
-        self.negative_points = []
-        self.point_graphics = []
-        self.rectangle_graphics = None
-
-        self.cancel_hover_annotation()
-        self.cancel_rectangle_annotation()
+        self.clear_drawing_state()
         self.annotation_window.viewport().update()
 
     def cancel_working_area(self):
@@ -503,3 +631,7 @@ class SAMTool(Tool):
         self.image_path = None
         self.original_image = None
         self.image = None
+        
+        # Clear all annotations when canceling the working area
+        self.clear_annotations()
+        self.annotation_window.viewport().update()
