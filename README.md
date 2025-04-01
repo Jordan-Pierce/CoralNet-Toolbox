@@ -139,9 +139,7 @@ Enhance your CoralNet experience with these tools:
   - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
 - 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically
 - 🧪 AutoDistill: Use `AutoDistill` to access the following for creating rectangles and polygons:
-    - `Grounding DINO` 
-    - `OWLViT`
-    - `OmDetTurbo`
+  - Uses `Grounding DINO`, `OWLViT`, `OmDetTurbo`
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
