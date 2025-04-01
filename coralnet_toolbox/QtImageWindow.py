@@ -4,16 +4,15 @@ import gc
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
-from queue import Queue
 
 import numpy as np
 import rasterio
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QTimer, QDateTime
-from PyQt5.QtGui import QImage
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableWidget, QTableWidgetItem,
                              QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
-                             QGroupBox, QPushButton, QStyle, QFormLayout)
+                             QGroupBox, QPushButton, QStyle, QFormLayout, QFrame)
 
 from rasterio.windows import Window
 
@@ -28,38 +27,9 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class LoadFullResolutionImageWorker(QThread):
-    imageLoaded = pyqtSignal(QImage)
-    finished = pyqtSignal()
-    errorOccurred = pyqtSignal(str)
-
-    def __init__(self, image_path):
-        super().__init__()
-        self.image_path = image_path
-        self._is_cancelled = False
-        self.full_resolution_image = None
-
-    def run(self):
-        try:
-            # Load the QImage
-            self.full_resolution_image = QImage(self.image_path)
-            # Emit the signal with the loaded image
-            if not self._is_cancelled:
-                self.imageLoaded.emit(self.full_resolution_image)
-        except Exception as e:
-            self.errorOccurred.emit(str(e))
-        finally:
-            self.finished.emit()
-
-    def cancel(self):
-        self._is_cancelled = True
-
-
 class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)
     imageChanged = pyqtSignal()  # New signal for image change
-    MAX_CONCURRENT_THREADS = 8  # Maximum number of concurrent threads
-    THROTTLE_INTERVAL = 50  # Minimum time (in milliseconds) between image selection
 
     def __init__(self, main_window):
         super().__init__()
@@ -256,15 +226,19 @@ class ImageWindow(QWidget):
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.filter_images)
 
-        self.image_load_queue = Queue()
-        self.current_workers = []  # List to keep track of running workers
-        self.last_image_selection_time = QDateTime.currentMSecsSinceEpoch()
-
         self.checkbox_states = {}  # Store checkbox states for each image path
 
         # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+        
+        # Preview tooltip attributes
+        self.preview_tooltip = ImagePreviewTooltip()
+        self.hover_row = -1
+        
+        # Connect table events for hover tracking
+        self.tableWidget.setMouseTracking(True)
+        self.tableWidget.viewport().installEventFilter(self)
         
     def dragEnterEvent(self, event):
         event.ignore()
@@ -277,6 +251,57 @@ class ImageWindow(QWidget):
         
     def dragLeaveEvent(self, event):
         event.ignore()
+        
+    def eventFilter(self, source, event):
+        """Event filter to track mouse movement over table rows"""
+        if source is self.tableWidget.viewport():
+            if event.type() == event.Enter:
+                # Mouse entered the table viewport
+                pass
+            elif event.type() == event.Leave:
+                # Mouse left the table viewport
+                self.hide_image_preview()
+                self.hover_row = -1
+            elif event.type() == event.MouseMove:
+                # Mouse moved within the table viewport
+                pos = event.pos()
+                row = self.tableWidget.rowAt(pos.y())
+                
+                if row != self.hover_row:
+                    # Mouse moved to a different row
+                    self.hide_image_preview()
+                    self.hover_row = row
+                    
+                    if row >= 0 and row < len(self.filtered_image_paths):
+                        # Show preview immediately
+                        self.show_image_preview()
+                    
+        return super().eventFilter(source, event)
+        
+    def show_image_preview(self):
+        """Show image preview tooltip for the current hover row"""
+        if self.hover_row < 0 or self.hover_row >= len(self.filtered_image_paths):
+            return
+        
+        # Get the path of the image to preview, load a thumbnail
+        image_path = self.filtered_image_paths[self.hover_row]
+        thumbnail = self.load_scaled_image(image_path, max_size=64)
+        pixmap = QPixmap.fromImage(thumbnail)
+
+        # Set image and show tooltip
+        self.preview_tooltip.set_image(pixmap)
+        
+        # Position tooltip near the row
+        pos = self.tableWidget.viewport().mapToGlobal(QPoint(
+            self.tableWidget.columnWidth(0) + self.tableWidget.columnWidth(1) // 2,
+            self.tableWidget.rowViewportPosition(self.hover_row) + 
+            self.tableWidget.rowHeight(self.hover_row) // 2
+        ))
+        self.preview_tooltip.show_at(pos)
+        
+    def hide_image_preview(self):
+        """Hide the image preview tooltip"""
+        self.preview_tooltip.hide()
 
     def add_image(self, image_path):
         if image_path not in self.image_paths:
@@ -327,7 +352,7 @@ class ImageWindow(QWidget):
             item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
             item = QTableWidgetItem(item_text)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            item.setToolTip(os.path.basename(path))
+            item.setToolTip(path)
             item.setTextAlignment(Qt.AlignCenter)
             self.tableWidget.setItem(row, 1, item)
 
@@ -420,94 +445,71 @@ class ImageWindow(QWidget):
         # Load the image without clearing selections
         self.load_image_by_path(image_path)
 
-        # No need to update checkbox states here since they're preserved
-
     def load_image_by_path(self, image_path, update=False):
-        current_time = QDateTime.currentMSecsSinceEpoch()
-        time_since_last_selection = current_time - self.last_image_selection_time
-
-        if time_since_last_selection < self.THROTTLE_INTERVAL:
-            # If selecting images too quickly, ignore this request
-            return
-
         if image_path not in self.image_paths:
             return
 
         if image_path == self.selected_image_path and update is False:
             return
 
-        self.last_image_selection_time = current_time
-
-        # Add the image path to the queue
-        self.image_load_queue.put(image_path)
-
-        # Start processing the queue if we're under the thread limit
-        self._process_image_queue()
-        # Emit the signal when a new image is chosen
-        self.imageChanged.emit()
-        # Update the search bars
-        self.update_search_bars()
-
-    def _process_image_queue(self):
-        if self.image_load_queue.empty():
-            return
-
-        # Remove finished workers from the list
-        self.current_workers = [worker for worker in self.current_workers if worker.isRunning()]
-
-        # If we're at the thread limit, don't start a new one
-        if len(self.current_workers) >= self.MAX_CONCURRENT_THREADS:
-            return
-
-        image_path = self.image_load_queue.get()
-
         try:
             # Update the selected image path
             self.selected_image_path = image_path
-            self.imageSelected.emit(image_path)
             self.update_table_selection()
             self.update_current_image_index_label()
 
             # Set the cursor to the wait cursor
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Load and display scaled-down version
+            # Load and display scaled-down version immediately
             scaled_image = self.load_scaled_image(image_path)
             self.annotation_window.display_image_item(scaled_image)
+            
+            # Now load the full resolution image
+            try:
+                # Load the full resolution image
+                full_image = QImage(image_path)
+                self.images[image_path] = full_image
+                
+                # Load the rasterio representation
+                self.rasterio_images[image_path] = self.rasterio_open(image_path)
+                
+                # Update the display with the full-resolution image
+                self.annotation_window.set_image(image_path)
+                self.imageSelected.emit(image_path)
+            except Exception as e:
+                print(f"Error loading full resolution image {image_path}: {str(e)}")
+            
+            # Emit the signal when a new image is chosen
+            self.imageChanged.emit()
+            # Update the search bars
+            self.update_search_bars()
 
-            # Create and start the worker thread for full-resolution image
-            worker = LoadFullResolutionImageWorker(image_path)
-            worker.imageLoaded.connect(self.on_full_resolution_image_loaded)
-            worker.finished.connect(lambda: self.on_worker_finished(worker))
-            worker.errorOccurred.connect(self.on_worker_error)
-            worker.start()
-
-            self.current_workers.append(worker)
+            # Restore the cursor to the default cursor
+            QApplication.restoreOverrideCursor()
 
         except Exception as e:
             print(f"Error processing image {image_path}: {str(e)}")
-            self.on_worker_finished(None)
-
-    def on_worker_finished(self, finished_worker):
-        if finished_worker in self.current_workers:
-            self.current_workers.remove(finished_worker)
-
-        QTimer.singleShot(0, self._process_image_queue)
-
-    def on_worker_error(self, error_message):
-        print(f"Worker error: {error_message}")
-        self.on_worker_finished(None)
+            QApplication.restoreOverrideCursor()
 
     def closeEvent(self, event):
-        for worker in self.current_workers:
-            if worker.isRunning():
-                worker.cancel()
-                worker.quit()
-                worker.wait()
+        # Hide tooltip when window is closed
+        self.hide_image_preview()
         QApplication.restoreOverrideCursor()
         super().closeEvent(event)
 
-    def load_scaled_image(self, image_path):
+    def load_scaled_image(self, image_path, max_size=None):
+        """
+        Load a scaled version of an image
+        
+        Args:
+            image_path (str): Path to the image
+            max_size (int, optional): If provided, scales to fit within max_size while maintaining aspect ratio.
+                                    If None, scales to 1/100 of original size.
+        
+        Returns:
+            QImage: Scaled image
+        """
         try:
             # Open the raster file with Rasterio
             with rasterio.open(image_path) as src:
@@ -517,72 +519,86 @@ class ImageWindow(QWidget):
                 # Determine the number of bands
                 num_bands = src.count
 
-                # Calculate the scaled size
-                scaled_width = original_width // 100
-                scaled_height = original_height // 100
+                # Calculate the scaled size based on input parameters
+                if max_size is not None:
+                    # Scale to fit within max_size (for thumbnails)
+                    scale = min(max_size / original_width, max_size / original_height)
+                    scaled_width = int(original_width * scale)
+                    scaled_height = int(original_height * scale)
+                else:
+                    # Scale to 1/100 of original size (for initial preview)
+                    scaled_width = original_width // 100
+                    scaled_height = original_height // 100
 
                 # Read a downsampled version of the image
-                # We use a window to read a subset of the image and then resize it
                 window = Window(0, 0, original_width, original_height)
 
                 if num_bands == 1:
-                    # Read a single band
-                    downsampled_image = src.read(window=window,
-                                                 out_shape=(scaled_height, scaled_width))
+                    # Read a single band for grayscale images
+                    downsampled_image = src.read(1,
+                                                 window=window,
+                                                 out_shape=(scaled_height, scaled_width),
+                                                 resampling=rasterio.enums.Resampling.bilinear)
 
-                    # Grayscale image
+                    # Convert to uint8 if needed
+                    if downsampled_image.dtype != np.uint8:
+                        downsampled_image = downsampled_image.astype(float) * (255.0 / downsampled_image.max())
+                        downsampled_image = downsampled_image.astype(np.uint8)
+
+                    # Create QImage from data
                     qimage = QImage(downsampled_image.data.tobytes(),
                                     scaled_width,
                                     scaled_height,
+                                    scaled_width,  # bytes per line
                                     QImage.Format_Grayscale8)
 
-                elif num_bands == 3 or num_bands == 4:
-                    # Read bands in the correct order (RGB)
+                elif num_bands >= 3:
+                    # Read RGB bands
                     downsampled_image = src.read([1, 2, 3],
                                                  window=window,
-                                                 out_shape=(scaled_height, scaled_width))
+                                                 out_shape=(3, scaled_height, scaled_width),
+                                                 resampling=rasterio.enums.Resampling.bilinear) 
 
-                    # Convert to uint8 if it's not already
-                    rgb_image = downsampled_image.astype(np.uint8)
-                    # Ensure the bands are in the correct order (RGB)
-                    rgb_image = np.transpose(rgb_image, (1, 2, 0))
+                    # Convert to uint8 if needed
+                    if downsampled_image.dtype != np.uint8:
+                        downsampled_image = downsampled_image.astype(float) * (255.0 / downsampled_image.max())
+                        downsampled_image = downsampled_image.astype(np.uint8)
+                        
+                    # Transpose to height, width, channels format
+                    rgb_image = np.transpose(downsampled_image, (1, 2, 0))
 
-                    # Create QImage directly from the numpy array
+                    # Create QImage from data
                     qimage = QImage(rgb_image.data.tobytes(),
                                     scaled_width,
                                     scaled_height,
-                                    scaled_width * 3,
+                                    scaled_width * 3,  # bytes per line
                                     QImage.Format_RGB888)
                 else:
                     raise ValueError(f"Unsupported number of bands: {num_bands}")
 
-                # Close the rasterio dataset
+                # Close the rasterio dataset and collect garbage
                 src.close()
                 gc.collect()
 
                 return qimage
         except Exception as e:
             print(f"Error loading scaled image {image_path}: {str(e)}")
+            
+            # Fallback to QImage loading
+            try:
+                image = QImage(image_path)
+                if not image.isNull():
+                    if max_size:
+                        return image.scaled(max_size, max_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    else:
+                        # Default scaling for initial preview
+                        return image.scaled(image.width() // 100, image.height() // 100, 
+                                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            except Exception:
+                pass
+                
             return QImage()  # Return an empty QImage if there's an error
-
-    def on_full_resolution_image_loaded(self, full_resolution_image):
-        if not self.selected_image_path:
-            return
-
-        # Load the Rasterio
-        self.rasterio_images[self.selected_image_path] = self.rasterio_open(self.selected_image_path)
-
-        # Update the selected image
-        self.update_table_selection()
-
-        # Update the display with the full-resolution image
-        self.images[self.selected_image_path] = full_resolution_image
-        self.annotation_window.set_image(self.selected_image_path)
-        self.imageSelected.emit(self.selected_image_path)
-
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
-
+        
     @lru_cache(maxsize=32)
     def rasterio_open(self, image_path):
         # Open the image with Rasterio
@@ -916,7 +932,7 @@ class ImageWindow(QWidget):
         if self.filtered_image_paths:
             self.annotation_window.clear_scene()
             self.load_image_by_path(self.filtered_image_paths[0])
-
+            
     def update_search_bars(self):
         # Store current search texts
         current_image_search = self.search_bar_images.currentText()
@@ -959,3 +975,70 @@ class ImageWindow(QWidget):
             checkbox = self.tableWidget.cellWidget(row, 0)
             if checkbox:
                 checkbox.setChecked(False)
+                
+                
+class ImagePreviewTooltip(QFrame):
+    """
+    A custom tooltip widget that displays an image preview and information text.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
+        
+        # Configure appearance
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShadow(QFrame.Raised)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #f8f8f8;
+                border: 1px solid #aaaaaa;
+                border-radius: 4px;
+            }
+        """)
+        
+        # Create layout
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(8, 8, 8, 8)
+        self.layout.setSpacing(4)  # Add spacing between elements
+        
+        # Create image label
+        self.image_label = QLabel(self)
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumSize(64, 64)
+        self.layout.addWidget(self.image_label)
+        
+        # Initially hidden
+        self.hide()
+        
+    def set_image(self, pixmap):
+        """Set the preview image"""
+        if pixmap and not pixmap.isNull():
+            self.image_label.setPixmap(pixmap)
+            
+            # Adjust widget size based on the pixmap
+            size = pixmap.size()
+            self.image_label.setMinimumSize(size)
+            self.image_label.setMaximumSize(size)
+        
+            # Ensure proper sizing
+            self.adjustSize()
+        else:
+            self.hide()
+            
+    def show_at(self, global_pos):
+        """Position and show the tooltip at the specified global position"""
+        # Position slightly offset from cursor with increased x offset
+        x, y = global_pos.x() + 50, global_pos.y() + 15  # Increased x offset (bottom-right)
+        
+        # Ensure tooltip stays within screen boundaries
+        screen_rect = self.screen().geometry()
+        tooltip_size = self.sizeHint()
+        
+        # Adjust position if needed
+        if x + tooltip_size.width() > screen_rect.right():
+            x = global_pos.x() - tooltip_size.width() - 5
+        if y + tooltip_size.height() > screen_rect.bottom():
+            y = global_pos.y() - tooltip_size.height() - 5
+            
+        # Set position and show
+        self.move(x, y)
+        self.show()
