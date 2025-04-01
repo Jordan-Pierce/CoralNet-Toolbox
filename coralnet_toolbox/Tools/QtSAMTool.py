@@ -270,6 +270,13 @@ class SAMTool(Tool):
         self.cancel_annotation()
         self.annotation_window.viewport().update()
 
+    def get_workarea_thickness(self):
+        """Calculate appropriate line thickness based on current view dimensions."""
+        extent = self.annotation_window.viewportToScene()
+        view_width = round(extent.width())
+        view_height = round(extent.height())
+        return max(5, min(20, max(view_width, view_height) // 1000))
+
     def set_working_area(self):
         """
         Set the working area for the tool.
@@ -312,7 +319,7 @@ class SAMTool(Tool):
         # Create the graphic for the working area
         pen = QPen(Qt.green)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(10)
+        pen.setWidth(self.get_workarea_thickness())
         self.working_area = QGraphicsRectItem(working_rect)
         self.working_area.setPen(pen)
 

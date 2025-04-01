@@ -295,6 +295,9 @@ class DeployPredictorDialog(QDialog):
             # Load model using registry
             self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
             
+            # Run a dummy prediction to load the model
+            # ...
+            
             progress_bar.finish_progress()
             self.status_bar.setText("Model loaded")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")

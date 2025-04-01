@@ -59,11 +59,8 @@ class SelectTool(Tool):
                 self.rectangle_selection = True
                 self.selection_start_pos = position
                 self.selection_rectangle = QGraphicsRectItem()
-                # Calculate line thickness based on current viewing extent
-                extent = self.annotation_window.viewportToScene()
-                view_width = round(extent.width())
-                view_height = round(extent.height())
-                line_thickness = max(5, min(20, max(view_width, view_height) // 1000))
+                # Use the dedicated method to calculate line thickness
+                line_thickness = self.get_selection_thickness()
                 self.selection_rectangle.setPen(QPen(Qt.black, line_thickness, Qt.DashLine))
                 # Add the selection rectangle to the scene
                 self.annotation_window.scene.addItem(self.selection_rectangle)
@@ -71,7 +68,7 @@ class SelectTool(Tool):
             selected_annotation = self.select_annotation(position, items, event.modifiers())
             if selected_annotation:
                 self.init_drag_or_resize(selected_annotation, position, event.modifiers())
-
+                
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events for resizing, moving, or drawing selection rectangle."""
         current_pos = self.annotation_window.mapToScene(event.pos())
@@ -112,6 +109,13 @@ class SelectTool(Tool):
         """Handle key release events to hide resize handles."""
         if not event.modifiers() & Qt.ShiftModifier:
             self.remove_resize_handles()
+            
+    def get_selection_thickness(self):
+        """Calculate appropriate line thickness based on current view dimensions."""
+        extent = self.annotation_window.viewportToScene()
+        view_width = round(extent.width())
+        view_height = round(extent.height())
+        return max(5, min(20, max(view_width, view_height) // 1000))
 
     def get_locked_label(self):
         """Get the locked label if it exists."""

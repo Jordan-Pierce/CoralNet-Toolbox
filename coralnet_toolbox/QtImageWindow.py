@@ -189,7 +189,10 @@ class ImageWindow(QWidget):
         self.tableWidget = QTableWidget(self)
         self.tableWidget.setColumnCount(3)
         self.tableWidget.setHorizontalHeaderLabels(["✓", "Image Name", "Annotations"])
-        self.tableWidget.horizontalHeader().setStretchLastSection(True)
+        
+        # Change this line to False since we don't want the last column to stretch
+        self.tableWidget.horizontalHeader().setStretchLastSection(False)
+        
         self.tableWidget.verticalHeader().setVisible(False)
         self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
         self.tableWidget.setSelectionMode(QTableWidget.SingleSelection)
@@ -206,8 +209,16 @@ class ImageWindow(QWidget):
             }
         """)
 
+        # Set width for checkboxes column (column 0)
         self.tableWidget.setColumnWidth(0, 50)
         self.tableWidget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        
+        # Set width for Annotations column (column 2)
+        self.tableWidget.setColumnWidth(2, 120)  # Adjust this width as needed
+        self.tableWidget.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        
+        # Make the Image Name column (column 1) stretch to fill remaining space
+        self.tableWidget.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
         # Add table widget to the info table group layout
         info_table_layout.addWidget(self.tableWidget)
