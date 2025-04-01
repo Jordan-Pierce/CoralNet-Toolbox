@@ -391,6 +391,7 @@ class DeployPredictorDialog(QDialog):
             results = self.loaded_model.predict(self.resized_image,
                                                 visual_prompts=visuals.copy(),
                                                 predictor=predictor,
+                                                imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh())
 

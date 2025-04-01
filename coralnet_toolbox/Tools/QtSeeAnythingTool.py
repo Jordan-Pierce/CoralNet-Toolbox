@@ -2,7 +2,10 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+import cv2
 import numpy as np
+
+import supervision as sv
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush, QPainterPath
@@ -59,6 +62,7 @@ class SeeAnythingTool(Tool):
         self.rectangles_processed = False  # Track if rectangles have been processed
         
         self.annotations = []
+        self.detections = None
 
     def activate(self):
         """
@@ -355,6 +359,9 @@ class SeeAnythingTool(Tool):
         
         if len(self.rectangles) == 0:
             return None
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
             
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect().topLeft()
@@ -368,15 +375,34 @@ class SeeAnythingTool(Tool):
         if not results:
             return None
         
-        # Loop through the results
-        for result in results:        
-            # Get the score
-            score = result.boxes.conf.item()
-            if score < self.main_window.get_uncertainty_thresh():
-                continue
+        if self.detections is None:
+            self.detections = sv.Detections.from_ultralytics(results)
+        else:
+            self.detections = sv.Detections.merge([self.detections, 
+                                                   sv.Detections.from_ultralytics(results)])
             
-            # Get the result box
-            box = result.boxes.xyxyn.detach().cpu().numpy()[0]
+        # Perform non-maximum suppression, and confidence thresholding
+        self.detections = self.detections[self.detections.confidence > self.main_window.get_uncertainty_thresh()]
+        self.detections = self.detections.with_nms(self.main_window.get_iou_thresh())
+        
+        # Clear the annotations (that haven't been confirmed)
+        self.clear_annotations()
+        
+        # Get the shape of the image (in case resizing was done)
+        resized_image = results.orig_img
+        
+        # Loop through the detections
+        for detection in self.detections:  
+            xyxy, mask, confidence, _, _, _ = detection
+            
+            # Get the detection box
+            box = xyxy
+            # Normalize the box using the resized image shape
+            box = box / np.array([resized_image.shape[1],
+                                  resized_image.shape[0],
+                                  resized_image.shape[1],
+                                  resized_image.shape[0]])
+                                    
             # Convert from normalized to pixel coordinates
             box = box * np.array([self.image.shape[1], 
                                   self.image.shape[0], 
@@ -393,10 +419,10 @@ class SeeAnythingTool(Tool):
             self.rectangles.append(box)
             
             if self.see_anything_dialog.task == "segment":
-                # Extract the results
-                mask = result.masks.xyn.detach().cpu().numpy()[0]
-                # Convert from normalized points to pixel coordinates
-                mask = mask * np.array([self.image.shape[1], self.image.shape[0]])
+                # Resize the mask to the resized image shape
+                mask = cv2.resize(mask.squeeze().astype(int), (resized_image.shape[1], resized_image.shape[0]))
+                # Convert to a polygon
+                mask = sv.detection.utils.mask_to_polygons(mask)[0]
                 # Update coordinates relative to the working area
                 points = [QPointF(point[0] + working_area_top_left.x(), 
                                   point[1] + working_area_top_left.y()) for point in mask]
@@ -425,13 +451,16 @@ class SeeAnythingTool(Tool):
                                                  transparency)
                 
             # Update the confidence score of annotation
-            annotation.update_machine_confidence({self.annotation_window.selected_label: score})
+            annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
             
-            # Ensure the annotation is added to the scene after creation
+            # Ensure the annotation is added to the scene after creation (but not saved yet)
             annotation.create_graphics_item(self.annotation_window.scene)
             self.annotations.append(annotation)
 
         self.annotation_window.viewport().update()
+        
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
 
     def confirm_annotations(self):
         """
@@ -474,6 +503,7 @@ class SeeAnythingTool(Tool):
         
         # Clear the annotations list
         self.annotations = []
+        self.detections = None
         
     def clear_annotations(self):
         """
@@ -548,3 +578,6 @@ class SeeAnythingTool(Tool):
         # Clear all rectangles when canceling the working area
         self.clear_all_rectangles()
         self.rectangles_processed = False
+        
+        self.annotations = []
+        self.detections = None
