@@ -142,6 +142,21 @@ class DeployGeneratorDialog(QDialog):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
+        
+        # Task dropdown
+        self.use_task_dropdown = QComboBox()
+        self.use_task_dropdown.addItems(["detect", "segment"])
+        self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
+        self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
+        label = QLabel("Choose a task to perform")
+        layout.addRow(label, self.use_task_dropdown)
+        
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detect)
+        label = QLabel("Max Detections")
+        layout.addRow(label, self.max_detections_spinbox)
 
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
@@ -203,21 +218,6 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
 
-        # Max detections spinbox
-        self.max_detections_spinbox = QSpinBox()
-        self.max_detections_spinbox.setRange(1, 10000)
-        self.max_detections_spinbox.setValue(self.max_detect)
-        label = QLabel("Max Detections")
-        layout.addRow(label, self.max_detections_spinbox)
-
-        # Task dropdown
-        self.use_task_dropdown = QComboBox()
-        self.use_task_dropdown.addItems(["Detect", "Segment"])
-        self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
-        self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
-        label = QLabel("Choose a task to perform")
-        layout.addRow(label, self.use_task_dropdown)
-
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
@@ -262,7 +262,7 @@ class DeployGeneratorDialog(QDialog):
 
     def update_task(self):
         """Update the task based on the dropdown selection."""
-        self.task = self.use_task_dropdown.currentText().lower()
+        self.task = self.use_task_dropdown.currentText()
 
     def is_sam_model_deployed(self):
         """
@@ -345,7 +345,7 @@ class DeployGeneratorDialog(QDialog):
         try:
             # Get selected model path
             self.model_path = self.models[self.model_combo.currentText()]
-            self.task = self.use_task_dropdown.currentText().lower()
+            self.task = self.use_task_dropdown.currentText()
 
             # Set the parameters
             overrides = dict(model=self.model_path,
@@ -499,7 +499,7 @@ class DeployGeneratorDialog(QDialog):
     def _process_results(self, results_processor, results):
         """Process the results using the result processor."""
         # Process the segmentations
-        if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
+        if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
             results_processor.process_segmentation_results(results)
         else:
             results_processor.process_detection_results(results)

@@ -52,10 +52,12 @@ class DeployPredictorDialog(QDialog):
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
+        
+        self.task = "detect"
+        self.max_detect = 500
         self.model_path = None
         self.loaded_model = None
         self.image_path = None
-        self.task = "segment"
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -140,6 +142,13 @@ class DeployPredictorDialog(QDialog):
         self.task_dropdown = QComboBox()
         self.task_dropdown.addItems(["detect", "segment"])
         layout.addRow("Task:", self.task_dropdown)
+        
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detect)
+        label = QLabel("Max Detections")
+        layout.addRow(label, self.max_detections_spinbox)
         
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
@@ -279,6 +288,11 @@ class DeployPredictorDialog(QDialog):
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        
+    def get_max_detections(self):
+        """Get the maximum number of detections to return."""
+        self.max_detect = self.max_detections_spinbox.value()
+        return self.max_detect
 
     def load_model(self):
         """
@@ -416,7 +430,8 @@ class DeployPredictorDialog(QDialog):
                                                 predictor=predictor,
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.main_window.get_uncertainty_thresh(),
-                                                iou=self.main_window.get_iou_thresh())
+                                                iou=self.main_window.get_iou_thresh(),
+                                                max_det=self.get_max_detections())
 
         except Exception as e:
             QMessageBox.critical(self.annotation_window,
