@@ -240,7 +240,6 @@ class SeeAnythingTool(Tool):
             # Add the rectangle coordinates to the list
             rectangle = np.array([top_left.x(), top_left.y(), bottom_right.x(), bottom_right.y()])
             self.rectangles.append(rectangle)
-            print("Number of rectangles: ", len(self.rectangles))
             
             # Reset the current rectangle graphics item
             self.current_rect_graphics = None
