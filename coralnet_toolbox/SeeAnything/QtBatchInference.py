@@ -1,12 +1,20 @@
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
+import os
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
-                             QLabel, QDialog, QDialogButtonBox, QGroupBox, QButtonGroup)
+                             QLabel, QDialog, QDialogButtonBox, QGroupBox, QButtonGroup,
+                             QFormLayout, QComboBox)
+
+from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -43,6 +51,8 @@ class BatchInferenceDialog(QDialog):
 
         # Setup the info layout
         self.setup_info_layout()
+        # Setup the source layout
+        self.setup_source_layout()
         # Setup the image options layout
         self.setup_options_layout()
         # Setup the buttons layout
@@ -55,8 +65,11 @@ class BatchInferenceDialog(QDialog):
         :param event: Show event
         """
         super().showEvent(event)
-        # self.deploy_model_dialog = self.main_window.see_anything_deploy_model_dialog
-        # self.loaded_model = self.deploy_model_dialog.loaded_model
+        self.deploy_model_dialog = self.main_window.see_anything_deploy_predictor_dialog
+        self.loaded_model = self.deploy_model_dialog.loaded_model
+        
+        # Update the source images (now assuming sources are valid)
+        self.update_source_images()
         
     def setup_info_layout(self):
         """
@@ -74,6 +87,26 @@ class BatchInferenceDialog(QDialog):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def setup_source_layout(self):
+        """
+        Set up the layout with source image and label selection.
+        Contains dropdown combo boxes for selecting the source image and label.
+        """
+        group_box = QGroupBox("Source Selection")
+        layout = QFormLayout()
+
+        # Create the source image combo box
+        self.source_image_combo_box = QComboBox()
+        self.source_image_combo_box.currentIndexChanged.connect(self.update_source_labels)
+        layout.addRow("Source Image:", self.source_image_combo_box)
+
+        # Create the source label combo box
+        self.source_label_combo_box = QComboBox()
+        layout.addRow("Source Label:", self.source_label_combo_box)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_options_layout(self):
         """
@@ -86,7 +119,7 @@ class BatchInferenceDialog(QDialog):
         # Create a button group for the image checkboxes
         image_options_group = QButtonGroup(self)
 
-        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.apply_filtered_checkbox = QCheckBox("ᗊ Apply to filtered images")
         self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
         self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
         self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
@@ -121,24 +154,153 @@ class BatchInferenceDialog(QDialog):
         button_box.rejected.connect(self.reject)
 
         self.layout.addWidget(button_box)
+        
+    def has_valid_sources(self):
+        """
+        Check if there are any valid source images with polygon or rectangle annotations.
+        
+        :return: True if valid sources exist, False otherwise
+        """
+        # Check if there are any images
+        if not self.image_window.image_dict:
+            QMessageBox.information(None, 
+                                    "No Images", 
+                                    "No images available for batch inference.")
+            return False
+                
+        # Check for images with valid annotations
+        for image_path, image_info in self.image_window.image_dict.items():
+            # Skip images with no labels
+            if not image_info.get('labels'):
+                continue
+                
+            # Get annotations for this image
+            annotations = self.annotation_window.get_image_annotations(image_path)
+                
+            # Check if there's at least one valid polygon/rectangle annotation
+            for annotation in annotations:
+                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
+                    return True
+            
+        QMessageBox.information(None, 
+                                "No Valid Annotations", 
+                                "No images have polygon or rectangle annotations for batch inference.")
+        return False
     
-    def update_uncertainty_label(self):
+    def check_valid_sources(self):
         """
-        Update the uncertainty threshold label based on the slider value.
+        Check if there are any valid source images with polygon or rectangle annotations.
+        
+        :return: True if valid sources exist, False otherwise
         """
-        # Convert the slider value to a ratio (0-1)
-        value = self.uncertainty_threshold_slider.value() / 100.0
-        self.main_window.update_uncertainty_thresh(value)
+        # Check if there are any images
+        if not self.image_window.image_dict:
+            QMessageBox.information(self, 
+                                    "No Images", 
+                                    "No images available for batch inference.")
+            return False
+            
+        # Check for images with valid annotations
+        for image_path, image_info in self.image_window.image_dict.items():
+            # Skip images with no labels
+            if not image_info.get('labels'):
+                continue
+            
+            # Get annotations for this image
+            annotations = self.annotation_window.get_image_annotations(image_path)
+            
+            # Check if there's at least one valid polygon/rectangle annotation
+            for annotation in annotations:
+                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
+                    return True
+        
+        QMessageBox.information(self, 
+                                "No Valid Annotations", 
+                                "No images have polygon or rectangle annotations for batch inference.")
+        return False
+        
+    def update_source_images(self):
+        """
+        Updates the source image combo box with images that have at least one label
+        with a valid polygon or rectangle annotation.
+        
+        :return: True if valid source images were found, False otherwise
+        """
+        self.source_image_combo_box.clear()
+        valid_images_found = False
+        
+        # Get all image paths from the image_dict
+        for image_path, image_info in self.image_window.image_dict.items():
+            # Skip images with no labels (quick early check)
+            if not image_info.get('labels'):
+                continue
+            
+            # Get annotations for this image
+            annotations = self.annotation_window.get_image_annotations(image_path)
+            
+            # Check if there's at least one valid polygon/rectangle annotation
+            valid_annotation_found = False
+            for annotation in annotations:
+                if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
+                    valid_annotation_found = True
+                    break
+            
+            if valid_annotation_found:
+                # Get the basename (filename)
+                basename = os.path.basename(image_path)
+                # Add item to combo box with full path as data
+                self.source_image_combo_box.addItem(basename, image_path)
+                valid_images_found = True
+            
+        if not valid_images_found:
+            QMessageBox.information(self, 
+                                    "No Source Images", 
+                                    "No images available for batch inference.")
+            # Close the dialog since batch inference can't proceed
+            QApplication.processEvents()  # Process pending events
+            self.reject()
+            return False
+        
+        # Update the source labels given changes in the source images
+        return self.update_source_labels()
 
-    def on_uncertainty_changed(self, value):
+    def update_source_labels(self):
         """
-        Update the slider and label when the shared data changes.
+        Updates the source label combo box with labels that have at least one
+        polygon or rectangle annotation from the current image.
         
-        :param value: New uncertainty threshold value
+        :return: True if valid source labels were found, False otherwise
         """
-        self.uncertainty_threshold_slider.setValue(int(value * 100))
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
+        self.source_label_combo_box.clear()
         
+        source_image_path = self.source_image_combo_box.currentData()
+        if not source_image_path:
+            return False
+            
+        # Get annotations for this image
+        annotations = self.annotation_window.get_image_annotations(source_image_path)
+        
+        # Create a set of labels with valid annotations
+        valid_labels = set()
+        for annotation in annotations:
+            if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
+                valid_labels.add(annotation.label.short_label_code)
+        
+        # Add valid labels to combo box
+        for label_code in valid_labels:
+            self.source_label_combo_box.addItem(label_code)
+        
+        if not valid_labels:
+            QMessageBox.information(self, 
+                                    "No Valid Labels", 
+                                    "No labels with polygon or rectangle annotations available for batch inference.")
+            # Close the dialog since batch inference can't proceed
+            QApplication.processEvents()  # Process pending events
+            self.reject()
+            return False
+        
+        return True
+    
     def get_selected_image_paths(self):
         """
         Get the selected image paths based on the options.
@@ -186,8 +348,7 @@ class BatchInferenceDialog(QDialog):
         progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
-            pass
-            # self.deploy_model_dialog.predict(image_paths=self.image_paths)
+            self.deploy_model_dialog.predict_from_annotations(image_paths=self.image_paths)
 
         progress_bar.stop_progress()
         progress_bar.close()

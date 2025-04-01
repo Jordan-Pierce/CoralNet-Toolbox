@@ -322,10 +322,10 @@ class DeployModelDialog(QDialog):
         """
         Check if the SAM model is deployed and update the checkbox state accordingly.
         """
-        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
+        if not hasattr(self.main_window, 'sam_deploy_predictor_dialog'):
             return False
 
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+        self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
             self.use_sam_dropdown.setCurrentText("False")

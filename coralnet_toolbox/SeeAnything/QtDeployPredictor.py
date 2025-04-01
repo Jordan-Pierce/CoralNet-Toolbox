@@ -125,7 +125,7 @@ class DeployPredictorDialog(QDialog):
         # Add all models to combo box
         self.model_combo.addItems(models)
 
-        layout.addWidget(QLabel("Select Model:"))
+        layout.addWidget(QLabel("Select Model"))
         layout.addWidget(self.model_combo)
 
         group_box.setLayout(layout)
@@ -141,7 +141,7 @@ class DeployPredictorDialog(QDialog):
         # Task dropdown
         self.task_dropdown = QComboBox()
         self.task_dropdown.addItems(["detect", "segment"])
-        layout.addRow("Task:", self.task_dropdown)
+        layout.addRow("Task", self.task_dropdown)
         
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
@@ -155,14 +155,14 @@ class DeployPredictorDialog(QDialog):
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
         self.resize_image_dropdown.setEnabled(False)
-        layout.addRow("Resize Image:", self.resize_image_dropdown)
+        layout.addRow("Resize Image", self.resize_image_dropdown)
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(512, 65536)
         self.imgsz_spinbox.setSingleStep(256)
         self.imgsz_spinbox.setValue(self.imgsz)
-        layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
+        layout.addRow("Image Size (imgsz)", self.imgsz_spinbox)
 
         # Uncertainty threshold controls
         self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
@@ -440,6 +440,10 @@ class DeployPredictorDialog(QDialog):
             return None
 
         return results
+    
+    def predict_from_annotations(self, image_paths):
+        """"""
+        pass
 
     def deactivate_model(self):
         """

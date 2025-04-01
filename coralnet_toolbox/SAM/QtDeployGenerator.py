@@ -148,14 +148,14 @@ class DeployGeneratorDialog(QDialog):
         self.use_task_dropdown.addItems(["detect", "segment"])
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
         self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
-        label = QLabel("Choose a task to perform")
+        label = QLabel("Task:")
         layout.addRow(label, self.use_task_dropdown)
         
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
         self.max_detections_spinbox.setRange(1, 10000)
         self.max_detections_spinbox.setValue(self.max_detect)
-        label = QLabel("Max Detections")
+        label = QLabel("Max Detections:")
         layout.addRow(label, self.max_detections_spinbox)
 
         # Resize image dropdown
@@ -270,10 +270,10 @@ class DeployGeneratorDialog(QDialog):
 
         :return: Boolean indicating whether the SAM model is deployed
         """
-        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
+        if not hasattr(self.main_window, 'sam_deploy_predictor_dialog'):
             return False
 
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+        self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
             self.use_sam_dropdown.setCurrentText("False")

@@ -75,7 +75,7 @@ class SAMTool(Tool):
         """
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+        self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
         self.hover_active = True  # Ensure hover is active when SAMTool is activated
 
     def deactivate(self):

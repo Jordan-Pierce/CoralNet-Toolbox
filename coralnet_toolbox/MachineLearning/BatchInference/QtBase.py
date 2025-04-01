@@ -78,7 +78,7 @@ class Base(QDialog):
         # Create a button group for the image checkboxes
         image_options_group = QButtonGroup(self)
 
-        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.apply_filtered_checkbox = QCheckBox("ᗊ Apply to filtered images")
         self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
         self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
         self.apply_all_checkbox = QCheckBox("↕ Apply to all images")

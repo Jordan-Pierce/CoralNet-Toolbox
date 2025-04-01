@@ -64,7 +64,7 @@ class BatchInferenceDialog(QDialog):
         self.image_options_group = QButtonGroup(self)
         
         # Create image selection options
-        self.apply_filtered = QCheckBox("Apply to filtered images")
+        self.apply_filtered = QCheckBox("ᗊ Apply to filtered images")
         self.apply_prev = QCheckBox("↑ Apply to previous images")
         self.apply_next = QCheckBox("↓ Apply to next images") 
         self.apply_all = QCheckBox("↕ Apply to all images")

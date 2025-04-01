@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
         
         # Create dialogs (SAM)
-        self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)
+        self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
         self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
         
@@ -529,7 +529,7 @@ class MainWindow(QMainWindow):
         self.sam_deploy_model_menu = self.sam_menu.addMenu("Deploy Model")
         # Deploy Predictor
         self.sam_deploy_model_action = QAction("Predictor", self)
-        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
+        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_predictor_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_model_action)
         # Deploy Generator
         self.sam_deploy_generator_action = QAction("Generator", self)
@@ -543,7 +543,7 @@ class MainWindow(QMainWindow):
         # See Anything menu
         self.see_anything_menu = self.menu_bar.addMenu("See Anything")
         # Deploy Model
-        self.see_anything_deploy_predictor_action = QAction("Deploy Model", self)
+        self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
         self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_predictor_action)
         # Batch Inference
@@ -977,7 +977,7 @@ class MainWindow(QMainWindow):
                 self.toolChanged.emit(None)
                 
         elif action == self.sam_tool_action:
-            if not self.sam_deploy_model_dialog.loaded_model:
+            if not self.sam_deploy_predictor_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "SAM Deploy Predictor",
@@ -999,7 +999,7 @@ class MainWindow(QMainWindow):
                 self.see_anything_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "See Anything (YOLOE)",
-                                    "You must deploy a model before using the tool.")
+                                    "You must deploy a Predictor before using the tool.")
                 return
             if state:
                 self.select_tool_action.setChecked(False)
@@ -1684,7 +1684,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_sam_deploy_model_dialog(self):
+    def open_sam_deploy_predictor_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Predictor",
@@ -1693,7 +1693,7 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.sam_deploy_model_dialog.exec_()
+            self.sam_deploy_predictor_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -1754,10 +1754,11 @@ class MainWindow(QMainWindow):
                                 "See Anything (YOLOE) Batch Inference",
                                 "Please deploy a model before running batch inference.")
             return
-
+        
         try:
             self.untoggle_all_tools()
-            self.see_anything_batch_inference_dialog.exec_()
+            if self.see_anything_batch_inference_dialog.has_valid_sources():
+                self.see_anything_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
