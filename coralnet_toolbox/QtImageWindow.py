@@ -469,15 +469,23 @@ class ImageWindow(QWidget):
             try:
                 # Load the full resolution image
                 full_image = QImage(image_path)
+                if full_image.isNull():
+                    raise ValueError("QImage failed to load the image")
                 self.images[image_path] = full_image
                 
                 # Load the rasterio representation
-                self.rasterio_images[image_path] = self.rasterio_open(image_path)
+                rasterio_src = self.rasterio_open(image_path)
+                if rasterio_src is None:
+                    raise ValueError("Rasterio failed to open the image")
+                self.rasterio_images[image_path] = rasterio_src
                 
                 # Update the display with the full-resolution image
                 self.annotation_window.set_image(image_path)
                 self.imageSelected.emit(image_path)
             except Exception as e:
+                QMessageBox.warning(self, 
+                                    "Image Loading Error",
+                                    f"Error loading full resolution image {os.path.basename(image_path)}:\n{str(e)}")
                 print(f"Error loading full resolution image {image_path}: {str(e)}")
             
             # Emit the signal when a new image is chosen
@@ -601,9 +609,33 @@ class ImageWindow(QWidget):
         
     @lru_cache(maxsize=32)
     def rasterio_open(self, image_path):
-        # Open the image with Rasterio
-        self.src = rasterio.open(image_path)
-        return self.src
+        """
+        Open an image with rasterio and handle potential errors.
+        
+        Args:
+            image_path (str): Path to the image file
+            
+        Returns:
+            rasterio.DatasetReader: Opened rasterio dataset or None if error
+        """
+        try:
+            # Use a local variable rather than instance attribute to avoid thread issues
+            src = rasterio.open(image_path)
+            return src
+        except Exception as e:
+            print(f"Error opening image with rasterio: {image_path}")
+            print(f"Exception: {str(e)}")
+            
+            # Try to inspect file existence and permissions
+            if not os.path.exists(image_path):
+                print(f"File does not exist: {image_path}")
+            elif not os.path.isfile(image_path):
+                print(f"Path is not a file: {image_path}")
+            elif not os.access(image_path, os.R_OK):
+                print(f"File is not readable: {image_path}")
+                
+            # Return None on failure
+            return None
 
     def rasterio_close(self, image_path):
         # Close the image with Rasterio
