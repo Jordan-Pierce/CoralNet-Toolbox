@@ -25,7 +25,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
-
+# TODO handle tool switching and proper close out
 class SeeAnythingTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
@@ -74,14 +74,27 @@ class SeeAnythingTool(Tool):
 
     def deactivate(self):
         """
-        Deactivates the tool.
+        Deactivates the tool and cleans up all resources.
         """
         self.active = False
         self.annotation_window.setCursor(Qt.ArrowCursor)
-        self.see_anything_dialog = None
+        
+        # Clear annotations that haven't been confirmed
+        if self.annotations:
+            self.clear_annotations()
+        
+        # Clear rectangle data and graphics
         self.clear_all_rectangles()
+        
+        # Clean up working area and shadow
         self.cancel_working_area()
         
+        # Clear detection data
+        self.detections = None
+        
+        # Update the viewport
+        self.annotation_window.viewport().update()
+
     def set_working_area(self):
         """
         Set the working area for the tool.
