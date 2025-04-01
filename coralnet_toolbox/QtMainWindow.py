@@ -81,7 +81,6 @@ from coralnet_toolbox.SAM import (
 
 from coralnet_toolbox.SeeAnything import (
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
-    DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
     BatchInferenceDialog as SeeAnythingBatchInferenceDialog
 )
 
@@ -230,7 +229,6 @@ class MainWindow(QMainWindow):
         
         # Create dialogs (See Anything)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
-        self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
         self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
         
         # Create dialogs (AutoDistill)
@@ -548,10 +546,6 @@ class MainWindow(QMainWindow):
         self.see_anything_deploy_predictor_action = QAction("Deploy Model", self)
         self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
         self.see_anything_menu.addAction(self.see_anything_deploy_predictor_action)
-        # Deploy Generator
-        self.see_anything_deploy_generator_action = QAction("Deploy Generator", self)
-        self.see_anything_deploy_generator_action.triggered.connect(self.open_see_anything_deploy_generator_dialog)
-        self.see_anything_menu.addAction(self.see_anything_deploy_generator_action)
         # Batch Inference
         self.see_anything_batch_inference_action = QAction("Batch Inference", self)
         self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
@@ -1748,19 +1742,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
-    def open_see_anything_deploy_generator_dialog(self):
-        if not self.image_window.image_paths:
-            QMessageBox.warning(self,
-                                "See Anything (YOLOE)",
-                                "No images are present in the project.")
-            return
-
-        try:
-            self.untoggle_all_tools()
-            # self.see_anything_deploy_generator_dialog.exec_()  TODO
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
     def open_see_anything_batch_inference_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
@@ -1768,11 +1749,10 @@ class MainWindow(QMainWindow):
                                 "No images are present in the project.")
             return
         
-        if not self.see_anything_deploy_predictor_dialog.loaded_model or \
-           not self.see_anything_deploy_generator_dialog.loaded_model:
+        if not self.see_anything_deploy_predictor_dialog.loaded_model:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE) Batch Inference",
-                                "Please deploy a predictor or generator before running batch inference.")
+                                "Please deploy a model before running batch inference.")
             return
 
         try:
