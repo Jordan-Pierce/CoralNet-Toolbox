@@ -584,7 +584,6 @@ class DeployPredictorDialog(QDialog):
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
 
-        # TODO fix progress bar
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")

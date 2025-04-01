@@ -240,6 +240,7 @@ class SeeAnythingTool(Tool):
             # Add the rectangle coordinates to the list
             rectangle = np.array([top_left.x(), top_left.y(), bottom_right.x(), bottom_right.y()])
             self.rectangles.append(rectangle)
+            print("Number of rectangles: ", len(self.rectangles))
             
             # Reset the current rectangle graphics item
             self.current_rect_graphics = None
@@ -384,8 +385,14 @@ class SeeAnythingTool(Tool):
 
         # Predict the mask provided prompts
         results = self.see_anything_dialog.predict_from_prompts(self.rectangles)[0]
-
+        
+        # Get the shape of the image (in case resizing was done)
+        resized_image = results.orig_img
+        image_area = resized_image.shape[0] * resized_image.shape[1]
+        
         if not results:
+            # Make cursor normal
+            QApplication.restoreOverrideCursor()
             return None
         
         if self.detections is None:
@@ -394,18 +401,18 @@ class SeeAnythingTool(Tool):
             self.detections = sv.Detections.merge([self.detections, 
                                                    sv.Detections.from_ultralytics(results)])
             
-        # Perform non-maximum suppression, and confidence thresholding
+        # Perform non-maximum suppression, area, and confidence thresholding
         self.detections = self.detections[self.detections.confidence > self.main_window.get_uncertainty_thresh()]
+        self.detections = self.detections[self.detections.area > self.main_window.get_area_thresh_min() * image_area]
+        self.detections = self.detections[self.detections.area < self.main_window.get_area_thresh_max() * image_area]
         self.detections = self.detections.with_nms(self.main_window.get_iou_thresh())
         
         # Clear the annotations (that haven't been confirmed)
         self.clear_annotations()
         
-        # Get the shape of the image (in case resizing was done)
-        resized_image = results.orig_img
-        
         # Loop through the detections
         for detection in self.detections:  
+            # Extract values from detection
             xyxy, mask, confidence, _, _, _ = detection
             
             # Get the detection box
@@ -434,12 +441,22 @@ class SeeAnythingTool(Tool):
             if self.see_anything_dialog.task == "segment":
                 # Resize the mask to the resized image shape
                 mask = cv2.resize(mask.squeeze().astype(int), (resized_image.shape[1], resized_image.shape[0]))
+                
                 # Convert to a polygon
-                mask = sv.detection.utils.mask_to_polygons(mask)[0]
-                # Update coordinates relative to the working area
-                points = [QPointF(point[0] + working_area_top_left.x(), 
-                                  point[1] + working_area_top_left.y()) for point in mask]
-                                
+                polygons = sv.detection.utils.mask_to_polygons(mask)[0]
+                
+                # Normalize points by resized image dimensions
+                normalized_points = [(point[0] / resized_image.shape[1], 
+                                     point[1] / resized_image.shape[0]) for point in polygons]
+                
+                # Scale to working area dimensions
+                scaled_points = [(point[0] * self.image.shape[1],
+                                  point[1] * self.image.shape[0]) for point in normalized_points]
+                
+                # Convert to whole image coordinates
+                points = [QPointF(point[0] + working_area_top_left.x(),
+                                  point[1] + working_area_top_left.y()) for point in scaled_points]
+                
                 # Create the annotation
                 annotation = PolygonAnnotation(points,
                                                self.annotation_window.selected_label.short_label_code,

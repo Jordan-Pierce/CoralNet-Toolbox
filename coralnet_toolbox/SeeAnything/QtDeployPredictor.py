@@ -145,6 +145,7 @@ class DeployPredictorDialog(QDialog):
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
         self.resize_image_dropdown.setCurrentIndex(0)
+        self.resize_image_dropdown.setEnabled(False)
         layout.addRow("Resize Image:", self.resize_image_dropdown)
 
         # Image size control
@@ -322,12 +323,31 @@ class DeployPredictorDialog(QDialog):
     def get_target_shape(self, image, imgsz):
         """
         Determine the target shape based on the long side.
+        Ensures the maximum dimension is a multiple of 32.
         """
         h, w = image.shape[:2]
+        
+        # Round imgsz to the nearest multiple of 32
+        imgsz = round(imgsz / 32) * 32
+        
         if h > w:
-            return imgsz, int(w * (imgsz / h))
+            # Height is the longer side
+            new_h = imgsz
+            new_w = int(w * (new_h / h))
+            # Make width a multiple of 32
+            new_w = round(new_w / 32) * 32
         else:
-            return int(h * (imgsz / w)), imgsz
+            # Width is the longer side
+            new_w = imgsz
+            new_h = int(h * (new_w / w))
+            # Make height a multiple of 32
+            new_h = round(new_h / 32) * 32
+        
+        # Ensure neither dimension is zero
+        new_h = max(32, new_h)
+        new_w = max(32, new_w)
+        
+        return new_h, new_w
 
     def set_image(self, image, image_path):
         """
