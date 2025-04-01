@@ -43,8 +43,10 @@ class BatchInferenceDialog(QDialog):
         self.deploy_model_dialog = None
         self.loaded_model = None
         
-        self.annotations = []
-        self.prepared_patches = []
+        # Reference image and label
+        self.source_image_path = None
+        self.source_label = None
+        # Target images
         self.image_paths = []
 
         self.layout = QVBoxLayout(self)
@@ -304,19 +306,30 @@ class BatchInferenceDialog(QDialog):
     def get_selected_image_paths(self):
         """
         Get the selected image paths based on the options.
+        Excludes the source image path if present.
         
         :return: List of selected image paths
         """
+        # Get the source image path to exclude
+        source_image_path = self.source_image_combo_box.currentData()
+        
+        # Get selected paths based on checkbox selection
         if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.filtered_image_paths
+            selected_paths = self.image_window.filtered_image_paths.copy()
         elif self.apply_prev_checkbox.isChecked():
             current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[:current_image_index + 1]
+            selected_paths = self.image_window.image_paths[:current_image_index + 1].copy()
         elif self.apply_next_checkbox.isChecked():
             current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[current_image_index:]
+            selected_paths = self.image_window.image_paths[current_image_index:].copy()
         else:
-            return self.image_window.image_paths
+            selected_paths = self.image_window.image_paths.copy()
+        
+        # Remove the source image path if it's in the selected paths
+        if source_image_path and source_image_path in selected_paths:
+            selected_paths.remove(source_image_path)
+            
+        return selected_paths
 
     def apply(self):
         """
@@ -326,8 +339,12 @@ class BatchInferenceDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         try:
+            # Get the source image path and label
+            self.source_image_path = self.source_image_combo_box.currentData()
+            self.source_label = self.source_label_combo_box.currentText()
             # Get the selected image paths
             self.image_paths = self.get_selected_image_paths()
+            # Perform batch inference
             self.batch_inference()
 
         except Exception as e:
@@ -348,7 +365,9 @@ class BatchInferenceDialog(QDialog):
         progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
-            self.deploy_model_dialog.predict_from_annotations(image_paths=self.image_paths)
+            self.deploy_model_dialog.predict_from_annotations(refer_image=self.source_image_path,
+                                                              refer_label=self.source_label,
+                                                              image_paths=self.image_paths)
 
         progress_bar.stop_progress()
         progress_bar.close()

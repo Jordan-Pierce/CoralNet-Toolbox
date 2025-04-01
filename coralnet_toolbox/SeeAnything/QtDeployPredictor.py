@@ -441,7 +441,7 @@ class DeployPredictorDialog(QDialog):
 
         return results
     
-    def predict_from_annotations(self, image_paths):
+    def predict_from_annotations(self, refer_image, refer_label, target_images):
         """"""
         pass
 
