@@ -5,8 +5,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 import gc
 import os
 
-import numpy as np
 import torch
+import numpy as np
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
@@ -124,6 +124,8 @@ class DeployPredictorDialog(QDialog):
 
         # Add all models to combo box
         self.model_combo.addItems(models)
+        # Set the default model to 
+        self.model_combo.setCurrentIndex(1)
 
         layout.addWidget(QLabel("Select Model"))
         layout.addWidget(self.model_combo)
@@ -420,11 +422,12 @@ class DeployPredictorDialog(QDialog):
             'cls': np.zeros(len(bboxes))  # TODO figure this out
         }
         
-        try:
-            # Set the predictor
-            self.task = self.task_dropdown.currentText()
-            predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
+        # Set the predictor
+        self.task = self.task_dropdown.currentText()
+        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
             
+        try:
+            # Make predictions
             results = self.loaded_model.predict(self.resized_image,
                                                 visual_prompts=visuals.copy(),
                                                 predictor=predictor,
@@ -437,13 +440,81 @@ class DeployPredictorDialog(QDialog):
             QMessageBox.critical(self.annotation_window,
                                  "Prediction Error",
                                  f"Error predicting: {e}")
-            return None
+            results = None
+        
+        finally:
+            # Clear the cache
+            gc.collect()
+            torch.cuda.empty_cache
 
         return results
     
-    def predict_from_annotations(self, refer_image, refer_label, target_images):
-        """"""
-        pass
+    def predict_from_annotations(self, refer_image, refer_label, refer_annotations, target_images):
+        """"""       
+        # Create a class mapping
+        class_mapping = {0: refer_label}
+
+        # Create a results processor
+        results_processor = ResultsProcessor(
+            self.main_window,
+            class_mapping,
+            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+            iou_thresh=self.main_window.get_iou_thresh(),
+            min_area_thresh=self.main_window.get_area_thresh_min(),
+            max_area_thresh=self.main_window.get_area_thresh_max()
+        )
+        
+        # Create a visual dictionary
+        visuals = {
+            'bboxes': np.array(refer_annotations),
+            'cls': np.zeros(len(refer_annotations))  # TODO figure this out
+        }
+        
+        # Set the predictor
+        self.task = self.task_dropdown.currentText()
+        predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
+        
+        # Create a progress bar
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(target_images))
+        
+        for target_image in target_images:
+            
+            try:
+                # Make predictions
+                results = self.loaded_model.predict(target_image,
+                                                    refer_image=refer_image,
+                                                    visual_prompts=visuals.copy(),
+                                                    predictor=predictor,
+                                                    imgsz=self.imgsz_spinbox.value(),
+                                                    conf=self.main_window.get_uncertainty_thresh(),
+                                                    iou=self.main_window.get_iou_thresh(),
+                                                    max_det=self.get_max_detections())
+                
+                results[0].names = {0: refer_label.short_label_code}
+                
+                # Process the detections
+                if self.task == 'segment':
+                    results_processor.process_segmentation_results(results)
+                else:
+                    results_processor.process_detection_results(results)
+                
+            except Exception as e:
+                print(f"Error predicting: {e}")
+            
+            finally:
+                progress_bar.update_progress()
+                # Clear the cache
+                gc.collect()
+                torch.cuda.empty_cache()
+                
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def deactivate_model(self):
         """

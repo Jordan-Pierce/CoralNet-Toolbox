@@ -5,6 +5,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 
+import numpy as np
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox, QButtonGroup,
@@ -25,7 +27,7 @@ from coralnet_toolbox.Icons import get_icon
 
 class BatchInferenceDialog(QDialog):
     """
-    ...
+    Perform See Anything (YOLOE) on multiple images using a reference image and label.
         
     :param main_window: MainWindow object
     :param parent: Parent widget
@@ -38,7 +40,7 @@ class BatchInferenceDialog(QDialog):
         
         self.setWindowIcon(get_icon("eye.png"))
         self.setWindowTitle("Batch Inference")
-        self.resize(400, 100)
+        self.resize(600, 100)
 
         self.deploy_model_dialog = None
         self.loaded_model = None
@@ -47,7 +49,7 @@ class BatchInferenceDialog(QDialog):
         self.source_image_path = None
         self.source_label = None
         # Target images
-        self.image_paths = []
+        self.target_images = []
 
         self.layout = QVBoxLayout(self)
 
@@ -263,6 +265,10 @@ class BatchInferenceDialog(QDialog):
             self.reject()
             return False
         
+        # Update the combo box to have the selected image first
+        if self.annotation_window.current_image_path in self.image_window.image_dict:
+            self.source_image_combo_box.setCurrentText(os.path.basename(self.annotation_window.current_image_path))
+        
         # Update the source labels given changes in the source images
         return self.update_source_labels()
 
@@ -282,15 +288,15 @@ class BatchInferenceDialog(QDialog):
         # Get annotations for this image
         annotations = self.annotation_window.get_image_annotations(source_image_path)
         
-        # Create a set of labels with valid annotations
-        valid_labels = set()
+        # Create a dict of labels with valid annotations
+        valid_labels = {}
         for annotation in annotations:
             if isinstance(annotation, PolygonAnnotation) or isinstance(annotation, RectangleAnnotation):
-                valid_labels.add(annotation.label.short_label_code)
+                valid_labels[annotation.label.short_label_code] = annotation.label
         
         # Add valid labels to combo box
-        for label_code in valid_labels:
-            self.source_label_combo_box.addItem(label_code)
+        for label_code, label_obj in valid_labels.items():
+            self.source_label_combo_box.addItem(label_code, label_obj)
         
         if not valid_labels:
             QMessageBox.information(self, 
@@ -302,6 +308,23 @@ class BatchInferenceDialog(QDialog):
             return False
         
         return True
+    
+    def get_source_annotations(self):
+        """Return a list of polygon and rectangle annotations for the 
+        source image belonging to the selected label."""
+        source_image_path = self.source_image_combo_box.currentData()
+        source_label = self.source_label_combo_box.currentData()
+        
+        # Get annotations for this image
+        annotations = self.annotation_window.get_image_annotations(source_image_path)
+        
+        # Filter annotations by label
+        source_annotations = []
+        for annotation in annotations:
+            if annotation.label.short_label_code == source_label.short_label_code:
+                source_annotations.append(annotation.cropped_bbox)
+        
+        return np.array(source_annotations)
     
     def get_selected_image_paths(self):
         """
@@ -341,9 +364,11 @@ class BatchInferenceDialog(QDialog):
         try:
             # Get the source image path and label
             self.source_image_path = self.source_image_combo_box.currentData()
-            self.source_label = self.source_label_combo_box.currentText()
+            self.source_label = self.source_label_combo_box.currentData()
+            # Get the source annotations
+            self.source_annotations = self.get_source_annotations()
             # Get the selected image paths
-            self.image_paths = self.get_selected_image_paths()
+            self.target_images = self.get_selected_image_paths()
             # Perform batch inference
             self.batch_inference()
 
@@ -358,16 +383,17 @@ class BatchInferenceDialog(QDialog):
     def batch_inference(self):
         """
         Perform batch inference on the selected images.
+        
         """
         # Make predictions on each image's annotations
         progress_bar = ProgressBar(self, title="Batch Inference")
         progress_bar.show()
-        progress_bar.start_progress(len(self.image_paths))
+        progress_bar.start_progress(len(self.target_images))
 
         if self.loaded_model is not None:
             self.deploy_model_dialog.predict_from_annotations(refer_image=self.source_image_path,
                                                               refer_label=self.source_label,
-                                                              image_paths=self.image_paths)
-
+                                                              refer_annotations=self.source_annotations,
+                                                              target_images=self.target_images)
         progress_bar.stop_progress()
         progress_bar.close()

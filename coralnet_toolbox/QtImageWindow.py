@@ -406,14 +406,14 @@ class ImageWindow(QWidget):
         if image_path in self.image_dict:
             # Check for any annotations
             annotations = self.annotation_window.get_image_annotations(image_path)
+            self.image_dict[image_path]['has_annotations'] = bool(annotations)
+            self.image_dict[image_path]['annotation_count'] = len(annotations)
             # Check for any predictions
             predictions = [a.machine_confidence for a in annotations if a.machine_confidence != {}]
-            # Check for any labels
-            labels = {annotation.label.short_label_code for annotation in annotations}
-            self.image_dict[image_path]['has_annotations'] = bool(annotations)
             self.image_dict[image_path]['has_predictions'] = len(predictions)
+            # Check for any labels
+            labels = {annotation.label for annotation in annotations}
             self.image_dict[image_path]['labels'] = labels
-            self.image_dict[image_path]['annotation_count'] = len(annotations)
             # Update the table row
             self.update_table_row(image_path)
             
@@ -941,6 +941,7 @@ class ImageWindow(QWidget):
         predictions = self.image_dict[path]['has_predictions']
         # Check the labels for the provided path
         labels = self.image_dict[path]['labels']
+        labels = [label.short_label_code for label in labels]
         
         # Filter images based on search text and checkboxes
         if search_text_images and search_text_images not in filename:
