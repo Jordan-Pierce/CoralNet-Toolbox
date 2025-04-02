@@ -308,6 +308,16 @@ class Base(QDialog):
                 f"until added manually:\n{missing_labels_str}"
             )
 
+    def add_labels_to_label_window(self):
+        """
+        Add labels to the label window based on the class mapping.
+        """
+        if self.class_mapping:
+            for label in self.class_mapping.values():
+                self.label_window.add_label_if_not_exists(label['short_label_code'],
+                                                          label['long_label_code'],
+                                                          QColor(*label['color']))
+                
     def handle_missing_class_mapping(self):
         """
         Handle the case when the class mapping file is missing.
@@ -319,15 +329,6 @@ class Base(QDialog):
         if reply == QMessageBox.Yes:
             self.create_generic_labels()
 
-    def add_labels_to_label_window(self):
-        """
-        Add labels to the label window based on the class mapping.
-        """
-        if self.class_mapping:
-            for label in self.class_mapping.values():
-                self.label_window.add_label_if_not_exists(label['short_label_code'],
-                                                          label['long_label_code'],
-                                                          QColor(*label['color']))
 
     def create_generic_labels(self):
         """

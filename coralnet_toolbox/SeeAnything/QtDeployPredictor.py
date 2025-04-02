@@ -2,13 +2,15 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import gc
 import os
+import gc
+import json
 
 import torch
 import numpy as np
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, 
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSlider, QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
@@ -59,6 +61,8 @@ class DeployPredictorDialog(QDialog):
         self.model_path = None
         self.loaded_model = None
         self.image_path = None
+        
+        self.class_mapping = {}
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -152,9 +156,18 @@ class DeployPredictorDialog(QDialog):
         model_path_layout = QHBoxLayout()
         model_path_layout.addWidget(self.model_path_edit)
         model_path_layout.addWidget(browse_button)
+        custom_layout.addRow("Custom Model:", model_path_layout)
         
-        custom_layout.addRow("Select Custom Model:", model_path_layout)
-        
+        # Class Mapping
+        self.mapping_edit = QLineEdit()
+        self.mapping_button = QPushButton("Browse...")
+        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.mapping_edit)
+        class_mapping_layout.addWidget(self.mapping_button)
+        custom_layout.addRow("Class Mapping:", class_mapping_layout)
+
         tab_widget.addTab(custom_tab, "Custom Model")
         
         # Add the tab widget to the main layout
@@ -176,6 +189,26 @@ class DeployPredictorDialog(QDialog):
                                                    "Model Files (*.pt *.pth);;All Files (*)")
         if file_path:
             self.model_path_edit.setText(file_path)
+            
+            # Load the class mapping if it exists
+            dir_path = os.path.dirname(os.path.dirname(file_path))
+            class_mapping_path = f"{dir_path}/class_mapping.json"
+            if os.path.exists(class_mapping_path):
+                self.class_mapping = json.load(open(class_mapping_path, 'r'))
+                self.mapping_edit.setText(class_mapping_path)
+            
+    def browse_class_mapping_file(self):
+        """
+        Browse and select a class mapping file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Class Mapping File",
+                                                   "",
+                                                   "JSON Files (*.json)")
+        if file_path:
+            # Load the class mapping
+            self.class_mapping = json.load(open(file_path, 'r'))
+            self.mapping_edit.setText(file_path)
 
     def setup_parameters_layout(self):
         """
@@ -375,6 +408,10 @@ class DeployPredictorDialog(QDialog):
                 imgsz=640,
                 conf=0.99,
             )         
+            
+            # Load the model class names if available
+            if self.class_mapping:
+                self.add_labels_to_label_window()
                
             progress_bar.finish_progress()
             self.status_bar.setText("Model loaded")
@@ -392,6 +429,16 @@ class DeployPredictorDialog(QDialog):
             progress_bar = None
             
         self.accept()
+        
+    def add_labels_to_label_window(self):
+        """
+        Add labels to the label window based on the class mapping.
+        """
+        if self.class_mapping:
+            for label in self.class_mapping.values():
+                self.main_window.label_window.add_label_if_not_exists(label['short_label_code'],
+                                                                      label['long_label_code'],
+                                                                      QColor(*label['color']))
         
     def resize_image(self, image):
         """
