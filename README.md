@@ -122,6 +122,17 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
         <em>Patch-based LAI Classification</em>
       </td>
     </tr>
+    <tr>
+      <td align="center">
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" height="200"/>
+        <br>
+        <em>Polygon Classification</em>
+      </td>
+      <td align="center">
+      </td>
+    </tr>
   </table>
 </div>
 
