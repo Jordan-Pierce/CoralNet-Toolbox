@@ -222,7 +222,6 @@ class Segment(Base):
 
                 results = self._apply_model(inputs)
                 results = self._apply_sam(results, image_path)
-                results = self._apply_tile_postprocessing(results)
                 self._process_results(results_processor, results)
         except Exception as e:
             print("An error occurred during prediction:", e)
@@ -237,14 +236,7 @@ class Segment(Base):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
-            if not inputs:
-                return None
-        else:
-            inputs = image_path
-        return inputs
+        return image_path
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
@@ -265,13 +257,6 @@ class Segment(Base):
         if self.use_sam_dropdown.currentText() == "True":
             results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
 
-        return results
-
-    def _apply_tile_postprocessing(self, results):
-        """Apply tile postprocessing if needed."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
         return results
 
     def _process_results(self, result_processor, results):

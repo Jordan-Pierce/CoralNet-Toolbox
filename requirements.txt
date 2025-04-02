@@ -10,7 +10,6 @@ autodistill
 transformers>=4.5.0
 x-segment-anything>=0.0.8
 yolo-tiling>=0.0.14
-patched_yolo_infer==1.3.8
 roboflow
 rasterio
 requests

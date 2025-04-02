@@ -415,7 +415,6 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        # Check if tile inference tool is enabled
         return image_path
 
     def _apply_model(self, inputs):

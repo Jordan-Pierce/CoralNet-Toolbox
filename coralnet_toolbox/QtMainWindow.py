@@ -27,7 +27,6 @@ from coralnet_toolbox.Tile import (
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
-    TileInference as TileInferenceDialog,
 )
 
 # TODO update IO classes to have dialogs
@@ -94,8 +93,6 @@ from coralnet_toolbox.CoralNet import (
     AuthenticateDialog as CoralNetAuthenticateDialog,
     DownloadDialog as CoralNetDownloadDialog
 )
-
-from coralnet_toolbox.TileProcessor import TileProcessor
 
 from coralnet_toolbox.BreakTime import SnakeGame
 
@@ -241,10 +238,6 @@ class MainWindow(QMainWindow):
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
-        self.tile_inference_dialog = TileInferenceDialog(self)
-        
-        # Create the tile processor
-        self.tile_processor = TileProcessor(self)
         
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
@@ -434,11 +427,6 @@ class MainWindow(QMainWindow):
         self.segment_tile_dataset_action = QAction("Segment", self)
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
-        
-        # Tile Inference
-        self.tile_inference_action = QAction("Tile Inference", self)
-        self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
-        # self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -642,13 +630,6 @@ class MainWindow(QMainWindow):
         self.see_anything_tool_action.setCheckable(True)
         self.see_anything_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.see_anything_tool_action)
-
-        self.toolbar.addSeparator()
-
-        self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
-        self.tile_inference_tool_action.setCheckable(True)
-        self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
-        # self.toolbar.addAction(self.tile_inference_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -933,8 +914,6 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
-                # Hidden for now
-                self.tile_inference_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("select")
             else:
@@ -947,9 +926,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
-                # Hidden for now
-                self.tile_inference_tool_action.setChecked(False)
-
+                
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
@@ -961,9 +938,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
-                # Hidden for now
-                self.tile_inference_tool_action.setChecked(False)
-
+                
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
@@ -975,8 +950,6 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
-                # Hidden for now
-                self.tile_inference_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("polygon")
             else:
@@ -994,8 +967,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
-                self.tile_inference_tool_action.setChecked(False)
-
+        
                 self.toolChanged.emit("sam")
             else:
                 self.toolChanged.emit(None)
@@ -1013,30 +985,10 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                # Hidden for now
-                self.tile_inference_tool_action.setChecked(False)
-
+                
                 self.toolChanged.emit("see_anything")
             else:
                 self.toolChanged.emit(None)
-                
-        elif action == self.tile_inference_tool_action: 
-            if not self.tile_processor.params_set():
-                self.tile_inference_tool_action.setChecked(False)
-                QMessageBox.warning(self,
-                                    "Tile Inference",
-                                    "You must set the parameters for Tile Inference before using the tool.")
-                return          
-            if state:
-                self.select_tool_action.setChecked(False)
-                self.patch_tool_action.setChecked(False)
-                self.rectangle_tool_action.setChecked(False)
-                self.polygon_tool_action.setChecked(False)
-                self.sam_tool_action.setChecked(False)
-                self.see_anything_tool_action.setChecked(False)
-
-            # Emit None to close other tools
-            self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
         # Unlock the label lock
@@ -1049,9 +1001,7 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
-        # Hidden for now
-        self.tile_inference_tool_action.setChecked(False)
-
+        
         # Emit to reset the tool
         self.toolChanged.emit(None)
         
@@ -1066,8 +1016,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(False)
+            
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
@@ -1075,8 +1024,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(False)
+            
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1084,8 +1032,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(False)
+            
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1093,8 +1040,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(False)
+            
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1102,8 +1048,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(False)
+            
         elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1111,17 +1056,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(False)
-        elif tool == "tile_inference":
-            self.select_tool_action.setChecked(False)
-            self.patch_tool_action.setChecked(False)
-            self.rectangle_tool_action.setChecked(False)
-            self.polygon_tool_action.setChecked(False)
-            self.sam_tool_action.setChecked(False)
-            self.see_anything_tool_action.setChecked(False)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(True)
+
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1129,8 +1064,6 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
-            # Hidden for now
-            self.tile_inference_tool_action.setChecked(False)
             
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
@@ -1516,26 +1449,6 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_tile_dataset_dialog.exec_()
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_tile_inference_dialog(self):
-        
-        if not self.image_window.image_paths:
-            # Check if there are any images in the project
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before setting Tile Inference parameters.")
-            return
-        
-        try:
-            self.untoggle_all_tools()
-            self.tile_inference_dialog.exec_()
-            
-            # Get the tile parameters and tile inference parameters
-            tile_params, tile_inference_params = self.tile_inference_dialog.get_params()
-            self.tile_processor.set_params(tile_params, tile_inference_params)
-            
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
