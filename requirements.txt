@@ -1,6 +1,6 @@
 PyQt5>=5.15.11
 pyqtdarktheme
-ultralytics>=8.3.99
+ultralytics>=8.3.100
 open-clip-torch>=2.20.0
 supervision>=0.24.0
 scikit-learn
