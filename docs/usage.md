@@ -31,11 +31,16 @@ The main window consists of several components:
 - **Confidence Window**: Displays cropped images and confidence charts.
 
 ## Menu Bar Actions
+- **New Project**: Reload CoralNet-Toolbox (loss of data warning)
+- **Open Project**: Open an existing CoralNet-Toolbox project JSON file.
+- **Save Project**: Save current CoralNet-Toolbox project to JSON file.
+
 - **Import**:
   - **Import Images**: Load image files.
   - **Import Frames**: Load video frames (Currently not available).
-  - **Import Orthomosaic**: Load orthomosaic images (Currently not available).
   - **Import Labels (JSON)**: Load label data from a JSON file.
+  - **Import CoralNet Labels (CSV)**: Load label data from a CoralNet CSV file.
+  - **Import TagLab Labels (JSON)**: Load label data from a TagLab JSON file.
   - **Import Annotations (JSON)**: Load annotation data from a JSON file.
   - **Import Annotations (CoralNet)**: Load annotation data from a CoralNet CSV file.
   - **Import Annotations (Viscore)**: Load annotation data from a Viscore CSV file.
@@ -44,6 +49,7 @@ The main window consists of several components:
 
 - **Export**:
   - **Export Labels (JSON)**: Save label data to a JSON file.
+  - **Export TagLab Labels (JSON)**: Save label data to a TagLab JSON file.
   - **Export Annotations (JSON)**: Save annotation data to a JSON file.
   - **Export Annotations (CoralNet)**: Save annotation data to a CoralNet CSV file.
   - **Export Annotations (Viscore)**: Save annotation data to a Viscore CSV file.
@@ -53,15 +59,15 @@ The main window consists of several components:
 - **Sample**:
   - **Sample Annotations**: Automatically generate Patch annotations.
 
-- **CoralNet**: (Currently not available)
-  - **Authenticate**: Authenticate with CoralNet.
-  - **Upload**: Upload data to CoralNet.
-  - **Download**: Download data from CoralNet.
-  - **Model API**: Access CoralNet model API.
+- **Tile**:
+  - **Tile Dataset**: Tile existing Classification, Detection or Segmention datasets using `yolo-tiling`.
 
-- **Machine Learning**:
+- **CoralNet**: 
+  - **Authenticate**: Authenticate with CoralNet.
+  - **Download**: Download data from CoralNet.
+
+- **Ultralytics**:
   - **Merge Datasets**: Merge multiple Classification datasets.
-  - **Tile Dataset**: Tile existing Detection / Segmention datasets using yolo-tiling.
   - **Train Model**: Train a machine learning model.
   - **Evaluate Model**: Evaluate a trained model.
   - **Optimize Model**: Convert model format.
@@ -69,14 +75,18 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferences.
 
 - **SAM**:
-  - **Deploy Predictor**: Deploy EdgeSAM, MobileSAM, or SAM to use interactively (points, box); Segment Anything
-  - **Deploy Generator**: Deploy FastSAM to automatically segment the image; Segment Everything
-    - Recommendation: Use the "Use Predictor to create Polygons", as the results are significantly better
-  - **Batch Inference**: Perform batch inferences.
+  - **Deploy Predictor**: Deploy `EdgeSAM`, `MobileSAM`, `SAM`, etc, to use interactively (points, box).
+  - **Deploy Generator**: Deploy `FastSAM` to automatically segment the image.
+  - **Batch Inference**: Perform batch inferencing using `FastSAM`.
+
+- **See Anything (YOLOE)**:
+  - **Train Model**: Train a YOLOE Segmentation model using an existing YOLO Segmentation dataset.
+  - **Deploy Predictor**: Deploy an existing `YOLOE` model to use interactively.
+  - **Batch Inference**: Perform batch inferencing using `YOLOE`.
 
 - **AutoDistill**:
   - **Deploy Model**: Deploy a foundational model
-    - Models Available: GroundingDino,
+    - Models Available: `Grounding DINO`, `OWLViT`, `OmDetTurbo`
   - **Batch Inference**: Perform batch inferences.
 
 ## Tool Bar
@@ -84,7 +94,8 @@ The main window consists of several components:
 - **Patch Tool**: Add new PatchAnnotations.
 - **Polygon Tool**: Add new PolygonAnnotations.
 - **Rectangle Tool**: Add new RectangleAnnotations.
-- **SAM Tool**: Use SAM model for automatic segmentation (points, box).
+- **SAM Tool**: Use `SAM` model for automatic segmentation (points, box).
+- **See Anything Tool**: Use See Anything (`YOLOE`) to provide references of object, and detect other similar appearing.
 
 ## Status Bar
 - **Image Size**: Displays the image size.
@@ -93,6 +104,8 @@ The main window consists of several components:
 - **Annotation Transparency**: Adjust the annotation transparency.
   - **Select All Labels**: Select all labels, adjusting transparency for all labels.
   - **Unselect All Labels**: Unselect all labels, adjusting transparency for only selected labels.
+- **Patch Size**: Manipulate Patch Size (only active when using Patch Tool).
+- **Parameters**: Adjust parameters including uncertainty, IoU, and area thresholds.
 
 ## Annotation Window
 - **Zoom**: Use the mouse wheel to zoom in and out.
@@ -101,6 +114,8 @@ The main window consists of several components:
 - **Select Annotations**:
   - Ctrl + Left-Click on multiple annotations while using the select tool.
   - Ctrl + Left-Click and drag to select multiple annotations while using the select tool.
+  - Ctrl + Shift + < to select all annotations
+  - Ctrl + Shift + < to deselect all annotations
     - **Move Annotation**: Drag a selected annotation.
     - **Modify Annotation**: Hold Shift and drag the vertices of the selected annotation (Rectangle, Polygon).
     - **Resize Annotation**: Hold Ctrl and Zoom in / out to increase / decrease a selected annotation's size.
@@ -147,7 +162,13 @@ The main window consists of several components:
   - **Ctrl + 5**: Make predictions using AutoDistill model.
 
 - **SAM**: After a model is loaded
-  - **Space Bar**: Set working area; finalize prediction.
+  - **Space Bar**: Set working area; confirm prediction; finalize predictions.
   - **Left-Click**: Start a box; press again to end a box.
   - **Ctrl + Left-Click**: Add positive point.
   - **Ctrl + Right-Click**: Add negative point.
+  - **Backspace**: Discard unfinalized predictions.
+
+- **See Anything (YOLOE)**: After a model is loaded
+  - **Space Bar**: Set working area; run prediction; finalize predictions.
+  - **Left-Click**: Start a box; press again to end a box.
+  - **Backspace**: Discard unfinalized predictions.

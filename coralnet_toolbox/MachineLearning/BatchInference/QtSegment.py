@@ -43,6 +43,6 @@ class Segment(Base):
                 self.deploy_model_dialog.predict(self.image_paths)
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
-
+                
         progress_bar.stop_progress()
         progress_bar.close()

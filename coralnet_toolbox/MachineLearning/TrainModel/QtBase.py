@@ -227,7 +227,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Train Model")
-        self.resize(600, 800)
+        self.resize(600, 650)
 
         # Set window settings
         self.setWindowFlags(Qt.Window |

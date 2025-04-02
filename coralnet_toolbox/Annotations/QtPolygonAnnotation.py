@@ -142,12 +142,14 @@ class PolygonAnnotation(Annotation):
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
 
-        self._reduce_precision(points)
+        self._reduce_precision(points, True)
         self.calculate_centroid()
         self.set_cropped_bbox()
 
-    def _reduce_precision(self, points: list):
-        self.points = [QPointF(round(point.x(), 2), round(point.y(), 2)) for point in points]
+    def _reduce_precision(self, points: list, reduce: bool = True):
+        if reduce:
+            points = [QPointF(round(point.x(), 3), round(point.y(), 3)) for point in points]
+        self.points = points
 
     def calculate_centroid(self):
         centroid_x = sum(point.x() for point in self.points) / len(self.points)

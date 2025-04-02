@@ -1,9 +1,12 @@
-import numpy as np
-import torch
-
 from PyQt5.QtCore import QPointF
 
+import numpy as np
+
+import torch
 from torchvision.ops import nms
+
+import supervision as sv
+
 from ultralytics.engine.results import Results
 from ultralytics.models.sam.amg import batched_mask_to_box
 from ultralytics.utils import ops
@@ -207,7 +210,19 @@ class ResultsProcessor:
         cls = int(result.boxes.cls.cpu().numpy()[0])
         cls_name = result.names[cls]
         conf = float(result.boxes.conf.cpu().numpy()[0])
-        points = result.masks.cpu().xy[0].astype(float)
+        
+        # Get the mask and convert to polygon points
+        mask = result.masks.cpu().data.numpy().squeeze().astype(bool)
+        
+        # Convert to biggest polygon
+        polygons = sv.detection.utils.mask_to_polygons(mask)
+        
+        if len(polygons) == 1:
+            points = polygons[0]
+        else:
+            # Grab the index of the largest polygon
+            points = max(polygons, key=lambda x: len(x))
+
         return image_path, cls, cls_name, conf, points
 
     def process_single_segmentation_result(self, result):

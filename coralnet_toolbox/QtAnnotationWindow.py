@@ -21,6 +21,7 @@ from coralnet_toolbox.Tools import (
     PolygonTool,
     RectangleTool,
     SAMTool,
+    SeeAnythingTool,
     SelectTool,
     ZoomTool
 )
@@ -90,6 +91,7 @@ class AnnotationWindow(QGraphicsView):
             "rectangle": RectangleTool(self),
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
+            "see_anything": SeeAnythingTool(self)
         }
         
     def dragEnterEvent(self, event):
@@ -488,13 +490,15 @@ class AnnotationWindow(QGraphicsView):
         """
         # Crop annotations (if image_path and annotations are provided, they are used)
         annotations = self.crop_annotations(image_path, annotations)
-        total = len(annotations)
+        
+        if not len(annotations):
+            return
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, title="Loading Annotations")
         progress_bar.show()
-        progress_bar.start_progress(total)
+        progress_bar.start_progress(len(annotations))
         
         try:
             # Load each annotation and update progress
@@ -506,11 +510,11 @@ class AnnotationWindow(QGraphicsView):
                 self.load_annotation(annotation)
 
                 # Update every 10% of the annotations (or for each item if total is small)
-                if total > 10:
-                    if idx % (total // 10) == 0:
-                        progress_bar.update_progress_percentage((idx / total) * 100)
+                if len(annotations) > 10:
+                    if idx % (len(annotations) // 10) == 0:
+                        progress_bar.update_progress_percentage((idx / len(annotations)) * 100)
                 else:
-                    progress_bar.update_progress_percentage((idx / total) * 100)
+                    progress_bar.update_progress_percentage((idx / len(annotations)) * 100)
                     
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -556,13 +560,17 @@ class AnnotationWindow(QGraphicsView):
 
         if annotations is None:
             annotations = self.get_image_annotations(image_path)
+            
+        if not annotations:
+            QApplication.restoreOverrideCursor()
+            return []
 
         progress_bar = None
         if verbose:
             progress_bar = ProgressBar(self, title="Cropping Annotations")
             progress_bar.show()
             progress_bar.start_progress(len(annotations))
-
+        
         rasterio_image = self.main_window.image_window.rasterio_open(image_path)
         for annotation in annotations:
             try:

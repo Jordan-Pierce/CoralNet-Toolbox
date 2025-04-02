@@ -50,7 +50,7 @@ class DeployGeneratorDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 
-        self.setWindowIcon(get_icon("sam.png"))
+        self.setWindowIcon(get_icon("wizard.png"))
         self.setWindowTitle("FastSAM Generator (Ctrl + 4)")
         self.resize(400, 325)
 
@@ -142,6 +142,19 @@ class DeployGeneratorDialog(QDialog):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
+        
+        # Task dropdown
+        self.use_task_dropdown = QComboBox()
+        self.use_task_dropdown.addItems(["detect", "segment"])
+        self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
+        self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
+        layout.addRow("Task:", self.use_task_dropdown)
+        
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detect)
+        layout.addRow("Max Detections:", self.max_detections_spinbox)
 
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
@@ -155,7 +168,6 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz_spinbox.setRange(512, 65536)
         self.imgsz_spinbox.setSingleStep(1024)
         self.imgsz_spinbox.setValue(self.imgsz)
-        self.imgsz_spinbox.setEnabled(False)  # Grey out the dropdown
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         # Uncertainty threshold controls
@@ -203,29 +215,6 @@ class DeployGeneratorDialog(QDialog):
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
 
-        # Max detections spinbox
-        self.max_detections_spinbox = QSpinBox()
-        self.max_detections_spinbox.setRange(1, 10000)
-        self.max_detections_spinbox.setValue(self.max_detect)
-        label = QLabel("Max Detections")
-        layout.addRow(label, self.max_detections_spinbox)
-
-        # Task dropdown
-        self.use_task_dropdown = QComboBox()
-        self.use_task_dropdown.addItems(["Detect", "Segment"])
-        self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
-        self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
-        label = QLabel("Choose a task to perform")
-        layout.addRow(label, self.use_task_dropdown)
-
-        # SAM dropdown
-        self.use_sam_dropdown = QComboBox()
-        self.use_sam_dropdown.addItems(["False", "True"])
-        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        label = QLabel("Use Predictor for creating Polygons:")
-        label.setStyleSheet("font-weight: bold;")
-        layout.addRow(label, self.use_sam_dropdown)
-
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -262,25 +251,7 @@ class DeployGeneratorDialog(QDialog):
 
     def update_task(self):
         """Update the task based on the dropdown selection."""
-        self.task = self.use_task_dropdown.currentText().lower()
-
-    def is_sam_model_deployed(self):
-        """
-        Check if the SAM model is deployed and update the checkbox state accordingly.
-
-        :return: Boolean indicating whether the SAM model is deployed
-        """
-        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
-            return False
-
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
-
-        if not self.sam_dialog.loaded_model:
-            self.use_sam_dropdown.setCurrentText("False")
-            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
-            return False
-
-        return True
+        self.task = self.use_task_dropdown.currentText()
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -345,13 +316,14 @@ class DeployGeneratorDialog(QDialog):
         try:
             # Get selected model path
             self.model_path = self.models[self.model_combo.currentText()]
-            self.task = self.use_task_dropdown.currentText().lower()
+            self.task = self.use_task_dropdown.currentText()
 
             # Set the parameters
             overrides = dict(model=self.model_path,
                              task=self.task,
                              mode='predict',
                              save=False,
+                             retina_masks=self.task == "segment",
                              max_det=self.get_max_detections(),
                              imgsz=self.get_imgsz(),
                              conf=self.main_window.get_uncertainty_thresh(),
@@ -366,6 +338,7 @@ class DeployGeneratorDialog(QDialog):
                 # Run a blank through the model to initialize it
                 self.loaded_model(np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8))
 
+            progress_bar.finish_progress()
             self.status_bar.setText(f"Model loaded: {self.model_path}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
 
@@ -376,7 +349,6 @@ class DeployGeneratorDialog(QDialog):
             # Restore cursor
             QApplication.restoreOverrideCursor()
             # Stop the progress bar
-            progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
 
@@ -412,36 +384,38 @@ class DeployGeneratorDialog(QDialog):
             # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
 
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+        
         try:
             for image_path in image_paths:
+                progress_bar.update_progress()
                 inputs = self._get_inputs(image_path)
                 if inputs is None:
                     continue
 
                 results = self._apply_model(inputs)
                 results = self._update_results(results, image_path)
-                results = self._apply_sam(results, image_path)
-                results = self._apply_tile_postprocessing(results)
                 self._process_results(results_processor, results)
         except Exception as e:
             print("An error occurred during prediction:", e)
         finally:
             QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
         gc.collect()
         empty_cache()
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
-            if not inputs:
-                return None
-        else:
-            inputs = image_path
-        return inputs
+        return image_path
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
@@ -470,25 +444,10 @@ class DeployGeneratorDialog(QDialog):
 
         return results
 
-    def _apply_sam(self, results, image_path):
-        """Apply SAM to the results if enabled."""
-        # Check if SAM is enabled
-        if self.use_sam_dropdown.currentText() == "True":
-            self.task = 'segment'
-            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
-        return results
-
-    def _apply_tile_postprocessing(self, results):
-        """Apply tile postprocessing if needed."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
-        return results
-
     def _process_results(self, results_processor, results):
         """Process the results using the result processor."""
         # Process the segmentations
-        if self.task.lower() == 'segment' or self.use_sam_dropdown.currentText() == "True":
+        if self.task == 'segment':
             results_processor.process_segmentation_results(results)
         else:
             results_processor.process_detection_results(results)

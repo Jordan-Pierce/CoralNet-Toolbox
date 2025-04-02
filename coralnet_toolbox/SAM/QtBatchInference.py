@@ -28,7 +28,7 @@ class BatchInferenceDialog(QDialog):
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         
-        self.setWindowIcon(get_icon("sam.png"))
+        self.setWindowIcon(get_icon("wizard.png"))
         self.setWindowTitle("Batch Inference")
         self.resize(400, 100)
 
@@ -86,7 +86,7 @@ class BatchInferenceDialog(QDialog):
         # Create a button group for the image checkboxes
         image_options_group = QButtonGroup(self)
 
-        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
+        self.apply_filtered_checkbox = QCheckBox("ᗊ Apply to filtered images")
         self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
         self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
         self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
@@ -121,23 +121,6 @@ class BatchInferenceDialog(QDialog):
         button_box.rejected.connect(self.reject)
 
         self.layout.addWidget(button_box)
-    
-    def update_uncertainty_label(self):
-        """
-        Update the uncertainty threshold label based on the slider value.
-        """
-        # Convert the slider value to a ratio (0-1)
-        value = self.uncertainty_threshold_slider.value() / 100.0
-        self.main_window.update_uncertainty_thresh(value)
-
-    def on_uncertainty_changed(self, value):
-        """
-        Update the slider and label when the shared data changes.
-        
-        :param value: New uncertainty threshold value
-        """
-        self.uncertainty_threshold_slider.setValue(int(value * 100))
-        self.uncertainty_threshold_label.setText(f"{value:.2f}")
         
     def get_selected_image_paths(self):
         """

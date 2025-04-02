@@ -1,9 +1,6 @@
-import os
 from dataclasses import dataclass
 
-
 import cv2
-import torch
 import numpy as np
 
 import supervision as sv
@@ -12,9 +9,6 @@ from transformers import OwlViTForObjectDetection, OwlViTProcessor
 
 from autodistill.detection import CaptionOntology, DetectionBaseModel
 from autodistill.helpers import load_image
-
-HOME = os.path.expanduser("~")
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -27,13 +21,14 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class OWLViTModel(DetectionBaseModel):
     ontology: CaptionOntology
 
-    def __init__(self, ontology: CaptionOntology):
+    def __init__(self, ontology: CaptionOntology, device: str = "cpu"):
         self.ontology = ontology
+        self.device = device
         
         model_name = "google/owlvit-base-patch32"
 
         self.processor = OwlViTProcessor.from_pretrained(model_name)
-        self.model = OwlViTForObjectDetection.from_pretrained(model_name).to(DEVICE)
+        self.model = OwlViTForObjectDetection.from_pretrained(model_name).to(self.device)
 
     def predict(self, input, confidence=0.01):
         """"""
@@ -74,7 +69,7 @@ class OWLViTModel(DetectionBaseModel):
             # Make predictions
             texts = [self.ontology.prompts()]
             class_idx_mapper = {label: idx for idx, label in enumerate(texts[0])}
-            inputs = self.processor(text=texts, images=image, return_tensors="pt")
+            inputs = self.processor(text=texts, images=image, return_tensors="pt").to(self.device)
             outputs = self.model(**inputs)
 
             results = self.processor.post_process_grounded_object_detection(
@@ -93,15 +88,23 @@ class OWLViTModel(DetectionBaseModel):
             final_boxes, final_scores, final_labels = [], [], []
 
             for box, score, label in zip(boxes, scores, labels):
-                box = box.detach().numpy().astype(int).tolist()
+                
+                try:
+                    box = box.detach().cpu().numpy().astype(int).tolist()
+                    score = score.item()
+                    label = class_idx_mapper[label]
+                    
+                    # Amplify scores
+                    if score < confidence:
+                        continue
 
-                # Amplify scores
-                if score.item() * 10 < confidence:
+                    final_boxes.append(box)
+                    final_scores.append(score)
+                    final_labels.append(label)
+                
+                except Exception as e:
+                    print(f"Error: Issue converting predictions:\n{e}")
                     continue
-
-                final_boxes.append(box)
-                final_scores.append(score.item())
-                final_labels.append(class_idx_mapper[label])
 
             if len(final_boxes) == 0:
                 continue

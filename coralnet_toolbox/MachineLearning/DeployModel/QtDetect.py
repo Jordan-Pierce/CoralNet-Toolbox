@@ -18,6 +18,8 @@ from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.utilities import check_model_architecture
 
 
@@ -97,12 +99,20 @@ class Detect(Base):
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
 
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM Model for Creating Polygons")
+        layout = QFormLayout()
+        
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
-
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -196,36 +206,37 @@ class Detect(Base):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+        
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(image_paths))
+        
         try:
             # Loop through the image paths
             for image_path in image_paths:
+                progress_bar.update_progress()
                 inputs = self._get_inputs(image_path)
                 if inputs is None:
                     continue
 
                 results = self._apply_model(inputs)
                 results = self._apply_sam(results, image_path)
-                results = self._apply_tile_postprocessing(results)
                 self._process_results(results_processor, results)
         except Exception as e:
             print("An error occurred during prediction:", e)
         finally:
             QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
+            progress_bar.stop_progress()
+            progress_bar.close()
 
         gc.collect()
         empty_cache()  # Assuming this function is defined elsewhere
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            inputs = self.main_window.tile_processor.make_crops(self.loaded_model, image_path)
-            if not inputs:
-                return None
-        else:
-            inputs = image_path
-        return inputs
+        return image_path
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
@@ -235,6 +246,7 @@ class Detect(Base):
             conf=self.main_window.get_uncertainty_thresh(),
             iou=self.main_window.get_iou_thresh(),
             device=self.main_window.device,
+            retina_masks=self.task == "segment",
             half=True,
             stream=True
         )

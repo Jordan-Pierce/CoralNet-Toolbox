@@ -27,7 +27,6 @@ from coralnet_toolbox.Tile import (
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
-    TileInference as TileInferenceDialog,
 )
 
 # TODO update IO classes to have dialogs
@@ -79,6 +78,12 @@ from coralnet_toolbox.SAM import (
     BatchInferenceDialog as SAMBatchInferenceDialog
 )
 
+from coralnet_toolbox.SeeAnything import (
+    TrainModelDialog as SeeAnythingTrainModelDialog,
+    DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
+    BatchInferenceDialog as SeeAnythingBatchInferenceDialog
+)
+
 from coralnet_toolbox.AutoDistill import (
     DeployModelDialog as AutoDistillDeployModelDialog,
     BatchInferenceDialog as AutoDistillBatchInferenceDialog
@@ -88,8 +93,6 @@ from coralnet_toolbox.CoralNet import (
     AuthenticateDialog as CoralNetAuthenticateDialog,
     DownloadDialog as CoralNetDownloadDialog
 )
-
-from coralnet_toolbox.TileProcessor import TileProcessor
 
 from coralnet_toolbox.BreakTime import SnakeGame
 
@@ -118,7 +121,8 @@ class MainWindow(QMainWindow):
         self.patch_icon = get_icon("patch.png")
         self.rectangle_icon = get_icon("rectangle.png")
         self.polygon_icon = get_icon("polygon.png")
-        self.sam_icon = get_icon("sam.png")
+        self.sam_icon = get_icon("wizard.png")
+        self.see_anything_icon = get_icon("eye.png")
         self.tile_icon = get_icon("tile.png")
         self.turtle_icon = get_icon("turtle.png")
         self.rabbit_icon = get_icon("rabbit.png")
@@ -217,9 +221,14 @@ class MainWindow(QMainWindow):
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
         
         # Create dialogs (SAM)
-        self.sam_deploy_model_dialog = SAMDeployPredictorDialog(self)
+        self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
         self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
+        
+        # Create dialogs (See Anything)
+        self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
+        self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
+        self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
         
         # Create dialogs (AutoDistill)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
@@ -229,10 +238,6 @@ class MainWindow(QMainWindow):
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
-        self.tile_inference_dialog = TileInferenceDialog(self)
-        
-        # Create the tile processor
-        self.tile_processor = TileProcessor(self)
         
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
@@ -281,12 +286,10 @@ class MainWindow(QMainWindow):
 
         # Raster submenu
         self.import_rasters_menu = self.import_menu.addMenu("Rasters")
-
         # Import Images
         self.import_images_action = QAction("Images", self)
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
-        
         # Import Frames
         self.import_frames_action = QAction("Frames from Video", self)
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
@@ -294,17 +297,14 @@ class MainWindow(QMainWindow):
 
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
-
         # Import Labels
         self.import_labels_action = QAction("Labels (JSON)", self)
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
-        
         # Import CoralNet Labels
         self.import_coralnet_labels_action = QAction("CoralNet Labels (CSV)", self)
         self.import_coralnet_labels_action.triggered.connect(self.import_coralnet_labels.import_coralnet_labels)
         self.import_labels_menu.addAction(self.import_coralnet_labels_action)
-
         # Import TagLab Labels
         self.import_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
         self.import_taglab_labels_action.triggered.connect(self.import_taglab_labels.import_taglab_labels)
@@ -312,22 +312,18 @@ class MainWindow(QMainWindow):
 
         # Annotations submenu
         self.import_annotations_menu = self.import_menu.addMenu("Annotations")
-
         # Import Annotations
         self.import_annotations_action = QAction("Annotations (JSON)", self)
         self.import_annotations_action.triggered.connect(self.import_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_annotations_action)
-
         # Import CoralNet Annotations
         self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_annotations_action.triggered.connect(self.import_coralnet_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_coralnet_annotations_action)
-
         # Import Viscore Annotations
         self.import_viscore_annotations_action = QAction("Viscore (CSV)", self)
         self.import_viscore_annotations_action.triggered.connect(self.open_import_viscore_annotations_dialog)
         self.import_annotations_menu.addAction(self.import_viscore_annotations_action)
-
         # Import TagLab Annotations
         self.import_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.import_taglab_annotations_action.triggered.connect(self.import_taglab_annotations.import_annotations)
@@ -335,12 +331,10 @@ class MainWindow(QMainWindow):
 
         # Dataset submenu
         self.import_dataset_menu = self.import_menu.addMenu("Dataset")
-
         # Import Detection Dataset submenu
         self.import_detect_dataset_action = QAction("Detect", self)
         self.import_detect_dataset_action.triggered.connect(self.detect_import_dataset_dialog.exec_)
         self.import_dataset_menu.addAction(self.import_detect_dataset_action)
-
         # Import Segmentation Dataset submenu
         self.import_segment_dataset_action = QAction("Segment", self)
         self.import_segment_dataset_action.triggered.connect(self.segment_import_dataset_dialog.exec_)
@@ -351,12 +345,10 @@ class MainWindow(QMainWindow):
 
         # Labels submenu
         self.export_labels_menu = self.export_menu.addMenu("Labels")
-
         # Export Labels
         self.export_labels_action = QAction("Labels (JSON)", self)
         self.export_labels_action.triggered.connect(self.export_labels.export_labels)
         self.export_labels_menu.addAction(self.export_labels_action)
-
         # Export TagLab Labels
         self.export_taglab_labels_action = QAction("TagLab Labels (JSON)", self)
         self.export_taglab_labels_action.triggered.connect(self.export_taglab_labels.export_taglab_labels)
@@ -364,22 +356,18 @@ class MainWindow(QMainWindow):
 
         # Annotations submenu
         self.export_annotations_menu = self.export_menu.addMenu("Annotations")
-
         # Export Annotations
         self.export_annotations_action = QAction("Annotations (JSON)", self)
         self.export_annotations_action.triggered.connect(self.export_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_annotations_action)
-
         # Export CoralNet Annotations
         self.export_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.export_coralnet_annotations_action.triggered.connect(self.export_coralnet_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_coralnet_annotations_action)
-
         # Export Viscore Annotations
         self.export_viscore_annotations_action = QAction("Viscore (CSV, JSON)", self)
         self.export_viscore_annotations_action.triggered.connect(self.open_export_viscore_annotations_dialog)
         self.export_annotations_menu.addAction(self.export_viscore_annotations_action)
-
         # Export TagLab Annotations
         self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.export_taglab_annotations_action.triggered.connect(self.export_taglab_annotations.export_annotations)
@@ -387,17 +375,14 @@ class MainWindow(QMainWindow):
 
         # Dataset submenu
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
-
         # Export Classification Dataset
         self.export_classify_dataset_action = QAction("Classify", self)
         self.export_classify_dataset_action.triggered.connect(self.open_classify_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_classify_dataset_action)
-
         # Export Detection Dataset
         self.export_detect_dataset_action = QAction("Detect", self)
         self.export_detect_dataset_action.triggered.connect(self.open_detect_export_dataset_dialog)
         self.export_dataset_menu.addAction(self.export_detect_dataset_action)
-
         # Export Segmentation Dataset
         self.export_segment_dataset_action = QAction("Segment", self)
         self.export_segment_dataset_action.triggered.connect(self.open_segment_export_dataset_dialog)
@@ -410,12 +395,10 @@ class MainWindow(QMainWindow):
         self.new_project_action = QAction("New Project", self)
         self.new_project_action.triggered.connect(self.open_new_project)
         self.file_menu.addAction(self.new_project_action)
-        
         # Open Project
         self.open_project_action = QAction("Open Project (JSON)", self)
         self.open_project_action.triggered.connect(self.open_open_project_dialog)
         self.file_menu.addAction(self.open_project_action)
-
         # Save Project
         self.save_project_action = QAction("Save Project (JSON)", self)
         self.save_project_action.setToolTip("Ctrl + Shift + S")
@@ -432,54 +415,35 @@ class MainWindow(QMainWindow):
 
         # Tile Dataset submenu
         self.tile_dataset_menu = self.tile_menu.addMenu("Tile Dataset")
-        
         # Tile Classify Dataset
         self.classify_tile_dataset_action = QAction("Classify", self)
         self.classify_tile_dataset_action.triggered.connect(self.open_classify_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.classify_tile_dataset_action)
-        
         # Tile Detect Dataset
         self.detect_tile_dataset_action = QAction("Detect", self)
         self.detect_tile_dataset_action.triggered.connect(self.open_detect_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.detect_tile_dataset_action)
-
         # Tile Segment Dataset
         self.segment_tile_dataset_action = QAction("Segment", self)
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
-        
-        # Tile Inference action
-        self.tile_inference_action = QAction("Tile Inference", self)
-        self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
-        # self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
-
+        # CoralNet Authenticate
         self.coralnet_authenticate_action = QAction("Authenticate", self)
         self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
         self.coralnet_menu.addAction(self.coralnet_authenticate_action)
-
-        # self.coralnet_upload_action = QAction("Upload", self)
-        # self.coralnet_upload_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.coralnet_menu.addAction(self.coralnet_upload_action)
-
+        # CoralNet Download 
         self.coralnet_download_action = QAction("Download", self)
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
-
-        # self.coralnet_model_api_action = QAction("Model API", self)
-        # self.coralnet_model_api_action.triggered.connect(
-        #     lambda: QMessageBox.information(self, "Placeholder", "This is not yet implemented."))
-        # self.coralnet_menu.addAction(self.coralnet_model_api_action)
 
         # Ultralytics menu
         self.ml_menu = self.menu_bar.addMenu("Ultralytics")
 
         # Merge Datasets submenu
         self.ml_merge_datasets_menu = self.ml_menu.addMenu("Merge Datasets")
-
         # Merge Classification Datasets
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
@@ -487,17 +451,14 @@ class MainWindow(QMainWindow):
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
-
         # Train Classification Model
         self.ml_classify_train_model_action = QAction("Classify", self)
         self.ml_classify_train_model_action.triggered.connect(self.open_classify_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_classify_train_model_action)
-
         # Train Detection Model
         self.ml_detect_train_model_action = QAction("Detect", self)
         self.ml_detect_train_model_action.triggered.connect(self.open_detect_train_model_dialog)
         self.ml_train_model_menu.addAction(self.ml_detect_train_model_action)
-
         # Train Segmentation Model
         self.ml_segment_train_model_action = QAction("Segment", self)
         self.ml_segment_train_model_action.triggered.connect(self.open_segment_train_model_dialog)
@@ -505,17 +466,14 @@ class MainWindow(QMainWindow):
 
         # Evaluate Model submenu
         self.ml_evaluate_model_menu = self.ml_menu.addMenu("Evaluate Model")
-
         # Evaluate Classification Model
         self.ml_classify_evaluate_model_action = QAction("Classify", self)
         self.ml_classify_evaluate_model_action.triggered.connect(self.open_classify_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_classify_evaluate_model_action)
-
         # Evaluate Detection Model
         self.ml_detect_evaluate_model_action = QAction("Detect", self)
         self.ml_detect_evaluate_model_action.triggered.connect(self.open_detect_evaluate_model_dialog)
         self.ml_evaluate_model_menu.addAction(self.ml_detect_evaluate_model_action)
-
         # Evaluate Segmentation Model
         self.ml_segment_evaluate_model_action = QAction("Segment", self)
         self.ml_segment_evaluate_model_action.triggered.connect(self.open_segment_evaluate_model_dialog)
@@ -525,20 +483,16 @@ class MainWindow(QMainWindow):
         self.ml_optimize_model_action = QAction("Optimize Model", self)
         self.ml_optimize_model_action.triggered.connect(self.open_optimize_model_dialog)
         self.ml_menu.addAction(self.ml_optimize_model_action)
-
         # Deploy Model submenu
         self.ml_deploy_model_menu = self.ml_menu.addMenu("Deploy Model")
-
         # Deploy Classification Model
         self.ml_classify_deploy_model_action = QAction("Classify", self)
         self.ml_classify_deploy_model_action.triggered.connect(self.open_classify_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_classify_deploy_model_action)
-
         # Deploy Detection Model
         self.ml_detect_deploy_model_action = QAction("Detect", self)
         self.ml_detect_deploy_model_action.triggered.connect(self.open_detect_deploy_model_dialog)
         self.ml_deploy_model_menu.addAction(self.ml_detect_deploy_model_action)
-
         # Deploy Segmentation Model
         self.ml_segment_deploy_model_action = QAction("Segment", self)
         self.ml_segment_deploy_model_action.triggered.connect(self.open_segment_deploy_model_dialog)
@@ -546,17 +500,14 @@ class MainWindow(QMainWindow):
 
         # Batch Inference submenu
         self.ml_batch_inference_menu = self.ml_menu.addMenu("Batch Inference")
-
         # Batch Inference Classification
         self.ml_classify_batch_inference_action = QAction("Classify", self)
         self.ml_classify_batch_inference_action.triggered.connect(self.open_classify_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_classify_batch_inference_action)
-
         # Batch Inference Detection
         self.ml_detect_batch_inference_action = QAction("Detect", self)
         self.ml_detect_batch_inference_action.triggered.connect(self.open_detect_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_detect_batch_inference_action)
-
         # Batch Inference Segmentation
         self.ml_segment_batch_inference_action = QAction("Segment", self)
         self.ml_segment_batch_inference_action.triggered.connect(self.open_segment_batch_inference_dialog)
@@ -564,33 +515,42 @@ class MainWindow(QMainWindow):
 
         # SAM menu
         self.sam_menu = self.menu_bar.addMenu("SAM")
-
         # Deploy Model submenu
         self.sam_deploy_model_menu = self.sam_menu.addMenu("Deploy Model")
-
         # Deploy Predictor
         self.sam_deploy_model_action = QAction("Predictor", self)
-        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_model_dialog)
+        self.sam_deploy_model_action.triggered.connect(self.open_sam_deploy_predictor_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_model_action)
-
         # Deploy Generator
         self.sam_deploy_generator_action = QAction("Generator", self)
         self.sam_deploy_generator_action.triggered.connect(self.open_sam_deploy_generator_dialog)
         self.sam_deploy_model_menu.addAction(self.sam_deploy_generator_action)
-
         # Batch Inference
         self.sam_batch_inference_action = QAction("Batch Inference", self)
         self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
         self.sam_menu.addAction(self.sam_batch_inference_action)
+        
+        # See Anything menu
+        self.see_anything_menu = self.menu_bar.addMenu("See Anything")
+        # Train Model
+        self.see_anything_train_model_action = QAction("Train Model", self)
+        self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
+        self.see_anything_menu.addAction(self.see_anything_train_model_action)
+        # Deploy Model
+        self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
+        self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
+        self.see_anything_menu.addAction(self.see_anything_deploy_predictor_action)
+        # Batch Inference
+        self.see_anything_batch_inference_action = QAction("Batch Inference", self)
+        self.see_anything_batch_inference_action.triggered.connect(self.open_see_anything_batch_inference_dialog)
+        self.see_anything_menu.addAction(self.see_anything_batch_inference_action)
 
         # Auto Distill menu
         self.auto_distill_menu = self.menu_bar.addMenu("AutoDistill")
-
         # Deploy Model
         self.auto_distill_deploy_model_action = QAction("Deploy Model", self)
         self.auto_distill_deploy_model_action.triggered.connect(self.open_auto_distill_deploy_model_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_deploy_model_action)
-
         # Batch Inference
         self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
         self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
@@ -603,15 +563,12 @@ class MainWindow(QMainWindow):
         self.check_for_updates_action = QAction("Check for Updates", self)
         self.check_for_updates_action.triggered.connect(self.open_check_for_updates_dialog)
         self.help_menu.addAction(self.check_for_updates_action)
-        
         # Issues / Feature Requests
         self.create_issue_action = QAction("Issues / Feature Requests", self)
         self.create_issue_action.triggered.connect(self.open_create_new_issue_dialog)
         self.help_menu.addAction(self.create_issue_action)
-        
         # Create Break Time submenu
         break_time_menu = self.help_menu.addMenu("Take a Break")
-        
         # Snake Game
         snake_game_action = QAction("Snake Game", self)
         snake_game_action.triggered.connect(self.open_snake_game_dialog)
@@ -668,13 +625,11 @@ class MainWindow(QMainWindow):
         self.sam_tool_action.setCheckable(True)
         self.sam_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.sam_tool_action)
-
-        self.toolbar.addSeparator()
-
-        self.tile_inference_tool_action = QAction(self.tile_icon, "Tile Inference", self)
-        self.tile_inference_tool_action.setCheckable(True)
-        self.tile_inference_tool_action.triggered.connect(self.toggle_tool)
-        # self.toolbar.addAction(self.tile_inference_tool_action)
+        
+        self.see_anything_tool_action = QAction(self.see_anything_icon, "See Anything (YOLOE)", self)
+        self.see_anything_tool_action.setCheckable(True)
+        self.see_anything_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.see_anything_tool_action)
 
         self.toolbar.addSeparator()
 
@@ -903,6 +858,8 @@ class MainWindow(QMainWindow):
                 pass  # Do nothing, let the OS handle the restore
             
     def dragEnterEvent(self, event):
+        self.untoggle_all_tools()
+
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
@@ -914,6 +871,8 @@ class MainWindow(QMainWindow):
                 self.import_images.dragEnterEvent(event)
 
     def dropEvent(self, event):
+        self.untoggle_all_tools()
+
         urls = event.mimeData().urls()
         file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
 
@@ -921,13 +880,18 @@ class MainWindow(QMainWindow):
             # Check if a single JSON file was dropped
             if len(file_names) == 1 and file_names[0].lower().endswith('.json'):
                 # Open as a project file
-                self.open_project_dialog.file_path_edit.setText(file_names[0])
+                path = file_names[0]
+                self.open_project_dialog.file_path_edit.setText(path)
                 self.open_project_dialog.load_selected_project()
+                self.current_project_path = self.open_project_dialog.current_project_path
+                self.update_project_label()
             else:
                 # Handle as image imports
                 self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
+        self.untoggle_all_tools()
+        
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
@@ -949,7 +913,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.tile_inference_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("select")
             else:
@@ -961,8 +925,8 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.tile_inference_tool_action.setChecked(False)
-
+                self.see_anything_tool_action.setChecked(False)
+                
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
@@ -973,8 +937,8 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.tile_inference_tool_action.setChecked(False)
-
+                self.see_anything_tool_action.setChecked(False)
+                
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
@@ -985,14 +949,14 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-                self.tile_inference_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
                 
         elif action == self.sam_tool_action:
-            if not self.sam_deploy_model_dialog.loaded_model:
+            if not self.sam_deploy_predictor_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
                 QMessageBox.warning(self,
                                     "SAM Deploy Predictor",
@@ -1003,28 +967,28 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
-                self.tile_inference_tool_action.setChecked(False)
-
+        
                 self.toolChanged.emit("sam")
             else:
                 self.toolChanged.emit(None)
                 
-        elif action == self.tile_inference_tool_action: 
-            if not self.tile_processor.params_set():
-                self.tile_inference_tool_action.setChecked(False)
+        elif action == self.see_anything_tool_action:
+            if not self.see_anything_deploy_predictor_dialog.loaded_model:
+                self.see_anything_tool_action.setChecked(False)
                 QMessageBox.warning(self,
-                                    "Tile Inference",
-                                    "You must set the parameters for Tile Inference before using the tool.")
-                return          
+                                    "See Anything (YOLOE)",
+                                    "You must deploy a Predictor before using the tool.")
+                return
             if state:
                 self.select_tool_action.setChecked(False)
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
-
-            # Emit None to close other tools
-            self.toolChanged.emit(None)
+                
+                self.toolChanged.emit("see_anything")
+            else:
+                self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
         # Unlock the label lock
@@ -1036,8 +1000,8 @@ class MainWindow(QMainWindow):
         self.rectangle_tool_action.setChecked(False)
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
-        self.tile_inference_tool_action.setChecked(False)
-
+        self.see_anything_tool_action.setChecked(False)
+        
         # Emit to reset the tool
         self.toolChanged.emit(None)
         
@@ -1051,49 +1015,55 @@ class MainWindow(QMainWindow):
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-            self.tile_inference_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-            self.tile_inference_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(True)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-            self.tile_inference_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
-            self.tile_inference_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
-            self.tile_inference_tool_action.setChecked(False)
-        elif tool == "tile_inference":
+            self.see_anything_tool_action.setChecked(False)
+            
+        elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-            self.tile_inference_tool_action.setChecked(True)
+            self.see_anything_tool_action.setChecked(True)
+
         else:
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
             self.rectangle_tool_action.setChecked(False)
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
-            self.tile_inference_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
             
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
@@ -1481,26 +1451,6 @@ class MainWindow(QMainWindow):
             self.segment_tile_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
-    def open_tile_inference_dialog(self):
-        
-        if not self.image_window.image_paths:
-            # Check if there are any images in the project
-            QMessageBox.warning(self,
-                                "No Images Loaded",
-                                "Please load images into the project before setting Tile Inference parameters.")
-            return
-        
-        try:
-            self.untoggle_all_tools()
-            self.tile_inference_dialog.exec_()
-            
-            # Get the tile parameters and tile inference parameters
-            tile_params, tile_inference_params = self.tile_inference_dialog.get_params()
-            self.tile_processor.set_params(tile_params, tile_inference_params)
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_train_model_dialog(self):
         try:
@@ -1653,7 +1603,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_sam_deploy_model_dialog(self):
+    def open_sam_deploy_predictor_dialog(self):
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Predictor",
@@ -1662,7 +1612,7 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.sam_deploy_model_dialog.exec_()
+            self.sam_deploy_predictor_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -1695,6 +1645,46 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_see_anything_train_model_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_train_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_see_anything_deploy_predictor_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE)",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_deploy_predictor_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_see_anything_batch_inference_dialog(self):
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE) Batch Inference",
+                                "No images are present in the project.")
+            return
+        
+        if not self.see_anything_deploy_predictor_dialog.loaded_model:
+            QMessageBox.warning(self,
+                                "See Anything (YOLOE) Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+            if self.see_anything_batch_inference_dialog.has_valid_sources():
+                self.see_anything_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

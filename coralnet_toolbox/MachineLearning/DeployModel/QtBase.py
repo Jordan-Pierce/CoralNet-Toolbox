@@ -59,6 +59,8 @@ class Base(QDialog):
         self.setup_labels_layout()
         # Setup parameters layout
         self.setup_parameters_layout()
+        # Setup SAM layout
+        self.setup_sam_layout()
         # Setup the button layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -97,6 +99,9 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_parameters_layout(self):
+        raise NotImplementedError("Subclasses must implement this method")
+    
+    def setup_sam_layout(self):
         raise NotImplementedError("Subclasses must implement this method")
 
     def setup_buttons_layout(self):
@@ -204,10 +209,10 @@ class Base(QDialog):
 
         :return: Boolean indicating whether the SAM model is deployed
         """
-        if not hasattr(self.main_window, 'sam_deploy_model_dialog'):
+        if not hasattr(self.main_window, 'sam_deploy_predictor_dialog'):
             return False
 
-        self.sam_dialog = self.main_window.sam_deploy_model_dialog
+        self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
             self.use_sam_dropdown.setCurrentText("False")
@@ -303,6 +308,16 @@ class Base(QDialog):
                 f"until added manually:\n{missing_labels_str}"
             )
 
+    def add_labels_to_label_window(self):
+        """
+        Add labels to the label window based on the class mapping.
+        """
+        if self.class_mapping:
+            for label in self.class_mapping.values():
+                self.label_window.add_label_if_not_exists(label['short_label_code'],
+                                                          label['long_label_code'],
+                                                          QColor(*label['color']))
+                
     def handle_missing_class_mapping(self):
         """
         Handle the case when the class mapping file is missing.
@@ -314,15 +329,6 @@ class Base(QDialog):
         if reply == QMessageBox.Yes:
             self.create_generic_labels()
 
-    def add_labels_to_label_window(self):
-        """
-        Add labels to the label window based on the class mapping.
-        """
-        if self.class_mapping:
-            for label in self.class_mapping.values():
-                self.label_window.add_label_if_not_exists(label['short_label_code'],
-                                                          label['long_label_code'],
-                                                          QColor(*label['color']))
 
     def create_generic_labels(self):
         """

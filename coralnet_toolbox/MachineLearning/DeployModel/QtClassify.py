@@ -65,6 +65,9 @@ class Classify(Base):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        pass
 
     def load_model(self):
         """

@@ -60,6 +60,7 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 - [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM)
 - [`CoralSCOP`](https://github.com/zhengziqiang/CoralSCOP)
 - [`SAM`](https://github.com/facebookresearch/segment-anything)
+- [`YOLOE`](https://github.com/THU-MIG/yoloe)
 - [`AutoDistill`](https://github.com/autodistill)
   - [`Grounding Dino`](https://huggingface.co/docs/transformers/en/model_doc/grounding-dino)
   - [`OWLViT`](https://huggingface.co/docs/transformers/en/model_doc/owlvit)
@@ -121,6 +122,17 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
         <em>Patch-based LAI Classification</em>
       </td>
     </tr>
+    <tr>
+      <td align="center">
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" height="200"/>
+        <br>
+        <em>Polygon Classification</em>
+      </td>
+      <td align="center">
+      </td>
+    </tr>
   </table>
 </div>
 
@@ -136,10 +148,9 @@ Enhance your CoralNet experience with these tools:
 - 🟣 Polygons: Create polygons (instance masks)
 - 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
   - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
+- 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically
 - 🧪 AutoDistill: Use `AutoDistill` to access the following for creating rectangles and polygons:
-    - `Grounding DINO` 
-    - `OWLViT`
-    - `OmDetTurbo`
+  - Uses `Grounding DINO`, `OWLViT`, `OmDetTurbo`
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
@@ -151,9 +162,7 @@ Enhance your CoralNet experience with these tools:
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 
 ### TODO
-- 🏁 Tile Inference: Perform Tile Inference on large images using [`YOLO-Patch-Based-Inference`](https://github.com/Koldim2001/YOLO-Patch-Based-Inference)
 - 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
-- 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 
