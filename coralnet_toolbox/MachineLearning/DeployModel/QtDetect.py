@@ -99,12 +99,20 @@ class Detect(Base):
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
 
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM Model for Creating Polygons")
+        layout = QFormLayout()
+        
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
-
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -246,6 +254,7 @@ class Detect(Base):
             conf=self.main_window.get_uncertainty_thresh(),
             iou=self.main_window.get_iou_thresh(),
             device=self.main_window.device,
+            retina_masks=self.task == "segment",
             half=True,
             stream=True
         )

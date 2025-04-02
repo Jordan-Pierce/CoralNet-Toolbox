@@ -80,6 +80,7 @@ from coralnet_toolbox.SAM import (
 )
 
 from coralnet_toolbox.SeeAnything import (
+    TrainModelDialog as SeeAnythingTrainModelDialog,
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
     BatchInferenceDialog as SeeAnythingBatchInferenceDialog
 )
@@ -228,6 +229,7 @@ class MainWindow(QMainWindow):
         self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
         
         # Create dialogs (See Anything)
+        self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
         
@@ -542,6 +544,10 @@ class MainWindow(QMainWindow):
         
         # See Anything menu
         self.see_anything_menu = self.menu_bar.addMenu("See Anything")
+        # Train Model
+        self.see_anything_train_model_action = QAction("Train Model", self)
+        self.see_anything_train_model_action.triggered.connect(self.open_see_anything_train_model_dialog)
+        self.see_anything_menu.addAction(self.see_anything_train_model_action)
         # Deploy Model
         self.see_anything_deploy_predictor_action = QAction("Deploy Predictor", self)
         self.see_anything_deploy_predictor_action.triggered.connect(self.open_see_anything_deploy_predictor_dialog)
@@ -1726,6 +1732,13 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.sam_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_see_anything_train_model_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.see_anything_train_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             

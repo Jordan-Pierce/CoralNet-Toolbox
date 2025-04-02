@@ -9,23 +9,17 @@ import datetime
 import traceback
 from pathlib import Path
 
-from ultralytics import YOLO, RTDETR
-import ultralytics.data.build as build
-import ultralytics.models.yolo.classify.train as train_build
-from ultralytics.data.dataset import YOLODataset
-from ultralytics.data.dataset import ClassificationDataset
+from ultralytics import YOLOE
+from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
+                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, )
 
 import torch
 from torch.cuda import empty_cache
 
-from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
-from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
-from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
 from coralnet_toolbox.Icons import get_icon
@@ -60,14 +54,10 @@ class TrainModelWorker(QThread):
         super().__init__()
         self.params = params
         self.device = device
-        
-        self.is_yolo = True
-        
+                
         self.model = None
         self.model_path = None
-        
-        self.weighted = False
-        
+                
     def pre_run(self):
         """
         Set up the model and prepare parameters for training.
@@ -75,46 +65,31 @@ class TrainModelWorker(QThread):
         try:
             # Extract model path
             self.model_path = self.params.pop('model', None)
-            # Get the weighted flag
-            self.weighted = self.params.pop('weighted', False)
-            # Whether to use YOLO or RTDETR
-            self.is_yolo = False if 'detr' in self.model_path.lower() else True
-            
-            # Determine if ultralytics or community
-            if self.model_path in get_available_configs(task=self.params['task']):
-                self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
-                # Cannot use weighted sampling with community models
-                self.weighted = False
-            
-            # Use the custom dataset class for weighted sampling
-            if self.weighted and self.params['task'] == 'classify':
-                train_build.ClassificationDataset = WeightedClassificationDataset
-            elif self.weighted and self.params['task'] in ['detect', 'segment']:
-                build.YOLODataset = WeightedInstanceDataset
-                
             # Load the model
-            if self.is_yolo:
-                self.model = YOLO(self.model_path)
-            else:
-                self.model = RTDETR(self.model_path)
+            self.model = YOLOE(self.model_path)
                 
-            # Set the task in the model itself
-            self.model.task = self.params['task']
-                
-            # Freeze layers, freeze encoder
-            freeze_layers = self.params.pop('freeze_layers', None)
+            freeze = []
+            training_mode = self.params.pop('training_mode', 'linear-probing')
             
-            if freeze_layers:
-                # Calculate the number of layers to freeze
-                num_layers = len(self.model.model.model[0:-1])
-                num_layers = int(num_layers * freeze_layers)
-                freeze_layers = [_ for _ in range(0, num_layers)]
-                print(f"Encoder layers frozen ({len(freeze_layers)})")
-            else:
-                freeze_layers = []
+            if training_mode == 'linear-probing':
+                head_index = len(self.model.model.model) - 1
+                freeze = [str(f) for f in range(0, head_index)]
+                for name, child in self.model.model.model[-1].named_children():
+                    if "cv3" not in name:
+                        freeze.append(f"{head_index}.{name}")
+
+                freeze.extend(
+                    [
+                        f"{head_index}.cv3.0.0",
+                        f"{head_index}.cv3.0.1",
+                        f"{head_index}.cv3.1.0",
+                        f"{head_index}.cv3.1.1",
+                        f"{head_index}.cv3.2.0",
+                        f"{head_index}.cv3.2.1",
+                    ]
+                )
             
-            # Set the freeze parameter for ultralytics
-            self.params['freeze'] = freeze_layers
+            self.params['freeze'] = freeze
 
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
@@ -133,7 +108,9 @@ class TrainModelWorker(QThread):
             self.pre_run()
 
             # Train the model
-            self.model.train(**self.params, device=self.device)
+            self.model.train(**self.params, 
+                             trainer=YOLOEPESegTrainer,
+                             device=self.device)
             
             # Post-run cleanup
             self.post_run()
@@ -154,11 +131,7 @@ class TrainModelWorker(QThread):
         """
         Clean up resources after training.
         """
-        # Revert to the original dataset class without weighted sampling
-        if self.weighted and self.params['task'] == 'classify':
-            train_build.ClassificationDataset = ClassificationDataset
-        elif self.weighted and self.params['task'] in ['detect', 'segment']:
-            build.YOLODataset = YOLODataset
+        pass
 
     def evaluate_model(self):
         """
@@ -213,7 +186,7 @@ class TrainModelWorker(QThread):
         empty_cache()
 
 
-class Base(QDialog):
+class TrainModelDialog(QDialog):
     """
     Dialog for training machine learning models for image classification, object detection,
     and instance segmentation.
@@ -225,7 +198,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
 
-        self.setWindowIcon(get_icon("coral.png"))
+        self.setWindowIcon(get_icon("eye.png"))
         self.setWindowTitle("Train Model")
         self.resize(600, 650)
 
@@ -273,7 +246,7 @@ class Base(QDialog):
 
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Details on different hyperparameters can be found "
-                            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
+                            "<a href='https://docs.ultralytics.com/models/yoloe/#train-usage'>here</a>.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -283,7 +256,37 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_dataset_layout(self):
-        raise NotImplementedError("Subclasses must implement this method.")
+        """Setup the dataset layout."""
+        
+        self.task = "segment"
+        self.imgsz = 640
+        self.batch = 4
+        
+        group_box = QGroupBox("Dataset")
+        layout = QFormLayout()
+
+        # Dataset YAML
+        self.dataset_edit = QLineEdit()
+        self.dataset_button = QPushButton("Browse...")
+        self.dataset_button.clicked.connect(self.browse_dataset_yaml)
+
+        dataset_yaml_layout = QHBoxLayout()
+        dataset_yaml_layout.addWidget(self.dataset_edit)
+        dataset_yaml_layout.addWidget(self.dataset_button)
+        layout.addRow("Dataset YAML:", dataset_yaml_layout)
+
+        # Class Mapping
+        self.mapping_edit = QLineEdit()
+        self.mapping_button = QPushButton("Browse...")
+        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
+
+        class_mapping_layout = QHBoxLayout()
+        class_mapping_layout.addWidget(self.mapping_edit)
+        class_mapping_layout.addWidget(self.mapping_button)
+        layout.addRow("Class Mapping:", class_mapping_layout)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_model_layout(self):
         """
@@ -361,12 +364,19 @@ class Base(QDialog):
         # Name
         self.name_edit = QLineEdit()
         form_layout.addRow("Name:", self.name_edit)
+        
+        # Fine-tune or Linear Probing
+        self.training_mode = QComboBox()
+        self.training_mode.addItems(["linear-probe", "fine-tune"])
+        self.training_mode.setCurrentText("linear-probe")
+        self.training_mode.currentTextChanged.connect(self.update_by_training_mode)
+        form_layout.addRow("Training Mode:", self.training_mode)
 
         # Epochs
         self.epochs_spinbox = QSpinBox()
         self.epochs_spinbox.setMinimum(1)
         self.epochs_spinbox.setMaximum(1000)
-        self.epochs_spinbox.setValue(100)
+        self.epochs_spinbox.setValue(2)
         form_layout.addRow("Epochs:", self.epochs_spinbox)
 
         # Patience
@@ -412,18 +422,6 @@ class Base(QDialog):
         self.save_period_spinbox.setValue(-1)
         form_layout.addRow("Save Period:", self.save_period_spinbox)
 
-        # Freeze Layers
-        self.freeze_layers_spinbox = QDoubleSpinBox()
-        self.freeze_layers_spinbox.setMinimum(0.0)
-        self.freeze_layers_spinbox.setMaximum(1.0)
-        self.freeze_layers_spinbox.setSingleStep(0.01)
-        self.freeze_layers_spinbox.setValue(0.0)
-        form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
-
-        # Weighted Dataset
-        self.weighted_combo = create_bool_combo()
-        form_layout.addRow("Weighted:", self.weighted_combo)
-
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
         self.dropout_spinbox.setMinimum(0.0)
@@ -434,7 +432,7 @@ class Base(QDialog):
         # Optimizer
         self.optimizer_combo = QComboBox()
         self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
-        self.optimizer_combo.setCurrentText("auto")
+        self.optimizer_combo.setCurrentText("AdamW")
         form_layout.addRow("Optimizer:", self.optimizer_combo)
 
         # Val
@@ -455,20 +453,7 @@ class Base(QDialog):
         form_layout.addRow("", self.add_param_button)
 
         self.layout.addWidget(group_box)
-
-    def setup_buttons_layout(self):
-        """
-
-        """
-        # Add OK and Cancel buttons
-        self.buttons = QPushButton("OK")
-        self.buttons.clicked.connect(self.accept)
-        self.layout.addWidget(self.buttons)
-
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.clicked.connect(self.reject)
-        self.layout.addWidget(self.cancel_button)
-
+        
     def add_parameter_pair(self):
         """
         Add a new pair of parameter name and value input fields.
@@ -482,8 +467,50 @@ class Base(QDialog):
         self.custom_params.append((param_name, param_value))
         self.custom_params_layout.addLayout(param_layout)
 
+    def setup_buttons_layout(self):
+        """
+
+        """
+        # Add OK and Cancel buttons
+        self.buttons = QPushButton("OK")
+        self.buttons.clicked.connect(self.accept)
+        self.layout.addWidget(self.buttons)
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject)
+        self.layout.addWidget(self.cancel_button)
+        
+    def update_by_training_mode(self):
+        """Update certain parameters depending on the fine-tune / linear probing"""
+        # Get the current value of the fine-tune combo box
+        training_mode = self.training_mode.currentText()
+        
+        if training_mode == "fine-tune":
+            # Fine-tune mode
+            self.epochs_spinbox.setValue(80)
+            self.patience_spinbox.setValue(20)
+        else: 
+            self.epochs_spinbox.setValue(2)
+            self.patience_spinbox.setValue(1)
+        
     def load_model_combobox(self):
-        raise NotImplementedError("Subclasses must implement this method.")
+        """Load the model combobox with the available models."""
+        self.model_combo.clear()
+        self.model_combo.setEditable(True)
+
+        standard_models = [
+            'yoloe-v8s-seg.pt',
+            'yoloe-v8m-seg.pt',
+            'yoloe-v8l-seg.pt',
+            'yoloe-11s-seg.pt',
+            'yoloe-11m-seg.pt',
+            'yoloe-11l-seg.pt',
+        ]
+
+        self.model_combo.addItems(standard_models)
+
+        # Set the default model
+        self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
 
     def browse_dataset_dir(self):
         """
@@ -544,11 +571,14 @@ class Base(QDialog):
 
     def browse_model_file(self):
         """
-        Browse and select a model file.
+        Open a file dialog to browse for a model file.
         """
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
+        file_path, _ = QFileDialog.getOpenFileName(self, 
+                                                   "Select Model File", 
+                                                   "", 
+                                                   "Model Files (*.pt *.pth);;All Files (*)")
         if file_path:
-            self.model_edit.setText(file_path)
+            self.model_path_edit.setText(file_path)
 
     def accept(self):
         """
@@ -570,6 +600,7 @@ class Base(QDialog):
             'project': self.project_edit.text(),
             'name': self.name_edit.text(),
             'data': self.dataset_edit.text(),
+            'training_mode': self.training_mode.currentText(),
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),
             'batch': self.batch_spinbox.value(),
@@ -580,8 +611,6 @@ class Base(QDialog):
             'workers': self.workers_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
             'verbose': self.verbose_combo.currentText() == "True",
-            'freeze_layers': self.freeze_layers_spinbox.value(),
-            'weighted': self.weighted_combo.currentText() == "True",
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_combo.currentText() == "True",
             'exist_ok': True,
@@ -614,6 +643,12 @@ class Base(QDialog):
                             params[name] = float(value)
                         except ValueError:
                             params[name] = value
+            
+        params['lr0'] = 1e-3 if 'lr0' not in params else params['lr0']
+        params['warmup_bias_lr'] = 0.0 if 'warmup_bias_lr' not in params else params['warmup_bias_lr']
+        params['weight_decay'] = 0.025 if 'weight_decay' not in params else params['weight_decay']
+        params['momentum'] = 0.9 if 'momentum' not in params else params['momentum']            
+        params['close_mosaic'] = 10 if 'close_mosaic' not in params else params['close_mosaic']
 
         # Return the dictionary of parameters
         return params

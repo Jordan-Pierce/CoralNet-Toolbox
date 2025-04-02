@@ -59,6 +59,8 @@ class Base(QDialog):
         self.setup_labels_layout()
         # Setup parameters layout
         self.setup_parameters_layout()
+        # Setup SAM layout
+        self.setup_sam_layout()
         # Setup the button layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -97,6 +99,9 @@ class Base(QDialog):
         self.layout.addWidget(group_box)
 
     def setup_parameters_layout(self):
+        raise NotImplementedError("Subclasses must implement this method")
+    
+    def setup_sam_layout(self):
         raise NotImplementedError("Subclasses must implement this method")
 
     def setup_buttons_layout(self):

@@ -26,6 +26,7 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+# TODO add a home button in the top-left corner to center the row on the current image
 
 class ImageWindow(QWidget):
     imageSelected = pyqtSignal(str)

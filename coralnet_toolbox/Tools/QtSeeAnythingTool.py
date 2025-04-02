@@ -448,12 +448,18 @@ class SeeAnythingTool(Tool):
                 # Resize the mask to the resized image shape
                 mask = cv2.resize(mask.squeeze().astype(int), (resized_image.shape[1], resized_image.shape[0]))
                 
-                # Convert to a polygon
-                polygons = sv.detection.utils.mask_to_polygons(mask)[0]
+                # Convert to biggest polygon
+                polygons = sv.detection.utils.mask_to_polygons(mask)
+                
+                if len(polygons) == 1:
+                    polygon = polygons[0]
+                else:
+                    # Grab the index of the largest polygon
+                    polygon = max(polygons, key=lambda x: len(x))
                 
                 # Normalize points by resized image dimensions
                 normalized_points = [(point[0] / resized_image.shape[1], 
-                                     point[1] / resized_image.shape[0]) for point in polygons]
+                                      point[1] / resized_image.shape[0]) for point in polygon]
                 
                 # Scale to working area dimensions
                 scaled_points = [(point[0] * self.image.shape[1],

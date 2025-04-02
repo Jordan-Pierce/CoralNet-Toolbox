@@ -74,6 +74,8 @@ class DeployModelDialog(QDialog):
         self.setup_ontology_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
+        # Setup the SAM layout
+        self.setup_sam_layout()
         # Setup the button layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -209,12 +211,20 @@ class DeployModelDialog(QDialog):
         layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
         layout.addRow("", self.area_threshold_label)
 
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM Model for Creating Polygons")
+        layout = QFormLayout()
+        
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        layout.addRow("Use SAM for creating Polygons:", self.use_sam_dropdown)
-
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 

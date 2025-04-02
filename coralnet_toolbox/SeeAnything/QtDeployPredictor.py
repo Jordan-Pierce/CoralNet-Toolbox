@@ -9,9 +9,10 @@ import torch
 import numpy as np
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, 
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                             QSlider, QSpinBox, QVBoxLayout, QGroupBox)
+                             QSlider, QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
+                             QWidget, QLineEdit, QFileDialog)
 
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
@@ -104,16 +105,23 @@ class DeployPredictorDialog(QDialog):
 
     def setup_models_layout(self):
         """
-        Setup the models layout.
+        Setup the models layout with tabs for standard and custom models.
         """
-        group_box = QGroupBox("Models")
+        group_box = QGroupBox("Model Selection")
         layout = QVBoxLayout()
 
+        # Create tabbed widget
+        tab_widget = QTabWidget()
+        
+        # Tab 1: Standard models
+        standard_tab = QWidget()
+        standard_layout = QVBoxLayout(standard_tab)
+        
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
 
         # Define available models
-        models = [
+        standard_models = [
             'yoloe-v8s-seg.pt',
             'yoloe-v8m-seg.pt',
             'yoloe-v8l-seg.pt',
@@ -123,15 +131,51 @@ class DeployPredictorDialog(QDialog):
         ]
 
         # Add all models to combo box
-        self.model_combo.addItems(models)
-        # Set the default model to 
-        self.model_combo.setCurrentIndex(1)
+        self.model_combo.addItems(standard_models)
+        # Set the default model
+        self.model_combo.setCurrentIndex(standard_models.index('yoloe-v8s-seg.pt'))
 
-        layout.addWidget(QLabel("Select Model"))
-        layout.addWidget(self.model_combo)
-
+        standard_layout.addWidget(QLabel("Models"))
+        standard_layout.addWidget(self.model_combo)
+        
+        tab_widget.addTab(standard_tab, "Use Existing Model")
+        
+        # Tab 2: Custom model
+        custom_tab = QWidget()
+        custom_layout = QFormLayout(custom_tab)
+        
+        # Custom model file selection
+        self.model_path_edit = QLineEdit()
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self.browse_model_file)
+        
+        model_path_layout = QHBoxLayout()
+        model_path_layout.addWidget(self.model_path_edit)
+        model_path_layout.addWidget(browse_button)
+        
+        custom_layout.addRow("Select Custom Model:", model_path_layout)
+        
+        tab_widget.addTab(custom_tab, "Custom Model")
+        
+        # Add the tab widget to the main layout
+        layout.addWidget(tab_widget)
+        
+        # Store the tab widget for later reference
+        self.model_tab_widget = tab_widget
+        
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def browse_model_file(self):
+        """
+        Open a file dialog to browse for a model file.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self, 
+                                                   "Select Model File", 
+                                                   "", 
+                                                   "Model Files (*.pt *.pth);;All Files (*)")
+        if file_path:
+            self.model_path_edit.setText(file_path)
 
     def setup_parameters_layout(self):
         """
@@ -311,9 +355,27 @@ class DeployPredictorDialog(QDialog):
             # Load model using registry
             self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
             
+            # Create a dummy visual dictionary
+            visuals = dict(
+                bboxes=np.array(
+                    [
+                        [120, 425, 160, 445],
+                    ],
+                ),
+                cls=np.array(
+                    np.zeros(1),
+                ),
+            )
+
             # Run a dummy prediction to load the model
-            # ...
-            
+            self.loaded_model.predict(
+                np.zeros((640, 640, 3), dtype=np.uint8),
+                visual_prompts=visuals.copy(),
+                predictor=YOLOEVPDetectPredictor,
+                imgsz=640,
+                conf=0.99,
+            )         
+               
             progress_bar.finish_progress()
             self.status_bar.setText("Model loaded")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
@@ -434,7 +496,8 @@ class DeployPredictorDialog(QDialog):
                                                 imgsz=max(self.resized_image.shape[:2]),
                                                 conf=self.main_window.get_uncertainty_thresh(),
                                                 iou=self.main_window.get_iou_thresh(),
-                                                max_det=self.get_max_detections())
+                                                max_det=self.get_max_detections(),
+                                                retina_masks=self.task == "segment")
 
         except Exception as e:
             QMessageBox.critical(self.annotation_window,
@@ -491,7 +554,8 @@ class DeployPredictorDialog(QDialog):
                                                     imgsz=self.imgsz_spinbox.value(),
                                                     conf=self.main_window.get_uncertainty_thresh(),
                                                     iou=self.main_window.get_iou_thresh(),
-                                                    max_det=self.get_max_detections())
+                                                    max_det=self.get_max_detections(),
+                                                    retina_masks=self.task == "segment")
                 
                 results[0].names = {0: refer_label.short_label_code}
                 

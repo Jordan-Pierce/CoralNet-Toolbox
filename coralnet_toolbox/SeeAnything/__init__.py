@@ -1,9 +1,10 @@
 # coralnet_toolbox/SeeAnything/__init__.py
-
-from .QtDeployPredictor import DeployPredictorDialog
+from .QtTrainModel import TrainModelDialog
 from .QtBatchInference import BatchInferenceDialog
+from .QtDeployPredictor import DeployPredictorDialog
 
 __all__ = [
-    'DeployPredictorDialog',
+    'TrainModelDialog',
     'BatchInferenceDialog'
+    'DeployPredictorDialog',
 ]
