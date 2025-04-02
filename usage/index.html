@@ -20,7 +20,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.9">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.11">
     
     
       
@@ -154,11 +154,13 @@
     
     
     
-      <label class="md-header__button md-icon" for="__search">
-        
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
-      </label>
-      <div class="md-search" data-md-component="search" role="dialog">
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
@@ -195,6 +197,7 @@
     </div>
   </div>
 </div>
+      
     
     
       <div class="md-header__source">
@@ -267,6 +270,7 @@
       <a href=".." class="md-nav__link">
         
   
+  
   <span class="md-ellipsis">
     Home
     
@@ -287,6 +291,7 @@
     <li class="md-nav__item">
       <a href="../installation/" class="md-nav__link">
         
+  
   
   <span class="md-ellipsis">
     Installation
@@ -318,6 +323,7 @@
         <label class="md-nav__link md-nav__link--active" for="__toc">
           
   
+  
   <span class="md-ellipsis">
     Usage
     
@@ -329,6 +335,7 @@
       
       <a href="./" class="md-nav__link md-nav__link--active">
         
+  
   
   <span class="md-ellipsis">
     Usage
@@ -493,6 +500,7 @@
     <li class="md-nav__item">
       <a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues" class="md-nav__link">
         
+  
   
   <span class="md-ellipsis">
     Report Issues
@@ -710,11 +718,19 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Confidence Window</strong>: Displays cropped images and confidence charts.</p>
 <h2 id="menu-bar-actions">Menu Bar Actions<a class="headerlink" href="#menu-bar-actions" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Import</strong>:</li>
+<li><strong>New Project</strong>: Reload CoralNet-Toolbox (loss of data warning)</li>
+<li><strong>Open Project</strong>: Open an existing CoralNet-Toolbox project JSON file.</li>
+<li>
+<p><strong>Save Project</strong>: Save current CoralNet-Toolbox project to JSON file.</p>
+</li>
+<li>
+<p><strong>Import</strong>:</p>
+</li>
 <li><strong>Import Images</strong>: Load image files.</li>
 <li><strong>Import Frames</strong>: Load video frames (Currently not available).</li>
-<li><strong>Import Orthomosaic</strong>: Load orthomosaic images (Currently not available).</li>
 <li><strong>Import Labels (JSON)</strong>: Load label data from a JSON file.</li>
+<li><strong>Import CoralNet Labels (CSV)</strong>: Load label data from a CoralNet CSV file.</li>
+<li><strong>Import TagLab Labels (JSON)</strong>: Load label data from a TagLab JSON file.</li>
 <li><strong>Import Annotations (JSON)</strong>: Load annotation data from a JSON file.</li>
 <li><strong>Import Annotations (CoralNet)</strong>: Load annotation data from a CoralNet CSV file.</li>
 <li><strong>Import Annotations (Viscore)</strong>: Load annotation data from a Viscore CSV file.</li>
@@ -726,6 +742,7 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Export</strong>:</p>
 </li>
 <li><strong>Export Labels (JSON)</strong>: Save label data to a JSON file.</li>
+<li><strong>Export TagLab Labels (JSON)</strong>: Save label data to a TagLab JSON file.</li>
 <li><strong>Export Annotations (JSON)</strong>: Save annotation data to a JSON file.</li>
 <li><strong>Export Annotations (CoralNet)</strong>: Save annotation data to a CoralNet CSV file.</li>
 <li><strong>Export Annotations (Viscore)</strong>: Save annotation data to a Viscore CSV file.</li>
@@ -740,19 +757,22 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Sample Annotations</strong>: Automatically generate Patch annotations.</p>
 </li>
 <li>
-<p><strong>CoralNet</strong>: (Currently not available)</p>
+<p><strong>Tile</strong>:</p>
+</li>
+<li>
+<p><strong>Tile Dataset</strong>: Tile existing Classification, Detection or Segmention datasets using <code>yolo-tiling</code>.</p>
+</li>
+<li>
+<p><strong>CoralNet</strong>: </p>
 </li>
 <li><strong>Authenticate</strong>: Authenticate with CoralNet.</li>
-<li><strong>Upload</strong>: Upload data to CoralNet.</li>
-<li><strong>Download</strong>: Download data from CoralNet.</li>
 <li>
-<p><strong>Model API</strong>: Access CoralNet model API.</p>
+<p><strong>Download</strong>: Download data from CoralNet.</p>
 </li>
 <li>
-<p><strong>Machine Learning</strong>:</p>
+<p><strong>Ultralytics</strong>:</p>
 </li>
 <li><strong>Merge Datasets</strong>: Merge multiple Classification datasets.</li>
-<li><strong>Tile Dataset</strong>: Tile existing Detection / Segmention datasets using yolo-tiling.</li>
 <li><strong>Train Model</strong>: Train a machine learning model.</li>
 <li><strong>Evaluate Model</strong>: Evaluate a trained model.</li>
 <li><strong>Optimize Model</strong>: Convert model format.</li>
@@ -763,19 +783,24 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>SAM</strong>:</p>
 </li>
-<li><strong>Deploy Predictor</strong>: Deploy EdgeSAM, MobileSAM, or SAM to use interactively (points, box); Segment Anything</li>
-<li><strong>Deploy Generator</strong>: Deploy FastSAM to automatically segment the image; Segment Everything<ul>
-<li>Recommendation: Use the "Use Predictor to create Polygons", as the results are significantly better</li>
-</ul>
+<li><strong>Deploy Predictor</strong>: Deploy <code>EdgeSAM</code>, <code>MobileSAM</code>, <code>SAM</code>, etc, to use interactively (points, box).</li>
+<li><strong>Deploy Generator</strong>: Deploy <code>FastSAM</code> to automatically segment the image.</li>
+<li>
+<p><strong>Batch Inference</strong>: Perform batch inferencing using <code>FastSAM</code>.</p>
 </li>
 <li>
-<p><strong>Batch Inference</strong>: Perform batch inferences.</p>
+<p><strong>See Anything (YOLOE)</strong>:</p>
+</li>
+<li><strong>Train Model</strong>: Train a YOLOE Segmentation model using an existing YOLO Segmentation dataset.</li>
+<li><strong>Deploy Predictor</strong>: Deploy an existing <code>YOLOE</code> model to use interactively.</li>
+<li>
+<p><strong>Batch Inference</strong>: Perform batch inferencing using <code>YOLOE</code>.</p>
 </li>
 <li>
 <p><strong>AutoDistill</strong>:</p>
 </li>
 <li><strong>Deploy Model</strong>: Deploy a foundational model<ul>
-<li>Models Available: GroundingDino,</li>
+<li>Models Available: <code>Grounding DINO</code>, <code>OWLViT</code>, <code>OmDetTurbo</code></li>
 </ul>
 </li>
 <li><strong>Batch Inference</strong>: Perform batch inferences.</li>
@@ -786,7 +811,8 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Patch Tool</strong>: Add new PatchAnnotations.</li>
 <li><strong>Polygon Tool</strong>: Add new PolygonAnnotations.</li>
 <li><strong>Rectangle Tool</strong>: Add new RectangleAnnotations.</li>
-<li><strong>SAM Tool</strong>: Use SAM model for automatic segmentation (points, box).</li>
+<li><strong>SAM Tool</strong>: Use <code>SAM</code> model for automatic segmentation (points, box).</li>
+<li><strong>See Anything Tool</strong>: Use See Anything (<code>YOLOE</code>) to provide references of object, and detect other similar appearing.</li>
 </ul>
 <h2 id="status-bar">Status Bar<a class="headerlink" href="#status-bar" title="Permanent link">&para;</a></h2>
 <ul>
@@ -796,6 +822,8 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Annotation Transparency</strong>: Adjust the annotation transparency.</li>
 <li><strong>Select All Labels</strong>: Select all labels, adjusting transparency for all labels.</li>
 <li><strong>Unselect All Labels</strong>: Unselect all labels, adjusting transparency for only selected labels.</li>
+<li><strong>Patch Size</strong>: Manipulate Patch Size (only active when using Patch Tool).</li>
+<li><strong>Parameters</strong>: Adjust parameters including uncertainty, IoU, and area thresholds.</li>
 </ul>
 <h2 id="annotation-window">Annotation Window<a class="headerlink" href="#annotation-window" title="Permanent link">&para;</a></h2>
 <ul>
@@ -804,7 +832,9 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Add Annotation</strong>: Click with the Left mouse button while using one of the annotation tools.</li>
 <li><strong>Select Annotations</strong>:</li>
 <li>Ctrl + Left-Click on multiple annotations while using the select tool.</li>
-<li>Ctrl + Left-Click and drag to select multiple annotations while using the select tool.<ul>
+<li>Ctrl + Left-Click and drag to select multiple annotations while using the select tool.</li>
+<li>Ctrl + Shift + &lt; to select all annotations</li>
+<li>Ctrl + Shift + &lt; to deselect all annotations<ul>
 <li><strong>Move Annotation</strong>: Drag a selected annotation.</li>
 <li><strong>Modify Annotation</strong>: Hold Shift and drag the vertices of the selected annotation (Rectangle, Polygon).</li>
 <li><strong>Resize Annotation</strong>: Hold Ctrl and Zoom in / out to increase / decrease a selected annotation's size.</li>
@@ -863,10 +893,19 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>SAM</strong>: After a model is loaded</p>
 </li>
-<li><strong>Space Bar</strong>: Set working area; finalize prediction.</li>
+<li><strong>Space Bar</strong>: Set working area; confirm prediction; finalize predictions.</li>
 <li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
 <li><strong>Ctrl + Left-Click</strong>: Add positive point.</li>
 <li><strong>Ctrl + Right-Click</strong>: Add negative point.</li>
+<li>
+<p><strong>Backspace</strong>: Discard unfinalized predictions.</p>
+</li>
+<li>
+<p><strong>See Anything (YOLOE)</strong>: After a model is loaded</p>
+</li>
+<li><strong>Space Bar</strong>: Set working area; run prediction; finalize predictions.</li>
+<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
+<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
 </ul>
 
 
@@ -890,7 +929,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="January 7, 2025 19:22:26"><span class="timeago" datetime="2025-01-07T19:22:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="January 7, 2025 19:22:26">2025-01-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 2, 2025 20:04:08"><span class="timeago" datetime="2025-04-02T20:04:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 2, 2025 20:04:08">2025-04-02</span>
   </span>
 
     
@@ -957,7 +996,9 @@ This guide provides instructions on how to use the application, including key fu
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "search.highlight", "search.share"], "search": "../assets/javascripts/workers/search.f8cc74c7.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "search.highlight", "search.share"], "search": "../assets/javascripts/workers/search.f8cc74c7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
       <script src="../assets/javascripts/bundle.c8b220af.min.js"></script>
