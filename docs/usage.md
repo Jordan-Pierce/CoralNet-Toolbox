@@ -31,7 +31,7 @@ The main window consists of several components:
 - **Confidence Window**: Displays cropped images and confidence charts.
 
 ## Menu Bar Actions
-- **New Project**: Reload CoralNet-Toolbox (loss of data warning)
+- **New Project**: Reload CoralNet-Toolbox (loss of data warning).
 - **Open Project**: Open an existing CoralNet-Toolbox project JSON file.
 - **Save Project**: Save current CoralNet-Toolbox project to JSON file.
 
@@ -115,7 +115,7 @@ The main window consists of several components:
   - Ctrl + Left-Click on multiple annotations while using the select tool.
   - Ctrl + Left-Click and drag to select multiple annotations while using the select tool.
   - Ctrl + Shift + < to select all annotations
-  - Ctrl + Shift + < to deselect all annotations
+  - Ctrl + Shift + > to deselect all annotations
     - **Move Annotation**: Drag a selected annotation.
     - **Modify Annotation**: Hold Shift and drag the vertices of the selected annotation (Rectangle, Polygon).
     - **Resize Annotation**: Hold Ctrl and Zoom in / out to increase / decrease a selected annotation's size.
@@ -138,6 +138,7 @@ The main window consists of several components:
   - **No Annotations**: Filter images with no annotations.
   - **Has Annotations**: Filter images with annotations.
   - **Has Predictions**: Filter images with predictions.
+  - **Selected**: Filter images selected.
 
 ## Confidence Window
 - **Display Cropped Image**: Shows the cropped image of the selected annotation.
