@@ -312,9 +312,9 @@ def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_mo
     
     ultralytics_model.model.model.load_state_dict(src_state_dict)
     ultralytics_model.model.model.eval()
-    del dst_state_dict
-    gc.collect()
     
     torch.save(ultralytics_model.model.model, output_path)
     print(f"Model saved to {output_path}")
     
+    del dst_state_dict
+    gc.collect()
