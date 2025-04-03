@@ -6,6 +6,7 @@ import os
 import re
 import requests
 
+from packaging import version
 
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
