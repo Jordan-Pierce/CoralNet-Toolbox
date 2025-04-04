@@ -76,6 +76,8 @@ class DeployGeneratorDialog(QDialog):
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
+        # Setup the SAM layout
+        self.setup_sam_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -217,6 +219,20 @@ class DeployGeneratorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM Model for Creating Polygons")
+        layout = QFormLayout()
+        
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_buttons_layout(self):
         """
@@ -303,6 +319,24 @@ class DeployGeneratorDialog(QDialog):
         """Get the maximum number of detections to return."""
         self.max_detect = self.max_detections_spinbox.value()
         return self.max_detect
+    
+    def is_sam_model_deployed(self):
+        """
+        Check if the SAM model is deployed and update the checkbox state accordingly.
+
+        :return: Boolean indicating whether the SAM model is deployed
+        """
+        if not hasattr(self.main_window, 'sam_deploy_predictor_dialog'):
+            return False
+
+        self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
+
+        if not self.sam_dialog.loaded_model:
+            self.use_sam_dropdown.setCurrentText("False")
+            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
+            return False
+
+        return True
 
     def load_model(self):
         """
@@ -400,6 +434,7 @@ class DeployGeneratorDialog(QDialog):
                     continue
 
                 results = self._apply_model(inputs)
+                results = self._apply_sam(results, image_path)
                 results = self._update_results(results, image_path)
                 self._process_results(results_processor, results)
         except Exception as e:
@@ -432,6 +467,17 @@ class DeployGeneratorDialog(QDialog):
 
         # Return the results
         yield results
+        
+    def _apply_sam(self, results, image_path):
+        """Apply SAM to the results if needed."""
+        # Check if SAM model is deployed
+        if self.use_sam_dropdown.currentText() == "True":
+            self.task = 'segment'
+            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
+        else:
+            self.task = 'detect'
+
+        return results
 
     def _update_results(self, results_generator, image_path):
         """Update the results with the image path and class mapping."""

@@ -1109,6 +1109,8 @@ class MainWindow(QMainWindow):
     def handle_image_changed(self):
         if self.annotation_window.selected_tool == 'sam':
             self.annotation_window.tools['sam'].cancel_working_area()
+        if self.annotation_window.selected_tool == 'see_anything':
+            self.annotation_window.tools['see_anything'].cancel_working_area()
 
     def update_project_label(self):
         """Update the project label in the status bar"""
