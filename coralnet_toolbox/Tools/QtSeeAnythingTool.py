@@ -25,7 +25,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
-# TODO handle tool switching and proper close out
+
 class SeeAnythingTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
@@ -62,7 +62,7 @@ class SeeAnythingTool(Tool):
         self.rectangles_processed = False  # Track if rectangles have been processed
         
         self.annotations = []
-        self.detections = None
+        self.results = None
 
     def activate(self):
         """
@@ -90,7 +90,7 @@ class SeeAnythingTool(Tool):
         self.cancel_working_area()
         
         # Clear detection data
-        self.detections = None
+        self.results = None
         
         # Update the viewport
         self.annotation_window.viewport().update()
@@ -392,42 +392,30 @@ class SeeAnythingTool(Tool):
         # Predict the mask provided prompts
         results = self.see_anything_dialog.predict_from_prompts(self.rectangles)[0]
         
-        # Get the shape of the image (in case resizing was done)
-        resized_image = results.orig_img
-        image_area = resized_image.shape[0] * resized_image.shape[1]
-        
         if not results:
             # Make cursor normal
             QApplication.restoreOverrideCursor()
             return None
         
-        if self.detections is None:
-            self.detections = sv.Detections.from_ultralytics(results)
-        else:
-            self.detections = sv.Detections.merge([self.detections, 
-                                                   sv.Detections.from_ultralytics(results)])
-            
-        # Perform non-maximum suppression, area, and confidence thresholding
-        self.detections = self.detections[self.detections.confidence > self.main_window.get_uncertainty_thresh()]
-        self.detections = self.detections[self.detections.area > self.main_window.get_area_thresh_min() * image_area]
-        self.detections = self.detections[self.detections.area < self.main_window.get_area_thresh_max() * image_area]
-        self.detections = self.detections.with_nms(self.main_window.get_iou_thresh())
-        
+        self.results = results
+        image_area = self.image.shape[0] * self.image.shape[1]
+
         # Clear the annotations (that haven't been confirmed)
         self.clear_annotations()
         
-        # Loop through the detections
-        for detection in self.detections:  
-            # Extract values from detection
-            xyxy, mask, confidence, _, _, _ = detection
+        # Loop through the results
+        for result in self.results:  
+            # Extract values from result
+            confidence = result.boxes.conf.item()
+                        
+            if confidence < self.main_window.get_uncertainty_thresh():
+                continue
             
-            # Get the detection box
-            box = xyxy
-            # Normalize the box using the resized image shape
-            box = box / np.array([resized_image.shape[1],
-                                  resized_image.shape[0],
-                                  resized_image.shape[1],
-                                  resized_image.shape[0]])
+            box = result.boxes.xyxyn.detach().cpu().numpy()
+            polygons = result.masks.xyn.detach().cpu().numpy()
+            
+            # Grab the largest polygon
+            points = max(polygons, key=lambda x: x.shape[0])
                                     
             # Convert from normalized to pixel coordinates
             box = box * np.array([self.image.shape[1], 
@@ -441,68 +429,85 @@ class SeeAnythingTool(Tool):
             box[2] += working_area_top_left.x()
             box[3] += working_area_top_left.y()
             
+            # Check box area relative to image area
+            box_area = (box[2] - box[0]) * (box[3] - box[1])
+            
+            # self.main_window.get_area_thresh_min() 
+            if box_area < self.main_window.get_area_thresh_min() * image_area:
+                continue
+            
+            if box_area > self.main_window.get_area_thresh_max() * image_area:
+                continue
+            
             # Add the box to the list of rectangles (compounding automatic annotation)
             self.rectangles.append(box)
             
             if self.see_anything_dialog.task == "segment":
-                # Resize the mask to the resized image shape
-                mask = cv2.resize(mask.squeeze().astype(int), (resized_image.shape[1], resized_image.shape[0]))
-                
-                # Convert to biggest polygon
-                polygons = sv.detection.utils.mask_to_polygons(mask)
-                
-                if len(polygons) == 1:
-                    polygon = polygons[0]
-                else:
-                    # Grab the index of the largest polygon
-                    polygon = max(polygons, key=lambda x: len(x))
-                
-                # Normalize points by resized image dimensions
-                normalized_points = [(point[0] / resized_image.shape[1], 
-                                      point[1] / resized_image.shape[0]) for point in polygon]
-                
-                # Scale to working area dimensions
-                scaled_points = [(point[0] * self.image.shape[1],
-                                  point[1] * self.image.shape[0]) for point in normalized_points]
-                
-                # Convert to whole image coordinates
-                points = [QPointF(point[0] + working_area_top_left.x(),
-                                  point[1] + working_area_top_left.y()) for point in scaled_points]
-                
-                # Create the annotation
-                annotation = PolygonAnnotation(points,
-                                               self.annotation_window.selected_label.short_label_code,
-                                               self.annotation_window.selected_label.long_label_code,
-                                               self.annotation_window.selected_label.color,
-                                               self.annotation_window.current_image_path,
-                                               self.annotation_window.selected_label.id,
-                                               transparency)
-            else:                   
-                # Update coordinates relative to the working area
-                top_left = QPointF(box[0], box[1])
-                bottom_right = QPointF(box[2], box[3])
-
-                # Create the annotation
-                annotation = RectangleAnnotation(top_left,
-                                                 bottom_right,
-                                                 self.annotation_window.selected_label.short_label_code,
-                                                 self.annotation_window.selected_label.long_label_code,
-                                                 self.annotation_window.selected_label.color,
-                                                 self.annotation_window.current_image_path,
-                                                 self.annotation_window.selected_label.id,
-                                                 transparency)
-                
-            # Update the confidence score of annotation
-            annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-            
-            # Ensure the annotation is added to the scene after creation (but not saved yet)
-            annotation.create_graphics_item(self.annotation_window.scene)
-            self.annotations.append(annotation)
+                self.create_polygon_annotation(points, confidence, transparency)
+            else:
+                self.create_rectangle_annotation(box, confidence, transparency)
 
         self.annotation_window.viewport().update()
         
         # Make cursor normal
         QApplication.restoreOverrideCursor()
+        
+    def create_rectangle_annotations(self, box, confidence, transparency):
+        """
+        Create rectangle annotations based on the given box coordinates.
+        
+        Args:
+            box (np.ndarray): The bounding box coordinates.
+            transparency (int): The transparency level for the annotation.
+        """
+        # Create a rectangle annotation
+        top_left = QPointF(box[0], box[1])
+        bottom_right = QPointF(box[2], box[3])
+
+        # Create the annotation
+        annotation = RectangleAnnotation(top_left,
+                                         bottom_right,
+                                         self.annotation_window.selected_label.short_label_code,
+                                         self.annotation_window.selected_label.long_label_code,
+                                         self.annotation_window.selected_label.color,
+                                         self.annotation_window.current_image_path,
+                                         self.annotation_window.selected_label.id,
+                                         transparency)
+        
+        # Update the confidence score of annotation
+        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
+        
+        # Ensure the annotation is added to the scene after creation (but not saved yet)
+        annotation.create_graphics_item(self.annotation_window.scene)
+        self.annotations.append(annotation)
+        
+    def create_polygon_annotation(self, points, confidence, transparency):
+        """
+        Create polygon annotations based on the given points.
+        
+        Args:
+            points (np.ndarray): The polygon points.
+            confidence (float): The confidence score for the annotation.
+            transparency (int): The transparency level for the annotation.
+        """
+        # Create a polygon annotation
+        polygon = sv.Polygon(points)
+        
+        # Create the annotation
+        annotation = PolygonAnnotation(polygon,
+                                       self.annotation_window.selected_label.short_label_code,
+                                       self.annotation_window.selected_label.long_label_code,
+                                       self.annotation_window.selected_label.color,
+                                       self.annotation_window.current_image_path,
+                                       self.annotation_window.selected_label.id,
+                                       transparency)
+        
+        # Update the confidence score of annotation
+        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
+        
+        # Ensure the annotation is added to the scene after creation (but not saved yet)
+        annotation.create_graphics_item(self.annotation_window.scene)
+        self.annotations.append(annotation)
 
     def confirm_annotations(self):
         """
@@ -545,7 +550,7 @@ class SeeAnythingTool(Tool):
         
         # Clear the annotations list
         self.annotations = []
-        self.detections = None
+        self.results = None
         
     def clear_annotations(self):
         """
@@ -622,4 +627,4 @@ class SeeAnythingTool(Tool):
         self.rectangles_processed = False
         
         self.annotations = []
-        self.detections = None
+        self.results = None

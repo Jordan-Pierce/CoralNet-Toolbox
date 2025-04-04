@@ -71,27 +71,45 @@ class Annotation(QObject):
         self.update_graphics_item()
 
     def delete(self):
-        self.annotationDeleted.emit(self)
+        # Emit deletion signal before removing resources
+        self.annotationDeleted.emit(self.id)
+        
+        # Disconnect all signals to prevent callback issues
+        try:
+            self.blockSignals(True)
+            self.selected.disconnect()
+            self.colorChanged.disconnect()
+            self.annotationDeleted.disconnect()
+            self.annotationUpdated.disconnect()
+        except Exception:
+            # Ignore errors if signals weren't connected
+            pass
 
-        # Remove the main graphics item
-        if self.graphics_item and self.graphics_item.scene():
-            self.graphics_item.scene().removeItem(self.graphics_item)
-            self.graphics_item = None
-
-        # Remove the center graphics item
-        if self.center_graphics_item and self.center_graphics_item.scene():
-            self.center_graphics_item.scene().removeItem(self.center_graphics_item)
-            self.center_graphics_item = None
-
-        # Remove the bounding box graphics item
-        if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
-            self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
-            self.bounding_box_graphics_item = None
-
-        # Remove the polygon graphics item
-        if self.polygon_graphics_item and self.polygon_graphics_item.scene():
-            self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
-            self.polygon_graphics_item = None
+        # Remove all graphics items
+        for item_attr in ['graphics_item', 'center_graphics_item', 
+                        'bounding_box_graphics_item', 'polygon_graphics_item']:
+            item = getattr(self, item_attr, None)
+            if item and item.scene():
+                item.scene().removeItem(item)
+                setattr(self, item_attr, None)
+        
+        # Free resources
+        if hasattr(self, 'cropped_image') and self.cropped_image:
+            del self.cropped_image
+            self.cropped_image = None
+            
+        # Close rasterio data source if open
+        if hasattr(self, 'rasterio_src') and self.rasterio_src:
+            try:
+                self.rasterio_src.close()
+            except Exception:
+                pass
+            self.rasterio_src = None
+            
+        # Clear data structures that might contain references
+        self.machine_confidence.clear()
+        self.user_confidence.clear()
+        self.data.clear()
 
     def update_machine_confidence(self, prediction: dict):
         if not prediction:

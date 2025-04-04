@@ -34,6 +34,14 @@ class Segment(Base):
         """Setup the dataset layout."""
         group_box = QGroupBox("Dataset")
         layout = QFormLayout()
+        
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        layout.addRow("Existing Model:", model_layout)
             
         self.dataset_edit = QLineEdit()
         self.dataset_button = QPushButton("Browse...")

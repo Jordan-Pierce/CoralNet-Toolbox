@@ -644,9 +644,16 @@ class AnnotationWindow(QGraphicsView):
         if annotation_id in self.annotations_dict:
             # Get the annotation from dict
             annotation = self.annotations_dict[annotation_id]
-            # Remove from image annotations dict
+            
+            # Remove from image annotations dict if present
             if annotation.image_path in self.image_annotations_dict:
-                self.image_annotations_dict[annotation.image_path].remove(annotation)
+                if annotation in self.image_annotations_dict[annotation.image_path]:
+                    self.image_annotations_dict[annotation.image_path].remove(annotation)
+                else:
+                    # Annotation not in list - it may have been removed already
+                    print(f"Warning: Annotation {annotation_id} not found in image annotations list")
+                    
+                # Clean up empty image entries
                 if not self.image_annotations_dict[annotation.image_path]:
                     del self.image_annotations_dict[annotation.image_path]
 
