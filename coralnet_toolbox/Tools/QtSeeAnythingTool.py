@@ -411,11 +411,7 @@ class SeeAnythingTool(Tool):
             if confidence < self.main_window.get_uncertainty_thresh():
                 continue
             
-            box = result.boxes.xyxyn.detach().cpu().numpy()
-            polygons = result.masks.xyn.detach().cpu().numpy()
-            
-            # Grab the largest polygon
-            points = max(polygons, key=lambda x: x.shape[0])
+            box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
                                     
             # Convert from normalized to pixel coordinates
             box = box * np.array([self.image.shape[1], 
@@ -443,8 +439,33 @@ class SeeAnythingTool(Tool):
             self.rectangles.append(box)
             
             if self.see_anything_dialog.task == "segment":
+                # Get the mask from the result
+                mask = result.masks.data.detach().cpu().numpy().squeeze().astype(int)
+                # # Resize the mask to the resized image shape
+                mask = cv2.resize(mask, (result.orig_img.shape[1], result.orig_img.shape[0]))
+                # Convert to polygons
+                polygons = sv.detection.utils.mask_to_polygons(mask)
+                
+                if len(polygons) == 1:
+                    polygon = polygons[0]
+                else:
+                    # Grab the index of the largest polygon
+                    polygon = max(polygons, key=lambda x: len(x))
+                
+                # Renormalize points by resized image dimensions
+                normalized_points = polygon / np.array([result.orig_img.shape[1], result.orig_img.shape[0]])
+                
+                # Scale to working area dimensions
+                points = normalized_points * np.array([self.image.shape[1], self.image.shape[0]])
+                
+                # Convert to whole image coordinates
+                points[:, 0] += working_area_top_left.x()
+                points[:, 1] += working_area_top_left.y()
+                
+                # Create the polygon annotation
                 self.create_polygon_annotation(points, confidence, transparency)
             else:
+                # Create the rectangle annotation
                 self.create_rectangle_annotation(box, confidence, transparency)
 
         self.annotation_window.viewport().update()
@@ -452,7 +473,7 @@ class SeeAnythingTool(Tool):
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         
-    def create_rectangle_annotations(self, box, confidence, transparency):
+    def create_rectangle_annotation(self, box, confidence, transparency):
         """
         Create rectangle annotations based on the given box coordinates.
         
@@ -460,7 +481,7 @@ class SeeAnythingTool(Tool):
             box (np.ndarray): The bounding box coordinates.
             transparency (int): The transparency level for the annotation.
         """
-        # Create a rectangle annotation
+        # Convert to QPointF
         top_left = QPointF(box[0], box[1])
         bottom_right = QPointF(box[2], box[3])
 
@@ -490,11 +511,10 @@ class SeeAnythingTool(Tool):
             confidence (float): The confidence score for the annotation.
             transparency (int): The transparency level for the annotation.
         """
-        # Create a polygon annotation
-        polygon = sv.Polygon(points)
-        
+        # Convert to QPointF
+        points = [QPointF(point[0], point[1]) for point in points]
         # Create the annotation
-        annotation = PolygonAnnotation(polygon,
+        annotation = PolygonAnnotation(points,
                                        self.annotation_window.selected_label.short_label_code,
                                        self.annotation_window.selected_label.long_label_code,
                                        self.annotation_window.selected_label.color,
