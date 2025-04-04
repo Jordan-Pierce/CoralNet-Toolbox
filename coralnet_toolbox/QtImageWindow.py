@@ -219,7 +219,6 @@ class ImageWindow(QWidget):
 
         self.images = {}  # Dictionary to store image paths and their QImage representation
         self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
-        self.image_cache = {}  # Cache for images
 
         self.show_confirmation_dialog = True
 
@@ -638,10 +637,6 @@ class ImageWindow(QWidget):
             # Return None on failure
             return None
 
-    def rasterio_close(self, image_path):
-        # Close the image with Rasterio
-        self.rasterio_images[image_path] = None
-
     def show_context_menu(self, position):
         # Get selected checkboxes
         selected_paths = self._get_selected_image_paths()
@@ -654,7 +649,7 @@ class ImageWindow(QWidget):
         delete_all_images_action.triggered.connect(lambda: self.delete_selected_images())
 
         delete_all_annotations_action = context_menu.addAction(f"Delete Annotations for {len(selected_paths)} Images")
-        delete_all_annotations_action.triggered.connect(lambda: self.delete_selected_annotations())
+        delete_all_annotations_action.triggered.connect(lambda: self.delete_selected_images_annotations())
 
         context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
         
@@ -685,7 +680,7 @@ class ImageWindow(QWidget):
             # Delete images and handle loading a new image if necessary
             self.delete_images(selected_paths)
                 
-    def delete_selected_annotations(self):
+    def delete_selected_images_annotations(self):
         selected_paths = self._get_selected_image_paths()
         
         if not selected_paths:
@@ -711,6 +706,7 @@ class ImageWindow(QWidget):
                 
                 # Delete annotations for selected images
                 for path in selected_paths:
+                    # Delete the annotations for the image
                     self.annotation_window.delete_image_annotations(path)
                     # Update the image annotation count in the table widget
                     self.update_image_annotations(path)
@@ -747,7 +743,7 @@ class ImageWindow(QWidget):
 
         # Determine the next image to load if current image is deleted
         next_image_to_load = None
-        if current_image_in_deletion:
+        if current_image_in_deletion and self.filtered_image_paths:
             # Find remaining images in the filtered list
             remaining_images = [path for path in self.filtered_image_paths if path not in image_paths]
             
@@ -755,57 +751,95 @@ class ImageWindow(QWidget):
                 # If possible, maintain the relative position in the list
                 current_idx = self.filtered_image_paths.index(self.selected_image_path)
                 
-                # Find the next viable image to load
-                viable_images = []
-                for img in remaining_images:
-                    if self.filtered_image_paths.index(img) <= current_idx:
-                        viable_images.append(img)
+                # Find the next viable image to load (prioritize images before current)
+                viable_images = [img for img in remaining_images 
+                                if self.filtered_image_paths.index(img) <= current_idx]
                 
                 # Prioritize images at or before the current index
                 next_image_to_load = viable_images[0] if viable_images else remaining_images[0]
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self, title="Loading Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
+        try:
+            # Make cursor busy and show progress
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            progress_bar = ProgressBar(self, title="Deleting Images")
+            progress_bar.show()
+            progress_bar.start_progress(len(image_paths))
+            
+            # Delete each image
+            for image_path in image_paths:
+                self.cleanup_image(image_path)
+                progress_bar.update_progress()
+            
+            # Update UI components
+            self.update_table_widget()
+            self.update_image_count_label()
+
+            # Load next image or clear scene
+            if next_image_to_load:
+                self.load_image_by_path(next_image_to_load)
+            elif not self.filtered_image_paths:
+                self.selected_image_path = None
+                self.annotation_window.clear_scene()
+
+            # Update current image index label
+            self.update_current_image_index_label()
         
-        # Delete each image
-        for image_path in image_paths:
-            # Remove from image paths
-            self.image_paths.remove(image_path)
-            del self.image_dict[image_path]
+        finally:
+            # Ensure cursor is restored even if an exception occurs
+            if progress_bar:
+                progress_bar.stop_progress()
+                progress_bar.close()
+            QApplication.restoreOverrideCursor()
             
-            # Remove from filtered image paths if present
-            if image_path in self.filtered_image_paths:
-                self.filtered_image_paths.remove(image_path)
+    def cleanup_image(self, image_path):
+        """
+        Completely remove an image from all data structures and release all resources.
+        
+        Args:
+            image_path (str): Path to the image to be removed
             
-            # Delete annotations
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if image_path not in self.image_paths:
+            return False
+            
+        try:
+            # Remove from annotation window
             self.annotation_window.delete_image(image_path)
             
-            # Update progress bar
-            progress_bar.update_progress()
-        
-        # Close the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
+            # Remove from filtered image paths
+            if image_path in self.filtered_image_paths:
+                self.filtered_image_paths.remove(image_path)
+                
+            # Close and remove rasterio resources
+            if image_path in self.rasterio_images:
+                self.rasterio_images[image_path] = None
+                del self.rasterio_images[image_path]
 
-        # Update UI components
-        self.update_table_widget()
-        self.update_image_count_label()
-
-        # Load next image or clear scene
-        if next_image_to_load:
-            self.load_image_by_path(next_image_to_load)
-        elif not self.filtered_image_paths:
-            self.selected_image_path = None
-            self.annotation_window.clear_scene()
-
-        # Update current image index label
-        self.update_current_image_index_label()
-        
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
+            # Remove from QImage dictionary
+            if image_path in self.images:
+                self.images[image_path] = None
+                del self.images[image_path]
+                
+            # Remove from main image collections
+            self.image_paths.remove(image_path)
+            
+            # Remove from checkbox states
+            if image_path in self.checkbox_states:
+                del self.checkbox_states[image_path]
+                
+            # Remove from image dictionary
+            if image_path in self.image_dict:
+                del self.image_dict[image_path]
+                
+            # Force garbage collection to clean up resources
+            gc.collect()
+            
+            return True
+        except Exception as e:
+            print(f"Error cleaning up image {image_path}: {str(e)}")
+            return False
 
     def tableWidget_keyPressEvent(self, event):
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:

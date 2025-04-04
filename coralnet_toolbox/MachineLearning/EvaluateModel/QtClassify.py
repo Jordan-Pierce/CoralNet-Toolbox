@@ -14,6 +14,7 @@ class Classify(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Evaluate Classification Model")
         self.task = 'classify'
+        self.imgsz = 256
         
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""

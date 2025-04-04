@@ -128,7 +128,7 @@ class RectangleAnnotation(Annotation):
                                                      QPointF(self.top_left.x(), self.bottom_right.y())]), scene)
 
     def update_graphics_item(self, crop_image=True):
-        if self.graphics_item:
+        if self.graphics_item and self.graphics_item.scene():
             scene = self.graphics_item.scene()
             if scene:
                 scene.removeItem(self.graphics_item)

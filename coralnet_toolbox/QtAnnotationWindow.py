@@ -47,6 +47,7 @@ class AnnotationWindow(QGraphicsView):
     hover_point = pyqtSignal(QPointF)  # Signal to emit when mouse hovers over a point
 
     def __init__(self, main_window, parent=None):
+        """Initialize the annotation window with the main window and parent widget."""
         super().__init__(parent)
         self.main_window = main_window
 
@@ -95,18 +96,23 @@ class AnnotationWindow(QGraphicsView):
         }
         
     def dragEnterEvent(self, event):
+        """Ignore drag enter events."""
         event.ignore()
 
     def dropEvent(self, event):
+        """Ignore drop events."""
         event.ignore()
 
     def dragMoveEvent(self, event):
+        """Ignore drag move events."""
         event.ignore()
         
     def dragLeaveEvent(self, event):
+        """Ignore drag leave events."""
         event.ignore()
 
     def wheelEvent(self, event: QMouseEvent):
+        """Handle mouse wheel events for zooming."""
         # Handle zooming with the mouse wheel
         if self.selected_tool and event.modifiers() & Qt.ControlModifier:
             self.tools[self.selected_tool].wheelEvent(event)
@@ -116,6 +122,7 @@ class AnnotationWindow(QGraphicsView):
         self.viewChanged.emit(*self.get_image_dimensions())
 
     def mousePressEvent(self, event: QMouseEvent):
+        """Handle mouse press events for the active tool."""
         if self.active_image:
             self.tools["pan"].mousePressEvent(event)
         if self.selected_tool:
@@ -124,6 +131,7 @@ class AnnotationWindow(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        """Handle mouse movement events for the active tool."""
         if self.active_image:
             self.tools["pan"].mouseMoveEvent(event)
         if self.selected_tool:
@@ -139,6 +147,7 @@ class AnnotationWindow(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        """Handle mouse release events for the active tool."""
         if self.active_image:
             self.tools["pan"].mouseReleaseEvent(event)
         if self.selected_tool:
@@ -149,6 +158,7 @@ class AnnotationWindow(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
+        """Handle keyboard press events including deletion of selected annotations."""
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
@@ -160,11 +170,13 @@ class AnnotationWindow(QGraphicsView):
                     self.delete_selected_annotation()
 
     def keyReleaseEvent(self, event):
+        """Handle keyboard release events for the active tool."""
         if self.active_image and self.selected_tool:
             self.tools[self.selected_tool].keyReleaseEvent(event)
         super().keyReleaseEvent(event)
 
     def cursorInWindow(self, pos, mapped=False):
+        """Check if the cursor position is within the image bounds."""
         if not pos or not self.image_pixmap:
             return False
 
@@ -175,12 +187,14 @@ class AnnotationWindow(QGraphicsView):
         return image_rect.contains(pos)
 
     def cursorInViewport(self, pos):
+        """Check if the cursor position is within the viewport bounds."""
         if not pos:
             return False
 
         return self.viewport().rect().contains(pos)
 
     def set_selected_tool(self, tool):
+        """Set the currently active tool and deactivate the previous one."""
         if self.selected_tool:
             self.tools[self.selected_tool].deactivate()
         self.selected_tool = tool
@@ -191,6 +205,7 @@ class AnnotationWindow(QGraphicsView):
         self.toggle_cursor_annotation()
 
     def set_selected_label(self, label):
+        """Set the currently selected label and update selected annotations if needed."""
         self.selected_label = label
         self.annotation_color = label.color
 
@@ -205,6 +220,7 @@ class AnnotationWindow(QGraphicsView):
                 self.toggle_cursor_annotation()
 
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
+        """Update the location of an annotation to a new center point."""
         if annotation_id in self.annotations_dict:
             annotation = self.annotations_dict[annotation_id]
             # Disconnect the confidence window from the annotation, so it won't update while moving
@@ -217,6 +233,7 @@ class AnnotationWindow(QGraphicsView):
             self.main_window.confidence_window.display_cropped_image(annotation)
 
     def set_annotation_size(self, size=None, delta=0):
+        """Set or adjust the size of the current annotation(s)."""
         if size is not None:
             self.annotation_size = size
         else:
@@ -260,6 +277,7 @@ class AnnotationWindow(QGraphicsView):
             self.annotationSizeChanged.emit(self.annotation_size)
 
     def is_annotation_moveable(self, annotation):
+        """Check if an annotation can be moved and show a warning if not."""
         if annotation.show_message:
             self.unselect_annotations()
             annotation.show_warning_message()
@@ -267,7 +285,7 @@ class AnnotationWindow(QGraphicsView):
         return True
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
-
+        """Toggle the cursor annotation on or off at the given position."""
         if self.cursor_annotation:
             self.cursor_annotation.delete()
             self.cursor_annotation = None
@@ -283,6 +301,7 @@ class AnnotationWindow(QGraphicsView):
                 pass
 
     def display_image_item(self, image_item):
+        """Display an image item in the annotation window."""
         # Clean up
         self.clear_scene()
 
@@ -300,7 +319,7 @@ class AnnotationWindow(QGraphicsView):
         QApplication.processEvents()
 
     def set_image(self, image_path):
-
+        """Set and display an image at the given path."""
         # Clean up
         self.clear_scene()
 
@@ -336,9 +355,11 @@ class AnnotationWindow(QGraphicsView):
         QApplication.processEvents()
 
     def update_current_image_path(self, image_path):
+        """Update the current image path being displayed."""
         self.current_image_path = image_path
 
     def viewportToScene(self):
+        """Convert viewport coordinates to scene coordinates."""
         # Map the top-left and bottom-right corners of the viewport to the scene coordinates
         top_left = self.mapToScene(self.viewport().rect().topLeft())
         bottom_right = self.mapToScene(self.viewport().rect().bottomRight())
@@ -346,11 +367,13 @@ class AnnotationWindow(QGraphicsView):
         return QRectF(top_left, bottom_right)
 
     def get_image_dimensions(self):
+        """Get the dimensions of the currently loaded image."""
         if self.image_pixmap:
             return self.image_pixmap.size().width(), self.image_pixmap.size().height()
         return 0, 0
 
     def center_on_annotation(self, annotation):
+        """Center the view on the specified annotation."""
         # Create graphics item if it doesn't exist
         if not annotation.graphics_item:
             annotation.create_graphics_item(self.scene)
@@ -363,6 +386,7 @@ class AnnotationWindow(QGraphicsView):
         self.centerOn(annotation_center)
 
     def cycle_annotations(self, direction):
+        """Cycle through annotations in the specified direction."""
         # Get the annotations for the current image
         annotations = self.get_image_annotations()
         if not annotations:
@@ -412,6 +436,7 @@ class AnnotationWindow(QGraphicsView):
                 self.center_on_annotation(annotations[new_index])
 
     def select_annotation(self, annotation, ctrl_pressed=False):
+        """Select an annotation and update the UI accordingly."""
         if not ctrl_pressed:
             self.unselect_annotations()
 
@@ -459,18 +484,20 @@ class AnnotationWindow(QGraphicsView):
                 self.select_annotation(annotation, ctrl_pressed=True)
 
     def unselect_annotation(self, annotation):
+        """Unselect a specific annotation."""
         if annotation in self.selected_annotations:
             annotation.deselect()
             self.selected_annotations.remove(annotation)
             self.main_window.confidence_window.clear_display()
 
     def unselect_annotations(self):
+        """Unselect all currently selected annotations."""
         for annotation in self.selected_annotations:
-            annotation.deselect()
+            self.unselect_annotation(annotation)
         self.selected_annotations = []
-        self.main_window.confidence_window.clear_display()
 
     def load_annotation(self, annotation):
+        """Load a single annotation into the scene."""
         # Remove the graphics item from its current scene if it exists
         if annotation.graphics_item and annotation.graphics_item.scene():
             annotation.graphics_item.scene().removeItem(annotation.graphics_item)
@@ -485,9 +512,7 @@ class AnnotationWindow(QGraphicsView):
         self.viewport().update()
 
     def load_annotations(self, image_path=None, annotations=None):
-        """
-        Loads annotations for the current image by default or for a given image and annotations.
-        """
+        """Load annotations for the specified image path or current image."""
         # Crop annotations (if image_path and annotations are provided, they are used)
         annotations = self.crop_annotations(image_path, annotations)
         
@@ -529,12 +554,14 @@ class AnnotationWindow(QGraphicsView):
         self.viewport().update()
 
     def get_image_annotations(self, image_path=None):
+        """Get all annotations for the specified image path or current image."""
         if not image_path:
             image_path = self.current_image_path
 
         return self.image_annotations_dict.get(image_path, [])
 
     def get_image_review_annotations(self, image_path=None):
+        """Get all annotations marked for review for the specified image path or current image."""
         if not image_path:
             image_path = self.current_image_path
 
@@ -546,12 +573,7 @@ class AnnotationWindow(QGraphicsView):
         return annotations
 
     def crop_annotations(self, image_path=None, annotations=None, return_annotations=True, verbose=True):
-        """
-        Crop annotations for the specified image.
-
-        If annotations is None, crop all annotations associated with the image (using self.get_image_annotations).
-        If return_annotations is True, returns the list of annotations after cropping.
-        """
+        """Crop the image around each annotation for the specified image path."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
@@ -591,6 +613,7 @@ class AnnotationWindow(QGraphicsView):
             return annotations
 
     def add_annotation(self, scene_pos: QPointF = None):
+        """Add a new annotation at the specified position using the current tool."""
         if not self.selected_label:
             QMessageBox.warning(self,
                                 "No Label Selected",
@@ -631,7 +654,8 @@ class AnnotationWindow(QGraphicsView):
         # Update the table in ImageWindow
         self.annotationCreated.emit(annotation.id)
 
-    def add_annotation_to_dict(self, annotation):       
+    def add_annotation_to_dict(self, annotation):
+        """Add an annotation to the internal annotation dictionaries."""
         # Add to annotation dict
         self.annotations_dict[annotation.id] = annotation
         # Add to image annotations dict (if not already present)
@@ -641,63 +665,63 @@ class AnnotationWindow(QGraphicsView):
             self.image_annotations_dict[annotation.image_path].append(annotation)
 
     def delete_annotation(self, annotation_id):
+        """Delete an annotation by its ID."""
         if annotation_id in self.annotations_dict:
             # Get the annotation from dict
             annotation = self.annotations_dict[annotation_id]
+            # Unselect the annotation (if selected)
+            self.unselect_annotation(annotation)
             
-            # Remove from image annotations dict if present
+            # Check if the annotation image is still in the image annotations dict (key)
             if annotation.image_path in self.image_annotations_dict:
+                # Check if the annotation itself is in the image annotations dict (value)
                 if annotation in self.image_annotations_dict[annotation.image_path]:
+                    # Remove it from the image annotations dict
                     self.image_annotations_dict[annotation.image_path].remove(annotation)
-                else:
-                    # Annotation not in list - it may have been removed already
-                    print(f"Warning: Annotation {annotation_id} not found in image annotations list")
-                    
-                # Clean up empty image entries
-                if not self.image_annotations_dict[annotation.image_path]:
-                    del self.image_annotations_dict[annotation.image_path]
 
             # Delete the annotation
             annotation.delete()
+            # Remove the annotation from the annotations dict
             del self.annotations_dict[annotation_id]
+            # Emit the annotation deleted signal
             self.annotationDeleted.emit(annotation_id)
             # Clear the confidence window
             self.main_window.confidence_window.clear_display()
 
-    def delete_selected_annotation(self):
-        for annotation in self.selected_annotations:
-            self.delete_annotation(annotation.id)
-        self.unselect_annotations()
-
     def delete_annotations(self, annotations):
+        """Delete a list of annotations."""
         for annotation in annotations:
+            self.delete_annotation(annotation.id)
+            
+    def delete_selected_annotation(self):
+        """Delete all currently selected annotations."""
+        # Get the selected annotations
+        selected_annotations = self.selected_annotations.copy()
+        # Unselect them first
+        self.unselect_annotations()
+        # Delete each selected annotation
+        for annotation in selected_annotations:
             self.delete_annotation(annotation.id)
 
     def delete_label_annotations(self, label):
+        """Delete all annotations with the specified label."""
         for annotation in list(self.annotations_dict.values()):
             if annotation.label.id == label.id:
-                annotation.delete()
-                del self.annotations_dict[annotation.id]
+                self.delete_annotation(annotation.id)
 
     def delete_image_annotations(self, image_path):
-        """Efficiently delete all annotations for a given image path"""
+        """Delete all annotations associated with a specific image path."""
         if image_path in self.image_annotations_dict:
-            annotations = self.image_annotations_dict[image_path]
-            # Delete graphics items and annotations in batch
-            for annotation in annotations:
-                annotation.delete()
-                del self.annotations_dict[annotation.id]
-                self.annotationDeleted.emit(annotation.id)
+            annotations = list(self.image_annotations_dict[image_path].copy())
+            self.delete_annotations(annotations)
 
+            # Remove the image path from the dictionary (no longer contains annotations)
             del self.image_annotations_dict[image_path]
 
-            # Clear confidence window if needed
-            if self.current_image_path == image_path:
-                self.main_window.confidence_window.clear_display()
-
     def delete_image(self, image_path):
+        """Delete an image and all its associated annotations."""
         # Delete all annotations associated with image path
-        self.delete_annotations(self.get_image_annotations(image_path))
+        self.delete_image_annotations(image_path)
         # Delete the image
         if self.current_image_path == image_path:
             self.scene.clear()
@@ -708,6 +732,7 @@ class AnnotationWindow(QGraphicsView):
             self.active_image = False
 
     def clear_scene(self):
+        """Clear the graphics scene and reset related variables."""
         # Clean up
         self.unselect_annotations()
 

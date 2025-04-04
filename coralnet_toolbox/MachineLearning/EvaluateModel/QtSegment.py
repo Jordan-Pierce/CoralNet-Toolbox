@@ -14,6 +14,8 @@ class Segment(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Evaluate Segmentation Model")
         self.task = 'segment'
+        self.imgsz = 640
+
 
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
