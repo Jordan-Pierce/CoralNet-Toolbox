@@ -13,12 +13,14 @@ from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
+from coralnet_toolbox.ResultsProcessor import ResultsProcessor
+
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
-from coralnet_toolbox.utilities import pixmap_to_numpy
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import pixmap_to_numpy
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -339,7 +341,13 @@ class SeeAnythingTool(Tool):
             else:
                 # If there's a working area but no rectangles or if rectangles have been processed,
                 # confirm the annotations, and cancel the working area.
-                self.confirm_annotations()
+                if self.rectangles or self.annotations:
+                    if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
+                        self.apply_sam_model()
+                    else:
+                        # Confirm the annotations
+                        self.confirm_annotations()
+                # Cancel the working area
                 self.cancel_working_area()
                 
         elif event.key() == Qt.Key_Backspace:
@@ -567,6 +575,44 @@ class SeeAnythingTool(Tool):
         
         # Clear the working area
         self.cancel_working_area()
+        
+        # Clear the annotations list
+        self.annotations = []
+        self.results = None
+        
+    def apply_sam_model(self):
+        """Uses the Results with SAM predictor to create polygons instead of confirming the
+        ones created by the SeeAnything predictor."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        # Create a class mapping dictionary
+        class_mapping = {0: self.annotation_window.selected_label}
+        
+        # Create a results processor
+        results_processor = ResultsProcessor(
+            self.main_window,
+            class_mapping,
+            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+            iou_thresh=self.main_window.get_iou_thresh(),
+            min_area_thresh=self.main_window.get_area_thresh_min(),
+            max_area_thresh=self.main_window.get_area_thresh_max()
+        )
+        
+        results = self.see_anything_dialog.sam_dialog.predict_from_results(self.results, 
+                                                                           class_mapping=class_mapping)
+        
+        # Process the results
+        results_processor.process_segmentation_results(results)
+        
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        
+        # Clear the working area
+        self.cancel_working_area()
+        
+        # Clear the previous, non-confirmed annotations
+        self.clear_annotations()
         
         # Clear the annotations list
         self.annotations = []
