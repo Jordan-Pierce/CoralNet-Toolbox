@@ -12,13 +12,11 @@
         <meta name="author" content="Jordan-Pierce">
       
       
-        <link rel="canonical" href="https://Jordan-Pierce.github.io/CoralNet-Toolbox/installation/">
+        <link rel="canonical" href="https://Jordan-Pierce.github.io/CoralNet-Toolbox/classify/">
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../usage/">
       
-      
-        <link rel="next" href="../usage/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -26,7 +24,7 @@
     
     
       
-        <title>Installation - CoralNet-Toolbox</title>
+        <title>Classify - CoralNet-Toolbox</title>
       
     
     
@@ -82,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#how-to-install" class="md-skip">
+        <a href="#sop-to-train-a-classification-model-in-toolbox" class="md-skip">
           Skip to content
         </a>
       
@@ -118,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Installation
+              Classify
             
           </span>
         </div>
@@ -288,30 +286,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Installation
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
         
   
   
@@ -322,84 +300,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#how-to-install" class="md-nav__link">
-    <span class="md-ellipsis">
-      How to Install
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="How to Install">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#anaconda" class="md-nav__link">
-    <span class="md-ellipsis">
-      Anaconda
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
-    <span class="md-ellipsis">
-      Install
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cuda" class="md-nav__link">
-    <span class="md-ellipsis">
-      CUDA
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#run" class="md-nav__link">
-    <span class="md-ellipsis">
-      Run
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#github-repository" class="md-nav__link">
-    <span class="md-ellipsis">
-      GitHub Repository
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -430,10 +330,32 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../classify/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Classify
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -444,6 +366,134 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-toolbox-installation-and-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Toolbox installation and setup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-prepare-training-and-testing-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Prepare training and testing images
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-load-labelset" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Load labelset
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-import-and-annotate-training-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Import and annotate training images
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-export-classification-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Export classification dataset
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-train-classification-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Train classification model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-load-and-deploy-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Load and deploy model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-test-the-model-on-new-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Test the model on new images
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-run-predictions" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Run predictions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-review-and-correct-predictions" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Review and correct predictions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-export-and-improve-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Export and improve dataset
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-improve-existing-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Improve existing model
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -487,6 +537,8 @@
   
   
   
+    
+  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -495,60 +547,108 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#how-to-install" class="md-nav__link">
+  <a href="#1-toolbox-installation-and-setup" class="md-nav__link">
     <span class="md-ellipsis">
-      How to Install
+      1. Toolbox installation and setup
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="How to Install">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#anaconda" class="md-nav__link">
-    <span class="md-ellipsis">
-      Anaconda
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
-    <span class="md-ellipsis">
-      Install
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cuda" class="md-nav__link">
-    <span class="md-ellipsis">
-      CUDA
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#run" class="md-nav__link">
-    <span class="md-ellipsis">
-      Run
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#github-repository" class="md-nav__link">
+  <a href="#2-prepare-training-and-testing-images" class="md-nav__link">
     <span class="md-ellipsis">
-      GitHub Repository
+      2. Prepare training and testing images
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-load-labelset" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Load labelset
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-import-and-annotate-training-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Import and annotate training images
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-export-classification-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Export classification dataset
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-train-classification-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Train classification model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-load-and-deploy-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Load and deploy model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-test-the-model-on-new-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Test the model on new images
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-run-predictions" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Run predictions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-review-and-correct-predictions" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Review and correct predictions
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-export-and-improve-dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Export and improve dataset
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-improve-existing-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Improve existing model
     </span>
   </a>
   
@@ -576,140 +676,125 @@
   
 
 
-  <h1>Installation</h1>
-
-<h2 id="how-to-install"><strong>How to Install</strong><a class="headerlink" href="#how-to-install" title="Permanent link">&para;</a></h2>
-<h3 id="anaconda">Anaconda<a class="headerlink" href="#anaconda" title="Permanent link">&para;</a></h3>
-<p>It's recommended to use <code>Anaconda</code> to create an environment for the <code>toolbox</code>:
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-<span class="c1"># Create and activate an environment</span>
-conda<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span>coralnet10<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.10<span class="w"> </span>-y
-conda<span class="w"> </span>activate<span class="w"> </span>coralnet10
-</code></pre></div></td></tr></table></div></p>
-<h3 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h3>
-<p>Once this has finished, install the <code>toolbox</code> using <code>uv</code>: </p>
+<p>A <strong>big</strong> thanks to the researchers at the research arm of the Seattle Aquarium for providing this guide.</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
 <span class="normal">2</span>
 <span class="normal">3</span>
 <span class="normal">4</span>
 <span class="normal">5</span>
-<span class="normal">6</span>
-<span class="normal">7</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-<span class="c1"># Install uv first</span>
-pip<span class="w"> </span>install<span class="w"> </span>uv
-
-<span class="c1"># Install with uv</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
+<span class="normal">6</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nc">@misc</span><span class="p">{</span><span class="nl">williams2025</span><span class="p">,</span>
+<span class="w">  </span><span class="na">author</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">{Williams, Megan}</span><span class="p">,</span>
+<span class="w">  </span><span class="na">title</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">{SOP to train a classification model in Toolbox}</span><span class="p">,</span>
+<span class="w">  </span><span class="na">institution</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">{Seattle Aquarium}</span><span class="p">,</span>
+<span class="w">  </span><span class="na">date</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s">{2025-04-04}</span>
+<span class="p">}</span>
 </code></pre></div></td></tr></table></div>
-<p>Although fast, <code>uv</code> is still relatively new; if this fails, simply fall back to using <code>pip</code>:</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-<span class="c1"># Install</span>
-pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
-</code></pre></div></td></tr></table></div>
-<h3 id="cuda">CUDA<a class="headerlink" href="#cuda" title="Permanent link">&para;</a></h3>
-<p>If you have <code>CUDA</code>, you should install the versions of <code>cuda-nvcc</code> and <code>cudatoolkit</code> that you
-need, and then install the corresponding versions of <code>torch</code> and <code>torchvision</code>. Below is an example of how that can be
-done using <code>CUDA</code> version 11.8:</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span>
-<span class="normal">6</span>
-<span class="normal">7</span>
-<span class="normal">8</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-<span class="c1"># Example for CUDA 11.8</span>
-conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-11.8.0::cuda-nvcc<span class="w"> </span>-y
-conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-11.8.0::cuda-toolkit<span class="w"> </span>-y
-
-<span class="c1"># Example for torch w/ CUDA 11.8</span>
-pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> </span>torchvision<span class="w"> </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu118<span class="w"> </span>--upgrade
-</code></pre></div></td></tr></table></div>
-<p>If <code>CUDA</code> is installed on your computer, and <code>torch</code> was built with it properly, you should see a <code>🐇</code> icon in the
-<code>toolbox</code> instead of a <code>🐢</code>; if you have multiple <code>CUDA</code> devices available, you should see a <code>🚀</code> icon,
-and if you're using a Mac with <code>Metal</code>, you should see an <code>🍎</code> icon (click on the icon to see the device information).</p>
-<p>See here for more details on versions for the following:
-- <a href="https://anaconda.org/nvidia/cuda-nvcc"><code>cuda-nvcc</code></a>
-- <a href="https://anaconda.org/nvidia/cuda-toolkit"><code>cudatoolkit</code></a>
-- <a href="https://pytorch.org/get-started/locally/"><code>torch</code></a></p>
-<h3 id="run">Run<a class="headerlink" href="#run" title="Permanent link">&para;</a></h3>
-<p>Finally, you can run the <code>toolbox</code> from the command line:</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-<span class="c1"># Run</span>
-coralnet-toolbox
-</code></pre></div></td></tr></table></div>
-<h2 id="github-repository">GitHub Repository<a class="headerlink" href="#github-repository" title="Permanent link">&para;</a></h2>
-<p>If you prefer to clone the repository and run the <code>toolbox</code> from the source code, you can do so with the following:</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
-<span class="normal"> 2</span>
-<span class="normal"> 3</span>
-<span class="normal"> 4</span>
-<span class="normal"> 5</span>
-<span class="normal"> 6</span>
-<span class="normal"> 7</span>
-<span class="normal"> 8</span>
-<span class="normal"> 9</span>
-<span class="normal">10</span>
-<span class="normal">11</span>
-<span class="normal">12</span>
-<span class="normal">13</span>
-<span class="normal">14</span>
-<span class="normal">15</span>
-<span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
-<span class="normal">19</span>
-<span class="normal">20</span>
-<span class="normal">21</span>
-<span class="normal">22</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-<span class="c1"># Create and activate an environment</span>
-conda<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span>coralnet10<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.10<span class="w"> </span>-y
-conda<span class="w"> </span>activate<span class="w"> </span>coralnet10
-
-<span class="c1"># Clone and enter the repository</span>
-git<span class="w"> </span>clone<span class="w"> </span>https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
-<span class="nb">cd</span><span class="w"> </span>CoralNet-Toolbox
-
-<span class="c1"># Install the latest</span>
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
-
-<span class="c1"># Install CUDA requirements (if applicable)</span>
-conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-11.8.0::cuda-nvcc<span class="w"> </span>-y
-conda<span class="w"> </span>install<span class="w"> </span>nvidia/label/cuda-11.8.0::cuda-toolkit<span class="w"> </span>-y
-
-<span class="c1"># Example for torch w/ CUDA 11.8</span>
-pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> </span>torchvision<span class="w"> </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu118<span class="w"> </span>--upgrade
-
-<span class="c1"># Run</span>
-coralnet-toolbox
-</code></pre></div></td></tr></table></div>
-<p>Or, if you want to simply install from the <code>toolbox</code> from the GitHub repo directly you can do the following:</p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span>
-<span class="normal">3</span>
-<span class="normal">4</span>
-<span class="normal">5</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># cmd</span>
-
-pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main
-
-<span class="c1"># replace @main with a different branch if you want to test out experimental code</span>
-</code></pre></div></td></tr></table></div>
+<h1 id="sop-to-train-a-classification-model-in-toolbox">SOP to train a classification model in Toolbox<a class="headerlink" href="#sop-to-train-a-classification-model-in-toolbox" title="Permanent link">&para;</a></h1>
+<p>The following steps are required to create a training dataset, train a classification model using Ultralytics YOLO in <a href="https://github.com/Jordan-Pierce/CoralNet-Toolbox">Toolbox</a>, and apply the model to make predictions.</p>
+<h2 id="1-toolbox-installation-and-setup">1. Toolbox installation and setup<a class="headerlink" href="#1-toolbox-installation-and-setup" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Instructions for installing and running Toolbox can be found in the documentation linked <a href="https://www.dropbox.com/scl/fi/ut3k3invqvyhyyj168332/Toolbox_installation.docx?rlkey=qob1tuoqmnaljc87blidohpx3&amp;dl=0">here</a>.</li>
+</ul>
+<h2 id="2-prepare-training-and-testing-images">2. Prepare training and testing images<a class="headerlink" href="#2-prepare-training-and-testing-images" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Ensure images are color corrected and a quality desired for analysis.</li>
+<li>Split images into training and testing folder. Our technique is:</li>
+<li>Training folder: Move 2 out of every 3 images here.</li>
+<li>Testing folder: Move 1 out of every 3 images here.</li>
+</ul>
+<h2 id="3-load-labelset">3. Load labelset<a class="headerlink" href="#3-load-labelset" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Open Toolbox and import your classification labelset</li>
+<li>Go to Labelset → Import</li>
+<li>Our JSON labelset can be found <a href="https://www.dropbox.com/scl/fi/7rbkh40zzj7xbjx4nydoc/labelset_31.json?rlkey=7curccvmqin4ia1xqazum4h3m&amp;dl=0">here</a>. You can also previous the labelset in Excel <a href="https://www.dropbox.com/scl/fi/o2oxc0fen94m5o8x5a5el/percent_cover_labelset.xlsx?rlkey=kh8dlx9fpo9pz5wxnn8eaq5e4&amp;dl=0">here</a>.</li>
+</ul>
+<h2 id="4-import-and-annotate-training-images">4. Import and annotate training images<a class="headerlink" href="#4-import-and-annotate-training-images" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Import training images into Toolbox</li>
+<li>File → Import → Rasters → Images</li>
+<li>Create images patches (classification annotations)</li>
+<li>Select a label in the lower label window.</li>
+<li>Choose the image patch tool (rectangle icon) from the toolbar on the left.</li>
+<li>In the annotation window (center window), left click the appropriate location in the image to add a patch for that label.</li>
+<li>Repeat for each label across your training images.</li>
+</ul>
+<h2 id="5-export-classification-dataset">5. Export classification dataset<a class="headerlink" href="#5-export-classification-dataset" title="Permanent link">&para;</a></h2>
+<ul>
+<li>After annotating, export the dataset:</li>
+<li>File → Export → Dataset → Classify</li>
+<li>Toolbox will generate a dataset directory containing train, validation, and test folders with labeled image patches.</li>
+</ul>
+<h2 id="6-train-classification-model">6. Train classification model<a class="headerlink" href="#6-train-classification-model" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Start training a YOLO classification model</li>
+<li>Ultralytics → Train Model → Classify</li>
+<li>In the training window:</li>
+<li>Dataset: Click Browse and select the exported dataset folder.</li>
+<li>Model Selection: Choose the Ultralytics YOLO model that fits your needs (e.g., YOLOv8 or YOLOv11). A guide comparing model options is available <a href="https://docs.ultralytics.com/compare/yolov8-vs-yolo11/">here</a>.</li>
+<li>Parameters:<ul>
+<li>Set the location where you want your trained model to be saved.</li>
+<li>You can use default training parameters or customize them. More information about the parameters can be found <a href="https://docs.ultralytics.com/modes/train/#train-settings">here</a>.</li>
+</ul>
+</li>
+<li>Click OK to begin training. You can monitor training progress in the terminal.</li>
+</ul>
+<h2 id="7-load-and-deploy-model">7. Load and deploy model<a class="headerlink" href="#7-load-and-deploy-model" title="Permanent link">&para;</a></h2>
+<ul>
+<li>After training completes:</li>
+<li>Go to Ultralytics → Deploy Model → Classify</li>
+<li>Under Actions, click Browse Model and select your trained weights file (best.pt).</li>
+<li>Click load model</li>
+</ul>
+<h2 id="8-test-the-model-on-new-images">8. Test the model on new images<a class="headerlink" href="#8-test-the-model-on-new-images" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Remove training images:</li>
+<li>In the image window, click "Select All", right-click and select delete all images to remove.</li>
+<li>Import test images:</li>
+<li>File → Import → Rasters → Images and choose the testing folder.</li>
+<li>Create random image patches:</li>
+<li>Click Sample at the top</li>
+<li>Set your desired sampling configuration (e.g., number of patches).</li>
+<li>Set Select Label to Review</li>
+<li>Check "Apply to all images" and click Accept</li>
+</ul>
+<h2 id="9-run-predictions">9. Run predictions<a class="headerlink" href="#9-run-predictions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>To predict label for the new image patches:</li>
+<li>For a single image: press Ctrl + 1</li>
+<li>For all images:<ul>
+<li>Ultralytics → Batch Inference → Classify</li>
+<li>Check "Apply to all images" and "Predict review annotation"</li>
+</ul>
+</li>
+</ul>
+<h2 id="10-review-and-correct-predictions">10. Review and correct predictions<a class="headerlink" href="#10-review-and-correct-predictions" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Predicted labels appears for each review image patch.</li>
+<li>Confidence levels are shown in the Confidence window.</li>
+<li>To fix incorrect predictions:</li>
+<li>Select the image patch so that it is shown in the Confidence window</li>
+<li>Select the correct label in the label window</li>
+</ul>
+<h2 id="11-export-and-improve-dataset">11. Export and improve dataset<a class="headerlink" href="#11-export-and-improve-dataset" title="Permanent link">&para;</a></h2>
+<ul>
+<li>To analyze results</li>
+<li>Export annotation file as a .csv file: File → Export → CSV</li>
+<li>To improve your model</li>
+<li>Create a new dataset with the corrected predictions</li>
+<li>Merge this with the original dataset:<ul>
+<li>Ultralytics → Merge Datasets → Classify</li>
+<li>Set a name and location for the merged dataset</li>
+<li>Class → Add Dataset and select the datasets you want to combine</li>
+</ul>
+</li>
+</ul>
+<h2 id="12-improve-existing-model">12. Improve existing model<a class="headerlink" href="#12-improve-existing-model" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The merges dataset can now be used to train a new model following Step 6.</li>
+<li>Instead of selecting a new YOLO model, you can use your existing model:</li>
+<li>Under Model Selection switch to Use Existing Model</li>
+<li>Browse to the model weights (best.pt)</li>
+</ul>
 
 
 
@@ -732,7 +817,7 @@ pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="March 16, 2025 15:43:51"><span class="timeago" datetime="2025-03-16T15:43:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="March 16, 2025 15:43:51">2025-03-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 7, 2025 17:43:31"><span class="timeago" datetime="2025-04-07T17:43:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 7, 2025 17:43:31">2025-04-07</span>
   </span>
 
     
@@ -742,7 +827,7 @@ pip<span class="w"> </span>install<span class="w"> </span>git+https://github.com
     <span class="md-icon" title="Created">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="December 3, 2024 17:24:03"><span class="timeago" datetime="2024-12-03T17:24:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="December 3, 2024 17:24:03">2024-12-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 7, 2025 15:29:16"><span class="timeago" datetime="2025-04-07T15:29:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 7, 2025 15:29:16">2025-04-07</span>
   </span>
 
     
