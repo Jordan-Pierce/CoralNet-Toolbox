@@ -65,7 +65,7 @@ class DeployGeneratorDialog(QDialog):
         self.max_detect = 300
         self.loaded_model = None
         self.model_path = None
-        self.class_mapping = {0: 'Review'}
+        self.class_mapping = None
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -76,6 +76,8 @@ class DeployGeneratorDialog(QDialog):
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
+        # Setup the detect as layout
+        self.detect_as_layout()
         # Setup the SAM layout
         self.setup_sam_layout()
         # Setup the buttons layout
@@ -94,6 +96,7 @@ class DeployGeneratorDialog(QDialog):
         self.initialize_uncertainty_threshold()
         self.initialize_iou_threshold()
         self.initialize_area_threshold()
+        self.update_detect_as_combo()
 
     def setup_info_layout(self):
         """
@@ -220,6 +223,22 @@ class DeployGeneratorDialog(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
         
+    def detect_as_layout(self):
+        """Detect objects as layout."""
+        group_box = QGroupBox("Detect as: ")
+        layout = QFormLayout()
+        
+        # Sample Label
+        self.detect_as_combo = QComboBox()
+        for label in self.label_window.labels:
+            self.detect_as_combo.addItem(label.short_label_code, label.id)
+        self.detect_as_combo.setCurrentIndex(0)
+        self.detect_as_combo.currentIndexChanged.connect(self.update_class_mapping)
+        layout.addRow("Detect as:", self.detect_as_combo)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
         group_box = QGroupBox("Use SAM Model for Creating Polygons")
@@ -264,6 +283,19 @@ class DeployGeneratorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def update_detect_as_combo(self):
+        """Update the label combo box with the current labels."""
+        self.detect_as_combo.clear()
+        for label in self.label_window.labels:
+            self.detect_as_combo.addItem(label.short_label_code, label.id)
+        self.detect_as_combo.setCurrentIndex(0)
+        
+    def update_class_mapping(self):
+        """Update the class mapping based on the selected label."""
+        detect_as = self.detect_as_combo.currentText()
+        label = self.label_window.get_label_by_short_code(detect_as)
+        self.class_mapping = {0: label}
 
     def update_task(self):
         """Update the task based on the dropdown selection."""
@@ -366,7 +398,7 @@ class DeployGeneratorDialog(QDialog):
 
             # Load the model
             self.loaded_model = FastSAMPredictor(overrides=overrides)
-            self.loaded_model.names = self.class_mapping
+            self.loaded_model.names = {0: self.class_mapping[0].short_label_code}
 
             with torch.no_grad():
                 # Run a blank through the model to initialize it
@@ -486,7 +518,7 @@ class DeployGeneratorDialog(QDialog):
             for result in results:
                 if result:
                     result.path = image_path
-                    result.names = self.class_mapping
+                    result.names = {0: self.class_mapping[0].short_label_code}
 
         return results
 

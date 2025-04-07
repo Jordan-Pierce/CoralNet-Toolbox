@@ -2,9 +2,12 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+import copy
+
 import cv2
 import numpy as np
 
+import torch
 import supervision as sv
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
@@ -445,7 +448,7 @@ class SeeAnythingTool(Tool):
             
             # Add the box to the list of rectangles (compounding automatic annotation)
             self.rectangles.append(box)
-            
+                        
             if self.see_anything_dialog.task == "segment":
                 # Get the mask from the result
                 mask = result.masks.data.detach().cpu().numpy().squeeze().astype(int)
@@ -476,10 +479,21 @@ class SeeAnythingTool(Tool):
                 # Create the rectangle annotation
                 self.create_rectangle_annotation(box, confidence, transparency)
 
+        # Update the results with new boxes (for SAM, if used)
+        self.update_results()
+        
         self.annotation_window.viewport().update()
         
         # Make cursor normal
         QApplication.restoreOverrideCursor()
+        
+    def update_results(self):
+        """Update the results with the new rectangles (whole image coordinates)."""
+        conf = self.results.boxes.conf
+        classes = self.results.boxes.cls
+        new_boxes = torch.tensor(self.rectangles)
+        new_boxes = torch.cat((new_boxes, conf[:, None], classes[:, None]), dim=1)
+        self.results.update(boxes=new_boxes)
         
     def create_rectangle_annotation(self, box, confidence, transparency):
         """
@@ -599,7 +613,16 @@ class SeeAnythingTool(Tool):
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
         
-        results = self.see_anything_dialog.sam_dialog.predict_from_results(self.results, 
+        # Make a copy of the results
+        results = copy.deepcopy(self.results)
+        
+        # Replace the resized image with the original image
+        results.orig_img = self.original_image.copy()
+        results.orig_shape = self.original_image.shape
+        results.path = self.image_path
+        results.names = {0: class_mapping[0].short_label_code}
+        
+        results = self.see_anything_dialog.sam_dialog.predict_from_results([results], 
                                                                            class_mapping=class_mapping)
         
         # Process the results
@@ -608,15 +631,11 @@ class SeeAnythingTool(Tool):
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         
-        # Clear the working area
-        self.cancel_working_area()
-        
         # Clear the previous, non-confirmed annotations
         self.clear_annotations()
         
-        # Clear the annotations list
-        self.annotations = []
-        self.results = None
+        # Clear the working area
+        self.cancel_working_area()
         
     def clear_annotations(self):
         """

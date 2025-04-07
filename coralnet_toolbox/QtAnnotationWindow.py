@@ -628,7 +628,7 @@ class AnnotationWindow(QGraphicsView):
         if scene_pos:
             if not self.cursorInWindow(scene_pos, mapped=True):
                 return
-
+            
         # Create the annotation for the selected tool
         annotation = self.tools[self.selected_tool].create_annotation(scene_pos, finished=True)
 
