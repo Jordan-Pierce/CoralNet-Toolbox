@@ -478,22 +478,11 @@ class SeeAnythingTool(Tool):
             else:
                 # Create the rectangle annotation
                 self.create_rectangle_annotation(box, confidence, transparency)
-
-        # Update the results with new boxes (for SAM, if used)
-        self.update_results()
         
         self.annotation_window.viewport().update()
         
         # Make cursor normal
         QApplication.restoreOverrideCursor()
-        
-    def update_results(self):
-        """Update the results with the new rectangles (whole image coordinates)."""
-        conf = self.results.boxes.conf
-        classes = self.results.boxes.cls
-        new_boxes = torch.tensor(self.rectangles)
-        new_boxes = torch.cat((new_boxes, conf[:, None], classes[:, None]), dim=1)
-        self.results.update(boxes=new_boxes)
         
     def create_rectangle_annotation(self, box, confidence, transparency):
         """
@@ -653,20 +642,10 @@ class SeeAnythingTool(Tool):
         self.annotations = []
         
         # Also clear rectangles since they've been processed into annotations
-        self.clear_all_rectangles()
+        self.clear_rectangle_graphics()
         
         self.annotation_window.viewport().update()
         
-    def clear_rectangle_data(self):
-        """
-        Clear rectangle data structures but keep the graphics.
-        """
-        self.rectangles = []
-        self.start_point = None
-        self.end_point = None
-        self.drawing_rectangle = False
-        self.rectangles_processed = False
-    
     def clear_rectangle_graphics(self):
         """
         Clear rectangle graphics from the scene but keep the data.
@@ -682,6 +661,16 @@ class SeeAnythingTool(Tool):
             
         # Reset the graphics list
         self.rectangle_items = []
+        
+    def clear_rectangle_data(self):
+        """
+        Clear rectangle data structures but keep the graphics.
+        """
+        self.rectangles = []
+        self.start_point = None
+        self.end_point = None
+        self.drawing_rectangle = False
+        self.rectangles_processed = False
 
     def clear_all_rectangles(self):
         """

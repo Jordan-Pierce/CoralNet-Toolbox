@@ -1,8 +1,13 @@
 A **big** thanks to the researchers at the research arm of the Seattle Aquarium for providing this guide.
-- Megan Williams
-- Zachary Randell
-- Reid Thomson
-- Sabrina Ang
+
+```bibtex
+@misc{williams2025,
+  author = {Williams, Megan},
+  title = {SOP to train a classification model in Toolbox},
+  institution = {Seattle Aquarium},
+  date = {2025-04-04}
+}
+```
 
 # SOP to train a classification model in Toolbox
 
