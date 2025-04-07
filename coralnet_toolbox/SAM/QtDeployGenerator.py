@@ -514,13 +514,15 @@ class DeployGeneratorDialog(QDialog):
     def _update_results(self, results_generator, image_path):
         """Update the results with the image path and class mapping."""
         # Update the results with the image path and class mapping.
+        updated_results = []
         for results in results_generator:
             for result in results:
                 if result:
                     result.path = image_path
                     result.names = {0: self.class_mapping[0].short_label_code}
+                    updated_results.append(result)
 
-        return results
+        return updated_results
 
     def _process_results(self, results_processor, results):
         """Process the results using the result processor."""

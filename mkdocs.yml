@@ -75,4 +75,5 @@ nav:
     - Home: index.md
     - Installation: installation.md
     - Usage: usage.md
+    - Classify: classify.md
     - Report Issues: https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues

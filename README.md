@@ -31,9 +31,10 @@ pip install coralnet-toolbox
 coralnet-toolbox
 ```
 
-For further instructions please see the following:
+For further instructions please see the following guides:
 - [Installation](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
 - [Usage](https://jordan-pierce.github.io/CoralNet-Toolbox/usage)
+- [Patch-based Image Classifier](https://jordan-pierce.github.io/CoralNet-Toolbox/classify)
 
 <details open>
   <summary><h2><b>Watch the Video Demos</b></h2></summary>
