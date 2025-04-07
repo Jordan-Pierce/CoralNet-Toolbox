@@ -28,13 +28,13 @@ The following steps are required to create a training dataset, train a classific
 
 - Open Toolbox and import your classification labelset
   - Go to Labelset → Import
-  - Our JSON labelset can be found [here](https://www.dropbox.com/scl/fi/7rbkh40zzj7xbjx4nydoc/labelset_31.json?rlkey=7curccvmqin4ia1xqazum4h3m&dl=0). You can also previous the labelset in Excel [here](https://www.dropbox.com/scl/fi/o2oxc0fen94m5o8x5a5el/percent_cover_labelset.xlsx?rlkey=kh8dlx9fpo9pz5wxnn8eaq5e4&dl=0).
+  - Our JSON labelset can be found [here](https://www.dropbox.com/scl/fi/7rbkh40zzj7xbjx4nydoc/labelset_31.json?rlkey=7curccvmqin4ia1xqazum4h3m&dl=0). You can also preview the labelset in Excel [here](https://www.dropbox.com/scl/fi/o2oxc0fen94m5o8x5a5el/percent_cover_labelset.xlsx?rlkey=kh8dlx9fpo9pz5wxnn8eaq5e4&dl=0).
 
 ## 4. Import and annotate training images
 
 - Import training images into Toolbox
   - File → Import → Rasters → Images
-- Create images patches (classification annotations)
+- Create image patches (classification annotations)
   1. Select a label in the lower label window.
   2. Choose the image patch tool (rectangle icon) from the toolbar on the left.
   3. In the annotation window (center window), left click the appropriate location in the image to add a patch for that label.
@@ -87,7 +87,7 @@ The following steps are required to create a training dataset, train a classific
 
 ## 10. Review and correct predictions
 
-- Predicted labels appears for each review image patch.
+- Predicted labels appear for each review image patch.
 - Confidence levels are shown in the Confidence window.
 - To fix incorrect predictions:
   - Select the image patch so that it is shown in the Confidence window
@@ -95,18 +95,18 @@ The following steps are required to create a training dataset, train a classific
 
 ## 11. Export and improve dataset
 
-- To analyze results
+- To analyze results:
   - Export annotation file as a .csv file: File → Export → CSV
-- To improve your model
+- To improve your model:
   - Create a new dataset with the corrected predictions
   - Merge this with the original dataset:
     - Ultralytics → Merge Datasets → Classify
     - Set a name and location for the merged dataset
-    - Class → Add Dataset and select the datasets you want to combine
+    - Click → Add Dataset and select the datasets you want to combine
 
 ## 12. Improve existing model
 
-- The merges dataset can now be used to train a new model following Step 6.
+- The merged dataset can now be used to train a new model following Step 6.
 - Instead of selecting a new YOLO model, you can use your existing model:
   - Under Model Selection switch to Use Existing Model
   - Browse to the model weights (best.pt)
