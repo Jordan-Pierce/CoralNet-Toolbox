@@ -63,11 +63,9 @@ class PolygonTool(Tool):
                 self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
 
     def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key_Space:
+        if event.key() == Qt.Key_Backspace:
             # Cancel the current annotation
-            self.points = []
-            self.drawing_continuous = False
-            self.annotation_window.toggle_cursor_annotation()
+            self.cancel_annotation()
 
     def cancel_annotation(self):
         self.points = []

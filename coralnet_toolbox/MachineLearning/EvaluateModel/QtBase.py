@@ -174,7 +174,7 @@ class Base(QDialog):
     def browse_dataset_yaml(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select YAML File", "", "YAML Files (*.yaml)")
         if file_path:
-            self.yaml_edit.setText(file_path)
+            self.dataset_edit.setText(file_path)
 
     def browse_save_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
@@ -193,7 +193,7 @@ class Base(QDialog):
         }
         params['task'] = self.task
         params['model'] = self.model_edit.text()
-        params['data'] = self.data_edit.text()
+        params['data'] = self.dataset_edit.text()
         params['save_dir'] = self.save_dir_edit.text()
         params['name'] = self.name_edit.text()
         params['split'] = self.split_combo.currentText()

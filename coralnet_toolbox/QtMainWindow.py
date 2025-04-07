@@ -6,6 +6,7 @@ import os
 import re
 import requests
 
+from packaging import version
 
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QPoint
 from PyQt5.QtGui import QIcon, QMouseEvent
@@ -1108,6 +1109,8 @@ class MainWindow(QMainWindow):
     def handle_image_changed(self):
         if self.annotation_window.selected_tool == 'sam':
             self.annotation_window.tools['sam'].cancel_working_area()
+        if self.annotation_window.selected_tool == 'see_anything':
+            self.annotation_window.tools['see_anything'].cancel_working_area()
 
     def update_project_label(self):
         """Update the project label in the status bar"""

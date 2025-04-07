@@ -71,6 +71,8 @@ class Annotation(QObject):
         self.update_graphics_item()
 
     def delete(self):
+        
+        # Emit the deletion signal first
         self.annotationDeleted.emit(self)
 
         # Remove the main graphics item
@@ -92,7 +94,12 @@ class Annotation(QObject):
         if self.polygon_graphics_item and self.polygon_graphics_item.scene():
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
             self.polygon_graphics_item = None
-
+            
+        # Clean up resources
+        if self.cropped_image:
+            del self.cropped_image
+            self.cropped_image = None
+            
     def update_machine_confidence(self, prediction: dict):
         if not prediction:
             return

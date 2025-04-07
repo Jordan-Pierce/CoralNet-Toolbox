@@ -64,12 +64,9 @@ class RectangleTool(Tool):
                 self.annotation_window.toggle_cursor_annotation(self.end_point)
 
     def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key_Space:
+        if event.key() == Qt.Key_Backspace:
             # Cancel the current annotation
-            self.start_point = None
-            self.end_point = None
-            self.drawing_rectangle = False
-            self.annotation_window.toggle_cursor_annotation()
+            self.cancel_annotation()
 
     def cancel_annotation(self):
         self.start_point = None

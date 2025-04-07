@@ -261,7 +261,7 @@ class PolygonAnnotation(Annotation):
         self.create_polygon_graphics_item(self.points, scene)
 
     def update_graphics_item(self, crop_image=True):
-        if self.graphics_item:
+        if self.graphics_item and self.graphics_item.scene():
             scene = self.graphics_item.scene()
             if scene:
                 scene.removeItem(self.graphics_item)

@@ -63,10 +63,13 @@ class PatchSamplingDialog(QDialog):
 
         self.layout = QVBoxLayout(self)
 
-        # Create sections of the dialog
+        # Setup the sampling configuration layout
         self.setup_sampling_config_layout()
+        # Setup the annotation configuration layout
         self.setup_annotation_config_layout()
+        # Setup the apply options layout
         self.setup_apply_options_layout()
+        # Setup the bottom button controls
         self.setup_buttons_layout()
 
         self.sampled_annotations = []

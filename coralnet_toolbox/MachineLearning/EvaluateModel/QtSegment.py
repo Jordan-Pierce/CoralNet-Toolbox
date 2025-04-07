@@ -14,6 +14,8 @@ class Segment(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Evaluate Segmentation Model")
         self.task = 'segment'
+        self.imgsz = 640
+
 
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
@@ -34,6 +36,14 @@ class Segment(Base):
         """Setup the dataset layout."""
         group_box = QGroupBox("Dataset")
         layout = QFormLayout()
+        
+        self.model_edit = QLineEdit()
+        self.model_button = QPushButton("Browse...")
+        self.model_button.clicked.connect(self.browse_model_file)
+        model_layout = QHBoxLayout()
+        model_layout.addWidget(self.model_edit)
+        model_layout.addWidget(self.model_button)
+        layout.addRow("Existing Model:", model_layout)
             
         self.dataset_edit = QLineEdit()
         self.dataset_button = QPushButton("Browse...")

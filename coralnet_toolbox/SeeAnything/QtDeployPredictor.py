@@ -73,6 +73,8 @@ class DeployPredictorDialog(QDialog):
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
+        # Setup the SAM layout
+        self.setup_sam_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
@@ -290,6 +292,21 @@ class DeployPredictorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def setup_sam_layout(self):
+        """Use SAM model for segmentation."""
+        group_box = QGroupBox("Use SAM Model for Creating Polygons")
+        layout = QFormLayout()
+        
+        # SAM dropdown
+        self.use_sam_dropdown = QComboBox()
+        self.use_sam_dropdown.addItems(["False", "True"])
+        self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
+        self.use_sam_dropdown.setEnabled(False)
+        layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
+        
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
 
     def setup_buttons_layout(self):
         """
@@ -372,6 +389,24 @@ class DeployPredictorDialog(QDialog):
         """Get the maximum number of detections to return."""
         self.max_detect = self.max_detections_spinbox.value()
         return self.max_detect
+
+    def is_sam_model_deployed(self):
+        """
+        Check if the SAM model is deployed and update the checkbox state accordingly.
+
+        :return: Boolean indicating whether the SAM model is deployed
+        """
+        if not hasattr(self.main_window, 'sam_deploy_predictor_dialog'):
+            return False
+
+        self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
+
+        if not self.sam_dialog.loaded_model:
+            self.use_sam_dropdown.setCurrentText("False")
+            QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
+            return False
+
+        return True
 
     def load_model(self):
         """
