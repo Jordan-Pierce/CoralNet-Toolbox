@@ -289,7 +289,17 @@ class DeployGeneratorDialog(QDialog):
         self.detect_as_combo.clear()
         for label in self.label_window.labels:
             self.detect_as_combo.addItem(label.short_label_code, label.id)
-        self.detect_as_combo.setCurrentIndex(0)
+            
+        # Get the currently selected label
+        active_label = self.label_window.active_label.short_label_code
+        # Set the current index to the selected label
+        if active_label:
+            index = self.detect_as_combo.findText(active_label)
+            if index != -1:
+                self.detect_as_combo.setCurrentIndex(index)
+        else:
+            # If no active label, set to the first one
+            self.detect_as_combo.setCurrentIndex(0)
         
     def update_class_mapping(self):
         """Update the class mapping based on the selected label."""
