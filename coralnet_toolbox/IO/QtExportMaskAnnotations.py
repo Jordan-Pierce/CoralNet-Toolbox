@@ -342,7 +342,7 @@ class ExportMaskAnnotations(QDialog):
 
             QMessageBox.information(self, 
                                     "Export Complete", 
-                                    "Segmentation masks have been sucessfully exported")
+                                    "Segmentation masks have been successfully exported")
             self.accept()
             
         except Exception as e:
