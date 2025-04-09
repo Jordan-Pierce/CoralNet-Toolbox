@@ -122,10 +122,10 @@ class DeployModelDialog(QDialog):
         self.model_dropdown.addItems([
             "OmDetTurbo-SwinT",
             "OWLViT",
-            "GroundingDINO-SwinT", 
+            "GroundingDINO-SwinT",
             "GroundingDINO-SwinB",
         ])
-        
+
         layout.addWidget(self.model_dropdown)
 
         group_box.setLayout(layout)
@@ -140,22 +140,22 @@ class DeployModelDialog(QDialog):
 
         # Create a single pair of text input and dropdown
         pair_layout = QHBoxLayout()
-        
+
         self.text_input = QLineEdit()
         self.text_input.setMaxLength(100)  # Cap the width at 100 characters
         self.text_input.setPlaceholderText("Enter keyword or description")
-        
+
         self.label_dropdown = QComboBox()
         self.label_dropdown.addItems([label.short_label_code for label in self.label_window.labels])
-        
+
         pair_layout.addWidget(self.text_input)
         pair_layout.addWidget(self.label_dropdown)
-        
+
         layout.addLayout(pair_layout)
-        
+
         # Store the single pair for later reference
         self.ontology_pairs = [(self.text_input, self.label_dropdown)]
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -213,18 +213,18 @@ class DeployModelDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
         group_box = QGroupBox("Use SAM Model for Creating Polygons")
         layout = QFormLayout()
-        
+
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -408,21 +408,21 @@ class DeployModelDialog(QDialog):
             self.loaded_model = GroundingDINOModel(ontology=self.ontology,
                                                    model=model,
                                                    device=self.main_window.device)
-            
+
         elif "OmDetTurbo" in model_name:
             from coralnet_toolbox.AutoDistill.Models.OmDetTurbo import OmDetTurboModel
 
             self.model_name = model_name
             self.loaded_model = OmDetTurboModel(ontology=self.ontology,
                                                 device=self.main_window.device)
-            
+
         elif "OWLViT" in model_name:
             from coralnet_toolbox.AutoDistill.Models.OWLViT import OWLViTModel
 
             self.model_name = model_name
             self.loaded_model = OWLViTModel(ontology=self.ontology,
                                             device=self.main_window.device)
-        
+
     def predict(self, image_paths=None):
         """
         Make Autodistill predictions on the given inputs
@@ -446,7 +446,7 @@ class DeployModelDialog(QDialog):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         # Start a progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
@@ -495,7 +495,7 @@ class DeployModelDialog(QDialog):
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() == "True":
             self.task = 'segment'
-            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
+            results = self.sam_dialog.predict_from_results(results, image_path)
         else:
             self.task = 'detect'
 

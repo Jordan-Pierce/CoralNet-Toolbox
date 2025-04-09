@@ -101,18 +101,18 @@ class Detect(Base):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
         group_box = QGroupBox("Use SAM Model for Creating Polygons")
         layout = QFormLayout()
-        
+
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -139,9 +139,9 @@ class Detect(Base):
                 yolo_button = msg_box.addButton("Load as YOLO", QMessageBox.ActionRole)
                 rtdetr_button = msg_box.addButton("Load as RTDETR", QMessageBox.ActionRole)
                 cancel_button = msg_box.addButton(QMessageBox.Cancel)
-                
+
                 msg_box.exec_()
-                
+
                 if msg_box.clickedButton() == yolo_button:
                     model_architecture = "yolo"
                 elif msg_box.clickedButton() == rtdetr_button:
@@ -206,12 +206,12 @@ class Detect(Base):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
-        
+
         try:
             # Loop through the image paths
             for image_path in image_paths:
@@ -256,7 +256,7 @@ class Detect(Base):
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() == "True":
             self.task = 'segment'
-            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
+            results = self.sam_dialog.predict_from_results(results, image_path)
         else:
             self.task = 'detect'
 
