@@ -176,7 +176,7 @@ class ExportMaskAnnotations(QDialog):
         
         # File format combo box
         self.file_format_combo = QComboBox()
-        self.file_format_combo.addItems([".png", ".jpg", ".bmp", ".tif"])
+        self.file_format_combo.addItems([".png", ".bmp", ".tif"])
         self.file_format_combo.setEditable(True)
         layout.addRow("File Format:", self.file_format_combo)
         
