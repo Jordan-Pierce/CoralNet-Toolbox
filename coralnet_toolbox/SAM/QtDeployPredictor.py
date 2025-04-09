@@ -570,22 +570,16 @@ class DeployPredictorDialog(QDialog):
 
         return results
 
-    def predict_from_results(self, results_generator, class_mapping, image_path=None):
+    def predict_from_results(self, results_generator, image_path=None):
         """
         Make predictions using the currently loaded model and grouped results.
 
         Args:
             results_generator (generator): A generator that yields Ultralytics Results.
+            image_path (str): Optional image path to override the image in the results.
         """
         # Create a result processor with current settings.
-        result_processor = ResultsProcessor(
-            self.main_window,
-            class_mapping=class_mapping,
-            uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-            iou_thresh=self.main_window.get_iou_thresh(),
-            min_area_thresh=self.main_window.get_area_thresh_min(),
-            max_area_thresh=self.main_window.get_area_thresh_max()
-        )
+        result_processor = ResultsProcessor(self.main_window)
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)

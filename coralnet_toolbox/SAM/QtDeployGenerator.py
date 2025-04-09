@@ -147,14 +147,14 @@ class DeployGeneratorDialog(QDialog):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
-        
+
         # Task dropdown
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["detect", "segment"])
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
         self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
         layout.addRow("Task:", self.use_task_dropdown)
-        
+
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
         self.max_detections_spinbox.setRange(1, 10000)
@@ -222,12 +222,12 @@ class DeployGeneratorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def detect_as_layout(self):
         """Detect objects as layout."""
         group_box = QGroupBox("Detect as: ")
         layout = QFormLayout()
-        
+
         # Sample Label
         self.detect_as_combo = QComboBox()
         for label in self.label_window.labels:
@@ -235,21 +235,21 @@ class DeployGeneratorDialog(QDialog):
         self.detect_as_combo.setCurrentIndex(0)
         self.detect_as_combo.currentIndexChanged.connect(self.update_class_mapping)
         layout.addRow("Detect as:", self.detect_as_combo)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
         group_box = QGroupBox("Use SAM Model for Creating Polygons")
         layout = QFormLayout()
-        
+
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -283,14 +283,24 @@ class DeployGeneratorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def update_detect_as_combo(self):
         """Update the label combo box with the current labels."""
         self.detect_as_combo.clear()
         for label in self.label_window.labels:
             self.detect_as_combo.addItem(label.short_label_code, label.id)
-        self.detect_as_combo.setCurrentIndex(0)
-        
+
+        # Get the currently selected label
+        active_label = self.label_window.active_label.short_label_code
+        # Set the current index to the selected label
+        if active_label:
+            index = self.detect_as_combo.findText(active_label)
+            if index != -1:
+                self.detect_as_combo.setCurrentIndex(index)
+        else:
+            # If no active label, set to the first one
+            self.detect_as_combo.setCurrentIndex(0)
+
     def update_class_mapping(self):
         """Update the class mapping based on the selected label."""
         detect_as = self.detect_as_combo.currentText()
@@ -351,7 +361,7 @@ class DeployGeneratorDialog(QDialog):
         """Get the maximum number of detections to return."""
         self.max_detect = self.max_detections_spinbox.value()
         return self.max_detect
-    
+
     def is_sam_model_deployed(self):
         """
         Check if the SAM model is deployed and update the checkbox state accordingly.
@@ -452,12 +462,12 @@ class DeployGeneratorDialog(QDialog):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
-        
+
         try:
             for image_path in image_paths:
                 progress_bar.update_progress()
@@ -499,13 +509,13 @@ class DeployGeneratorDialog(QDialog):
 
         # Return the results
         yield results
-        
+
     def _apply_sam(self, results, image_path):
         """Apply SAM to the results if needed."""
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() == "True":
             self.task = 'segment'
-            results = self.sam_dialog.predict_from_results(results, self.class_mapping, image_path)
+            results = self.sam_dialog.predict_from_results(results, image_path)
         else:
             self.task = 'detect'
 

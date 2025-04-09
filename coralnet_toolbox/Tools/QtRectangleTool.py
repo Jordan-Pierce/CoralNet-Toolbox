@@ -21,7 +21,7 @@ class RectangleTool(Tool):
         self.cursor = Qt.CrossCursor
         self.start_point = None
         self.end_point = None
-        self.drawing_rectangle = False
+        self.drawing_continuous = False
 
     def activate(self):
         self.active = True
@@ -34,26 +34,26 @@ class RectangleTool(Tool):
                                 "A label must be selected before adding an annotation.")
             return None
 
-        if event.button() == Qt.LeftButton and not self.drawing_rectangle:
+        if event.button() == Qt.LeftButton and not self.drawing_continuous:
             # Start drawing the rectangle
             self.start_point = self.annotation_window.mapToScene(event.pos())
-            self.drawing_rectangle = True
+            self.drawing_continuous = True
             self.annotation_window.unselect_annotations()
             self.annotation_window.toggle_cursor_annotation(self.start_point)
-        elif event.button() == Qt.LeftButton and self.drawing_rectangle:
+        elif event.button() == Qt.LeftButton and self.drawing_continuous:
             # Finish drawing the rectangle
             self.end_point = self.annotation_window.mapToScene(event.pos())
             self.annotation_window.unselect_annotations()
             self.annotation_window.add_annotation(self.end_point)
-            self.drawing_rectangle = False
-        elif event.button() == Qt.RightButton and self.drawing_rectangle:
+            self.drawing_continuous = False
+        elif event.button() == Qt.RightButton and self.drawing_continuous:
             # Panning the image while drawing
             pass
         else:
             self.cancel_annotation()
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self.drawing_rectangle:
+        if self.drawing_continuous:
             # Update the end point while drawing the rectangle
             self.end_point = self.annotation_window.mapToScene(event.pos())
             # Update the annotation graphics
@@ -71,7 +71,7 @@ class RectangleTool(Tool):
     def cancel_annotation(self):
         self.start_point = None
         self.end_point = None
-        self.drawing_rectangle = False
+        self.drawing_continuous = False
         self.annotation_window.toggle_cursor_annotation()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
@@ -97,6 +97,6 @@ class RectangleTool(Tool):
         if finished:
             self.start_point = None
             self.end_point = None
-            self.drawing_rectangle = False
+            self.drawing_continuous = False
 
         return annotation

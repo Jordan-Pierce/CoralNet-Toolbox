@@ -42,11 +42,12 @@ from coralnet_toolbox.IO import (
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
     ExportLabels,
+    ExportTagLabLabels,
     ExportAnnotations,
+    ExportMaskAnnotations,
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
-    ExportTagLabLabels,
     OpenProject,
     SaveProject
 )
@@ -189,6 +190,7 @@ class MainWindow(QMainWindow):
         self.export_coralnet_annotations = ExportCoralNetAnnotations(self)
         self.export_viscore_annotations_dialog = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
+        self.export_mask_annotations_dialog = ExportMaskAnnotations(self)
         self.import_frames_dialog = ImportFrames(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
@@ -373,6 +375,10 @@ class MainWindow(QMainWindow):
         self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.export_taglab_annotations_action.triggered.connect(self.export_taglab_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
+        # Export Mask Annotations
+        self.export_mask_annotations_action = QAction("Masks (Raster)", self)
+        self.export_mask_annotations_action.triggered.connect(self.open_export_mask_annotations_dialog)
+        self.export_annotations_menu.addAction(self.export_mask_annotations_action)
 
         # Dataset submenu
         self.export_dataset_menu = self.export_menu.addMenu("Dataset")
@@ -1307,6 +1313,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_export_viscore_annotations_dialog(self):
+        # Check if there are any images in the project
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+        
         # Check if there are annotations
         if not self.annotation_window.annotations_dict:
             QMessageBox.warning(self,
@@ -1319,11 +1332,31 @@ class MainWindow(QMainWindow):
             self.export_viscore_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_export_mask_annotations_dialog(self):
+        # Check if there are any images in the project
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+        
+        # Check if there are any annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Export Segmentation Masks",
+                                "No annotations are present in the project.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+            self.export_mask_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_patch_annotation_sampling_dialog(self):
-
+        # Check if there are any images in the project
         if not self.image_window.image_paths:
-            # Check if there are any images in the project
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")

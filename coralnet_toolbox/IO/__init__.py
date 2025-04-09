@@ -10,6 +10,7 @@ from .QtImportTagLabAnnotations import ImportTagLabAnnotations
 from .QtExportLabels import ExportLabels
 from .QtExportTagLabLabels import ExportTagLabLabels
 from .QtExportAnnotations import ExportAnnotations
+from .QtExportMaskAnnotations import ExportMaskAnnotations
 from .QtExportCoralNetAnnotations import ExportCoralNetAnnotations
 from .QtExportViscoreAnnotations import ExportViscoreAnnotations
 from .QtExportTagLabAnnotations import ExportTagLabAnnotations
@@ -29,6 +30,7 @@ __all__ = [
     'ExportLabels',
     'ExportTagLabLabels',
     'ExportAnnotations',
+    'ExportMaskAnnotations',
     'ExportCoralNetAnnotations', 
     'ExportViscoreAnnotations',
     'ExportTagLabAnnotations',

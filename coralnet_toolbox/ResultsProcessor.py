@@ -25,16 +25,29 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 class ResultsProcessor:
     def __init__(self, 
                  main_window, 
-                 class_mapping, 
-                 uncertainty_thresh=0.3, 
-                 iou_thresh=0.2, 
-                 min_area_thresh=0.00, 
-                 max_area_thresh=0.40):
+                 class_mapping={}, 
+                 uncertainty_thresh=None, 
+                 iou_thresh=None, 
+                 min_area_thresh=None, 
+                 max_area_thresh=None):
+        # Initialize the ResultsProcessor with the main window
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
         self.class_mapping = class_mapping
+        
+        if uncertainty_thresh is None:
+            self.uncertainty_thresh = main_window.get_uncertainty_thresh()
+            
+        if iou_thresh is None:
+            iou_thresh = main_window.get_iou_thresh()
+            
+        if min_area_thresh is None:
+            min_area_thresh = main_window.get_area_thresh_min()
+            
+        if max_area_thresh is None:
+            max_area_thresh = main_window.get_area_thresh_max()
         
         self.uncertainty_thresh = uncertainty_thresh
         self.iou_thresh = iou_thresh
