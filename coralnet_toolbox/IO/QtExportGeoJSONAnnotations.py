@@ -24,6 +24,8 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.utilities import rasterio_open
+
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -87,24 +89,20 @@ class ExportGeoJSONAnnotations(QDialog):
         
     def setup_output_layout(self):
         """Setup the output directory and file format layout."""
-        groupbox = QGroupBox("Output Directory and File Format")
+        groupbox = QGroupBox("Output File")
         layout = QFormLayout()
         
-        # Output directory selection
-        output_dir_layout = QHBoxLayout()
-        self.output_dir_edit = QLineEdit()
-        self.output_dir_button = QPushButton("Browse...")
-        self.output_dir_button.clicked.connect(self.browse_output_dir)
-        output_dir_layout.addWidget(self.output_dir_edit)
-        output_dir_layout.addWidget(self.output_dir_button)
-        layout.addRow("Output Directory:", output_dir_layout)
-        
-        # Output folder name
-        self.output_name_edit = QLineEdit("")
-        layout.addRow("File Name:", self.output_name_edit)    
+        # Output file selection
+        output_file_layout = QHBoxLayout()
+        self.output_file_edit = QLineEdit()
+        self.output_file_button = QPushButton("Browse...")
+        self.output_file_button.clicked.connect(self.browse_output_file)
+        output_file_layout.addWidget(self.output_file_edit)
+        output_file_layout.addWidget(self.output_file_button)
+        layout.addRow("Output File:", output_file_layout)
         
         groupbox.setLayout(layout)
-        self.layout.addWidget(groupbox)    
+        self.layout.addWidget(groupbox)
         
     def setup_image_selection_layout(self):
         """Setup the image selection layout."""
@@ -183,14 +181,14 @@ class ExportGeoJSONAnnotations(QDialog):
         
         self.layout.addLayout(button_layout)
 
-    def browse_output_dir(self):
-        """Open a file dialog to select the output directory."""
+    def browse_output_file(self):
+        """Open a file dialog to select the output file."""
         options = QFileDialog.Options()
-        directory = QFileDialog.getExistingDirectory(
-            self, "Select Output Directory", "", options=options
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Select Output File", "", "GeoJSON Files (*.geojson)", options=options
         )
-        if directory:
-            self.output_dir_edit.setText(directory)
+        if file_path:
+            self.output_file_edit.setText(file_path)
             
     def update_label_selection_list(self):
         """Update the label selection list with labels from the label window."""
@@ -256,49 +254,118 @@ class ExportGeoJSONAnnotations(QDialog):
     
     def convert_annotation_to_polygon(self, annotation):
         """Convert any annotation type to a polygon."""
+        
+        # Convert Patch Annotation to a polygon
         if isinstance(annotation, PatchAnnotation):
             size = annotation.annotation_size / 2
             x = annotation.center_xy.x()
             y = annotation.center_xy.y()
             return [(x - size, y - size), (x + size, y - size), (x + size, y + size), (x - size, y + size)]
+        
+        # Convert Rectangle Annotation to a polygon
         elif isinstance(annotation, RectangleAnnotation):
             return [(annotation.top_left.x(), annotation.top_left.y()),
                     (annotation.bottom_right.x(), annotation.top_left.y()),
                     (annotation.bottom_right.x(), annotation.bottom_right.y()),
                     (annotation.top_left.x(), annotation.bottom_right.y())]
+        
+        # Convert Polygon Annotation to a polygon
         elif isinstance(annotation, PolygonAnnotation):
             return [(p.x(), p.y()) for p in annotation.points]
+        
         return []
 
-    def create_geojson_feature(self, annotation, image_width, image_height):
-        """Create a GeoJSON feature from an annotation."""
+    def transform_coordinates(self, coords, transform):
+        """
+        Transform coordinates from pixel space to geographic space with proper validation.
+        
+        Args:
+            coords: List of (x, y) coordinate tuples in pixel space
+            transform: Affine transformation matrix from rasterio
+            
+        Returns:
+            List of [x, y] coordinate pairs in geographic space
+        
+        Raises:
+            ValueError: If transform is invalid or coordinates cannot be transformed
+        """
+        # Validate transform
+        if transform is None:
+            raise ValueError("No coordinate transformation available")
+            
+        if not isinstance(transform, Affine):
+            raise ValueError(f"Invalid transform type: {type(transform)}, expected Affine")
+        
+        # Check if transform is valid (not identity or close to identity)
+        identity = Affine.identity()
+        is_close_to_identity = all(abs(a - b) < 1e-10 for a, b in zip(transform, identity))
+        
+        if is_close_to_identity:
+            raise ValueError("Transform appears to be identity matrix - no geographic projection available")
+        
+        transformed_coords = []
+        for x, y in coords:
+            try:
+                # Validate input coordinates
+                if not (isinstance(x, (int, float)) and isinstance(y, (int, float))):
+                    raise ValueError(f"Invalid coordinate values: ({x}, {y})")
+                    
+                # Apply transformation
+                geo_x, geo_y = transform * (x, y)
+                
+                # Check for unreasonable values that might indicate transformation problems
+                # These thresholds depend on your coordinate system, adjust as needed
+                if abs(geo_x) > 1e10 or abs(geo_y) > 1e10:
+                    raise ValueError(f"Transformed coordinates out of reasonable range: [{geo_x}, {geo_y}]")
+                    
+                transformed_coords.append([geo_x, geo_y])
+            except Exception as e:
+                raise ValueError(f"Failed to transform coordinates ({x}, {y}): {str(e)}")
+        
+        return transformed_coords
+
+    def create_geojson_feature(self, annotation, image_path, transform=None):
+        """
+        Create a GeoJSON feature from an annotation with proper coordinate transformation error handling.
+        
+        Args:
+            annotation: The annotation object to convert
+            image_path: Path to the image containing the annotation
+            transform: Optional affine transformation matrix
+            
+        Returns:
+            GeoJSON feature dictionary or None if conversion fails
+        """
         polygon_coords = self.convert_annotation_to_polygon(annotation)
         
-        # Normalize the coordinates
-        normalized_coords = []
-        for x, y in polygon_coords:
-            normalized_coords.append([x / image_width, y / image_height])
+        # Ensure the polygon has at least 4 points
+        if len(polygon_coords) < 4:
+            print(f"Skipping annotation with less than 4 points in {image_path}")
+            return None
         
-        # Ensure the polygon has at least four positions
-        if len(normalized_coords) < 4:
-            # If less than 4 points, skip this annotation
-            print(f"Skipping annotation with less than 4 points.")
+        try:
+            # Transform the coordinates
+            polygon_coords = self.transform_coordinates(polygon_coords, transform)
+        except ValueError as e:
+            # Skip this annotation
             return None
         
         # Ensure the polygon is closed (first and last positions are the same)
-        if normalized_coords[0] != normalized_coords[-1]:
-            normalized_coords.append(normalized_coords[0])
+        if polygon_coords[0] != polygon_coords[-1]:
+            polygon_coords.append(polygon_coords[0])
         
         # Create the GeoJSON feature
         feature = {
             "type": "Feature",
             "geometry": {
                 "type": "Polygon",
-                "coordinates": [normalized_coords]
+                "coordinates": [polygon_coords]
             },
             "properties": {
                 "label": annotation.label.short_label_code,
-                "label_properties": annotation.label.to_dict()
+                "label_properties": annotation.label.to_dict(),
+                "source_image": os.path.basename(image_path),
+                "coordinate_system": "geographic"
             }
         }
         return feature
@@ -306,16 +373,10 @@ class ExportGeoJSONAnnotations(QDialog):
     def export_geojson(self):
         """Export annotations as GeoJSON."""
         # Validate inputs
-        if not self.output_dir_edit.text():
+        if not self.output_file_edit.text():
             QMessageBox.warning(self, 
-                                "Missing Output Directory", 
-                                "Please select an output directory.")
-            return
-
-        if not self.output_name_edit.text():
-            QMessageBox.warning(self, 
-                                "Missing File Name", 
-                                "Please enter a file name.")
+                                "Missing Output File", 
+                                "Please select an output file.")
             return
 
         # Check if at least one annotation type is selected
@@ -340,15 +401,7 @@ class ExportGeoJSONAnnotations(QDialog):
                                 "Please select at least one label.")
             return
 
-        output_dir = self.output_dir_edit.text()
-        file_name = self.output_name_edit.text().strip()
-        
-        # Ensure file_name ends with .geojson
-        if not file_name.endswith('.geojson'):
-            file_name += '.geojson'
-
-        # Create output directory
-        output_path = os.path.join(output_dir, file_name)
+        output_path = self.output_file_edit.text()
 
         # Get the list of images to process
         images = self.get_selected_image_paths()
@@ -383,37 +436,41 @@ class ExportGeoJSONAnnotations(QDialog):
         progress_bar.start_progress(len(images))
 
         try:
+            # Iterate through the images
             for image_path in images:
+                
                 # Check if the image is a .tif or .tiff
                 if not image_path.lower().endswith(('.tif', '.tiff')):
-                    print(f"Skipping non-TIFF image: {image_path}")
+                    print(f"Warning: Non-TIFF image {os.path.basename(image_path)} included; skipping.")
                     continue
                 
                 # Get the annotations for this image
                 annotations = self.get_annotations_for_image(image_path)
                 
-                # Get the image dimensions
+                if image_path in self.image_window.rasterio_images:
+                    rasterio_src = self.image_window.rasterio_images[image_path]
+                else:
+                    rasterio_src = rasterio_open(image_path)
+
                 try:
-                    image = Image.open(image_path)
-                    image_width, image_height = image.size
+                    # Get the image transform
+                    transform = rasterio_src.transform
+                    crs = rasterio_src.crs.to_string()
+                    
+                    # Check the transform
+                    if not isinstance(transform, Affine):
+                        print(f"Error: Invalid transform for {os.path.basename(image_path)}; skipping.")
+                        continue
+                    
                 except Exception as e:
-                    print(f"Error loading image: {e}")
+                    print(f"Error: Could not get crs for {os.path.basename(image_path)}; skipping.")
                     continue
                 
                 # Create GeoJSON features for each annotation
                 for annotation in annotations:
-                    feature = self.create_geojson_feature(annotation, image_width, image_height)
+                    feature = self.create_geojson_feature(annotation, image_path, transform)
                     if feature is not None:
                         geojson_data["features"].append(feature)
-                
-                # Attempt to read CRS from the first valid TIFF image
-                if crs is None:
-                    try:
-                        with rasterio.open(image_path) as src:
-                            if src.crs:
-                                crs = src.crs.to_string()
-                    except Exception as e:
-                        print(f"Error reading CRS from {image_path}: {e}")
 
                 progress_bar.update_progress()
 
@@ -425,6 +482,12 @@ class ExportGeoJSONAnnotations(QDialog):
                         "name": crs
                     }
                 }
+                
+            else:
+                QMessageBox.critial(self,
+                                    "Missing CRS",
+                                    "No CRS information available for the images.")
+                return
 
             # Write the GeoJSON data to a file
             with open(output_path, 'w') as f:

@@ -45,6 +45,7 @@ from coralnet_toolbox.IO import (
     ExportTagLabLabels,
     ExportAnnotations,
     ExportMaskAnnotations,
+    ExportGeoJSONAnnotations,
     ExportCoralNetAnnotations,
     ExportViscoreAnnotations,
     ExportTagLabAnnotations,
@@ -191,6 +192,7 @@ class MainWindow(QMainWindow):
         self.export_viscore_annotations_dialog = ExportViscoreAnnotations(self)
         self.export_taglab_annotations = ExportTagLabAnnotations(self)
         self.export_mask_annotations_dialog = ExportMaskAnnotations(self)
+        self.export_geojson_annotations_dialog = ExportGeoJSONAnnotations(self)
         self.import_frames_dialog = ImportFrames(self)
         self.open_project_dialog = OpenProject(self)
         self.save_project_dialog = SaveProject(self)
@@ -375,6 +377,10 @@ class MainWindow(QMainWindow):
         self.export_taglab_annotations_action = QAction("TagLab (JSON)", self)
         self.export_taglab_annotations_action.triggered.connect(self.export_taglab_annotations.export_annotations)
         self.export_annotations_menu.addAction(self.export_taglab_annotations_action)
+        # Export GeoJSON Annotations
+        self.export_geojson_annotations_action = QAction("GeoJSON (JSON)", self)
+        self.export_geojson_annotations_action.triggered.connect(self.export_geojson_annotations_dialog.exec_)
+        self.export_annotations_menu.addAction(self.export_geojson_annotations_action)
         # Export Mask Annotations
         self.export_mask_annotations_action = QAction("Masks (Raster)", self)
         self.export_mask_annotations_action.triggered.connect(self.open_export_mask_annotations_dialog)
@@ -1306,6 +1312,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_import_viscore_annotations_dialog(self):
+        """Open the Import Viscore Annotations dialog to import annotations"""
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+        
         try:
             self.untoggle_all_tools()
             self.import_viscore_annotations_dialog.exec_()
@@ -1313,6 +1326,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_export_viscore_annotations_dialog(self):
+        """Open the Export Viscore Annotations dialog to export annotations"""
         # Check if there are any images in the project
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
@@ -1333,7 +1347,30 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
+    def open_export_geojson_annotations_dialog(self):
+        """Open the Export GeoJSON dialog to export annotations as GeoJSON files"""
+        # Check if there are any images in the project
+        if not self.image_window.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before sampling annotations.")
+            return
+        
+        # Check if there are annotations
+        if not self.annotation_window.annotations_dict:
+            QMessageBox.warning(self,
+                                "Export Annotations",
+                                "No annotations are present in the project.")
+            return
+        
+        try:
+            self.untoggle_all_tools()
+            self.export_geojson_annotations_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
     def open_export_mask_annotations_dialog(self):
+        """Open the Export Mask Annotations dialog to export segmentation masks"""
         # Check if there are any images in the project
         if not self.image_window.image_paths:
             QMessageBox.warning(self,
