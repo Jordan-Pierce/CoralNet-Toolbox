@@ -58,9 +58,9 @@ class RectangleTool(Tool):
             self.end_point = self.annotation_window.mapToScene(event.pos())
             # Update the annotation graphics
             active_image = self.annotation_window.active_image
-            image_pixmap = self.annotation_window.image_pixmap
+            pixmap_image = self.annotation_window.pixmap_image
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-            if active_image and image_pixmap and cursor_in_window and self.start_point:
+            if active_image and pixmap_image and cursor_in_window and self.start_point:
                 self.annotation_window.toggle_cursor_annotation(self.end_point)
 
     def keyPressEvent(self, event: QKeyEvent):
@@ -75,7 +75,7 @@ class RectangleTool(Tool):
         self.annotation_window.toggle_cursor_annotation()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-        if not self.annotation_window.active_image or not self.annotation_window.image_pixmap:
+        if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
             return None
 
         # Get the current end point of the rectangle

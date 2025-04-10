@@ -118,9 +118,9 @@ class SeeAnythingTool(Tool):
 
         # Original image (grab current from the annotation window)
         self.image_path = self.annotation_window.current_image_path
-        self.original_image = pixmap_to_numpy(self.annotation_window.image_pixmap)
-        self.original_width = self.annotation_window.image_pixmap.size().width()
-        self.original_height = self.annotation_window.image_pixmap.size().height()
+        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
+        self.original_width = self.annotation_window.pixmap_image.size().width()
+        self.original_height = self.annotation_window.pixmap_image.size().height()
 
         # Current extent (view)
         extent = self.annotation_window.viewportToScene()
@@ -382,7 +382,7 @@ class SeeAnythingTool(Tool):
         if not self.annotation_window.active_image:
             return None
 
-        if not self.annotation_window.image_pixmap:
+        if not self.annotation_window.pixmap_image:
             return None
 
         if not self.working_area:

@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -25,23 +26,23 @@ class Detect(Base):
         super(Detect, self).__init__(parent)
         self.setWindowTitle("Export Detection Dataset")
         self.setWindowIcon(get_icon("coral"))
-        
+
     def setup_info_layout(self):
         """Setup the info layout"""
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_text = "Export Rectangles and Polygons to create a YOLO-formatted Detection dataset."
         info_label = QLabel(info_text)
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def update_annotation_type_checkboxes(self):
         """
         Update the state of annotation type checkboxes based on the selected dataset type.
@@ -113,7 +114,7 @@ class Detect(Base):
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
             return
-        
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title=f"Creating {split} Dataset")
@@ -122,7 +123,7 @@ class Detect(Base):
 
         for image_path in image_paths:
             yolo_annotations = []
-            image_height, image_width = self.image_window.rasterio_open(image_path).shape
+            image_height, image_width = rasterio_open(image_path).shape
             image_annotations = [a for a in annotations if a.image_path == image_path]
 
             for image_annotation in image_annotations:

@@ -82,7 +82,7 @@ class SAMTool(Tool):
     def start_hover_timer(self, pos):
         """
         Start the hover timer to display the annotation.
-        
+
         Args:
             pos (QPointF): The position of the cursor.
         """
@@ -142,7 +142,7 @@ class SAMTool(Tool):
     def mousePressEvent(self, event: QMouseEvent):
         """
         Handles the mouse press event.
-        
+
         Args:
             event (QMouseEvent): The mouse press event.
         """
@@ -218,7 +218,7 @@ class SAMTool(Tool):
     def mouseMoveEvent(self, event: QMouseEvent):
         """
         Handles the mouse move event.
-        
+
         Args:
             event (QMouseEvent): The mouse move event.
         """
@@ -229,9 +229,9 @@ class SAMTool(Tool):
 
             # Update the annotation graphics
             active_image = self.annotation_window.active_image
-            image_pixmap = self.annotation_window.image_pixmap
+            pixmap_image = self.annotation_window.pixmap_image
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-            if active_image and image_pixmap and cursor_in_window and self.start_point:
+            if active_image and pixmap_image and cursor_in_window and self.start_point:
                 self.annotation_window.toggle_cursor_annotation(self.end_point)
         else:
             if self.annotation_window.cursorInWindow(event.pos()):
@@ -245,7 +245,7 @@ class SAMTool(Tool):
     def keyPressEvent(self, event: QKeyEvent):
         """
         Handles the key press event.
-        
+
         Args:
             event (QKeyEvent): The key press event
         """
@@ -281,9 +281,9 @@ class SAMTool(Tool):
 
         # Original image (grab current from the annotation window)
         self.image_path = self.annotation_window.current_image_path
-        self.original_image = pixmap_to_numpy(self.annotation_window.image_pixmap)
-        self.original_width = self.annotation_window.image_pixmap.size().width()
-        self.original_height = self.annotation_window.image_pixmap.size().height()
+        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
+        self.original_width = self.annotation_window.pixmap_image.size().width()
+        self.original_height = self.annotation_window.pixmap_image.size().height()
 
         # Current extent (view)
         extent = self.annotation_window.viewportToScene()
@@ -344,17 +344,17 @@ class SAMTool(Tool):
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         """
         Create an annotation based on the given scene position.
-        
+
         Args:
             scene_pos (QPointF): The scene position
             finished (bool): Flag to indicate if the annotation is finished
         """
         if not self.annotation_window.active_image:
             return None
-        
-        if not self.annotation_window.image_pixmap:
+
+        if not self.annotation_window.pixmap_image:
             return None
-        
+
         if not self.working_area:
             return None
 
@@ -388,7 +388,7 @@ class SAMTool(Tool):
 
         if results.boxes.conf[0] < self.annotation_window.main_window.get_uncertainty_thresh():
             return None
-        
+
         # TODO use results processor
         # Get the points of the top1 mask
         top1_index = np.argmax(results.boxes.conf)

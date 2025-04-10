@@ -18,7 +18,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 
-from coralnet_toolbox.utilities import open_image
+# from coralnet_toolbox.utilities import open_image
 
 from coralnet_toolbox.Icons import get_icon
 

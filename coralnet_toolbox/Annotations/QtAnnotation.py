@@ -31,6 +31,7 @@ class Annotation(QObject):
                  label_id: str,
                  transparency: int = 128,
                  show_msg=False):
+        """Initialize an annotation object with label and display properties."""
         super().__init__()
         self.id = str(uuid.uuid4())
         self.label = Label(short_label_code, long_label_code, color, label_id)
@@ -55,6 +56,7 @@ class Annotation(QObject):
         self.polygon_graphics_item = None
 
     def show_warning_message(self):
+        """Display a warning message about removing machine suggestions when altering an annotation."""
         msg_box = QMessageBox()
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setWindowTitle("Warning")
@@ -63,14 +65,17 @@ class Annotation(QObject):
         msg_box.exec_()
 
     def select(self):
+        """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
         self.update_graphics_item()
 
     def deselect(self):
+        """Mark the annotation as not selected and update its visual appearance."""
         self.is_selected = False
         self.update_graphics_item()
 
     def delete(self):
+        """Remove the annotation and all associated graphics items from the scene."""
         
         # Emit the deletion signal first
         self.annotationDeleted.emit(self)
@@ -101,6 +106,7 @@ class Annotation(QObject):
             self.cropped_image = None
             
     def update_machine_confidence(self, prediction: dict):
+        """Update annotation with machine-generated confidence scores."""
         if not prediction:
             return
         
@@ -124,6 +130,7 @@ class Annotation(QObject):
         self.show_message = True
 
     def update_user_confidence(self, new_label: 'Label'):
+        """Update annotation with user-defined label and confidence."""
         # Set machine confidence to None
         self.machine_confidence = {}
         # Update user confidence
@@ -135,6 +142,7 @@ class Annotation(QObject):
         self.show_message = False
 
     def update_label(self, new_label: 'Label', set_review=False):
+        """Update the annotation's label while preserving confidence values."""
         # Initializing
         if self.label is None:
             self.label = new_label
@@ -166,50 +174,8 @@ class Annotation(QObject):
         # Always update the graphics item
         self.update_graphics_item()
 
-    def _prepare_data_for_qimage(self, data):
-        if data.shape[0] == 3:  # RGB image
-            data = np.transpose(data, (1, 2, 0))
-        elif data.shape[0] == 1:  # Grayscale image
-            data = np.squeeze(data)
-        elif data.shape[0] == 4:  # RGBA image
-            data = np.transpose(data, (1, 2, 0))
-
-        # Convert to uint8 if not already
-        if data.dtype != np.uint8:
-            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
-            
-        # Normalize data to 0-255 range if it's not already
-        if data.min() != 0 or data.max() != 255:
-            if not (data.max() - data.min() == 0):
-                data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
-
-        return data
-
-    def _convert_to_qimage(self, data):
-        height, width = data.shape[:2]
-        if len(data.shape) == 3:
-            if data.shape[2] == 3:  # RGB image
-                bytes_per_line = 3 * width
-                image_format = QImage.Format_RGB888
-            elif data.shape[2] == 4:  # RGBA image
-                bytes_per_line = 4 * width
-                image_format = QImage.Format_RGBA8888
-        else:  # Grayscale image
-            bytes_per_line = width
-            image_format = QImage.Format_Grayscale8
-
-        # Convert numpy array to bytes
-        if len(data.shape) == 3:
-            if data.shape[2] == 3:  # RGB image
-                data = data.tobytes()
-            elif data.shape[2] == 4:  # RGBA image
-                data = data.tobytes()
-        else:  # Grayscale image
-            data = np.expand_dims(data, -1).tobytes()
-
-        return QImage(data, width, height, bytes_per_line, image_format)
-
     def get_cropped_image(self, max_size=None):
+        """Retrieve the cropped image, optionally scaled to maximum size."""
         if self.cropped_image is None:
             return None
 
@@ -231,9 +197,11 @@ class Annotation(QObject):
         return self.cropped_image
 
     def get_cropped_image_graphic(self):
+        """Get graphical representation of the cropped image area."""
         raise NotImplementedError("Subclasses must implement this method.")
 
     def create_center_graphics_item(self, center_xy, scene):
+        """Create a graphical item representing the annotation's center point."""
         if self.center_graphics_item and self.center_graphics_item.scene():
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
 
@@ -247,6 +215,7 @@ class Annotation(QObject):
         scene.addItem(self.center_graphics_item)
 
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene):
+        """Create a graphical item representing the annotation's bounding box."""
         if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
 
@@ -263,6 +232,7 @@ class Annotation(QObject):
         scene.addItem(self.bounding_box_graphics_item)
 
     def create_polygon_graphics_item(self, points, scene):
+        """Create a graphical item representing the annotation's polygon outline."""
         if self.polygon_graphics_item and self.polygon_graphics_item.scene():
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
 
@@ -277,6 +247,7 @@ class Annotation(QObject):
         scene.addItem(self.polygon_graphics_item)
 
     def update_center_graphics_item(self, center_xy):
+        """Update the position and appearance of the center graphics item."""
         if self.center_graphics_item:
             color = QColor(self.label.color)
             if self.is_selected:
@@ -287,6 +258,7 @@ class Annotation(QObject):
             self.center_graphics_item.setBrush(color)
 
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
+        """Update the position and appearance of the bounding box graphics item."""
         if self.bounding_box_graphics_item:
             color = QColor(self.label.color)
             if self.is_selected:
@@ -300,6 +272,7 @@ class Annotation(QObject):
             self.bounding_box_graphics_item.setPen(color)
 
     def update_polygon_graphics_item(self, points):
+        """Update the shape and appearance of the polygon graphics item."""
         if self.polygon_graphics_item:
             color = QColor(self.label.color)
             if self.is_selected:
@@ -311,20 +284,25 @@ class Annotation(QObject):
             self.polygon_graphics_item.setBrush(color)
 
     def update_transparency(self, transparency: int):
+        """Update the transparency value of the annotation's graphical representation."""
         if self.transparency != transparency:
             self.transparency = transparency
             self.update_graphics_item(crop_image=False)
 
     def get_center_xy(self):
+        """Get the center coordinates of the annotation."""
         return self.center_xy
 
     def update_graphics_item(self, crop_image=True):
+        """Update the graphical representation of the annotation."""
         pass
 
     def resize(self, handle: str, new_pos: QPointF):
+        """Resize the annotation based on handle position."""
         pass
 
     def to_coralnet(self):
+        """Convert annotation to CoralNet format for export."""
         # Extract machine confidence values and suggestions
         confidences = [f"{confidence:.3f}" for confidence in self.machine_confidence.values()]
         suggestions = [suggestion.short_label_code for suggestion in self.machine_confidence.keys()]
@@ -356,6 +334,7 @@ class Annotation(QObject):
         }
 
     def to_dict(self):
+        """Convert annotation to dictionary format for serialization."""
         # Convert machine_confidence keys to short_label_code
         machine_confidence = {label.short_label_code: confidence for label, confidence in
                               self.machine_confidence.items()}
@@ -372,30 +351,10 @@ class Annotation(QObject):
         }
 
     def to_yolo_detection(self, image_width, image_height):
-        pass
-
+        raise NotImplementedError("Subclasses must implement this method.")
+        
     def to_yolo_segmentation(self, image_width, image_height):
-        pass
-
-    @classmethod
-    def from_dict(cls, data, label_window):
-        annotation = cls(data['label_short_code'],
-                         data['label_long_code'],
-                         QColor(*data['annotation_color']),
-                         data['image_path'],
-                         data['label_id'])
-        annotation.data = data.get('data', {})
-
-        # Convert machine_confidence keys back to Label objects
-        machine_confidence = {}
-        for short_label_code, confidence in data.get('machine_confidence', {}).items():
-            label = label_window.get_label_by_short_code(short_label_code)
-            if label:
-                machine_confidence[label] = confidence
-
-        annotation.update_machine_confidence(machine_confidence)
-
-        return annotation
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def __repr__(self):
         return (f"Annotation(id={self.id}, "

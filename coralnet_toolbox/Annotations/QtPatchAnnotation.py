@@ -1,12 +1,16 @@
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush
-from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsRectItem)
 from rasterio.windows import Window
 
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPainter, QPolygonF
+from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsRectItem)
+
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
+
+from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -56,15 +60,8 @@ class PatchAnnotation(Annotation):
             height=min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
         )
 
-        # Read the data from rasterio
-        data = rasterio_src.read(window=window)
-
-        # Ensure the data is in the correct format for QImage
-        data = self._prepare_data_for_qimage(data)
-
-        # Convert numpy array to QImage
-        q_image = self._convert_to_qimage(data)
-
+        # Convert rasterio to QImage
+        q_image = rasterio_to_cropped_image(self.rasterio_src, window)
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
@@ -74,14 +71,50 @@ class PatchAnnotation(Annotation):
         if self.cropped_image is None:
             return None
 
-        # For patch, just create a square at (0,0) of annotation_size
-        cropped_rect = QRectF(0, 0, self.annotation_size, self.annotation_size)
+        # Create a QImage with alpha channel for masking
+        masked_image = QPixmap(self.cropped_image.size()).toImage()
+        masked_image.fill(Qt.transparent)
 
-        cropped_image_graphic = QGraphicsRectItem(cropped_rect)
-        color = QColor(self.label.color)
-        pen = QPen(color, 3, Qt.DotLine)  # Create dotted line pen with label color
-        cropped_image_graphic.setPen(pen)  # Set the pen for the outline
-        cropped_image_graphic.update()
+        # Create a QPainter to draw the polygon onto the image
+        painter = QPainter(masked_image)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QBrush(QColor(0, 0, 0, 255)))  # Opaque black
+        painter.setPen(Qt.NoPen)
+
+        # Define the square's corners as a polygon
+        cropped_points = [
+            QPointF(0, 0),
+            QPointF(self.cropped_image.width(), 0),
+            QPointF(self.cropped_image.width(), self.cropped_image.height()),
+            QPointF(0, self.cropped_image.height())
+        ]
+
+        # Draw the polygon onto the image
+        polygon = QPolygonF(cropped_points)
+        painter.drawPolygon(polygon)
+        painter.end()
+
+        # Convert the QImage back to a QPixmap
+        mask_pixmap = QPixmap.fromImage(masked_image)
+
+        # Apply the mask to a copy of the cropped image
+        cropped_image_graphic = self.cropped_image.copy()
+        cropped_image_graphic.setMask(mask_pixmap.mask())
+
+        # Now draw the dotted line outline on top of the masked image
+        painter = QPainter(cropped_image_graphic)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Create a dotted pen
+        pen = QPen(self.label.color)
+        pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
+        pen.setWidth(2)  # Line width
+        painter.setPen(pen)
+        
+        # Draw the square outline with the dotted pen
+        painter.drawPolygon(polygon)
+        
+        painter.end()
 
         return cropped_image_graphic
 

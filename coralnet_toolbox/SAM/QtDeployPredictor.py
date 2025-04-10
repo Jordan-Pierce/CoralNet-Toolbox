@@ -22,10 +22,11 @@ from ultralytics.utils import ops
 
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
-from coralnet_toolbox.utilities import preprocess_image
+
 from coralnet_toolbox.utilities import rasterio_to_numpy
 from coralnet_toolbox.utilities import attempt_download_asset
+
+from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -123,7 +124,7 @@ class DeployPredictorDialog(QDialog):
         # Add all models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)
-            
+
         models = list(self.models.keys())
         self.model_combo.setCurrentIndex(models.index("EdgeSAM"))
 
@@ -344,7 +345,7 @@ class DeployPredictorDialog(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-            
+
         self.accept()
 
     def resize_image(self, image):
@@ -379,11 +380,10 @@ class DeployPredictorDialog(QDialog):
 
                 if image is None and image_path is not None:
                     # Open the image using rasterio
-                    image = self.main_window.image_window.rasterio_open(image_path)
-                    image = rasterio_to_numpy(image)
+                    image = rasterio_to_numpy(self.main_window.image_window.rasterio_images[image_path])
 
                 # Preprocess the image
-                image = preprocess_image(image)
+                # image = preprocess_image(image)
 
                 # Save the original image
                 self.original_image = image

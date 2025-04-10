@@ -11,7 +11,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, 
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QHBoxLayout, QLabel, QMessageBox, QPushButton,
                              QSlider, QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
                              QWidget, QLineEdit, QFileDialog)
@@ -29,7 +29,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
 
-from coralnet_toolbox.utilities import preprocess_image
 from coralnet_toolbox.utilities import rasterio_to_numpy
 
 
@@ -55,13 +54,13 @@ class DeployPredictorDialog(QDialog):
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
-        
+
         self.task = "detect"
         self.max_detect = 500
         self.model_path = None
         self.loaded_model = None
         self.image_path = None
-        
+
         self.class_mapping = {}
 
         # Create the layout
@@ -118,11 +117,11 @@ class DeployPredictorDialog(QDialog):
 
         # Create tabbed widget
         tab_widget = QTabWidget()
-        
+
         # Tab 1: Standard models
         standard_tab = QWidget()
         standard_layout = QVBoxLayout(standard_tab)
-        
+
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
 
@@ -143,23 +142,23 @@ class DeployPredictorDialog(QDialog):
 
         standard_layout.addWidget(QLabel("Models"))
         standard_layout.addWidget(self.model_combo)
-        
+
         tab_widget.addTab(standard_tab, "Use Existing Model")
-        
+
         # Tab 2: Custom model
         custom_tab = QWidget()
         custom_layout = QFormLayout(custom_tab)
-        
+
         # Custom model file selection
         self.model_path_edit = QLineEdit()
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_model_file)
-        
+
         model_path_layout = QHBoxLayout()
         model_path_layout.addWidget(self.model_path_edit)
         model_path_layout.addWidget(browse_button)
         custom_layout.addRow("Custom Model:", model_path_layout)
-        
+
         # Class Mapping
         self.mapping_edit = QLineEdit()
         self.mapping_button = QPushButton("Browse...")
@@ -171,34 +170,34 @@ class DeployPredictorDialog(QDialog):
         custom_layout.addRow("Class Mapping:", class_mapping_layout)
 
         tab_widget.addTab(custom_tab, "Custom Model")
-        
+
         # Add the tab widget to the main layout
         layout.addWidget(tab_widget)
-        
+
         # Store the tab widget for later reference
         self.model_tab_widget = tab_widget
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def browse_model_file(self):
         """
         Open a file dialog to browse for a model file.
         """
-        file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   "Select Model File", 
-                                                   "", 
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Model File",
+                                                   "",
                                                    "Model Files (*.pt *.pth);;All Files (*)")
         if file_path:
             self.model_path_edit.setText(file_path)
-            
+
             # Load the class mapping if it exists
             dir_path = os.path.dirname(os.path.dirname(file_path))
             class_mapping_path = f"{dir_path}/class_mapping.json"
             if os.path.exists(class_mapping_path):
                 self.class_mapping = json.load(open(class_mapping_path, 'r'))
                 self.mapping_edit.setText(class_mapping_path)
-            
+
     def browse_class_mapping_file(self):
         """
         Browse and select a class mapping file.
@@ -218,19 +217,19 @@ class DeployPredictorDialog(QDialog):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
-        
+
         # Task dropdown
         self.task_dropdown = QComboBox()
         self.task_dropdown.addItems(["detect", "segment"])
         layout.addRow("Task", self.task_dropdown)
-        
+
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
         self.max_detections_spinbox.setRange(1, 10000)
         self.max_detections_spinbox.setValue(self.max_detect)
         label = QLabel("Max Detections")
         layout.addRow(label, self.max_detections_spinbox)
-        
+
         # Resize image dropdown
         self.resize_image_dropdown = QComboBox()
         self.resize_image_dropdown.addItems(["True", "False"])
@@ -292,19 +291,19 @@ class DeployPredictorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_sam_layout(self):
         """Use SAM model for segmentation."""
         group_box = QGroupBox("Use SAM Model for Creating Polygons")
         layout = QFormLayout()
-        
+
         # SAM dropdown
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
         self.use_sam_dropdown.setEnabled(False)
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -384,7 +383,7 @@ class DeployPredictorDialog(QDialog):
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        
+
     def get_max_detections(self):
         """Get the maximum number of detections to return."""
         self.max_detect = self.max_detections_spinbox.value()
@@ -422,7 +421,7 @@ class DeployPredictorDialog(QDialog):
 
             # Load model using registry
             self.loaded_model = YOLOE(self.model_path).to(self.main_window.device)
-            
+
             # Create a dummy visual dictionary
             visuals = dict(
                 bboxes=np.array(
@@ -442,12 +441,12 @@ class DeployPredictorDialog(QDialog):
                 predictor=YOLOEVPDetectPredictor,
                 imgsz=640,
                 conf=0.99,
-            )         
-            
+            )
+
             # Load the model class names if available
             if self.class_mapping:
                 self.add_labels_to_label_window()
-               
+
             progress_bar.finish_progress()
             self.status_bar.setText("Model loaded")
             QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
@@ -462,9 +461,9 @@ class DeployPredictorDialog(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
             progress_bar = None
-            
+
         self.accept()
-        
+
     def add_labels_to_label_window(self):
         """
         Add labels to the label window based on the class mapping.
@@ -474,7 +473,7 @@ class DeployPredictorDialog(QDialog):
                 self.main_window.label_window.add_label_if_not_exists(label['short_label_code'],
                                                                       label['long_label_code'],
                                                                       QColor(*label['color']))
-        
+
     def resize_image(self, image):
         """
         Resize the image to the specified size.
@@ -489,10 +488,10 @@ class DeployPredictorDialog(QDialog):
         Ensures the maximum dimension is a multiple of 32.
         """
         h, w = image.shape[:2]
-        
+
         # Round imgsz to the nearest multiple of 32
         imgsz = round(imgsz / 32) * 32
-        
+
         if h > w:
             # Height is the longer side
             new_h = imgsz
@@ -505,11 +504,11 @@ class DeployPredictorDialog(QDialog):
             new_h = int(h * (new_w / w))
             # Make height a multiple of 32
             new_h = round(new_h / 32) * 32
-        
+
         # Ensure neither dimension is zero
         new_h = max(32, new_h)
         new_w = max(32, new_w)
-        
+
         return new_h, new_w
 
     def set_image(self, image, image_path):
@@ -518,11 +517,10 @@ class DeployPredictorDialog(QDialog):
         """
         if image is None and image_path is not None:
             # Open the image using rasterio
-            image = self.main_window.image_window.rasterio_open(image_path)
-            image = rasterio_to_numpy(image)
+            image = rasterio_to_numpy(self.main_window.image_window.rasterio_images[image_path])
 
         # Preprocess the image
-        image = preprocess_image(image)
+        # image = preprocess_image(image)
 
         # Save the original image
         self.original_image = image
@@ -533,7 +531,7 @@ class DeployPredictorDialog(QDialog):
             self.resized_image = self.resize_image(image)
         else:
             self.resized_image = image
-            
+
     def predict_from_prompts(self, bboxes):
         """
         Make predictions using the currently loaded model using prompts.
@@ -549,27 +547,27 @@ class DeployPredictorDialog(QDialog):
                                  "Model Not Loaded",
                                  "Model not loaded, cannot make predictions")
             return None
-        
+
         if not len(bboxes):
             return None
-        
+
         # Update the bbox coordinates to be relative to the resized image
         bboxes = np.array(bboxes)
         bboxes[:, 0] = (bboxes[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
         bboxes[:, 1] = (bboxes[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
         bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
         bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
-        
+
         # Create a visual dictionary
         visuals = {
             'bboxes': np.array(bboxes),
             'cls': np.zeros(len(bboxes))  # TODO figure this out
         }
-        
+
         # Set the predictor
         self.task = self.task_dropdown.currentText()
         predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
-            
+
         try:
             # Make predictions
             results = self.loaded_model.predict(self.resized_image,
@@ -586,16 +584,16 @@ class DeployPredictorDialog(QDialog):
                                  "Prediction Error",
                                  f"Error predicting: {e}")
             results = None
-        
+
         finally:
             # Clear the cache
             gc.collect()
             torch.cuda.empty_cache
 
         return results
-    
+
     def predict_from_annotations(self, refer_image, refer_label, refer_annotations, target_images):
-        """"""       
+        """"""
         # Create a class mapping
         class_mapping = {0: refer_label}
 
@@ -608,25 +606,25 @@ class DeployPredictorDialog(QDialog):
             min_area_thresh=self.main_window.get_area_thresh_min(),
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
-        
+
         # Create a visual dictionary
         visuals = {
             'bboxes': np.array(refer_annotations),
             'cls': np.zeros(len(refer_annotations))  # TODO figure this out
         }
-        
+
         # Set the predictor
         self.task = self.task_dropdown.currentText()
         predictor = YOLOEVPSegPredictor if self.task == "segment" else YOLOEVPDetectPredictor
-        
+
         # Create a progress bar
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(target_images))
-        
+
         for target_image in target_images:
-            
+
             try:
                 # Make predictions
                 results = self.loaded_model.predict(target_image,
@@ -638,24 +636,24 @@ class DeployPredictorDialog(QDialog):
                                                     iou=self.main_window.get_iou_thresh(),
                                                     max_det=self.get_max_detections(),
                                                     retina_masks=self.task == "segment")
-                
+
                 results[0].names = {0: refer_label.short_label_code}
-                
+
                 # Process the detections
                 if self.task == 'segment':
                     results_processor.process_segmentation_results(results)
                 else:
                     results_processor.process_detection_results(results)
-                
+
             except Exception as e:
                 print(f"Error predicting: {e}")
-            
+
             finally:
                 progress_bar.update_progress()
                 # Clear the cache
                 gc.collect()
                 torch.cuda.empty_cache()
-                
+
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         progress_bar.finish_progress()
