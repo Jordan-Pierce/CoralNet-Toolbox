@@ -7,6 +7,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import rasterio
+from rasterio.transform import Affine
 from PIL import Image, ImageDraw
 
 from PyQt5.QtCore import Qt
@@ -180,8 +182,24 @@ class ExportMaskAnnotations(QDialog):
         self.file_format_combo.setEditable(True)
         layout.addRow("File Format:", self.file_format_combo)
         
+        # Add option to preserve georeferencing
+        self.preserve_georef_checkbox = QCheckBox("Preserve georeferencing (if available)")
+        self.preserve_georef_checkbox.setChecked(True)
+        layout.addRow("", self.preserve_georef_checkbox)
+        
+        # Connect the checkbox to update based on file format
+        self.file_format_combo.currentTextChanged.connect(self.update_georef_availability)
+        
+        # Add a note about georeferencing
+        self.georef_note = QLabel("Note: Georeferencing can only be preserved with TIF format")
+        self.georef_note.setStyleSheet("color: #666; font-style: italic;")
+        layout.addRow("", self.georef_note)
+        
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
+        
+        # Initial update based on default format
+        self.update_georef_availability()
         
     def setup_buttons_layout(self):
         """Setup the buttons layout."""
@@ -221,6 +239,18 @@ class ExportMaskAnnotations(QDialog):
             checkbox.setProperty("label", label)  # Store the label object
             self.label_checkboxes.append(checkbox)
             self.label_layout.addWidget(checkbox)
+            
+    def update_georef_availability(self):
+        """Update georeferencing checkbox availability based on file format"""
+        current_format = self.file_format_combo.currentText().lower()
+        is_tif = '.tif' in current_format
+        
+        self.preserve_georef_checkbox.setEnabled(is_tif)
+        if not is_tif:
+            self.preserve_georef_checkbox.setChecked(False)
+            self.georef_note.setVisible(True)
+        else:
+            self.georef_note.setVisible(False)
             
     def get_selected_image_paths(self):
         """
@@ -356,9 +386,9 @@ class ExportMaskAnnotations(QDialog):
             progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
-
-    def create_mask_for_image(self, image_path, output_path, file_format):
-        """Create a segmentation mask for a single image"""
+            
+    def get_annotations_for_image(self, image_path):
+        """Get annotations for a specific image."""
         # Get the selected labels' short label codes
         selected_labels = [label.short_label_code for label in self.selected_labels]
         
@@ -383,21 +413,46 @@ class ExportMaskAnnotations(QDialog):
                 
             elif self.polygon_checkbox.isChecked() and isinstance(annotation, PolygonAnnotation):
                 annotations.append(annotation)
-            
-        if not annotations:
-            return  # Skip images with no annotations
-        
-        # Load the original image to get dimensions
-        try:
-            image = Image.open(image_path)
-            width, height = image.size
-        except Exception as e:
-            print(f"Error loading image: {e}")
-            return  # Skip if image can't be loaded
                 
-        # Create a blank mask
-        mask = np.zeros((height, width), dtype=np.uint8)
+        return annotations
+    
+    def get_image_metadata(self, image_path, file_format):
+        """Get the dimensions of the image, and check for georeferencing."""
+        # Check if image has georeferencing that needs to be preserved
+        transform = None
+        crs = None
+        has_georef = False
         
+        height = None
+        width = None
+
+        # Only check for georeferencing if using TIF format and checkbox is checked
+        can_preserve_georef = self.preserve_georef_checkbox.isChecked() and file_format.lower() == '.tif'
+
+        if can_preserve_georef:
+            try:
+                with rasterio.open(image_path) as src:
+                    if src.transform and not src.transform.is_identity:
+                        transform = src.transform
+                        crs = src.crs
+                        has_georef = True
+                    width, height = src.width, src.height
+            except Exception as e:
+                print(f"Could not read georeferencing: {e}")
+                has_georef = False
+        
+        # If no georeferencing or failed to read, use PIL as fallback
+        if not has_georef:
+            try:
+                image = Image.open(image_path)
+                width, height = image.size
+            except Exception as e:
+                print(f"Error loading image: {e}")
+                
+        return height, width, has_georef, transform, crs
+    
+    def draw_annotations_on_mask(self, mask, annotations):
+        """Draw annotations on the mask."""
         # Draw each annotation on the mask
         for annotation in annotations:
             # Get the label index for the annotation
@@ -427,14 +482,54 @@ class ExportMaskAnnotations(QDialog):
                 # Draw a filled polygon
                 points = np.array([[p.x(), p.y()] for p in annotation.points]).astype(np.int32)
                 cv2.fillPoly(mask, [points], label_index)
+                
+        return mask
+
+    def create_mask_for_image(self, image_path, output_path, file_format):
+        """Create a segmentation mask for a single image"""
+        # Get the annotations for this image
+        annotations = self.get_annotations_for_image(image_path)
+            
+        if not annotations:
+            return  # Skip images with no annotations
+        
+        # Get the image dimensions, georeferencing
+        height, width, has_georef, transform, crs = self.get_image_metadata(image_path, file_format)
+        
+        if not height or not width:
+            print(f"Could not get dimensions for image: {image_path}")
+            return
+                
+        # Create a blank mask
+        mask = np.zeros((height, width), dtype=np.uint8)
+        
+        # Draw annotations on the mask
+        mask = self.draw_annotations_on_mask(mask, annotations)
         
         # Save the mask
         filename = os.path.basename(image_path)
         name_without_ext = os.path.splitext(filename)[0]
-        mask_filename = f"{name_without_ext}_mask{file_format}"
+        mask_filename = f"{name_without_ext}{file_format}"
         mask_path = os.path.join(output_path, mask_filename)
         
-        cv2.imwrite(mask_path, mask)
+        # If we have georeferencing and we need to preserve it, use rasterio to save
+        if has_georef and file_format.lower() == '.tif':
+            with rasterio.open(
+                mask_path, 
+                'w', 
+                driver='GTiff',
+                height=height, 
+                width=width,
+                count=1, 
+                dtype=mask.dtype, 
+                crs=crs,
+                transform=transform,
+                compress='lzw',
+            ) as dst:
+                dst.write(mask, 1)
+        else:
+            # Use OpenCV as before for non-georeferenced images
+            cv2.imwrite(mask_path, mask)
         
         if not os.path.exists(mask_path):
             print(f"Warning: Failed to save mask to {mask_path}")

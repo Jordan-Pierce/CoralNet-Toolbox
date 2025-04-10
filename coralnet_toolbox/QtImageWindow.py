@@ -461,13 +461,12 @@ class ImageWindow(QWidget):
             # Set the cursor to the wait cursor
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Load and display scaled-down version immediately
+            # Load and display scaled-down version for immediate preview
             scaled_image = self.load_scaled_image(image_path)
             self.annotation_window.display_image_item(scaled_image)
             
-            # Now load the full resolution image
             try:
-                # Load the full resolution image
+                # Now Load the full resolution image
                 full_image = QImage(image_path)
                 if full_image.isNull():
                     raise ValueError("QImage failed to load the image")
@@ -513,7 +512,7 @@ class ImageWindow(QWidget):
         Args:
             image_path (str): Path to the image
             max_size (int, optional): If provided, scales to fit within max_size while maintaining aspect ratio.
-                                    If None, scales to 1/100 of original size.
+                                      If None, scales to 1/100 of original size.
         
         Returns:
             QImage: Scaled image

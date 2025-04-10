@@ -174,9 +174,14 @@ class Annotation(QObject):
         elif data.shape[0] == 4:  # RGBA image
             data = np.transpose(data, (1, 2, 0))
 
-        # Normalize data to 0-255 range if it's not already
+        # Convert to uint8 if not already
         if data.dtype != np.uint8:
             data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
+            
+        # Normalize data to 0-255 range if it's not already
+        if data.min() != 0 or data.max() != 255:
+            if not (data.max() - data.min() == 0):
+                data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
 
         return data
 
