@@ -172,6 +172,10 @@ class ExportGeoJSONAnnotations(QDialog):
         groupbox = QGroupBox("Labels to Include")
         layout = QVBoxLayout()
         
+        # Label selection
+        self.label_selection_label = QLabel("Select Labels:")
+        layout.addWidget(self.label_selection_label)
+        
         # Create a scroll area for the labels
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -422,6 +426,49 @@ class ExportGeoJSONAnnotations(QDialog):
         }
         return feature
 
+    def validate_images(self, images):
+        """
+        Validate that all selected images are TIFF files and have valid CRS and transform information.
+        
+        Args:
+            images: List of image paths to validate
+            
+        Returns:
+            True if all images are valid, False otherwise. Also displays warning messages.
+        """
+        for image_path in images:
+            # Check if the image is a .tif or .tiff
+            if not image_path.lower().endswith(('.tif', '.tiff')):
+                QMessageBox.warning(self, 
+                                    "Invalid Image Format",
+                                    "Non-TIF images included. Select only TIF images.")
+                return False
+            
+            if image_path in self.image_window.rasterio_images:
+                rasterio_src = self.image_window.rasterio_images[image_path]
+            else:
+                rasterio_src = rasterio_open(image_path)
+            
+            try:
+                # Get the image transform
+                transform = rasterio_src.transform
+                crs = rasterio_src.crs.to_string()
+                
+                # Check the transform
+                if not isinstance(transform, Affine):
+                    QMessageBox.warning(self, 
+                                        "Invalid Transform",
+                                        f"Invalid transform for {os.path.basename(image_path)}.")
+                    return False
+                
+            except Exception as e:
+                QMessageBox.warning(self, 
+                                    "Missing CRS Information",
+                                    f"Could not get CRS information for {os.path.basename(image_path)}.")
+                return False
+        
+        return True
+
     def export_geojson(self):
         """Export annotations as GeoJSON."""
         # Validate inputs
@@ -463,6 +510,10 @@ class ExportGeoJSONAnnotations(QDialog):
                                 "No images found in the project.")
             return
 
+        # Validate images before proceeding
+        if not self.validate_images(images):
+            return
+        
         # Collect annotation types to include
         self.annotation_types = []
         if self.patch_checkbox.isChecked():
