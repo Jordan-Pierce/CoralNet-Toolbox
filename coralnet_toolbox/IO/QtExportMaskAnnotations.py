@@ -59,6 +59,8 @@ class ExportMaskAnnotations(QDialog):
         self.setup_image_selection_layout()
         # Setup the annotation layout
         self.setup_annotation_layout()
+        # Setup the label layout
+        self.setup_label_layout()
         # Setup the mask format layout
         self.setup_mask_format_layout()
         # Setup the buttons layout
@@ -134,7 +136,7 @@ class ExportMaskAnnotations(QDialog):
         self.layout.addWidget(group_box)
         
     def setup_annotation_layout(self):
-        """Setup the annotation types, and label selection layout."""
+        """Setup the annotation types layout."""
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
         
@@ -146,9 +148,22 @@ class ExportMaskAnnotations(QDialog):
         self.polygon_checkbox = QCheckBox("Polygon Annotations")
         self.polygon_checkbox.setChecked(True)
         
+        # Include negative samples
+        self.include_negative_samples_checkbox = QCheckBox("Include negative samples")
+        self.include_negative_samples_checkbox.setChecked(True)
+        
         layout.addWidget(self.patch_checkbox)
         layout.addWidget(self.rectangle_checkbox)
         layout.addWidget(self.polygon_checkbox)
+        layout.addWidget(self.include_negative_samples_checkbox)
+        
+        groupbox.setLayout(layout)
+        self.layout.addWidget(groupbox)
+        
+    def setup_label_layout(self):
+        """Setup the label selection layout."""
+        groupbox = QGroupBox("Labels to Include")
+        layout = QVBoxLayout()
         
         # Label selection
         self.label_selection_label = QLabel("Select Labels:")
@@ -160,7 +175,9 @@ class ExportMaskAnnotations(QDialog):
         
         # Create a widget to hold the checkboxes
         self.label_container = QWidget()
+        self.label_container.setMinimumHeight(200)  # Set a minimum height for the container
         self.label_layout = QVBoxLayout(self.label_container)
+        self.label_layout.setSizeConstraint(QVBoxLayout.SetMinAndMaxSize)  # Respect widget sizes
         
         scroll_area.setWidget(self.label_container)
         layout.addWidget(scroll_area)
@@ -490,8 +507,8 @@ class ExportMaskAnnotations(QDialog):
         # Get the annotations for this image
         annotations = self.get_annotations_for_image(image_path)
             
-        if not annotations:
-            return  # Skip images with no annotations
+        if not annotations and not self.include_negative_samples_checkbox.isChecked():
+            return  # Skip images with no annotations if the user doesn't want negative samples
         
         # Get the image dimensions, georeferencing
         height, width, has_georef, transform, crs = self.get_image_metadata(image_path, file_format)

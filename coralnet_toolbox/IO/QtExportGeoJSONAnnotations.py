@@ -61,6 +61,9 @@ class ExportGeoJSONAnnotations(QDialog):
         self.setup_image_selection_layout()
         # Setup the annotation layout
         self.setup_annotation_layout()
+        # Setup the label selection layout
+        # Setup label selection
+        self.setup_label_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         
@@ -134,21 +137,40 @@ class ExportGeoJSONAnnotations(QDialog):
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
         
-        # Annotation types checkboxes
+        # Patch Annotation type checkboxes
         self.patch_checkbox = QCheckBox("Patch Annotations")
         self.patch_checkbox.setChecked(True)
+        layout.addWidget(self.patch_checkbox)
+        
+        # Setup patch representation selection
+        self.setup_patch_representation_layout(layout)
+        
+        # Annotation types checkboxes
         self.rectangle_checkbox = QCheckBox("Rectangle Annotations")
         self.rectangle_checkbox.setChecked(True)
+        layout.addWidget(self.rectangle_checkbox)
         self.polygon_checkbox = QCheckBox("Polygon Annotations")
         self.polygon_checkbox.setChecked(True)
-        
-        layout.addWidget(self.patch_checkbox)
-        layout.addWidget(self.rectangle_checkbox)
         layout.addWidget(self.polygon_checkbox)
         
-        # Label selection
-        self.label_selection_label = QLabel("Select Labels:")
-        layout.addWidget(self.label_selection_label)
+        groupbox.setLayout(layout)
+        self.layout.addWidget(groupbox)
+        
+    def setup_patch_representation_layout(self, layout):
+        """Setup the patch representation selection layout."""
+        # Patch representation selection
+        self.patch_representation_label = QLabel("Patch Representation:")
+        layout.addWidget(self.patch_representation_label)
+        
+        self.patch_representation_combo = QComboBox()
+        self.patch_representation_combo.addItem("Polygon")
+        self.patch_representation_combo.addItem("Point")
+        layout.addWidget(self.patch_representation_combo)
+        
+    def setup_label_layout(self):
+        """Setup the label selection layout."""
+        groupbox = QGroupBox("Labels to Include")
+        layout = QVBoxLayout()
         
         # Create a scroll area for the labels
         scroll_area = QScrollArea()
@@ -156,7 +178,9 @@ class ExportGeoJSONAnnotations(QDialog):
         
         # Create a widget to hold the checkboxes
         self.label_container = QWidget()
+        self.label_container.setMinimumHeight(200)  # Set a minimum height for the container
         self.label_layout = QVBoxLayout(self.label_container)
+        self.label_layout.setSizeConstraint(QVBoxLayout.SetMinAndMaxSize)  # Respect widget sizes
         
         scroll_area.setWidget(self.label_container)
         layout.addWidget(scroll_area)
@@ -336,6 +360,34 @@ class ExportGeoJSONAnnotations(QDialog):
         Returns:
             GeoJSON feature dictionary or None if conversion fails
         """
+        # Handle Patch Annotations as Points
+        if isinstance(annotation, PatchAnnotation) and self.patch_representation_combo.currentText() == "Point":
+            x = annotation.center_xy.x()
+            y = annotation.center_xy.y()
+            
+            try:
+                # Transform the coordinates
+                [[geo_x, geo_y]] = self.transform_coordinates([(x, y)], transform)
+            except ValueError as e:
+                # Skip this annotation
+                return None
+            
+            # Create the GeoJSON feature for Point
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [geo_x, geo_y]
+                },
+                "properties": {
+                    "label": annotation.label.short_label_code,
+                    "label_properties": annotation.label.to_dict(),
+                    "source_image": os.path.basename(image_path),
+                    "coordinate_system": "geographic"
+                }
+            }
+            return feature
+        
         polygon_coords = self.convert_annotation_to_polygon(annotation)
         
         # Ensure the polygon has at least 4 points
