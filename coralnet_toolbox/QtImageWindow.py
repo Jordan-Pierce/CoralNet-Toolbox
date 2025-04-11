@@ -285,17 +285,11 @@ class ImageWindow(QWidget):
         
         # Get the path of the image to preview
         image_path = self.filtered_image_paths[self.hover_row]
-        
-        # Check if the image is already loaded
-        if image_path not in self.rasterio_images:
-            # Load the image using rasterio
-            rasterio_image = rasterio_open(image_path)
-        else:
-            # Use the already loaded rasterio image
-            rasterio_image = self.rasterio_images[image_path]
+        # Use the already loaded rasterio image
+        rasterio_src = self.rasterio_images[image_path]
         
         # Open with rasterio, convert to QImage; display thumbnail as a pixmap
-        thumbnail = rasterio_to_qimage(rasterio_image, longest_edge=64)
+        thumbnail = rasterio_to_qimage(rasterio_src, longest_edge=64)
         pixmap = QPixmap.fromImage(thumbnail)
 
         # Set image and show tooltip
@@ -314,8 +308,12 @@ class ImageWindow(QWidget):
         self.preview_tooltip.hide()
 
     def add_image(self, image_path):
+        """Add an image to the image paths list and update the table widget"""
+        # Check if the image path is already in the list
         if image_path not in self.image_paths:
+            # Add the image path to the list
             self.image_paths.append(image_path)
+            # Add the image to the image dictionary
             filename = os.path.basename(image_path)
             self.image_dict[image_path] = {
                 'filename': filename,
@@ -324,6 +322,14 @@ class ImageWindow(QWidget):
                 'labels': set(),  # Initialize an empty set for labels
                 'annotation_count': 0  # Initialize annotation count
             }
+            # Load the rasterio representation (now available for use anywhere!)
+            rasterio_src = rasterio_open(image_path)
+            if rasterio_src is None:
+                raise ValueError("Rasterio failed to open the image")
+            # Store the rasterio image in the dictionary
+            self.rasterio_images[image_path] = rasterio_src
+            
+            # Update the table
             self.update_table_widget()
             self.update_image_count_label()
             self.update_search_bars()
@@ -442,6 +448,7 @@ class ImageWindow(QWidget):
         self.update_image_annotations(image_path)
 
     def load_image(self, row, column):
+        """Load the image associated with the clicked row in the table widget"""
         # Add safety checks
         if not self.filtered_image_paths:
             return
@@ -472,24 +479,27 @@ class ImageWindow(QWidget):
             self.selected_image_path = image_path
             self.update_table_selection()
             self.update_current_image_index_label()
-            
-            # Load the rasterio representation
-            rasterio_src = rasterio_open(image_path)
-            if rasterio_src is None:
-                raise ValueError("Rasterio failed to open the image")
 
+            # Get the rasterio image from the dictionary
+            if image_path in self.rasterio_images:
+                rasterio_src = self.rasterio_images[image_path]
+            else:
+                # This should not happen, but just in case
+                print("Warning: Rasterio image not found in dictionary.")
+                rasterio_src = rasterio_open(image_path)
+                self.rasterio_images[image_path] = rasterio_src
+                
             # Load and display scaled-down version for immediate preview
             low_res_q_image = rasterio_to_qimage(rasterio_src, longest_edge=256)
             self.annotation_window.display_image(low_res_q_image)
             
-            # Now Load the full resolution image using QImage directly
+            # Now Load the full resolution image using QImage directly (faster)
             q_image = QImage(image_path)
             if q_image.isNull():
                 raise ValueError("QImage failed to load the image")
             
             # Update the image dictionaries
             self.q_images[image_path] = q_image
-            self.rasterio_images[image_path] = rasterio_src
             
             # Update the display with the full-resolution image
             self.annotation_window.set_image(image_path)

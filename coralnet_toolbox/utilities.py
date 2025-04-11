@@ -74,7 +74,7 @@ def rasterio_open(image_path):
 
 def rasterio_to_qimage(rasterio_src, longest_edge=None):
     """
-    Load a scaled version of an image
+    Load a scaled version of an image with colormap support
 
     Args:
         rasterio_src (rasterio.DatasetReader): Rasterio dataset reader object
@@ -87,9 +87,6 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
         # Get the original size of the image
         original_width = rasterio_src.width
         original_height = rasterio_src.height
-
-        # Determine the number of bands
-        num_bands = rasterio_src.count
 
         # Calculate the scaled size based on input parameters
         if longest_edge is not None:
@@ -105,33 +102,56 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
         # Read a downsampled version of the image
         window = Window(0, 0, original_width, original_height)
 
-        if num_bands < 3:
-            # Limit to grayscale bands
-            num_bands = min(num_bands, 1)
-            qimage_format = QImage.Format_Grayscale8
-
-            # Read a single band for grayscale images
+        # Check for single-band image with colormap
+        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+            # Read the single band
             image = rasterio_src.read(1,
                                       window=window,
                                       out_shape=(scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-
-        elif num_bands >= 3:
-            # Limit to RGB bands
-            num_bands = min(num_bands, 3)
+            
+            # Get the colormap
+            colormap = rasterio_src.colormap(1)
+            
+            # Create RGB image of appropriate size
+            rgb_image = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
+            
+            # Apply colormap to each unique value
+            for value in np.unique(image):
+                if value in colormap:
+                    # Get RGB values (ignore alpha)
+                    r, g, b, _ = colormap[value]
+                    mask = (image == value)
+                    rgb_image[mask] = [r, g, b]
+            
+            # Use RGB format for colormap images
             qimage_format = QImage.Format_RGB888
-
+            image = rgb_image
+            num_bands = 3
+            
+        elif rasterio_src.count < 3:
+            # Grayscale image without colormap
+            num_bands = 1
+            qimage_format = QImage.Format_Grayscale8
+            
+            # Read a single band
+            image = rasterio_src.read(1,
+                                      window=window,
+                                      out_shape=(scaled_height, scaled_width),
+                                      resampling=rasterio.enums.Resampling.bilinear)
+            
+        else:
             # Read RGB bands
+            num_bands = 3
+            qimage_format = QImage.Format_RGB888
+            
             image = rasterio_src.read([1, 2, 3],
                                       window=window,
                                       out_shape=(3, scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-
+            
             # Transpose to height, width, channels format
             image = np.transpose(image, (1, 2, 0))
-
-        else:
-            raise ValueError(f"Unsupported number of bands: {num_bands}")
 
         # Convert to uint8 if not already
         if image.dtype != np.uint8:
@@ -147,19 +167,95 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
         qimage = QImage(image.data.tobytes(),
                         scaled_width,
                         scaled_height,
-                        scaled_width * num_bands,  # bytes per line
+                        scaled_width * num_bands,  # bytes per line for Greyscale or RGB
                         qimage_format)
 
         return qimage
 
     except Exception as e:
         print(f"Error loading scaled image: {str(e)}")
+        traceback.print_exc()
         return QImage()  # Return an empty QImage if there's an error
 
 
+def rasterio_to_cropped_image(rasterio_src, window):
+    """
+    Convert a rasterio window to a QImage, supporting colormaps.
+
+    Args:
+        rasterio_src (rasterio.DatasetReader): Rasterio dataset reader object
+        window (rasterio.windows.Window): Window to read from
+    Returns:
+        QImage: Cropped image as a QImage
+    """
+    try:
+        # Check for single-band image with colormap
+        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+            # Read only the first band
+            image = rasterio_src.read(1, window=window)
+            
+            # Get the colormap
+            colormap = rasterio_src.colormap(1)
+
+            # Create RGB image of appropriate size
+            rgb_image = np.zeros((window.height, window.width, 3), dtype=np.uint8)
+
+            # Apply colormap to each unique value
+            for value in np.unique(image):
+                if value in colormap:
+                    # Get RGB values (ignore alpha)
+                    r, g, b, _ = colormap[value]
+                    mask = (image == value)
+                    rgb_image[mask] = [r, g, b]
+
+            # Use RGB format for colormap images
+            qimage_format = QImage.Format_RGB888
+            image = rgb_image
+            num_bands = 3
+
+        elif rasterio_src.count < 3:
+            # Grayscale image without colormap
+            num_bands = 1
+            qimage_format = QImage.Format_Grayscale8
+            # Read the single band
+            image = rasterio_src.read(1, window=window)
+
+        else:
+            # Read RGB bands
+            num_bands = 3
+            qimage_format = QImage.Format_RGB888
+            # Read the three bands and transpose to (height, width, channels)
+            image = rasterio_src.read([1, 2, 3], window=window)
+            image = np.transpose(image, (1, 2, 0))
+
+        # Convert to uint8 if not already
+        if image.dtype != np.uint8:
+            image = image.astype(float) * (255.0 / image.max())
+            image = image.astype(np.uint8)
+
+        # Normalize data to 0-255 range if it's not already
+        if image.min() != 0 or image.max() != 255:
+            if not (image.max() - image.min() == 0):
+                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
+        
+        # Convert the numpy array to QImage
+        qimage = QImage(image.data.tobytes(),
+                        int(window.width),
+                        int(window.height),
+                        int(window.width * num_bands),  # bytes per line for Greyscale or RGB
+                        qimage_format)
+
+        return qimage
+
+    except Exception as e:
+        print(f"Error loading cropped image: {str(e)}")
+        traceback.print_exc()
+        return QImage()  # Return an empty QImage if there's an error
+    
+
 def rasterio_to_numpy(rasterio_src, longest_edge=None):
     """
-    Convert a rasterio dataset to a numpy array.
+    Convert a rasterio dataset to a numpy array, with colormap support.
 
     Args:
         rasterio_src (rasterio.DatasetReader): Rasterio dataset reader object
@@ -172,9 +268,6 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         # Get the original size of the image
         original_width = rasterio_src.width
         original_height = rasterio_src.height
-
-        # Determine the number of bands
-        num_bands = rasterio_src.count
 
         # Calculate the scaled size based on input parameters
         if longest_edge is not None:
@@ -190,15 +283,39 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         # Read a downsampled version of the image
         window = Window(0, 0, original_width, original_height)
 
-        if num_bands == 1:
-            # Read a single band for grayscale images
+        # Check for single-band image with colormap
+        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+            # Read the single band
             image = rasterio_src.read(1,
                                       window=window,
                                       out_shape=(scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-
-        elif num_bands >= 3:
-            # Read RGB bands
+            
+            # Get the colormap
+            colormap = rasterio_src.colormap(1)
+            
+            # Create RGB image of appropriate size
+            rgb_image = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
+            
+            # Apply colormap to each unique value
+            for value in np.unique(image):
+                if value in colormap:
+                    # Get RGB values (ignore alpha)
+                    r, g, b, _ = colormap[value]
+                    mask = (image == value)
+                    rgb_image[mask] = [r, g, b]
+            
+            # Use the colorized RGB version of the image
+            image = rgb_image
+            
+        elif rasterio_src.count == 1:
+            # Single-band image without colormap (grayscale)
+            image = rasterio_src.read(1,
+                                      window=window,
+                                      out_shape=(scaled_height, scaled_width),
+                                      resampling=rasterio.enums.Resampling.bilinear)
+        elif rasterio_src.count >= 3:
+            # Multi-band image (RGB)
             image = rasterio_src.read([1, 2, 3],
                                       window=window,
                                       out_shape=(3, scaled_height, scaled_width),
@@ -207,7 +324,7 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
             # Transpose to height, width, channels format
             image = np.transpose(image, (1, 2, 0))
         else:
-            raise ValueError(f"Unsupported number of bands: {num_bands}")
+            raise ValueError(f"Unsupported number of bands: {rasterio_src.count}")
 
         # Convert to uint8 if not already
         if image.dtype != np.uint8:
@@ -223,49 +340,56 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
 
     except Exception as e:
         print(f"Error converting rasterio image to numpy: {str(e)}")
+        traceback.print_exc()
         # Return a small empty array
         return np.zeros((100, 100, 3), dtype=np.uint8)
+    
 
+# def pixmap_to_numpy(pixmap):
+#     """
+#     Convert a QPixmap to a NumPy array.
 
-def rasterio_to_cropped_image(rasterio_src, window):
-    """
-    Convert a rasterio window to a QImage.
+#     :param pixmap: QPixmap to convert
+#     :return: numpy.ndarray in format (h, w, 3) with RGB values
+#     """
+#     try:
+#         # Convert QPixmap to QImage
+#         image = pixmap.toImage()
 
-    Args:
-        rasterio_src (rasterio.DatasetReader): Rasterio dataset reader object
-        window (rasterio.windows.Window): Window to read from
-    Returns:
-        QImage: Cropped image as a QImage
-    """
-    try:
-        # Read the window from the rasterio source
-        image = rasterio_src.read(window=window)
+#         # Get image dimensions
+#         width = image.width()
+#         height = image.height()
 
-        # Convert to uint8 if not already
-        if image.dtype != np.uint8:
-            image = image.astype(float) * (255.0 / image.max())
-            image = image.astype(np.uint8)
+#         # Get proper bytes per line
+#         bytes_per_line = image.bytesPerLine()
 
-        # Normalize data to 0-255 range if it's not already
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
+#         # Get image format
+#         img_format = image.format()
 
-        # Transpose to height, width, channels format
-        image = np.transpose(image, (1, 2, 0))
+#         # Convert QImage to numpy array based on format
+#         if img_format in [QImage.Format_RGB32, QImage.Format_ARGB32, QImage.Format_ARGB32_Premultiplied]:
+#             byte_array = image.bits().asstring(height * bytes_per_line)
+#             numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 4, 4))
+#             # BGRA to RGB
+#             numpy_array = numpy_array[:, :width, [2, 1, 0]]
+#         elif img_format == QImage.Format_RGB888:
+#             byte_array = image.bits().asstring(height * bytes_per_line)
+#             numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 3, 3))
+#             numpy_array = numpy_array[:, :width, :]
+#         else:
+#             # Convert to RGB888 format if not in a directly supported format
+#             converted_image = image.convertToFormat(QImage.Format_RGB888)
+#             bytes_per_line = converted_image.bytesPerLine()
+#             byte_array = converted_image.bits().asstring(height * bytes_per_line)
+#             numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 3, 3))
+#             numpy_array = numpy_array[:, :width, :]
 
-        # Convert the numpy array to QImage
-        qimage = QImage(image.data.tobytes(),
-                        window.width,
-                        window.height,
-                        window.width * 3,  # bytes per line
-                        QImage.Format_RGB888)
+#         return numpy_array
 
-        return qimage
-
-    except Exception as e:
-        print(f"Error converting rasterio window to QImage: {str(e)}")
-        return QImage()  # Return an empty QImage if there's an error
+#     except Exception as e:
+#         print(f"Error converting QPixmap to numpy: {e}")
+#         # Return a small empty array if conversion fails
+#         return np.zeros((100, 100, 3), dtype=np.uint8)
 
 
 def pixmap_to_numpy(pixmap):
@@ -276,43 +400,28 @@ def pixmap_to_numpy(pixmap):
     :return: numpy.ndarray in format (h, w, 3) with RGB values
     """
     try:
-        # Convert QPixmap to QImage
         image = pixmap.toImage()
-
+        
         # Get image dimensions
         width = image.width()
         height = image.height()
 
-        # Get proper bytes per line
-        bytes_per_line = image.bytesPerLine()
+        # Convert QImage to numpy array
+        byte_array = image.bits().asstring(width * height * 4)  # 4 for RGBA
+        numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, width, 4))
 
-        # Get image format
-        img_format = image.format()
-
-        # Convert QImage to numpy array based on format
-        if img_format in [QImage.Format_RGB32, QImage.Format_ARGB32, QImage.Format_ARGB32_Premultiplied]:
-            byte_array = image.bits().asstring(height * bytes_per_line)
-            numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 4, 4))
-            # BGRA to RGB
-            numpy_array = numpy_array[:, :width, [2, 1, 0]]
-        elif img_format == QImage.Format_RGB888:
-            byte_array = image.bits().asstring(height * bytes_per_line)
-            numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 3, 3))
-            numpy_array = numpy_array[:, :width, :]
-        else:
-            # Convert to RGB888 format if not in a directly supported format
-            converted_image = image.convertToFormat(QImage.Format_RGB888)
-            bytes_per_line = converted_image.bytesPerLine()
-            byte_array = converted_image.bits().asstring(height * bytes_per_line)
-            numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 3, 3))
-            numpy_array = numpy_array[:, :width, :]
-
-        return numpy_array
-
+        # If the image format is ARGB32, swap the first and last channels (A and B)
+        if format == QImage.Format_ARGB32:
+            numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
+            
+        numpy_array = numpy_array[:, :, :3]  # Remove the alpha channel if present
+        
     except Exception as e:
-        print(f"Error converting QPixmap to numpy: {e}")
+        print(f"Error converting QImage to numpy: {e}")
         # Return a small empty array if conversion fails
-        return np.zeros((100, 100, 3), dtype=np.uint8)
+        numpy_array = np.zeros((100, 100, 3), dtype=np.uint8)  
+        
+    return numpy_array
 
 
 def attempt_download_asset(app, asset_name, asset_url):

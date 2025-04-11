@@ -1255,7 +1255,7 @@ class MainWindow(QMainWindow):
         """Confirm user wants to create a new project before closing window."""
         reply = QMessageBox.question(self, "New Project",
                                      "Are you sure you want to create a new project?\n\n"
-                                     "All existing data will be deleted.",
+                                     "All unsaved data will be deleted.",
                                      QMessageBox.Yes | QMessageBox.No,
                                      QMessageBox.No)
 
