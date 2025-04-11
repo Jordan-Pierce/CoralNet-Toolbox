@@ -158,7 +158,7 @@ Enhance your CoralNet experience with these tools:
 - 🚀 Optimize: Productionize models for faster inferencing
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
-  - Export annotations as segmentation masks
+  - Export annotations as [GeoJSONs](https://datatracker.ietf.org/doc/html/rfc7946), segmentation masks
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)

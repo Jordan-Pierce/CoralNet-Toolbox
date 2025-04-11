@@ -3,10 +3,9 @@ import warnings
 import gc
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
 
-import numpy as np
 import rasterio
+
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
@@ -14,9 +13,10 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBox
                              QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
                              QGroupBox, QPushButton, QStyle, QFormLayout, QFrame)
 
-from rasterio.windows import Window
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import rasterio_open
+from coralnet_toolbox.utilities import rasterio_to_qimage
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -217,7 +217,7 @@ class ImageWindow(QWidget):
         self.selected_image_path = None
         self.right_clicked_row = None  # Attribute to store the right-clicked row
 
-        self.images = {}  # Dictionary to store image paths and their QImage representation
+        self.q_images = {}  # Dictionary to store image paths and their QImage representation
         self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
 
         self.show_confirmation_dialog = True
@@ -283,9 +283,13 @@ class ImageWindow(QWidget):
         if self.hover_row < 0 or self.hover_row >= len(self.filtered_image_paths):
             return
         
-        # Get the path of the image to preview, load a thumbnail
+        # Get the path of the image to preview
         image_path = self.filtered_image_paths[self.hover_row]
-        thumbnail = self.load_scaled_image(image_path, max_size=64)
+        # Use the already loaded rasterio image
+        rasterio_src = self.rasterio_images[image_path]
+        
+        # Open with rasterio, convert to QImage; display thumbnail as a pixmap
+        thumbnail = rasterio_to_qimage(rasterio_src, longest_edge=64)
         pixmap = QPixmap.fromImage(thumbnail)
 
         # Set image and show tooltip
@@ -304,8 +308,12 @@ class ImageWindow(QWidget):
         self.preview_tooltip.hide()
 
     def add_image(self, image_path):
+        """Add an image to the image paths list and update the table widget"""
+        # Check if the image path is already in the list
         if image_path not in self.image_paths:
+            # Add the image path to the list
             self.image_paths.append(image_path)
+            # Add the image to the image dictionary
             filename = os.path.basename(image_path)
             self.image_dict[image_path] = {
                 'filename': filename,
@@ -314,6 +322,14 @@ class ImageWindow(QWidget):
                 'labels': set(),  # Initialize an empty set for labels
                 'annotation_count': 0  # Initialize annotation count
             }
+            # Load the rasterio representation (now available for use anywhere!)
+            rasterio_src = rasterio_open(image_path)
+            if rasterio_src is None:
+                raise ValueError("Rasterio failed to open the image")
+            # Store the rasterio image in the dictionary
+            self.rasterio_images[image_path] = rasterio_src
+            
+            # Update the table
             self.update_table_widget()
             self.update_image_count_label()
             self.update_search_bars()
@@ -432,6 +448,7 @@ class ImageWindow(QWidget):
         self.update_image_annotations(image_path)
 
     def load_image(self, row, column):
+        """Load the image associated with the clicked row in the table widget"""
         # Add safety checks
         if not self.filtered_image_paths:
             return
@@ -446,58 +463,59 @@ class ImageWindow(QWidget):
         self.load_image_by_path(image_path)
 
     def load_image_by_path(self, image_path, update=False):
+        """Load an image by it's path, add to dictionaries, and update the table widget"""
+        # Check if the image path is valid
         if image_path not in self.image_paths:
             return
-
+        # Check if the image is already selected
         if image_path == self.selected_image_path and update is False:
             return
 
         try:
+            # Set the cursor to the wait cursor
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            
             # Update the selected image path
             self.selected_image_path = image_path
             self.update_table_selection()
             self.update_current_image_index_label()
 
-            # Set the cursor to the wait cursor
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-
-            # Load and display scaled-down version immediately
-            scaled_image = self.load_scaled_image(image_path)
-            self.annotation_window.display_image_item(scaled_image)
-            
-            # Now load the full resolution image
-            try:
-                # Load the full resolution image
-                full_image = QImage(image_path)
-                if full_image.isNull():
-                    raise ValueError("QImage failed to load the image")
-                self.images[image_path] = full_image
-                
-                # Load the rasterio representation
-                rasterio_src = self.rasterio_open(image_path)
-                if rasterio_src is None:
-                    raise ValueError("Rasterio failed to open the image")
+            # Get the rasterio image from the dictionary
+            if image_path in self.rasterio_images:
+                rasterio_src = self.rasterio_images[image_path]
+            else:
+                # This should not happen, but just in case
+                print("Warning: Rasterio image not found in dictionary.")
+                rasterio_src = rasterio_open(image_path)
                 self.rasterio_images[image_path] = rasterio_src
                 
-                # Update the display with the full-resolution image
-                self.annotation_window.set_image(image_path)
-                self.imageSelected.emit(image_path)
-            except Exception as e:
-                QMessageBox.warning(self, 
-                                    "Image Loading Error",
-                                    f"Error loading full resolution image {os.path.basename(image_path)}:\n{str(e)}")
-                print(f"Error loading full resolution image {image_path}: {str(e)}")
+            # Load and display scaled-down version for immediate preview
+            low_res_q_image = rasterio_to_qimage(rasterio_src, longest_edge=256)
+            self.annotation_window.display_image(low_res_q_image)
+            
+            # Now Load the full resolution image using QImage directly (faster)
+            q_image = QImage(image_path)
+            if q_image.isNull():
+                raise ValueError("QImage failed to load the image")
+            
+            # Update the image dictionaries
+            self.q_images[image_path] = q_image
+            
+            # Update the display with the full-resolution image
+            self.annotation_window.set_image(image_path)
+            self.imageSelected.emit(image_path)
             
             # Emit the signal when a new image is chosen
             self.imageChanged.emit()
             # Update the search bars
             self.update_search_bars()
 
-            # Restore the cursor to the default cursor
-            QApplication.restoreOverrideCursor()
-
         except Exception as e:
-            print(f"Error processing image {image_path}: {str(e)}")
+            QMessageBox.warning(self, 
+                                "Image Loading Error",
+                                f"Error loading full resolution image {os.path.basename(image_path)}:\n{str(e)}")
+            
+        finally:
             QApplication.restoreOverrideCursor()
 
     def closeEvent(self, event):
@@ -505,137 +523,6 @@ class ImageWindow(QWidget):
         self.hide_image_preview()
         QApplication.restoreOverrideCursor()
         super().closeEvent(event)
-
-    def load_scaled_image(self, image_path, max_size=None):
-        """
-        Load a scaled version of an image
-        
-        Args:
-            image_path (str): Path to the image
-            max_size (int, optional): If provided, scales to fit within max_size while maintaining aspect ratio.
-                                    If None, scales to 1/100 of original size.
-        
-        Returns:
-            QImage: Scaled image
-        """
-        try:
-            # Open the raster file with Rasterio
-            with rasterio.open(image_path) as src:
-                # Get the original size of the image
-                original_width = src.width
-                original_height = src.height
-                # Determine the number of bands
-                num_bands = src.count
-
-                # Calculate the scaled size based on input parameters
-                if max_size is not None:
-                    # Scale to fit within max_size (for thumbnails)
-                    scale = min(max_size / original_width, max_size / original_height)
-                    scaled_width = int(original_width * scale)
-                    scaled_height = int(original_height * scale)
-                else:
-                    # Scale to 1/100 of original size (for initial preview)
-                    scaled_width = original_width // 100
-                    scaled_height = original_height // 100
-
-                # Read a downsampled version of the image
-                window = Window(0, 0, original_width, original_height)
-
-                if num_bands == 1:
-                    # Read a single band for grayscale images
-                    downsampled_image = src.read(1,
-                                                 window=window,
-                                                 out_shape=(scaled_height, scaled_width),
-                                                 resampling=rasterio.enums.Resampling.bilinear)
-
-                    # Convert to uint8 if needed
-                    if downsampled_image.dtype != np.uint8:
-                        downsampled_image = downsampled_image.astype(float) * (255.0 / downsampled_image.max())
-                        downsampled_image = downsampled_image.astype(np.uint8)
-
-                    # Create QImage from data
-                    qimage = QImage(downsampled_image.data.tobytes(),
-                                    scaled_width,
-                                    scaled_height,
-                                    scaled_width,  # bytes per line
-                                    QImage.Format_Grayscale8)
-
-                elif num_bands >= 3:
-                    # Read RGB bands
-                    downsampled_image = src.read([1, 2, 3],
-                                                 window=window,
-                                                 out_shape=(3, scaled_height, scaled_width),
-                                                 resampling=rasterio.enums.Resampling.bilinear) 
-
-                    # Convert to uint8 if needed
-                    if downsampled_image.dtype != np.uint8:
-                        downsampled_image = downsampled_image.astype(float) * (255.0 / downsampled_image.max())
-                        downsampled_image = downsampled_image.astype(np.uint8)
-                        
-                    # Transpose to height, width, channels format
-                    rgb_image = np.transpose(downsampled_image, (1, 2, 0))
-
-                    # Create QImage from data
-                    qimage = QImage(rgb_image.data.tobytes(),
-                                    scaled_width,
-                                    scaled_height,
-                                    scaled_width * 3,  # bytes per line
-                                    QImage.Format_RGB888)
-                else:
-                    raise ValueError(f"Unsupported number of bands: {num_bands}")
-
-                # Close the rasterio dataset and collect garbage
-                src.close()
-                gc.collect()
-
-                return qimage
-        except Exception as e:
-            print(f"Error loading scaled image {image_path}: {str(e)}")
-            
-            # Fallback to QImage loading
-            try:
-                image = QImage(image_path)
-                if not image.isNull():
-                    if max_size:
-                        return image.scaled(max_size, max_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    else:
-                        # Default scaling for initial preview
-                        return image.scaled(image.width() // 100, image.height() // 100, 
-                                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            except Exception:
-                pass
-                
-            return QImage()  # Return an empty QImage if there's an error
-        
-    @lru_cache(maxsize=32)
-    def rasterio_open(self, image_path):
-        """
-        Open an image with rasterio and handle potential errors.
-        
-        Args:
-            image_path (str): Path to the image file
-            
-        Returns:
-            rasterio.DatasetReader: Opened rasterio dataset or None if error
-        """
-        try:
-            # Use a local variable rather than instance attribute to avoid thread issues
-            src = rasterio.open(image_path)
-            return src
-        except Exception as e:
-            print(f"Error opening image with rasterio: {image_path}")
-            print(f"Exception: {str(e)}")
-            
-            # Try to inspect file existence and permissions
-            if not os.path.exists(image_path):
-                print(f"File does not exist: {image_path}")
-            elif not os.path.isfile(image_path):
-                print(f"Path is not a file: {image_path}")
-            elif not os.access(image_path, os.R_OK):
-                print(f"File is not readable: {image_path}")
-                
-            # Return None on failure
-            return None
 
     def show_context_menu(self, position):
         # Get selected checkboxes
@@ -818,9 +705,9 @@ class ImageWindow(QWidget):
                 del self.rasterio_images[image_path]
 
             # Remove from QImage dictionary
-            if image_path in self.images:
-                self.images[image_path] = None
-                del self.images[image_path]
+            if image_path in self.q_images:
+                self.q_images[image_path] = None
+                del self.q_images[image_path]
                 
             # Remove from main image collections
             self.image_paths.remove(image_path)

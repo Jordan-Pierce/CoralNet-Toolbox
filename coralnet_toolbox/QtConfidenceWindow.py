@@ -142,14 +142,14 @@ class ConfidenceWindow(QWidget):
             self.cropped_image = annotation.cropped_image.copy()
             self.chart_dict = self.machine_confidence if self.machine_confidence else self.user_confidence
             
-    def scale_image_items(self, pixmap, graphic):
+    def scale_pixmap(self, pixmap):
         """Scale pixmap and graphic if they exceed max dimension while preserving aspect ratio"""
         width = pixmap.width()
         height = pixmap.height()
         
         # Check if scaling is needed
         if width <= self.max_graphic_size and height <= self.max_graphic_size:
-            return pixmap, graphic
+            return pixmap
             
         # Calculate scale factor based on largest dimension
         scale = self.max_graphic_size / max(width, height)
@@ -162,26 +162,22 @@ class ConfidenceWindow(QWidget):
             Qt.SmoothTransformation
         )
         
-        # Scale graphic
-        graphic.setScale(scale)
-        
-        return scaled_pixmap, graphic
+        return scaled_pixmap
 
     def display_cropped_image(self, annotation):
+        """Display the cropped image and update the bar chart."""
         try:
             self.clear_display()
             self.update_annotation(annotation)
             if self.cropped_image:
-                cropped_image = annotation.get_cropped_image()
-                cropped_image_graphic = annotation.get_cropped_image_graphic()
-                
                 # Scale items if needed
-                cropped_image, cropped_image_graphic = self.scale_image_items(cropped_image, cropped_image_graphic)
-                
+                cropped_image = self.scale_pixmap(annotation.get_cropped_image())
+                cropped_image_graphic = self.scale_pixmap(annotation.get_cropped_image_graphic())
+                                
                 # Add the scaled image
                 self.scene.addPixmap(cropped_image)
-                # Add the scaled annotation graphic
-                self.scene.addItem(cropped_image_graphic)
+                # Add the scaled annotation graphic (as pixmap)
+                self.scene.addPixmap(cropped_image_graphic)
                 # Add the border color with increased width
                 self.scene.setSceneRect(QRectF(cropped_image.rect()))
                 self.graphics_view.setStyleSheet("QGraphicsView { border: 3px solid transparent; }")
@@ -190,7 +186,6 @@ class ConfidenceWindow(QWidget):
                 self.graphics_view.centerOn(self.scene.sceneRect().center())
                 # Create the bar charts
                 self.create_bar_chart()
-                # Set bolder border
 
                 # Update dimensions label with original and scaled dimensions
                 orig_height = annotation.get_cropped_image().height()
@@ -204,9 +199,9 @@ class ConfidenceWindow(QWidget):
                 else:
                     self.dimensions_label.setText(f"Crop: {orig_height} x {orig_width}")
 
-        except:
+        except Exception as e:
             # Cropped image is None or some other error occurred
-            pass
+            print(f"Error displaying cropped image: {e}")
 
     def create_bar_chart(self):
         self.clear_layout(self.bar_chart_layout)

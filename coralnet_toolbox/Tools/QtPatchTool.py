@@ -44,9 +44,9 @@ class PatchTool(Tool):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         active_image = self.annotation_window.active_image
-        image_pixmap = self.annotation_window.image_pixmap
+        pixmap_image = self.annotation_window.pixmap_image
         cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-        if active_image and image_pixmap and cursor_in_window:
+        if active_image and pixmap_image and cursor_in_window:
             self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
 
     def mouseReleaseEvent(self, event: QMouseEvent):

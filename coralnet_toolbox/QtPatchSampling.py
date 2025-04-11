@@ -13,9 +13,12 @@ from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QLabel, QDialog, QHBoxLa
                              QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.Icons import get_icon
+
 from coralnet_toolbox.QtCommon import MarginInput
+
+from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -283,14 +286,14 @@ class PatchSamplingDialog(QDialog):
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
-        
+
         if not sample_label:
             return
 
         try:
             # Validate margins before sampling
-            margins = self.margin_input.get_margins(self.annotation_window.image_pixmap.width(),
-                                                    self.annotation_window.image_pixmap.height())
+            margins = self.margin_input.get_margins(self.annotation_window.pixmap_image.width(),
+                                                    self.annotation_window.pixmap_image.height())
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Margins", str(e))
             return
@@ -301,8 +304,8 @@ class PatchSamplingDialog(QDialog):
             num_annotations,
             annotation_size,
             margins,
-            self.annotation_window.image_pixmap.width(),
-            self.annotation_window.image_pixmap.height()
+            self.annotation_window.pixmap_image.width(),
+            self.annotation_window.pixmap_image.height()
         )
 
         # Create graphics for each annotation

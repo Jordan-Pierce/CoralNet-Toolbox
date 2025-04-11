@@ -148,12 +148,17 @@ class Classify(Base):
 
         if not inputs:
             # Predict only the selected annotation
-            inputs = self.annotation_window.selected_annotations
+            inputs = self.annotation_window.selected_annotations.copy()
+            # Unselect the annotations (regardless)
+            self.annotation_window.unselect_annotations()
+
         if not inputs:
             # If no annotations are selected, predict all annotations in the image
             inputs = self.annotation_window.get_image_review_annotations()
+            
         if not inputs:
             # If no annotations are available, return
+            QApplication.restoreOverrideCursor()
             return
 
         # Create lists to store valid images and their corresponding annotations
@@ -192,3 +197,4 @@ class Classify(Base):
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
+        

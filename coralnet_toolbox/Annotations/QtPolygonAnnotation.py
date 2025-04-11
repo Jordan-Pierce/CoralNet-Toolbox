@@ -1,126 +1,21 @@
 import warnings
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import cv2
 import math
 import numpy as np
 
-from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
 from rasterio.windows import Window
+
+from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Functions
-# ----------------------------------------------------------------------------------------------------------------------
-
-def resample_polygon_points(points: list, target_num_points: int = None, target_spacing: float = None) -> list:
-    """
-    Resample points along a polygon to achieve more uniform spacing.
-
-    Args:
-        points: List of QPointF points defining the polygon
-        target_num_points: Desired number of points after resampling (optional)
-        target_spacing: Desired spacing between points in pixels (optional)
-
-    Returns:
-        List of resampled QPointF points
-    """
-    if len(points) < 3:
-        return points.copy()
-
-    # Convert points to numpy array for easier computation
-    points_array = np.array([(p.x(), p.y()) for p in points], dtype=np.float64)
-
-    # Calculate segments and their lengths
-    segments = np.diff(points_array, axis=0)
-    segment_lengths = np.sqrt(np.sum(segments ** 2, axis=1))
-
-    # Find and remove duplicate/very close points
-    EPSILON = 1e-6
-    valid_segments = segment_lengths > EPSILON
-
-    if not np.any(valid_segments):
-        return points.copy()
-
-    # Filter out zero-length segments
-    filtered_points = [points_array[0]]
-    for i, length in enumerate(segment_lengths):
-        if length > EPSILON:
-            filtered_points.append(points_array[i + 1])
-    points_array = np.array(filtered_points)
-
-    # Recalculate segments after filtering
-    segments = np.diff(points_array, axis=0)
-    segment_lengths = np.sqrt(np.sum(segments ** 2, axis=1))
-
-    # Calculate total length including closing segment
-    total_length = np.sum(segment_lengths)
-    last_segment = points_array[0] - points_array[-1]
-    last_segment_length = np.sqrt(np.sum(last_segment ** 2))
-
-    if last_segment_length > EPSILON:
-        total_length += last_segment_length
-
-    # Determine number of points to sample
-    if target_spacing is not None:
-        target_spacing = max(target_spacing, EPSILON)
-        num_points = max(3, int(np.ceil(total_length / target_spacing)))
-    elif target_num_points is not None:
-        num_points = max(3, int(target_num_points))
-    else:
-        num_points = len(filtered_points)
-
-    # Create cumulative length array
-    cumulative_lengths = np.concatenate(([0], np.cumsum(segment_lengths)))
-
-    # Generate evenly spaced points along the perimeter
-    spaces = np.linspace(0, total_length * (1 - EPSILON), num_points, endpoint=False)
-    resampled_points = []
-
-    for space in spaces:
-        try:
-            # Find which segment this point belongs to
-            if space <= cumulative_lengths[-1]:
-                segment_idx = np.searchsorted(cumulative_lengths, space) - 1
-                segment_idx = max(0, min(segment_idx, len(points_array) - 2))
-                start_point = points_array[segment_idx]
-                end_point = points_array[segment_idx + 1]
-                segment_length = segment_lengths[segment_idx]
-                segment_space = space - cumulative_lengths[segment_idx]
-            else:
-                # Handle the closing segment
-                start_point = points_array[-1]
-                end_point = points_array[0]
-                segment_length = last_segment_length
-                segment_space = space - cumulative_lengths[-1]
-
-            # Skip zero-length segments
-            if segment_length <= EPSILON:
-                continue
-
-            # Calculate interpolation factor with bounds checking
-            factor = np.clip(segment_space / segment_length, 0, 1)
-
-            # Interpolate the point
-            new_point = start_point + factor * (end_point - start_point)
-
-            # Ensure point coordinates are finite
-            if np.all(np.isfinite(new_point)):
-                resampled_points.append(QPointF(float(new_point[0]), float(new_point[1])))
-
-        except Exception as e:
-            continue
-
-    # Ensure we have enough points
-    if len(resampled_points) < 3:
-        return points.copy()
-
-    return resampled_points
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -203,46 +98,64 @@ class PolygonAnnotation(Annotation):
             height=min(rasterio_src.height - int(min_y), int(max_y - min_y))
         )
 
-        # Read the data from rasterio
-        data = rasterio_src.read(window=window)
-        
-        # Create mask from polygon
-        polygon_points = np.array([(p.x() - min_x, p.y() - min_y) for p in self.points])
-        mask = np.zeros((window.height, window.width), dtype=np.uint8)
-        cv2.fillPoly(mask, [polygon_points.astype(np.int32)], 1)
-    
-        # Apply mask to each channel
-        for i in range(data.shape[0]):
-            data[i] = data[i] * mask
-
-        # Ensure the data is in the correct format for QImage
-        data = self._prepare_data_for_qimage(data)
-
-        # Convert numpy array to QImage
-        q_image = self._convert_to_qimage(data)
-
+        # Convert rasterio to QImage
+        q_image = rasterio_to_cropped_image(self.rasterio_src, window)
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
         self.annotationUpdated.emit(self)  # Notify update
-
+    
     def get_cropped_image_graphic(self):
         if self.cropped_image is None:
             return None
+
+        # Create a QImage with alpha channel for masking
+        masked_image = QPixmap(self.cropped_image.size()).toImage()
+        masked_image.fill(Qt.transparent)
+
+        # Create a QPainter to draw the mask
+        painter = QPainter(masked_image)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Create a black brush
+        brush = QBrush(QColor(0, 0, 0))  # Black color
+        painter.setBrush(brush)
+        painter.setPen(Qt.NoPen)
 
         # Create a copy of the points that are transformed to be relative to the cropped_image
         cropped_points = [QPointF(point.x() - self.cropped_bbox[0],
                                   point.y() - self.cropped_bbox[1]) for point in self.points]
 
-        cropped_polygon = QPolygonF(cropped_points)
-        cropped_image_graphic = QGraphicsPolygonItem(cropped_polygon)
+        # Create a polygon from the cropped points
+        polygon = QPolygonF(cropped_points)
 
-        # Create dotted line pen with label color
-        color = QColor(self.label.color)
-        pen = QPen(color, 3, Qt.DotLine)
-        cropped_image_graphic.setPen(pen)
-        cropped_image_graphic.setBrush(QBrush(Qt.NoBrush)) 
-        cropped_image_graphic.update()
+        # Fill the polygon with white color (the area we want to keep)
+        painter.setBrush(QBrush(Qt.white))
+        painter.drawPolygon(polygon)
+
+        painter.end()
+
+        # Convert the QImage back to a QPixmap
+        mask_pixmap = QPixmap.fromImage(masked_image)
+
+        # Apply the mask to a copy of the cropped image
+        cropped_image_graphic = self.cropped_image.copy()
+        cropped_image_graphic.setMask(mask_pixmap.mask())
+
+        # Now draw the dotted line outline on top of the masked image
+        painter = QPainter(cropped_image_graphic)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Create a dotted pen
+        pen = QPen(self.label.color)
+        pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
+        pen.setWidth(2)  # Line width
+        painter.setPen(pen)
+        
+        # Draw the polygon outline with the dotted pen
+        painter.drawPolygon(polygon)
+        
+        painter.end()
 
         return cropped_image_graphic
 

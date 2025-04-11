@@ -11,6 +11,7 @@ from .QtExportLabels import ExportLabels
 from .QtExportTagLabLabels import ExportTagLabLabels
 from .QtExportAnnotations import ExportAnnotations
 from .QtExportMaskAnnotations import ExportMaskAnnotations
+from .QtExportGeoJSONAnnotations import ExportGeoJSONAnnotations
 from .QtExportCoralNetAnnotations import ExportCoralNetAnnotations
 from .QtExportViscoreAnnotations import ExportViscoreAnnotations
 from .QtExportTagLabAnnotations import ExportTagLabAnnotations
@@ -30,6 +31,7 @@ __all__ = [
     'ExportLabels',
     'ExportTagLabLabels',
     'ExportAnnotations',
+    'ExportGeoJSONAnnotations',
     'ExportMaskAnnotations',
     'ExportCoralNetAnnotations', 
     'ExportViscoreAnnotations',

@@ -1,13 +1,15 @@
 import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF
+from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
-from rasterio.windows import Window
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -77,15 +79,8 @@ class RectangleAnnotation(Annotation):
             height=min(rasterio_src.height - int(min_y), int(max_y - min_y))
         )
 
-        # Read the data from rasterio
-        data = rasterio_src.read(window=window)
-
-        # Ensure the data is in the correct format for QImage
-        data = self._prepare_data_for_qimage(data)
-
-        # Convert numpy array to QImage
-        q_image = self._convert_to_qimage(data)
-
+        # Convert rasterio to QImage
+        q_image = rasterio_to_cropped_image(self.rasterio_src, window)
         # Convert QImage to QPixmap
         self.cropped_image = QPixmap.fromImage(q_image)
 
@@ -95,18 +90,61 @@ class RectangleAnnotation(Annotation):
         if self.cropped_image is None:
             return None
 
-        # Create a graphic item (perimeter) for the cropped image, transform the points 
-        cropped_image_graphic = QGraphicsRectItem(self.top_left.x() - self.cropped_bbox[0],
-                                                  self.top_left.y() - self.cropped_bbox[1],
-                                                  self.bottom_right.x() - self.cropped_bbox[0],
-                                                  self.bottom_right.y() - self.cropped_bbox[1])
+        # Create a QImage with alpha channel for masking
+        masked_image = QPixmap(self.cropped_image.size()).toImage()
+        masked_image.fill(Qt.transparent)
 
-        color = QColor(self.label.color)
-        color.setAlpha(128)
-        pen = QPen(color, 3, Qt.DashLine)
-        cropped_image_graphic.setPen(pen)
-        cropped_image_graphic.setBrush(QBrush(Qt.NoBrush))
-        cropped_image_graphic.update()
+        # Create a QPainter to draw the mask
+        painter = QPainter(masked_image)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Create a black brush
+        brush = QBrush(QColor(0, 0, 0))  # Black color
+        painter.setBrush(brush)
+        painter.setPen(Qt.NoPen)
+
+        # Define the rectangle points based on top_left and bottom_right
+        rectangle_points = [
+            self.top_left,
+            QPointF(self.bottom_right.x(), self.top_left.y()),
+            self.bottom_right,
+            QPointF(self.top_left.x(), self.bottom_right.y())
+        ]
+
+        # Create a copy of the points that are transformed to be relative to the cropped_image
+        cropped_points = [QPointF(point.x() - self.cropped_bbox[0],
+                                  point.y() - self.cropped_bbox[1]) for point in rectangle_points]
+
+        # Create a polygon from the cropped points
+        polygon = QPolygonF(cropped_points)
+
+        # Fill the polygon with white color (the area we want to keep)
+        painter.setBrush(QBrush(Qt.white))
+        painter.drawPolygon(polygon)
+
+        painter.end()
+
+        # Convert the QImage back to a QPixmap
+        mask_pixmap = QPixmap.fromImage(masked_image)
+
+        # Apply the mask to a copy of the cropped image
+        cropped_image_graphic = self.cropped_image.copy()
+        cropped_image_graphic.setMask(mask_pixmap.mask())
+
+        # Now draw the dotted line outline on top of the masked image
+        painter = QPainter(cropped_image_graphic)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Create a dotted pen
+        pen = QPen(self.label.color)
+        pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
+        pen.setWidth(2)  # Line width
+        painter.setPen(pen)
+        
+        # Draw the rectangle outline with the dotted pen
+        painter.drawPolygon(polygon)
+        
+        painter.end()
 
         return cropped_image_graphic
 

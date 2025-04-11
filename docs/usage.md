@@ -42,18 +42,20 @@ The main window consists of several components:
   - **Import CoralNet Labels (CSV)**: Load label data from a CoralNet CSV file.
   - **Import TagLab Labels (JSON)**: Load label data from a TagLab JSON file.
   - **Import Annotations (JSON)**: Load annotation data from a JSON file.
-  - **Import Annotations (CoralNet)**: Load annotation data from a CoralNet CSV file.
-  - **Import Annotations (Viscore)**: Load annotation data from a Viscore CSV file.
-  - **Import Annotations (TagLab)**: Load annotation data from a TagLab JSON file.
+  - **Import CoralNet Annotations**: Load annotation data from a CoralNet CSV file.
+  - **Import TagLab Annotations**: Load annotation data from a TagLab JSON file.
+  - **Import Viscore Annotations**: Load annotation data from a Viscore CSV file.
   - **Import Dataset**: Import a YOLO dataset for machine learning (Detection, Segmentation).
 
 - **Export**:
   - **Export Labels (JSON)**: Save label data to a JSON file.
   - **Export TagLab Labels (JSON)**: Save label data to a TagLab JSON file.
   - **Export Annotations (JSON)**: Save annotation data to a JSON file.
-  - **Export Annotations (CoralNet)**: Save annotation data to a CoralNet CSV file.
-  - **Export Annotations (Viscore)**: Save annotation data to a Viscore CSV file.
-  - **Export Annotations (TagLab)**: Save annotation data to a TagLab JSON file.
+  - **Export GeoJSON Annotations**: Save annotations to GeoJSON file (only for GeoTIFFs with CRS and Transforms data)
+  - **Export Mask Annotations (Raster)**: Save annotations as segmentation masks
+  - **Export CoralNet Annotations**: Save annotation data to a CoralNet CSV file.
+  - **Export TagLab Annotations**: Save annotation data to a TagLab JSON file.
+  - **Export Viscore Annotations**: Save annotation data to a Viscore CSV file.
   - **Export Dataset**: Create a YOLO dataset for machine learning (Classification, Detection, Segmentation).
 
 - **Sample**:
