@@ -587,9 +587,9 @@ class ExportGeoJSONAnnotations(QDialog):
                 }
                 
             else:
-                QMessageBox.critial(self,
-                                    "Missing CRS",
-                                    "No CRS information available for the images.")
+                QMessageBox.critical(self,
+                                     "Missing CRS",
+                                     "No CRS information available for the images.")
                 return
 
             # Write the GeoJSON data to a file
