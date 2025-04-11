@@ -436,64 +436,118 @@ class AnnotationWindow(QGraphicsView):
 
     def select_annotation(self, annotation, ctrl_pressed=False):
         """Select an annotation and update the UI accordingly."""
-        if not ctrl_pressed:
-            self.unselect_annotations()
-
-        if annotation in self.selected_annotations:
+        # If the annotation is already selected and Ctrl is pressed, unselect it
+        if annotation in self.selected_annotations and ctrl_pressed:
             self.unselect_annotation(annotation)
             return
 
+        # If not adding to selection (Ctrl not pressed), deselect all others first
+        if not ctrl_pressed:
+            self.unselect_annotations()
+            
+        # Only add if not already selected (shouldn't happen after the checks above, but just to be safe)
         if annotation not in self.selected_annotations:
+            # Add to selection
             self.selected_annotations.append(annotation)
             annotation.select()
-
-            # Set the label and color for selected annotation
+            
+            # Update UI state
             self.selected_label = annotation.label
             self.annotation_color = annotation.label.color
-
-            # Emit a signal indicating the selected annotations label to LabelWindow
-            # which then update the label in the label window, followed by transparency.
-            # Only do this if only one annotation is selected, otherwise all selected
-            # annotations will change label
+            
+            # Emit signal for annotation selection
             self.annotationSelected.emit(annotation.id)
-
+            
+            # If this is the only selected annotation, update label window and confidence window
             if len(self.selected_annotations) == 1:
                 self.labelSelected.emit(annotation.label.id)
-
+                
+                # Make sure we have a cropped image
                 if not annotation.cropped_image:
-                    # Crop the image from annotation using current image item
                     annotation.create_cropped_image(self.rasterio_image)
-
-                # Display the selected annotation in confidence window
+                    
+                # Display in confidence window
                 annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
                 self.main_window.confidence_window.display_cropped_image(annotation)
-
+        
+        # Special handling for multiple selected annotations
         if len(self.selected_annotations) > 1:
             self.main_window.label_window.deselect_active_label()
             self.main_window.confidence_window.clear_display()
+        
+        # Always update the viewport
+        self.viewport().update()
 
     def select_annotations(self):
         """Select all annotations in the current image."""
+        # First unselect any currently selected annotations
+        self.unselect_annotations()
+        
+        # Get all annotations in the current image
         annotations = self.get_image_annotations()
+        
+        # Check if label is locked
+        label_locked = self.main_window.label_window.label_locked
+        locked_label_id = self.main_window.label_window.locked_label.id if label_locked else None
+        
+        # Select all appropriate annotations
         for annotation in annotations:
-            if self.main_window.label_window.label_locked:
-                if annotation.label.id == self.main_window.label_window.locked_label.id:
-                    self.select_annotation(annotation, ctrl_pressed=True)
-            else:
-                self.select_annotation(annotation, ctrl_pressed=True)
+            # Skip annotations that don't match the locked label
+            if label_locked and annotation.label.id != locked_label_id:
+                continue
+                
+            # Use ctrl_pressed=True to add to selection without clearing
+            self.select_annotation(annotation, ctrl_pressed=True)
 
     def unselect_annotation(self, annotation):
         """Unselect a specific annotation."""
         if annotation in self.selected_annotations:
-            annotation.deselect()
+            # Remove from selected list
             self.selected_annotations.remove(annotation)
-            self.main_window.confidence_window.clear_display()
+            
+            # Disconnect from confidence window if needed
+            if hasattr(annotation, 'annotationUpdated') and self.main_window.confidence_window.isVisible():
+                try:
+                    annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+                except TypeError:
+                    # Already disconnected
+                    pass
+            
+            # Update annotation's internal state
+            annotation.deselect()
+            
+            # Clear confidence window if no annotations remain selected
+            if not self.selected_annotations:
+                self.main_window.confidence_window.clear_display()
+            
+            # Update the viewport
+            self.viewport().update()
 
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
-        for annotation in self.selected_annotations:
-            self.unselect_annotation(annotation)
+        # Create a copy to safely iterate through
+        annotations_to_unselect = self.selected_annotations.copy()
+        
+        # Clear the list first to avoid modification during iteration
         self.selected_annotations = []
+        
+        for annotation in annotations_to_unselect:
+            # Disconnect from confidence window if needed
+            if hasattr(annotation, 'annotationUpdated') and self.main_window.confidence_window.isVisible():
+                try:
+                    annotation.annotationUpdated.disconnect(self.main_window.confidence_window.display_cropped_image)
+                except TypeError:
+                    # Already disconnected
+                    pass
+            
+            # Update annotation's internal state
+            annotation.deselect()
+        
+        # Clear the confidence window
+        self.main_window.confidence_window.clear_display()
+        
+        # Update the viewport once for all changes
+        self.viewport().update()
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""

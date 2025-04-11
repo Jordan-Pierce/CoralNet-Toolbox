@@ -419,7 +419,7 @@ def pixmap_to_numpy(pixmap):
     except Exception as e:
         print(f"Error converting QImage to numpy: {e}")
         # Return a small empty array if conversion fails
-        numpy_array = np.zeros((100, 100, 3), dtype=np.uint8)  
+        numpy_array = np.zeros((256, 256, 3), dtype=np.uint8)  
         
     return numpy_array
 

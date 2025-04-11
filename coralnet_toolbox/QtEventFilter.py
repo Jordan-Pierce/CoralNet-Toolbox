@@ -89,7 +89,7 @@ class GlobalEventFilter(QObject):
             # Unselect all annotations on > key press with Shift+Ctrl
             if event.key() == Qt.Key_Greater and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
                 if self.main_window.select_tool_action.isChecked():
-                    self.annotation_window.select_annotations()
+                    self.annotation_window.unselect_annotations()
                     return True
 
             # Handle Escape key for exiting program
