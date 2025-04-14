@@ -4,9 +4,9 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import pyqtSignal, QObject, QPointF
-from PyQt5.QtGui import QColor, QImage, QPolygonF
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF
+from PyQt5.QtGui import QColor, QImage, QPolygonF, QPen, QBrush
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsScene
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -50,10 +50,54 @@ class Annotation(QObject):
         self.center_xy = None
         self.annotation_size = None
 
-        # Attributes to store the graphics items for center/centroid, bounding box, and brush/mask
+        # Attributes to store the graphics items for center/centroid, bounding box, and polygon
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
         self.polygon_graphics_item = None
+        
+    def contains_point(self, point: QPointF) -> bool:
+        """Check if the annotation contains a given point."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    def create_cropped_image(self, rasterio_src):
+        """Create a cropped image from the annotation area."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    def get_area(self):
+        """Calculate the area of the annotation."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def get_perimeter(self):
+        """Calculate the perimeter of the annotation."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    def get_polygon(self):
+        """Get the polygon representation of this annotation."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def get_bounding_box_top_left(self):
+        """Get the top-left corner of the annotation's bounding box."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def get_bounding_box_bottom_right(self):
+        """Get the bottom-right corner of the annotation's bounding box."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    def get_cropped_image_graphic(self):
+        """Get graphical representation of the cropped image area."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def update_location(self, new_center_xy: QPointF):
+        """Update the location of the annotation to a new center point."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
+    def update_annotation_size(self, size_or_scale_factor):
+        """Update the size of the annotation using a size or scale factor."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
+    def resize(self, handle: str, new_pos: QPointF):
+        """Resize the annotation based on handle position."""
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def show_warning_message(self):
         """Display a warning message about removing machine suggestions when altering an annotation."""
@@ -76,7 +120,7 @@ class Annotation(QObject):
 
     def delete(self):
         """Remove the annotation and all associated graphics items from the scene."""
-        
+
         # Emit the deletion signal first
         self.annotationDeleted.emit(self)
 
@@ -99,106 +143,34 @@ class Annotation(QObject):
         if self.polygon_graphics_item and self.polygon_graphics_item.scene():
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
             self.polygon_graphics_item = None
-            
+
         # Clean up resources
         if self.cropped_image:
             del self.cropped_image
             self.cropped_image = None
             
-    def update_machine_confidence(self, prediction: dict):
-        """Update annotation with machine-generated confidence scores."""
-        if not prediction:
-            return
+    def create_graphics_item(self, scene: QGraphicsScene):
+        """Create all graphics items for the annotation and add them to the scene."""
+        # Create the main graphics item based on the polygon
+        polygon = self.get_polygon()
         
-        # Convert any numpy numeric types to regular Python float for JSON compatibility
-        prediction = {k: float(v) if isinstance(v, (np.floating, np.integer)) else v for k, v in prediction.items()}
-        
-        # Set user confidence to None
-        self.user_confidence = {}
-        
-        # Sort the prediction by confidence (descending order)
-        prediction = {k: v for k, v in sorted(prediction.items(), key=lambda item: item[1], reverse=True)}
-        
-        # Update machine confidence
-        self.machine_confidence = prediction
-        
-        # Pass the label with the largest confidence as the label
-        self.label = max(prediction, key=prediction.get)
-        
-        # Create the graphic
+        self.graphics_item = QGraphicsPolygonItem(polygon)
         self.update_graphics_item()
-        self.show_message = True
+        self.graphics_item.setData(0, self.id)
+        
+        scene.addItem(self.graphics_item)
 
-    def update_user_confidence(self, new_label: 'Label'):
-        """Update annotation with user-defined label and confidence."""
-        # Set machine confidence to None
-        self.machine_confidence = {}
-        # Update user confidence
-        self.user_confidence = {new_label: 1.0}
-        # Pass the label with the largest confidence as the label
-        self.label = new_label
-        # Create the graphic
-        self.update_graphics_item()
-        self.show_message = False
-
-    def update_label(self, new_label: 'Label', set_review=False):
-        """Update the annotation's label while preserving confidence values."""
-        # Initializing
-        if self.label is None:
-            self.label = new_label
-
-        # Updating (new label, or new color)
-        elif self.label.id != new_label.id or self.label.color != new_label.color:
-            
-            if not set_review:
-                # Update the label in user_confidence if it exists
-                if self.user_confidence:
-                    old_confidence = next(iter(self.user_confidence.values()))
-                    self.user_confidence = {new_label: old_confidence}
-
-                # Update the label in machine_confidence if it exists
-                if self.machine_confidence:
-                    new_machine_confidence = {}
-                    for label, confidence in self.machine_confidence.items():
-                        if label.id == self.label.id:
-                            new_machine_confidence[new_label] = confidence
-                        else:
-                            new_machine_confidence[label] = confidence
-                            
-                    # Update the machine confidence
-                    self.machine_confidence = new_machine_confidence
-
-            # Update the label
-            self.label = new_label
-
-        # Always update the graphics item
-        self.update_graphics_item()
-
-    def get_cropped_image(self, max_size=None):
-        """Retrieve the cropped image, optionally scaled to maximum size."""
-        if self.cropped_image is None:
-            return None
-
-        if max_size is not None:
-            current_width = self.cropped_image.width()
-            current_height = self.cropped_image.height()
-            
-            # Calculate scaling factor while maintaining aspect ratio
-            width_ratio = max_size / current_width
-            height_ratio = max_size / current_height
-            scale_factor = min(width_ratio, height_ratio)
-            
-            # Only scale if image is larger than max_size
-            if scale_factor < 1.0:
-                new_width = int(current_width * scale_factor)
-                new_height = int(current_height * scale_factor)
-                return self.cropped_image.scaled(new_width, new_height)
-
-        return self.cropped_image
-
-    def get_cropped_image_graphic(self):
-        """Get graphical representation of the cropped image area."""
-        raise NotImplementedError("Subclasses must implement this method.")
+        # Create the center graphics item
+        self.create_center_graphics_item(self.center_xy, scene)
+        
+        # Create the bounding box graphics item
+        self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(), 
+                                               self.get_bounding_box_bottom_right(),
+                                               scene)
+        # Create the polygon graphics item
+        # Convert polygon to list of points
+        points = [polygon.at(i) for i in range(polygon.count())]
+        self.create_polygon_graphics_item(points, scene)
 
     def create_center_graphics_item(self, center_xy, scene):
         """Create a graphical item representing the annotation's center point."""
@@ -245,7 +217,69 @@ class Annotation(QObject):
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
         scene.addItem(self.polygon_graphics_item)
+            
+    def get_center_xy(self):
+        """Get the center coordinates of the annotation."""
+        return self.center_xy
 
+    def get_cropped_image(self, max_size=None):
+        """Retrieve the cropped image, optionally scaled to maximum size."""
+        if self.cropped_image is None:
+            return None
+
+        if max_size is not None:
+            current_width = self.cropped_image.width()
+            current_height = self.cropped_image.height()
+
+            # Calculate scaling factor while maintaining aspect ratio
+            width_ratio = max_size / current_width
+            height_ratio = max_size / current_height
+            scale_factor = min(width_ratio, height_ratio)
+
+            # Only scale if image is larger than max_size
+            if scale_factor < 1.0:
+                new_width = int(current_width * scale_factor)
+                new_height = int(current_height * scale_factor)
+                return self.cropped_image.scaled(new_width, new_height)
+
+        return self.cropped_image
+
+    def update_graphics_item(self, crop_image=True):
+        """Update the graphical representation of the annotation."""
+        if self.graphics_item and self.graphics_item.scene():
+            scene = self.graphics_item.scene()
+            if scene:
+                scene.removeItem(self.graphics_item)
+
+                # Get the polygon representation
+                polygon = self.get_polygon()
+                self.graphics_item = QGraphicsPolygonItem(polygon)
+
+                # Set color and style
+                color = QColor(self.label.color)
+                color.setAlpha(self.transparency)
+
+                if self.is_selected:
+                    inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                    pen = QPen(inverse_color, 6, Qt.DotLine)
+                else:
+                    pen = QPen(color, 4, Qt.SolidLine)
+
+                self.graphics_item.setPen(pen)
+                self.graphics_item.setBrush(QBrush(color))
+                self.graphics_item.setData(0, self.id)
+                scene.addItem(self.graphics_item)
+
+                # Update separate graphics items
+                self.update_center_graphics_item(self.center_xy)
+                self.update_bounding_box_graphics_item(
+                    self.get_bounding_box_top_left(),
+                    self.get_bounding_box_bottom_right()
+                )
+                # Convert polygon to list of points
+                points = [polygon.at(i) for i in range(polygon.count())]
+                self.update_polygon_graphics_item(points)
+                
     def update_center_graphics_item(self, center_xy):
         """Update the position and appearance of the center graphics item."""
         if self.center_graphics_item:
@@ -289,17 +323,71 @@ class Annotation(QObject):
             self.transparency = transparency
             self.update_graphics_item(crop_image=False)
 
-    def get_center_xy(self):
-        """Get the center coordinates of the annotation."""
-        return self.center_xy
+    def update_label(self, new_label: 'Label', set_review=False):
+        """Update the annotation's label while preserving confidence values."""
+        # Initializing
+        if self.label is None:
+            self.label = new_label
 
-    def update_graphics_item(self, crop_image=True):
-        """Update the graphical representation of the annotation."""
-        pass
+        # Updating (new label, or new color)
+        elif self.label.id != new_label.id or self.label.color != new_label.color:
 
-    def resize(self, handle: str, new_pos: QPointF):
-        """Resize the annotation based on handle position."""
-        pass
+            if not set_review:
+                # Update the label in user_confidence if it exists
+                if self.user_confidence:
+                    old_confidence = next(iter(self.user_confidence.values()))
+                    self.user_confidence = {new_label: old_confidence}
+
+                # Update the label in machine_confidence if it exists
+                if self.machine_confidence:
+                    new_machine_confidence = {}
+                    for label, confidence in self.machine_confidence.items():
+                        if label.id == self.label.id:
+                            new_machine_confidence[new_label] = confidence
+                        else:
+                            new_machine_confidence[label] = confidence
+
+                    # Update the machine confidence
+                    self.machine_confidence = new_machine_confidence
+
+            # Update the label
+            self.label = new_label
+
+        # Always update the graphics item
+        self.update_graphics_item()
+        
+    def update_user_confidence(self, new_label: 'Label'):
+        """Update annotation with user-defined label and confidence."""
+        # Set machine confidence to None
+        self.machine_confidence = {}
+        # Update user confidence
+        self.user_confidence = {new_label: 1.0}
+        # Pass the label with the largest confidence as the label
+        self.label = new_label
+        
+        # Create the graphic
+        self.update_graphics_item()
+        self.show_message = False
+
+    def update_machine_confidence(self, prediction: dict):
+        """Update annotation with machine-generated confidence scores."""
+        if not prediction:
+            return
+
+        # Convert any numpy numeric types to regular Python float for JSON compatibility
+        prediction = {k: float(v) if isinstance(v, (np.floating, np.integer)) else v for k, v in prediction.items()}
+        # Set user confidence to None
+        self.user_confidence = {}
+        # Sort the prediction by confidence (descending order)
+        prediction = {k: v for k, v in sorted(prediction.items(), key=lambda item: item[1], reverse=True)}
+        # Update machine confidence
+        self.machine_confidence = prediction
+        # Pass the label with the largest confidence as the label
+        self.label = max(prediction, key=prediction.get)
+
+        # Create the graphic
+        self.update_graphics_item()
+        self.show_message = True
 
     def to_coralnet(self):
         """Convert annotation to CoralNet format for export."""
@@ -339,7 +427,8 @@ class Annotation(QObject):
         machine_confidence = {label.short_label_code: confidence for label, confidence in
                               self.machine_confidence.items()}
 
-        return {
+        # Add common attributes
+        result = {
             'id': self.id,
             'label_short_code': self.label.short_label_code,
             'label_long_code': self.label.long_label_code,
@@ -347,16 +436,53 @@ class Annotation(QObject):
             'image_path': self.image_path,
             'label_id': self.label.id,
             'data': self.data,
-            'machine_confidence': machine_confidence
+            'machine_confidence': machine_confidence,
+            'area': self.get_area(),
+            'perimeter': self.get_perimeter()
         }
 
+        return result
+
     def to_yolo_detection(self, image_width, image_height):
-        raise NotImplementedError("Subclasses must implement this method.")
-        
+        """Convert annotation to YOLO detection format.
+
+        YOLO detection format is: class_id x_center y_center width height
+        where all values are normalized to [0, 1].
+        """
+        # Get the bounding box
+        top_left = self.get_bounding_box_top_left()
+        bottom_right = self.get_bounding_box_bottom_right()
+
+        # Calculate normalized center, width, and height
+        x_center = (top_left.x() + bottom_right.x()) / 2 / image_width
+        y_center = (top_left.y() + bottom_right.y()) / 2 / image_height
+        width = (bottom_right.x() - top_left.x()) / image_width
+        height = (bottom_right.y() - top_left.y()) / image_height
+
+        return self.label.short_label_code, f"{x_center} {y_center} {width} {height}"
+
     def to_yolo_segmentation(self, image_width, image_height):
-        raise NotImplementedError("Subclasses must implement this method.")
+        """Convert annotation to YOLO segmentation format.
+
+        YOLO segmentation format is: class_id x1 y1 x2 y2 ... xn yn
+        where all coordinates are normalized to [0, 1].
+        """
+        # Get the polygon
+        polygon = self.get_polygon()
+
+        # Normalize the points to [0,1] range
+        normalized_points = []
+        for i in range(polygon.count()):
+            point = polygon.at(i)
+            normalized_points.append((point.x() / image_width, point.y() / image_height))
+
+        # Format as a string with alternating x y coordinates
+        points_str = " ".join([f"{x} {y}" for x, y in normalized_points])
+
+        return self.label.short_label_code, points_str
 
     def __repr__(self):
+        """Return a string representation of the annotation."""
         return (f"Annotation(id={self.id}, "
                 f"annotation_color={self.label.color.name()}, "
                 f"image_path={self.image_path}, "

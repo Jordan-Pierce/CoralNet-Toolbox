@@ -29,41 +29,42 @@ class RectangleAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
 
-        self._reduce_precision(top_left, bottom_right)
-        self.calculate_centroid()
+        self.set_precision(top_left, bottom_right, False)
+        self.set_centroid()
         self.set_cropped_bbox()
 
-    def _reduce_precision(self, top_left: QPointF, bottom_right: QPointF):
-        self.top_left = QPointF(round(min(top_left.x(), bottom_right.x()), 2),
-                                round(min(top_left.y(), bottom_right.y()), 2))
+    def set_precision(self, top_left: QPointF, bottom_right: QPointF, reduce: bool = True):
+        """Reduce the precision of the coordinates to 2 decimal places."""
+        if reduce:
+            top_left = QPointF(round(top_left.x(), 2), round(top_left.y(), 2))
+            bottom_right = QPointF(round(bottom_right.x(), 2), round(bottom_right.y(), 2))
 
-        self.bottom_right = QPointF(round(max(top_left.x(), bottom_right.x()), 2),
-                                    round(max(top_left.y(), bottom_right.y()), 2))
-
-    def calculate_centroid(self):
-        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
-                                 (self.top_left.y() + self.bottom_right.y()) / 2)
-
+        self.top_left = top_left
+        self.bottom_right = bottom_right
+        
     def set_cropped_bbox(self):
+        """Set the cropped bounding box for the annotation."""
         self.cropped_bbox = (self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y())
         self.annotation_size = int(max(self.bottom_right.x() - self.top_left.x(),
                                        self.bottom_right.y() - self.top_left.y()))
 
-    def calculate_area(self):
-        return (self.bottom_right.x() - self.top_left.x()) * (self.bottom_right.y() - self.top_left.y())
-
-    def calculate_perimeter(self):
-        return 2 * (self.bottom_right.x() - self.top_left.x()) + 2 * (self.bottom_right.y() - self.top_left.y())
+    def set_centroid(self):
+        """Set the centroid of the rectangle."""
+        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
+                                 (self.top_left.y() + self.bottom_right.y()) / 2)
 
     def contains_point(self, point: QPointF) -> bool:
+        """Check if the given point is within the rectangle."""
         return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
                 self.top_left.y() <= point.y() <= self.bottom_right.y())
-
+        
     def create_cropped_image(self, rasterio_src):
+        """Create a cropped image from the rasterio source."""
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation
@@ -85,8 +86,35 @@ class RectangleAnnotation(Annotation):
         self.cropped_image = QPixmap.fromImage(q_image)
 
         self.annotationUpdated.emit(self)  # Notify update
+        
+    def get_area(self):
+        """Calculate the area of the rectangle."""
+        return (self.bottom_right.x() - self.top_left.x()) * (self.bottom_right.y() - self.top_left.y())
+
+    def get_perimeter(self):
+        """Calculate the perimeter of the rectangle."""
+        return 2 * (self.bottom_right.x() - self.top_left.x()) + 2 * (self.bottom_right.y() - self.top_left.y())
+
+    def get_polygon(self):
+        """Get the polygon representation of this rectangle."""
+        points = [
+            self.top_left,
+            QPointF(self.bottom_right.x(), self.top_left.y()),
+            self.bottom_right,
+            QPointF(self.top_left.x(), self.bottom_right.y())
+        ]
+        return QPolygonF(points)
+
+    def get_bounding_box_top_left(self):
+        """Get the top-left corner of the bounding box."""
+        return self.top_left
+
+    def get_bounding_box_bottom_right(self):
+        """Get the bottom-right corner of the bounding box."""
+        return self.bottom_right
 
     def get_cropped_image_graphic(self):
+        """Create a cropped image with a mask and dotted outline."""
         if self.cropped_image is None:
             return None
 
@@ -134,82 +162,33 @@ class RectangleAnnotation(Annotation):
         # Now draw the dotted line outline on top of the masked image
         painter = QPainter(cropped_image_graphic)
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         # Create a dotted pen
         pen = QPen(self.label.color)
         pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
         pen.setWidth(2)  # Line width
         painter.setPen(pen)
-        
+
         # Draw the rectangle outline with the dotted pen
         painter.drawPolygon(polygon)
-        
+
         painter.end()
 
         return cropped_image_graphic
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        rect = QGraphicsRectItem(self.top_left.x(), self.top_left.y(),
-                                 self.bottom_right.x() - self.top_left.x(),
-                                 self.bottom_right.y() - self.top_left.y())
-        self.graphics_item = rect
-        self.update_graphics_item()
-        self.graphics_item.setData(0, self.id)
-        scene.addItem(self.graphics_item)
-
-        # Create separate graphics items for center/centroid, bounding box, and brush/mask
-        self.create_center_graphics_item(self.center_xy, scene)
-        self.create_bounding_box_graphics_item(self.top_left, self.bottom_right, scene)
-        self.create_polygon_graphics_item(QPolygonF([self.top_left,
-                                                     QPointF(self.bottom_right.x(), self.top_left.y()),
-                                                     self.bottom_right,
-                                                     QPointF(self.top_left.x(), self.bottom_right.y())]), scene)
-
     def update_graphics_item(self, crop_image=True):
-        if self.graphics_item and self.graphics_item.scene():
-            scene = self.graphics_item.scene()
-            if scene:
-                scene.removeItem(self.graphics_item)
+        """Update the graphical representation of the annotation using base class method."""
+        super().update_graphics_item(crop_image)
 
-            # Update the graphic item
-            rect = QGraphicsRectItem(self.top_left.x(), self.top_left.y(),
-                                     self.bottom_right.x() - self.top_left.x(),
-                                     self.bottom_right.y() - self.top_left.y())
-            self.graphics_item = rect
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
-
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 6, Qt.DotLine)
-            else:
-                pen = QPen(color, 4, Qt.SolidLine)
-
-            self.graphics_item.setPen(pen)
-            brush = QBrush(color)
-            self.graphics_item.setBrush(brush)
-
-            if scene:
-                scene.addItem(self.graphics_item)
-
-            self.graphics_item.setData(0, self.id)
-            self.graphics_item.update()
-
-            # Update separate graphics items for center/centroid, bounding box, and brush/mask
-            self.update_center_graphics_item(self.center_xy)
-            self.update_bounding_box_graphics_item(self.top_left, self.bottom_right)
-            self.update_polygon_graphics_item(QPolygonF([self.top_left,
-                                                         QPointF(self.bottom_right.x(), self.top_left.y()),
-                                                         self.bottom_right,
-                                                         QPointF(self.top_left.x(), self.bottom_right.y())]))
-
-            if self.rasterio_src and crop_image:
-                self.create_cropped_image(self.rasterio_src)
+        # Update the cropped image if necessary
+        if self.rasterio_src and crop_image:
+            self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
+        """# Update the location of the annotation"""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-        
+
         # Update the location, graphic
         delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2),
                         round(new_center_xy.y() - self.center_xy.y(), 2))
@@ -220,9 +199,10 @@ class RectangleAnnotation(Annotation):
         self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, scale_factor: float):
+        """"Update the size of the annotation"""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-        
+
         # Update the size, graphic
         width = (self.bottom_right.x() - self.top_left.x()) * scale_factor
         height = (self.bottom_right.y() - self.top_left.y()) * scale_factor
@@ -232,6 +212,7 @@ class RectangleAnnotation(Annotation):
         self.annotationUpdated.emit(self)  # Notify update
 
     def resize(self, handle: str, new_pos: QPointF):
+        """Resize the annotation based on the handle and new position."""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
 
@@ -255,32 +236,23 @@ class RectangleAnnotation(Annotation):
         elif handle == "bottom_right":
             self.bottom_right = new_pos
 
-        self._reduce_precision(self.top_left, self.bottom_right)
-        self.calculate_centroid()
+        self.set_precision(self.top_left, self.bottom_right)
+        self.set_centroid()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
 
-    def to_yolo_detection(self, image_width, image_height):
-        min_x, min_y, max_x, max_y = self.cropped_bbox
-        x_center = (min_x + max_x) / 2 / image_width
-        y_center = (min_y + max_y) / 2 / image_height
-        width = (max_x - min_x) / image_width
-        height = (max_y - min_y) / image_height
-
-        return self.label.short_label_code, f"{x_center} {y_center} {width} {height}"
-
     def to_dict(self):
+        """Convert the annotation to a dictionary representation."""
         base_dict = super().to_dict()
         base_dict.update({
             'top_left': (self.top_left.x(), self.top_left.y()),
             'bottom_right': (self.bottom_right.x(), self.bottom_right.y()),
-            'area': self.calculate_area(),
-            'perimeter': self.calculate_perimeter()
         })
         return base_dict
 
     @classmethod
     def from_dict(cls, data, label_window):
+        """Create a RectangleAnnotation from a dictionary representation."""
         top_left = QPointF(data['top_left'][0], data['top_left'][1])
         bottom_right = QPointF(data['bottom_right'][0], data['bottom_right'][1])
         annotation = cls(top_left, bottom_right,
@@ -297,12 +269,13 @@ class RectangleAnnotation(Annotation):
             label = label_window.get_label_by_short_code(short_label_code)
             if label:
                 machine_confidence[label] = confidence
-        
+
         annotation.update_machine_confidence(machine_confidence)
 
         return annotation
 
     def __repr__(self):
+        """Represent the RectangleAnnotation as a string."""
         return (f"RectangleAnnotation(id={self.id}, "
                 f"top_left={self.top_left}, bottom_right={self.bottom_right}, "
                 f"annotation_color={self.label.color.name()}, "

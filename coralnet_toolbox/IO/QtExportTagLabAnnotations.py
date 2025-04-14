@@ -134,8 +134,8 @@ class ExportTagLabAnnotations:
                         height = max_y - min_y
                         centroid_x = float(f"{sum(point.x() for point in points) / len(points):.1f}")
                         centroid_y = float(f"{sum(point.y() for point in points) / len(points):.1f}")
-                        area = float(f"{annotation.calculate_area():.1f}")
-                        perimeter = float(f"{annotation.calculate_perimeter():.1f}")
+                        area = float(f"{annotation.get_area():.1f}")
+                        perimeter = float(f"{annotation.get_perimeter():.1f}")
                         contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
 
                         annotation_dict = {

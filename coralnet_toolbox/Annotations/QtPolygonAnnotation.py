@@ -33,25 +33,30 @@ class PolygonAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
 
-        self._reduce_precision(points, True)
-        self.calculate_centroid()
+        self.set_precision(points, True)
+        self.set_centroid()
         self.set_cropped_bbox()
 
-    def _reduce_precision(self, points: list, reduce: bool = True):
+    def set_precision(self, points: list, reduce: bool = True):
+        """Set the precision of the points to 3 decimal places."""
         if reduce:
             points = [QPointF(round(point.x(), 3), round(point.y(), 3)) for point in points]
+
         self.points = points
 
-    def calculate_centroid(self):
+    def set_centroid(self):
+        """Calculate the centroid of the polygon defined by the points."""
         centroid_x = sum(point.x() for point in self.points) / len(self.points)
         centroid_y = sum(point.y() for point in self.points) / len(self.points)
         self.center_xy = QPointF(centroid_x, centroid_y)
 
     def set_cropped_bbox(self):
+        """Calculate the bounding box of the polygon defined by the points."""
         min_x = min(point.x() for point in self.points)
         min_y = min(point.y() for point in self.points)
         max_x = max(point.x() for point in self.points)
@@ -59,30 +64,13 @@ class PolygonAnnotation(Annotation):
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
         self.annotation_size = int(max(max_x - min_x, max_y - min_y))
 
-    def calculate_area(self):
-        n = len(self.points)
-        area = 0.0
-        for i in range(n):
-            j = (i + 1) % n
-            area += self.points[i].x() * self.points[j].y()
-            area -= self.points[j].x() * self.points[i].y()
-        area = abs(area) / 2.0
-        return area
-
-    def calculate_perimeter(self):
-        n = len(self.points)
-        perimeter = 0.0
-        for i in range(n):
-            j = (i + 1) % n
-            perimeter += ((self.points[j].x() - self.points[i].x()) ** 2 +
-                          (self.points[j].y() - self.points[i].y()) ** 2) ** 0.5
-        return perimeter
-
     def contains_point(self, point: QPointF) -> bool:
+        """Check if the given point is inside the polygon defined by the points."""
         polygon = QPolygonF(self.points)
         return polygon.containsPoint(point, Qt.OddEvenFill)
 
     def create_cropped_image(self, rasterio_src):
+        """Create a cropped image from the rasterio source based on the polygon points."""
         # Set the rasterio source for the annotation
         self.rasterio_src = rasterio_src
         # Set the cropped bounding box for the annotation
@@ -104,8 +92,47 @@ class PolygonAnnotation(Annotation):
         self.cropped_image = QPixmap.fromImage(q_image)
 
         self.annotationUpdated.emit(self)  # Notify update
+        
+    def get_area(self):
+        """Calculate the area of the polygon defined by the points."""
+        if len(self.points) < 3:
+            return 0.0
+
+        # Use the shoelace formula to calculate the area of the polygon
+        area = 0.0
+        n = len(self.points)
+        for i in range(n):
+            j = (i + 1) % n
+            area += self.points[i].x() * self.points[j].y()
+            area -= self.points[j].x() * self.points[i].y()
+        return abs(area) / 2.0
     
+    def get_perimeter(self):
+        """Calculate the perimeter of the polygon defined by the points."""
+        if len(self.points) < 2:
+            return 0.0
+
+        perimeter = 0.0
+        n = len(self.points)
+        for i in range(n):
+            j = (i + 1) % n
+            perimeter += self.points[i].distanceToPoint(self.points[j])
+        return perimeter
+
+    def get_polygon(self):
+        """Get the polygon representation of this polygon annotation."""
+        return QPolygonF(self.points)
+
+    def get_bounding_box_top_left(self):
+        """Get the top-left corner of the annotation's bounding box."""
+        return QPointF(self.cropped_bbox[0], self.cropped_bbox[1])
+
+    def get_bounding_box_bottom_right(self):
+        """Get the bottom-right corner of the annotation's bounding box."""
+        return QPointF(self.cropped_bbox[2], self.cropped_bbox[3])
+
     def get_cropped_image_graphic(self):
+        """Get the cropped image with the polygon mask applied."""
         if self.cropped_image is None:
             return None
 
@@ -145,88 +172,47 @@ class PolygonAnnotation(Annotation):
         # Now draw the dotted line outline on top of the masked image
         painter = QPainter(cropped_image_graphic)
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         # Create a dotted pen
         pen = QPen(self.label.color)
         pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
         pen.setWidth(2)  # Line width
         painter.setPen(pen)
-        
+
         # Draw the polygon outline with the dotted pen
         painter.drawPolygon(polygon)
-        
+
         painter.end()
 
         return cropped_image_graphic
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        polygon = QPolygonF(self.points)
-        self.graphics_item = QGraphicsPolygonItem(polygon)
-        self.update_graphics_item()
-        self.graphics_item.setData(0, self.id)
-        scene.addItem(self.graphics_item)
-
-        # Create separate graphics items for center/centroid, bounding box, and brush/mask
-        self.create_center_graphics_item(self.center_xy, scene)
-        self.create_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
-                                               QPointF(self.cropped_bbox[2], self.cropped_bbox[3]),
-                                               scene)
-        self.create_polygon_graphics_item(self.points, scene)
-
     def update_graphics_item(self, crop_image=True):
-        if self.graphics_item and self.graphics_item.scene():
-            scene = self.graphics_item.scene()
-            if scene:
-                scene.removeItem(self.graphics_item)
+        """Update the graphical representation of the annotation using base class method."""
+        super().update_graphics_item(crop_image)
 
-            # Update the graphic item
-            polygon = QPolygonF(self.points)
-            self.graphics_item = QGraphicsPolygonItem(polygon)
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
-
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 6, Qt.DotLine)
-            else:
-                pen = QPen(color, 4, Qt.SolidLine)
-
-            self.graphics_item.setPen(pen)
-            brush = QBrush(color)
-            self.graphics_item.setBrush(brush)
-
-            if scene:
-                scene.addItem(self.graphics_item)
-
-            self.graphics_item.setData(0, self.id)
-            self.graphics_item.update()
-
-            # Update separate graphics items for center/centroid, bounding box, and brush/mask
-            self.update_center_graphics_item(self.center_xy)
-            self.update_bounding_box_graphics_item(QPointF(self.cropped_bbox[0], self.cropped_bbox[1]),
-                                                   QPointF(self.cropped_bbox[2], self.cropped_bbox[3]))
-            self.update_polygon_graphics_item(self.points)
-
-            if self.rasterio_src and crop_image:
-                self.create_cropped_image(self.rasterio_src)
+        # Update the cropped image if necessary
+        if self.rasterio_src and crop_image:
+            self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
+        """Update the location of the annotation by moving it to a new center point."""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-        
+
         # Update the location, graphic
         delta = QPointF(round(new_center_xy.x() - self.center_xy.x(), 2),
                         round(new_center_xy.y() - self.center_xy.y(), 2))
 
         new_points = [point + delta for point in self.points]
 
-        self._reduce_precision(new_points)
-        self.calculate_centroid()
+        self.set_precision(new_points)
+        self.set_centroid()
         self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, delta: float):
+        """Update the size of the annotation by a given delta value."""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
 
@@ -261,13 +247,14 @@ class PolygonAnnotation(Annotation):
             new_points.append(new_point)
 
         # Update the points
-        self._reduce_precision(new_points)
-        self.calculate_centroid()
+        self.set_precision(new_points)
+        self.set_centroid()
         self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
     def resize(self, handle, new_pos):
+        """Resize the annotation by moving a specific handle to a new position."""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
 
@@ -300,8 +287,8 @@ class PolygonAnnotation(Annotation):
                     new_points[i] += delta * influence
 
             # Recalculate centroid and bounding box
-            self._reduce_precision(new_points)
-            self.calculate_centroid()
+            self.set_precision(new_points)
+            self.set_centroid()
             self.set_cropped_bbox()
             self.update_graphics_item()
 
@@ -309,29 +296,16 @@ class PolygonAnnotation(Annotation):
             self.annotationUpdated.emit(self)
 
     def to_dict(self):
+        """Convert the annotation to a dictionary representation for serialization."""
         base_dict = super().to_dict()
         base_dict.update({
-            'points': [(point.x(), point.y()) for point in self.points],
-            'area': self.calculate_area(),
-            'perimeter': self.calculate_perimeter()
+            'points': [(point.x(), point.y()) for point in self.points]
         })
         return base_dict
 
-    def to_yolo_detection(self, image_width, image_height):
-        x_min, y_min, x_max, y_max = self.cropped_bbox
-        x_center = (x_min + x_max) / 2 / image_width
-        y_center = (y_min + y_max) / 2 / image_height
-        width = (x_max - x_min) / image_width
-        height = (y_max - y_min) / image_height
-
-        return self.label.short_label_code, f"{x_center} {y_center} {width} {height}"
-
-    def to_yolo_segmentation(self, image_width, image_height):
-        normalized_points = [(point.x() / image_width, point.y() / image_height) for point in self.points]
-        return self.label.short_label_code, " ".join([f"{x} {y}" for x, y in normalized_points])
-
     @classmethod
     def from_dict(cls, data, label_window):
+        """Create a PolygonAnnotation object from a dictionary representation."""
         points = [QPointF(x, y) for x, y in data['points']]
         annotation = cls(points,
                          data['label_short_code'],
@@ -347,12 +321,13 @@ class PolygonAnnotation(Annotation):
             label = label_window.get_label_by_short_code(short_label_code)
             if label:
                 machine_confidence[label] = confidence
-        
+
         annotation.update_machine_confidence(machine_confidence)
 
         return annotation
 
     def __repr__(self):
+        """Return a string representation of the PolygonAnnotation object."""
         return (f"PolygonAnnotation(id={self.id}, points={self.points}, "
                 f"annotation_color={self.label.color.name()}, "
                 f"image_path={self.image_path}, "
