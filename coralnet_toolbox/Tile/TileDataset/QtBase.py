@@ -204,6 +204,13 @@ class Base(QDialog):
         self.include_negatives_combo.setCurrentIndex(0)
         layout.addRow("Include Negative Samples:", self.include_negatives_combo)
         
+        # Copy source data
+        self.copy_source_data_combo = QComboBox()
+        self.copy_source_data_combo.addItems(["True", "False"])
+        self.copy_source_data_combo.setEditable(False)
+        self.copy_source_data_combo.setCurrentIndex(1)
+        layout.addRow("Copy Source Data:", self.copy_source_data_combo)
+        
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
         self.num_viz_sample_spinbox.setRange(1, 1000)
@@ -366,6 +373,8 @@ class Base(QDialog):
         test_ratio = self.test_ratio_spinbox.value()
         include_negatives = self.include_negatives_combo.currentText()
         include_negatives = True if include_negatives == "True" else False
+        copy_source_data = self.copy_source_data_combo.currentText()
+        copy_source_data = True if copy_source_data == "True" else False
         num_viz_samples = self.num_viz_sample_spinbox.value()
 
         # Perform all validation checks
@@ -418,7 +427,8 @@ class Base(QDialog):
             valid_ratio=valid_ratio,
             test_ratio=test_ratio,
             margins=margins,
-            include_negative_samples=include_negatives
+            include_negative_samples=include_negatives,
+            copy_source_data=copy_source_data,
         )
 
         tiler = YoloTiler(
@@ -426,7 +436,7 @@ class Base(QDialog):
             target=dst,
             config=config,
             progress_callback=progress_callback,
-            num_viz_samples=num_viz_samples,  # Number of samples to visualize
+            num_viz_samples=num_viz_samples,        # Number of samples to visualize
         )
 
         # Copy the class_mapping.json file if it exists
