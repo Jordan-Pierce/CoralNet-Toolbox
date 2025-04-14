@@ -38,7 +38,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Tile Dataset")
-        self.resize(800, 550)
+        self.resize(600, 550)
 
         # Main vertical layout
         main_layout = QVBoxLayout(self)
@@ -207,7 +207,7 @@ class Base(QDialog):
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
         self.num_viz_sample_spinbox.setRange(1, 1000)
-        self.num_viz_sample_spinbox.setValue(25)
+        self.num_viz_sample_spinbox.setValue(5)
         layout.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
 
         self.dataset_config_group.setLayout(layout)

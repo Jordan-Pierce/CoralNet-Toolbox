@@ -137,7 +137,7 @@ class PatchSamplingDialog(QDialog):
         group_box = QGroupBox("Apply To")
         layout = QVBoxLayout()
 
-        self.apply_filtered_checkbox = QCheckBox("ᗊ Apply to filtered images")
+        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
         self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
         self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
         self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
