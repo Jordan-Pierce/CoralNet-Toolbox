@@ -291,13 +291,14 @@ class SAMTool(Tool):
             # Cancel current rectangle being drawn
             if self.drawing_rectangle:
                 self.cancel_rectangle_annotation()
-            # If we have temporary annotations, clear them but keep the working area
-            elif self.working_area and len(self.temporary_annotations) > 0:
-                self.clear_temporary_annotations()
-            # If we have active prompts (points or completed rectangle), clear them
+                self.has_active_prompts = False
+            # If we have active prompts (points or completed rectangle), clear them first
             elif self.has_active_prompts:
                 self.cancel_annotation()
                 self.has_active_prompts = False
+            # If no active prompts but we have temporary annotations, clear them
+            elif self.working_area and len(self.temporary_annotations) > 0:
+                self.clear_temporary_annotations()
             # If no prompts or temporary annotations, cancel working area
             else:
                 self.cancel_working_area()
