@@ -395,6 +395,53 @@ class SAMTool(Tool):
         if not (has_points or has_rectangle):
             return None
 
+        # Use the existing create_annotation method to create the annotation
+        annotation = self.create_annotation(None, True)
+        
+        if annotation is None:
+            return None
+
+        # Remove hover graphics if it exists (since this is a confirmed annotation)
+        if self.hover_graphics:
+            self.annotation_window.scene.removeItem(self.hover_graphics)
+            self.hover_graphics = None
+
+        # Ensure the PolygonAnnotation is added to the scene after creation
+        annotation.create_graphics_item(self.annotation_window.scene)
+
+        if self.rectangle_graphics:
+            self.annotation_window.scene.removeItem(self.rectangle_graphics)
+            self.rectangle_graphics = None
+
+        # Add this annotation to our temporary list
+        self.temporary_annotations.append(annotation)
+
+        # Clear the points and rectangle after creating an annotation
+        # But keep the working area so user can add more prompts
+        self.cancel_annotation()
+
+        self.annotation_window.viewport().update()
+
+        return annotation
+
+    def create_annotation(self, scene_pos: QPointF, finished: bool = False):
+        """
+        Create an annotation based on the given scene position.
+        This is used for hover annotation and also called by create_temporary_annotation.
+
+        Args:
+            scene_pos (QPointF): The scene position
+            finished (bool): Flag to indicate if the annotation is finished
+        """
+        if not self.annotation_window.active_image:
+            return None
+
+        if not self.annotation_window.pixmap_image:
+            return None
+
+        if not self.working_area:
+            return None
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -406,7 +453,7 @@ class SAMTool(Tool):
         negative = [[point.x(), point.y()] for point in self.negative_points]
         bbox = np.array([])
 
-        if self.hover_point:
+        if self.hover_point and not finished:
             positive.append([self.hover_point.x(), self.hover_point.y()])
             transparency //= 4
 
@@ -427,7 +474,7 @@ class SAMTool(Tool):
             QApplication.restoreOverrideCursor()
             return None
 
-        if results.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
+        if not finished and results.boxes.conf[0] < self.main_window.get_uncertainty_thresh():
             QApplication.restoreOverrideCursor()
             return None
 
@@ -458,103 +505,9 @@ class SAMTool(Tool):
         # Create cropped image
         annotation.create_cropped_image(self.annotation_window.rasterio_image)
 
-        # Ensure the PolygonAnnotation is added to the scene after creation
-        annotation.create_graphics_item(self.annotation_window.scene)
-
-        if self.rectangle_graphics:
-            self.annotation_window.scene.removeItem(self.rectangle_graphics)
-            self.rectangle_graphics = None
-
-        # Add this annotation to our temporary list
-        self.temporary_annotations.append(annotation)
-
-        # Clear the points and rectangle after creating an annotation
-        # But keep the working area so user can add more prompts
-        self.cancel_annotation()
-
-        # Restore cursor
-        QApplication.restoreOverrideCursor()
-
-        self.annotation_window.viewport().update()
-
-        return annotation
-
-    def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-        """
-        Create an annotation based on the given scene position.
-        This is used for hover annotation and matches the Tool interface.
-
-        Args:
-            scene_pos (QPointF): The scene position
-            finished (bool): Flag to indicate if the annotation is finished
-        """
-        if not self.annotation_window.active_image:
-            return None
-
-        if not self.annotation_window.pixmap_image:
-            return None
-
-        if not self.working_area:
-            return None
-
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        # Get the current transparency
-        transparency = self.main_window.label_window.active_label.transparency
-
-        # Get the positive and negative points, bbox
-        positive = [[point.x(), point.y()] for point in self.positive_points]
-        negative = [[point.x(), point.y()] for point in self.negative_points]
-        bbox = np.array([])
-
-        if self.hover_point:
-            positive.append([self.hover_point.x(), self.hover_point.y()])
-            transparency //= 4
-
-        if self.start_point and self.end_point:
-            bbox = np.array([self.top_left.x(),
-                             self.top_left.y(),
-                             self.bottom_right.x(),
-                             self.bottom_right.y()])
-
-        # Create the labels, points, and bbox as numpy arrays
-        labels = np.array([1] * len(positive) + [0] * len(negative))
-        points = np.array(positive + negative)
-
-        # Predict the mask provided prompts
-        results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
-
-        if not results:
-            QApplication.restoreOverrideCursor()
-            return None
-
-        # Get the points of the top1 mask
-        top1_index = np.argmax(results.boxes.conf)
-        predictions = results[top1_index].masks.xy[0]
-
-        # Move the points back to the original image space
-        working_area_top_left = self.working_area.rect().topLeft()
-        points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in predictions]
-        self.points = [QPointF(*point) for point in points]
-
-        # Get confidence for the annotation
-        confidence = results.boxes.conf[top1_index].item()
-
-        # Create the annotation for hover
-        annotation = PolygonAnnotation(self.points,
-                                       self.annotation_window.selected_label.short_label_code,
-                                       self.annotation_window.selected_label.long_label_code,
-                                       self.annotation_window.selected_label.color,
-                                       self.annotation_window.current_image_path,
-                                       self.annotation_window.selected_label.id,
-                                       transparency)
-                                       
-        # Update the confidence score of annotation
-        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
-
-        # Handle hover graphics separately - this annotation won't be added to temporary_annotations
-        self.hover_graphics = annotation.graphics_item
+        # For hover annotations, store the graphics item separately
+        if not finished:
+            self.hover_graphics = annotation.graphics_item
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
