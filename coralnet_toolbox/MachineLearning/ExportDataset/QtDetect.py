@@ -147,6 +147,6 @@ class Detect(Base):
             progress_bar.update_progress()
 
         # Reset cursor
-        QApplication.restoreOverrideCursor
+        QApplication.restoreOverrideCursor()
         progress_bar.stop_progress()
         progress_bar.close()
