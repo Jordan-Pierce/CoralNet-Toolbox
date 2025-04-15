@@ -38,7 +38,7 @@ class ResultsProcessor:
         self.class_mapping = class_mapping
         
         if uncertainty_thresh is None:
-            self.uncertainty_thresh = main_window.get_uncertainty_thresh()
+            uncertainty_thresh = self.main_window.get_uncertainty_thresh()
             
         if iou_thresh is None:
             iou_thresh = main_window.get_iou_thresh()

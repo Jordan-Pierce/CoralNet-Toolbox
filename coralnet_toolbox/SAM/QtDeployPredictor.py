@@ -112,8 +112,8 @@ class DeployPredictorDialog(QDialog):
 
         # Define available models
         self.models = {
-            "EdgeSAM": "edge_sam_3x.pt",
             "MobileSAM": "vit_t.pt",
+            "EdgeSAM": "edge_sam_3x.pt",
             "RepViT-SAM": "repvit.pt",
             "CoralSCOP": "vit_b_coralscop.pt",
             "SAM-Base": "vit_b.pt",
@@ -126,7 +126,7 @@ class DeployPredictorDialog(QDialog):
             self.model_combo.addItem(model_name)
 
         models = list(self.models.keys())
-        self.model_combo.setCurrentIndex(models.index("EdgeSAM"))
+        self.model_combo.setCurrentIndex(models.index("MobileSAM"))
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
