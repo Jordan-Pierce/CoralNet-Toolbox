@@ -27,7 +27,7 @@ class OWLViTModel(DetectionBaseModel):
         
         model_name = "google/owlvit-base-patch32"
 
-        self.processor = OwlViTProcessor.from_pretrained(model_name)
+        self.processor = OwlViTProcessor.from_pretrained(model_name, use_fast=True)
         self.model = OwlViTForObjectDetection.from_pretrained(model_name).to(self.device)
 
     def predict(self, input, confidence=0.01):

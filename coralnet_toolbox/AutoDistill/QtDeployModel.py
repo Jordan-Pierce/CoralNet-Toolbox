@@ -3,6 +3,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import gc
+import traceback
 
 import torch
 from torch.cuda import empty_cache
@@ -18,7 +19,8 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 
-# from coralnet_toolbox.utilities import open_image
+from coralnet_toolbox.utilities import rasterio_open
+from coralnet_toolbox.utilities import rasterio_to_numpy
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -120,7 +122,7 @@ class DeployModelDialog(QDialog):
 
         self.model_dropdown = QComboBox()
         self.model_dropdown.addItems([
-            "OmDetTurbo-SwinT",
+            # "OmDetTurbo-SwinT",
             "OWLViT",
             "GroundingDINO-SwinT",
             "GroundingDINO-SwinB",
@@ -466,6 +468,7 @@ class DeployModelDialog(QDialog):
                 self._process_results(results_processor, results)
         except Exception as e:
             print("An error occurred during prediction:", e)
+            print(traceback.format_exc())
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.finish_progress()
@@ -475,16 +478,18 @@ class DeployModelDialog(QDialog):
         gc.collect()
         empty_cache()  # Assuming this function is defined elsewhere
 
-    def _get_inputs(self, image_path):
+    def _get_inputs(self, inputs):
         """Get the inputs for the model prediction."""
-        return image_path
+        if isinstance(inputs, str):
+            inputs = rasterio_to_numpy(rasterio_open(inputs))
+        return inputs
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
         return self.loaded_model.predict(inputs)
 
     def _update_results(self, results_processor, results, inputs, image_path):
-        """Update the results to match Ultralytics format."""
+        """Update the results to match Ultralytics format."""           
         return results_processor.from_supervision(results,
                                                   inputs,
                                                   image_path,

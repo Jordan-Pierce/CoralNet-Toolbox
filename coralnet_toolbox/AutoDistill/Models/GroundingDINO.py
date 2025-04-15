@@ -30,7 +30,7 @@ class GroundingDINOModel(DetectionBaseModel):
         else:
             model_name = "IDEA-Research/grounding-dino-tiny"
             
-        self.processor = AutoProcessor.from_pretrained(model_name)
+        self.processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_name).to(self.device)
 
     def predict(self, input, confidence=0.01):
