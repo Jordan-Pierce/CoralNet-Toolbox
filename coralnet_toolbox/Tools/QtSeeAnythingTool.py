@@ -619,6 +619,43 @@ class SeeAnythingTool(Tool):
         # Make a copy of the results
         results = copy.deepcopy(self.results)
 
+        # Get working area offset to adjust box coordinates
+        working_area_top_left = self.working_area.rect().topLeft()
+
+        # Adjust box coordinates to be relative to the entire image
+        if hasattr(results, 'boxes') and hasattr(results.boxes, 'xyxy'):
+            # Get the current boxes and make a copy
+            boxes = results.boxes.xyxy.detach().cpu().clone()
+            
+            # Add working area offset to make coordinates relative to entire image
+            boxes[:, 0] += working_area_top_left.x()
+            boxes[:, 1] += working_area_top_left.y()
+            boxes[:, 2] += working_area_top_left.x()
+            boxes[:, 3] += working_area_top_left.y()
+            
+            # Add confidence and class columns if they exist
+            if hasattr(results.boxes, 'conf'):
+                conf = results.boxes.conf.detach().cpu().clone()
+                conf = conf.unsqueeze(1) if conf.dim() == 1 else conf
+                
+                if hasattr(results.boxes, 'cls'):
+                    cls = results.boxes.cls.detach().cpu().clone() 
+                else:
+                    cls = torch.zeros_like(conf)
+                    
+                # Ensure cls is a column vector
+                cls = cls.unsqueeze(1) if cls.dim() == 1 else cls
+                
+                # Create complete boxes tensor (x1, y1, x2, y2, conf, cls)
+                complete_boxes = torch.cat([boxes, conf, cls], dim=1)
+                
+                # Update boxes using the proper method
+                results.update(boxes=complete_boxes)
+            else:
+                # If no confidence values, just adjust the coordinates in the result directly
+                # This branch should rarely if ever be taken
+                print("Warning: No confidence values found in boxes, coordinate conversion might be incomplete")
+
         # Replace the resized image with the original image
         results.orig_img = self.original_image.copy()
         results.orig_shape = self.original_image.shape
