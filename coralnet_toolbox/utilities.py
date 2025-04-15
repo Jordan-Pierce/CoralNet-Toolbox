@@ -578,10 +578,11 @@ def except_hook(cls, exception, traceback_obj, main_window=None):
 def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):
     """Convert a PyTorch model to Ultralytics format"""
     src_state_dict = ultralytics_model.model.model.state_dict()
-    dst_state_dict = torch.load(weights, map_location='cpu')
+    
+    temp_model = torch.load(weights, map_location='cpu')
+    dst_state_dict = temp_model['net']
 
     try:
-
         for (src_key, src_val), (dst_key, dst_val) in zip(src_state_dict.items(), dst_state_dict.items()):
             if src_val.shape == dst_val.shape:
                 src_state_dict[src_key] = dst_val
@@ -594,8 +595,9 @@ def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_mo
 
     ultralytics_model.model.model.load_state_dict(src_state_dict)
     ultralytics_model.model.model.eval()
-
-    torch.save(ultralytics_model.model.model, output_path)
+    
+    ultralytics_model.task = 'classify'
+    ultralytics_model.save(output_path)
     print(f"Model saved to {output_path}")
 
     del dst_state_dict

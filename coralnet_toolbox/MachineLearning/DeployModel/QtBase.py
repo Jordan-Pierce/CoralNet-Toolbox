@@ -40,12 +40,14 @@ class Base(QDialog):
         self.resize(400, 325)
 
         # Initialize variables
-        self.task = None
         self.imgsz = 1024
         self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
+        
+        self.task = None
+        self.max_detect = 300
         self.model_path = None
         self.loaded_model = None
         self.class_names = []

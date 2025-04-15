@@ -9,7 +9,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QLabel, QGroupBox, QFormLayout,
-                             QComboBox, QSlider)
+                             QComboBox, QSlider, QSpinBox)
 
 from torch.cuda import empty_cache
 from ultralytics import YOLO, RTDETR
@@ -53,6 +53,12 @@ class Detect(Base):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
+        
+        # Max detections spinbox
+        self.max_detections_spinbox = QSpinBox()
+        self.max_detections_spinbox.setRange(1, 10000)
+        self.max_detections_spinbox.setValue(self.max_detect)
+        layout.addRow("Max Detections:", self.max_detections_spinbox)
 
         # Uncertainty threshold controls
         self.uncertainty_thresh = self.main_window.get_uncertainty_thresh()
@@ -245,6 +251,7 @@ class Detect(Base):
             agnostic_nms=True,
             conf=self.main_window.get_uncertainty_thresh(),
             iou=self.main_window.get_iou_thresh(),
+            max_det=self.max_detections_spinbox.value(),
             device=self.main_window.device,
             retina_masks=self.task == "segment",
             half=True,

@@ -26,7 +26,7 @@ class OmDetTurboModel(DetectionBaseModel):
         self.device = device
         
         model_name = "omlab/omdet-turbo-swin-tiny-hf"
-        self.processor = AutoProcessor.from_pretrained(model_name)
+        self.processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
         self.model = OmDetTurboForObjectDetection.from_pretrained(model_name).to(self.device)
 
     def predict(self, input, confidence=0.01):

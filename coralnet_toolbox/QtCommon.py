@@ -133,8 +133,10 @@ class MarginInput(QGroupBox):
         type_layout = QHBoxLayout()
         self.type_combo = QComboBox()
         self.type_combo.addItems(["Single Value", "Multiple Values"])
+        self.type_combo.setCurrentIndex(1)  # Set Multiple Values as default
         self.value_type = QComboBox()
         self.value_type.addItems(["Pixels", "Percentage"])
+        self.value_type.setCurrentIndex(0)  # Set Pixels as default
 
         type_layout.addWidget(QLabel("Type:"))
         type_layout.addWidget(self.type_combo)
@@ -190,6 +192,10 @@ class MarginInput(QGroupBox):
         # Connect signals
         self.type_combo.currentIndexChanged.connect(self.stack.setCurrentIndex)
         self.value_type.currentIndexChanged.connect(self.update_input_mode)
+        
+        # Initialize to Multiple Values
+        self.stack.setCurrentIndex(1)
+        self.update_input_mode(0)  # Initialize with Pixels mode
 
     def update_input_mode(self, index):
         is_percentage = index == 1
@@ -239,16 +245,19 @@ class MarginInput(QGroupBox):
                     if validate and not (0.0 <= raw_margins <= 1.0):
                         raise ValueError("Percentage must be between 0 and 1")
                         
-                    if validate and image_width and image_height:
+                    if validate and image_width is not None and image_height is not None:
                         margin_pixels = [
-                            raw_margins * image_width,    # Left
-                            raw_margins * image_height,   # Top  
-                            raw_margins * image_width,    # Right
-                            raw_margins * image_height    # Bottom
+                            int(raw_margins * image_width),    # Left
+                            int(raw_margins * image_height),   # Top  
+                            int(raw_margins * image_width),    # Right
+                            int(raw_margins * image_height)    # Bottom
                         ]
+                        return tuple(margin_pixels)
                     else:
+                        # If no image dimensions, return percentage as is
                         return (raw_margins,) * 4
                 else:
+                    # Return pixels as is
                     return (raw_margins,) * 4
     
             # Multiple values input (Top, Right, Bottom, Left)
@@ -264,32 +273,26 @@ class MarginInput(QGroupBox):
                     if validate and not all(0.0 <= m <= 1.0 for m in ordered_margins):
                         raise ValueError("All percentages must be between 0 and 1")
                         
-                    if validate and image_width and image_height:
+                    if validate and image_width is not None and image_height is not None:
                         margin_pixels = [
-                            ordered_margins[0] * image_width,   # Left
-                            ordered_margins[1] * image_height,  # Top
-                            ordered_margins[2] * image_width,   # Right
-                            ordered_margins[3] * image_height   # Bottom
+                            int(ordered_margins[0] * image_width),   # Left
+                            int(ordered_margins[1] * image_height),  # Top
+                            int(ordered_margins[2] * image_width),   # Right
+                            int(ordered_margins[3] * image_height)   # Bottom
                         ]
+                        return tuple(margin_pixels)
                     else:
+                        # If no image dimensions, return percentages as is
                         return ordered_margins
                 else:
+                    # Return pixels as is
                     return ordered_margins
             else:
                 raise ValueError("Invalid margin format")
-    
-            # Validate if requested
-            if validate and image_width and image_height:
-                margin_pixels = [int(m) for m in margin_pixels]
-                if (margin_pixels[0] + margin_pixels[2]) >= image_width:
-                    raise ValueError("Horizontal margins exceed image width")
-                if (margin_pixels[1] + margin_pixels[3]) >= image_height:
-                    raise ValueError("Vertical margins exceed image height")
-    
-            return tuple(margin_pixels)
-    
+            
         except ValueError as e:
             if validate:
+                from PyQt5.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Invalid Margins", str(e))
                 return None
             return raw_margins

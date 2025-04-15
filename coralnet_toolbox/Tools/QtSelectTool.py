@@ -4,7 +4,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPen, QBrush
-from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem
+from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -101,14 +101,47 @@ class SelectTool(Tool):
         self.annotation_window.drag_start_pos = None
 
     def keyPressEvent(self, event):
-        """Handle key press events to show resize handles."""
+        """Handle key press events to show resize handles and process hotkeys."""
+        # Handle shift for resize handles
         if len(self.annotation_window.selected_annotations) == 1 and event.modifiers() & Qt.ShiftModifier:
             self.display_resize_handles(self.annotation_window.selected_annotations[0])
+            
+        # Handle Ctrl+Spacebar to update annotation with top machine confidence
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Space:
+            self.update_with_top_machine_confidence()
 
     def keyReleaseEvent(self, event):
         """Handle key release events to hide resize handles."""
         if not event.modifiers() & Qt.ShiftModifier:
             self.remove_resize_handles()
+            
+    def update_with_top_machine_confidence(self):
+        """Update the selected annotation(s) with their top machine confidence predictions."""
+        # Return if no annotations are selected
+        if not self.annotation_window.selected_annotations:
+            return
+        
+        updated_count = 0
+        for annotation in self.annotation_window.selected_annotations:
+            # Skip if no machine confidence predictions are available
+            if not annotation.machine_confidence:
+                continue
+            
+            # Get the top confidence prediction (the prediction dict is already sorted by confidence)
+            top_label = next(iter(annotation.machine_confidence))
+            
+            # Update the annotation with the top prediction label
+            annotation.update_user_confidence(top_label)
+            
+            updated_count += 1
+        
+        # If only one annotation is selected, update the label window to reflect the change
+        if len(self.annotation_window.selected_annotations) == 1 and updated_count == 1:
+            selected_annotation = self.annotation_window.selected_annotations[0]
+            self.annotation_window.labelSelected.emit(selected_annotation.label.id)
+        else:
+            # Unselect all annotations to clear the confidence window display
+            self.annotation_window.unselect_annotations()
             
     def get_selection_thickness(self):
         """Calculate appropriate line thickness based on current view dimensions."""

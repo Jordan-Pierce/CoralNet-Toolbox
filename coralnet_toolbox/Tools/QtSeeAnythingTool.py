@@ -255,8 +255,8 @@ class SeeAnythingTool(Tool):
 
             # Reset the current rectangle graphics item
             self.current_rect_graphics = None
-            # Set rectangles_processed to False since we have new rectangles
-            self.rectangles_processed = False
+            # Set rectangles_processed to False since we have new user rectangles
+            self.rectangles_processed = False  # Indicate prediction is needed
 
     def mousePressEvent(self, event: QMouseEvent):
         """
@@ -333,24 +333,24 @@ class SeeAnythingTool(Tool):
                 self.set_working_area()
                 self.see_anything_dialog.set_image(self.image, self.image_path)
 
-            # If there are rectangles already made and not processed, run the predictor
+            # If there are user-drawn rectangles ready for processing, run the predictor
             elif len(self.rectangles) > 0 and not self.rectangles_processed:
-                # Create annotation based on rectangles
+                # Create annotation based on the user-drawn rectangles
                 self.create_annotation(None)
-                # After creating annotation, only clear the rectangle graphics but keep the data
-                self.clear_rectangle_graphics()
-                # Mark rectangles as processed
+                # Clear the user-drawn rectangles (graphics and data) as they've been used
+                self.clear_all_rectangles()
+                # Mark rectangles as processed for this cycle
                 self.rectangles_processed = True
             else:
-                # If there's a working area but no rectangles or if rectangles have been processed,
-                # confirm the annotations, and cancel the working area.
-                if self.rectangles or self.annotations:
+                # If there's a working area but no new user rectangles,
+                # or if rectangles have been processed, confirm the accumulated annotations.
+                if self.annotations:  # Check if there are any annotations to confirm/process
                     if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
                         self.apply_sam_model()
                     else:
-                        # Confirm the annotations
+                        # Confirm the annotations accumulated so far
                         self.confirm_annotations()
-                # Cancel the working area
+                # Cancel the working area if no annotations were generated or after confirmation/SAM
                 self.cancel_working_area()
 
         elif event.key() == Qt.Key_Backspace:
@@ -362,12 +362,12 @@ class SeeAnythingTool(Tool):
                     self.current_rect_graphics = None
                 self.start_point = None
                 self.end_point = None
-            # If we have a working area and annotations, clear them
+            # If we have a working area and accumulated annotations, clear them
             elif self.working_area and len(self.annotations) > 0:
-                self.clear_annotations()
-            # If not drawing and no annotations to clear, clear all rectangles
+                self.clear_annotations()  # Clears unconfirmed annotations
+            # If not drawing and no annotations to clear, clear any pending user-drawn rectangles
             else:
-                self.clear_all_rectangles()
+                self.clear_all_rectangles()  # Clears user input rectangles
 
         self.annotation_window.viewport().update()
 
@@ -388,7 +388,7 @@ class SeeAnythingTool(Tool):
         if not self.working_area:
             return None
 
-        if len(self.rectangles) == 0:
+        if len(self.rectangles) == 0:  # Check specifically for user-drawn rectangles
             return None
 
         # Make cursor busy
@@ -400,21 +400,34 @@ class SeeAnythingTool(Tool):
         # Get the current transparency
         transparency = self.main_window.label_window.active_label.transparency
 
-        # Predict the mask provided prompts
+        # Predict the mask provided prompts (using only the current user-drawn rectangles)
         results = self.see_anything_dialog.predict_from_prompts(self.rectangles)[0]
 
         if not results:
             # Make cursor normal
             QApplication.restoreOverrideCursor()
             return None
+        
+        # Create a results processor to merge and filter results
+        results_processor = ResultsProcessor(self.main_window,
+                                             uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
+                                             iou_thresh=self.main_window.get_iou_thresh(),
+                                             min_area_thresh=self.main_window.get_area_thresh_min(),
+                                             max_area_thresh=self.main_window.get_area_thresh_max())
+        # Merge
+        if self.results:
+            results = results_processor.merge_results([self.results, results])
+            
+        # Filter
+        self.results = results_processor.apply_filters(results)
 
-        self.results = results
+        # Calculate the area of the image
         image_area = self.image.shape[0] * self.image.shape[1]
 
-        # Clear the annotations (that haven't been confirmed)
+        # Clear previous annotations if any
         self.clear_annotations()
 
-        # Loop through the results
+        # Loop through the results from the current prediction
         for result in self.results:
             # Extract values from result
             confidence = result.boxes.conf.item()
@@ -424,20 +437,21 @@ class SeeAnythingTool(Tool):
 
             box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
 
-            # Convert from normalized to pixel coordinates
-            box = box * np.array([self.image.shape[1],
-                                  self.image.shape[0],
-                                  self.image.shape[1],
-                                  self.image.shape[0]])
+            # Convert from normalized to pixel coordinates relative to the cropped image
+            box_rel = box * np.array([self.image.shape[1],
+                                      self.image.shape[0],
+                                      self.image.shape[1],
+                                      self.image.shape[0]])
 
             # Convert to whole image coordinates
-            box[0] += working_area_top_left.x()
-            box[1] += working_area_top_left.y()
-            box[2] += working_area_top_left.x()
-            box[3] += working_area_top_left.y()
+            box_abs = box_rel.copy()
+            box_abs[0] += working_area_top_left.x()
+            box_abs[1] += working_area_top_left.y()
+            box_abs[2] += working_area_top_left.x()
+            box_abs[3] += working_area_top_left.y()
 
             # Check box area relative to image area
-            box_area = (box[2] - box[0]) * (box[3] - box[1])
+            box_area = (box_abs[2] - box_abs[0]) * (box_abs[3] - box_abs[1])
 
             # self.main_window.get_area_thresh_min()
             if box_area < self.main_window.get_area_thresh_min() * image_area:
@@ -446,9 +460,6 @@ class SeeAnythingTool(Tool):
             if box_area > self.main_window.get_area_thresh_max() * image_area:
                 continue
 
-            # Add the box to the list of rectangles (compounding automatic annotation)
-            self.rectangles.append(box)
-
             if self.see_anything_dialog.task == "segment":
                 # Get the mask from the result
                 mask = result.masks.data.detach().cpu().numpy().squeeze().astype(int)
@@ -456,6 +467,9 @@ class SeeAnythingTool(Tool):
                 mask = cv2.resize(mask, (result.orig_img.shape[1], result.orig_img.shape[0]))
                 # Convert to polygons
                 polygons = sv.detection.utils.mask_to_polygons(mask)
+
+                if not polygons:  # Handle cases where mask_to_polygons returns empty
+                    continue
 
                 if len(polygons) == 1:
                     polygon = polygons[0]
@@ -473,11 +487,11 @@ class SeeAnythingTool(Tool):
                 points[:, 0] += working_area_top_left.x()
                 points[:, 1] += working_area_top_left.y()
 
-                # Create the polygon annotation
+                # Create the polygon annotation and add it to self.annotations
                 self.create_polygon_annotation(points, confidence, transparency)
             else:
-                # Create the rectangle annotation
-                self.create_rectangle_annotation(box, confidence, transparency)
+                # Create the rectangle annotation and add it to self.annotations
+                self.create_rectangle_annotation(box_abs, confidence, transparency)
 
         self.annotation_window.viewport().update()
 
@@ -605,6 +619,43 @@ class SeeAnythingTool(Tool):
         # Make a copy of the results
         results = copy.deepcopy(self.results)
 
+        # Get working area offset to adjust box coordinates
+        working_area_top_left = self.working_area.rect().topLeft()
+
+        # Adjust box coordinates to be relative to the entire image
+        if hasattr(results, 'boxes') and hasattr(results.boxes, 'xyxy'):
+            # Get the current boxes and make a copy
+            boxes = results.boxes.xyxy.detach().cpu().clone()
+            
+            # Add working area offset to make coordinates relative to entire image
+            boxes[:, 0] += working_area_top_left.x()
+            boxes[:, 1] += working_area_top_left.y()
+            boxes[:, 2] += working_area_top_left.x()
+            boxes[:, 3] += working_area_top_left.y()
+            
+            # Add confidence and class columns if they exist
+            if hasattr(results.boxes, 'conf'):
+                conf = results.boxes.conf.detach().cpu().clone()
+                conf = conf.unsqueeze(1) if conf.dim() == 1 else conf
+                
+                if hasattr(results.boxes, 'cls'):
+                    cls = results.boxes.cls.detach().cpu().clone() 
+                else:
+                    cls = torch.zeros_like(conf)
+                    
+                # Ensure cls is a column vector
+                cls = cls.unsqueeze(1) if cls.dim() == 1 else cls
+                
+                # Create complete boxes tensor (x1, y1, x2, y2, conf, cls)
+                complete_boxes = torch.cat([boxes, conf, cls], dim=1)
+                
+                # Update boxes using the proper method
+                results.update(boxes=complete_boxes)
+            else:
+                # If no confidence values, just adjust the coordinates in the result directly
+                # This branch should rarely if ever be taken
+                print("Warning: No confidence values found in boxes, coordinate conversion might be incomplete")
+
         # Replace the resized image with the original image
         results.orig_img = self.original_image.copy()
         results.orig_shape = self.original_image.shape
@@ -627,21 +678,20 @@ class SeeAnythingTool(Tool):
 
     def clear_annotations(self):
         """
-        Clear all annotations created by this tool from the scene without confirming them.
+        Clear all *unconfirmed* annotations created by this tool from the scene.
         """
-        # Remove all annotations from the scene
+        # Remove all annotations currently in self.annotations from the scene
         for annotation in self.annotations:
             if annotation.graphics_item:
                 self.annotation_window.scene.removeItem(annotation.graphics_item)
+                annotation.graphics_item = None # Ensure graphics item is cleared
 
+            # Optionally call a delete method if it exists and handles cleanup
             annotation.delete()
             annotation = None
 
-        # Clear the annotations list
+        # Clear the list holding the unconfirmed annotations
         self.annotations = []
-
-        # Also clear rectangles since they've been processed into annotations
-        self.clear_rectangle_graphics()
 
         self.annotation_window.viewport().update()
 
@@ -673,11 +723,10 @@ class SeeAnythingTool(Tool):
 
     def clear_all_rectangles(self):
         """
-        Clear all rectangle graphics and data.
+        Clear all *user-drawn* rectangle graphics and data.
         """
-        self.clear_rectangle_graphics()
-        self.clear_rectangle_data()
-        self.rectangles_processed = False
+        self.clear_rectangle_graphics()  # Clears items in self.rectangle_items and self.current_rect_graphics
+        self.clear_rectangle_data()      # Clears self.rectangles list and drawing state
 
     def cancel_working_area(self):
         """

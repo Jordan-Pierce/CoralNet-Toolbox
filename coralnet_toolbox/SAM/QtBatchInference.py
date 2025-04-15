@@ -18,7 +18,7 @@ from coralnet_toolbox.Icons import get_icon
 class BatchInferenceDialog(QDialog):
     """
     Base class for performing batch inference on images instance segmentation.
-    
+
     :param main_window: MainWindow object
     :param parent: Parent widget
     """
@@ -27,14 +27,14 @@ class BatchInferenceDialog(QDialog):
         self.main_window = main_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
-        
+
         self.setWindowIcon(get_icon("wizard.png"))
         self.setWindowTitle("Batch Inference")
         self.resize(400, 100)
 
         self.deploy_model_dialog = None
         self.loaded_model = None
-        
+
         self.annotations = []
         self.prepared_patches = []
         self.image_paths = []
@@ -47,31 +47,31 @@ class BatchInferenceDialog(QDialog):
         self.setup_options_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
-        
+
     def showEvent(self, event):
         """
         Set up the layout when the dialog is shown.
-        
+
         :param event: Show event
         """
         super().showEvent(event)
         self.deploy_generator_dialog = self.main_window.sam_deploy_generator_dialog
         self.loaded_model = self.deploy_generator_dialog.loaded_model
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Perform batch inferencing on the selected images.")
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -86,7 +86,7 @@ class BatchInferenceDialog(QDialog):
         # Create a button group for the image checkboxes
         image_options_group = QButtonGroup(self)
 
-        self.apply_filtered_checkbox = QCheckBox("ᗊ Apply to filtered images")
+        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
         self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
         self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
         self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
@@ -121,11 +121,11 @@ class BatchInferenceDialog(QDialog):
         button_box.rejected.connect(self.reject)
 
         self.layout.addWidget(button_box)
-        
+
     def get_selected_image_paths(self):
         """
         Get the selected image paths based on the options.
-        
+
         :return: List of selected image paths
         """
         if self.apply_filtered_checkbox.isChecked():
@@ -156,7 +156,7 @@ class BatchInferenceDialog(QDialog):
         finally:
             # Resume the cursor
             QApplication.restoreOverrideCursor()
-        
+
         self.accept()
 
     def batch_inference(self):

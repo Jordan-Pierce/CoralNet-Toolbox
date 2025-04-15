@@ -23,6 +23,7 @@ from ultralytics.utils import ops
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_numpy
 from coralnet_toolbox.utilities import attempt_download_asset
 
@@ -112,8 +113,8 @@ class DeployPredictorDialog(QDialog):
 
         # Define available models
         self.models = {
-            "EdgeSAM": "edge_sam_3x.pt",
             "MobileSAM": "vit_t.pt",
+            "EdgeSAM": "edge_sam_3x.pt",
             "RepViT-SAM": "repvit.pt",
             "CoralSCOP": "vit_b_coralscop.pt",
             "SAM-Base": "vit_b.pt",
@@ -126,7 +127,7 @@ class DeployPredictorDialog(QDialog):
             self.model_combo.addItem(model_name)
 
         models = list(self.models.keys())
-        self.model_combo.setCurrentIndex(models.index("EdgeSAM"))
+        self.model_combo.setCurrentIndex(models.index("MobileSAM"))
 
         layout.addWidget(QLabel("Select Model:"))
         layout.addWidget(self.model_combo)
@@ -380,10 +381,7 @@ class DeployPredictorDialog(QDialog):
 
                 if image is None and image_path is not None:
                     # Open the image using rasterio
-                    image = rasterio_to_numpy(self.main_window.image_window.rasterio_images[image_path])
-
-                # Preprocess the image
-                # image = preprocess_image(image)
+                    image = rasterio_to_numpy(rasterio_open(image_path))
 
                 # Save the original image
                 self.original_image = image
@@ -417,9 +415,10 @@ class DeployPredictorDialog(QDialog):
 
         finally:
             # Ensure cleanup happens even if an error occurs
+            QApplication.restoreOverrideCursor()
+            progress_bar.finish_progress()
             progress_bar.stop_progress()
             progress_bar.close()
-            QApplication.restoreOverrideCursor()
 
     def scale_points(self, points):
         """
@@ -641,11 +640,10 @@ class DeployPredictorDialog(QDialog):
                 finally:
                     progress_bar.update_progress()
 
-            # Reset progress bar
-            progress_bar.stop_progress()
-
         # Make cursor normal
         QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
         progress_bar.close()
 
     def deactivate_model(self):

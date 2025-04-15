@@ -121,6 +121,7 @@ The main window consists of several components:
     - **Move Annotation**: Drag a selected annotation.
     - **Modify Annotation**: Hold Shift and drag the vertices of the selected annotation (Rectangle, Polygon).
     - **Resize Annotation**: Hold Ctrl and Zoom in / out to increase / decrease a selected annotation's size.
+    - **Confirm Prediction**: Press Ctrl + Space bar to confirm selected annotations' machine learning prediction.
     - **Delete Annotations**: Press Ctrl + Delete to delete the selected annotations.
 
 ## Label Window

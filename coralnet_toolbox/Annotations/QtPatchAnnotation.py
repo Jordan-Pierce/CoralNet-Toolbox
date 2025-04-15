@@ -30,44 +30,75 @@ class PatchAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        self.center_xy = QPointF(round(center_xy.x(), 2), round(center_xy.y(), 2))
+
+        self.center_xy = QPointF(0, 0)
+        self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = annotation_size
 
+        self.set_precision(center_xy, False)
+        self.set_centroid()
+        self.set_cropped_bbox()
+
+    def set_precision(self, center_xy: QPointF, reduce: bool = True):
+        """Reduce precision of the center coordinates to avoid floating point issues."""
+        if reduce:
+            self.center_xy = QPointF(round(center_xy.x(), 2), round(center_xy.y(), 2))
+        else:
+            self.center_xy = center_xy
+
+    def set_cropped_bbox(self):
+        """Set the cropped bounding box coordinates based on center and size."""
+        half_size = self.annotation_size / 2
+        min_x = self.center_xy.x() - half_size
+        min_y = self.center_xy.y() - half_size
+        max_x = self.center_xy.x() + half_size
+        max_y = self.center_xy.y() + half_size
+        self.cropped_bbox = (min_x, min_y, max_x, max_y)
+
+    def set_centroid(self):
+        """Calculate the centroid of the annotation (for patch, this is the center_xy)."""
+        self.center_xy = self.center_xy
+
+    def get_area(self):
+        """Calculate the area of the square patch."""
+        return self.annotation_size * self.annotation_size
+
+    def get_perimeter(self):
+        """Calculate the perimeter of the square patch."""
+        return 4 * self.annotation_size
+
     def contains_point(self, point: QPointF):
+        """Check if the point is within the annotation's bounding box."""
         half_size = self.annotation_size / 2
         rect = QRectF(self.center_xy.x() - half_size,
                       self.center_xy.y() - half_size,
                       self.annotation_size,
                       self.annotation_size)
         return rect.contains(point)
-
-    def create_cropped_image(self, rasterio_src):
-        # Provide the rasterio source to the annotation for the first time
-        self.rasterio_src = rasterio_src
-
-        # Calculate the half size of the annotation
+    
+    def get_polygon(self):
+        """Get the polygon representation of this patch (a square)."""
         half_size = self.annotation_size / 2
+        points = [
+            QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),  # Top-left
+            QPointF(self.center_xy.x() + half_size, self.center_xy.y() - half_size),  # Top-right
+            QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),  # Bottom-right
+            QPointF(self.center_xy.x() - half_size, self.center_xy.y() + half_size),  # Bottom-left
+        ]
+        return QPolygonF(points)
 
-        # Convert center coordinates to pixel coordinates
-        pixel_x = int(self.center_xy.x())
-        pixel_y = int(self.center_xy.y())
+    def get_bounding_box_top_left(self):
+        """Get the top-left corner of the bounding box."""
+        half_size = self.annotation_size / 2
+        return QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size)
 
-        # Calculate the window for rasterio
-        window = Window(
-            col_off=max(0, pixel_x - half_size),
-            row_off=max(0, pixel_y - half_size),
-            width=min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
-            height=min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
-        )
-
-        # Convert rasterio to QImage
-        q_image = rasterio_to_cropped_image(self.rasterio_src, window)
-        # Convert QImage to QPixmap
-        self.cropped_image = QPixmap.fromImage(q_image)
-
-        self.annotationUpdated.emit(self)  # Notify update
+    def get_bounding_box_bottom_right(self):
+        """Get the bottom-right corner of the bounding box."""
+        half_size = self.annotation_size / 2
+        return QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size)
 
     def get_cropped_image_graphic(self):
+        """Get the cropped image with a dotted outline."""
         if self.cropped_image is None:
             return None
 
@@ -104,94 +135,81 @@ class PatchAnnotation(Annotation):
         # Now draw the dotted line outline on top of the masked image
         painter = QPainter(cropped_image_graphic)
         painter.setRenderHint(QPainter.Antialiasing)
-        
+
         # Create a dotted pen
         pen = QPen(self.label.color)
         pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
         pen.setWidth(2)  # Line width
         painter.setPen(pen)
-        
+
         # Draw the square outline with the dotted pen
         painter.drawPolygon(polygon)
-        
+
         painter.end()
 
         return cropped_image_graphic
 
-    def create_graphics_item(self, scene: QGraphicsScene):
-        half_size = self.annotation_size / 2
-        self.graphics_item = QGraphicsRectItem(self.center_xy.x() - half_size,
-                                               self.center_xy.y() - half_size,
-                                               self.annotation_size,
-                                               self.annotation_size)
-        self.update_graphics_item()
-        self.graphics_item.setData(0, self.id)
-        scene.addItem(self.graphics_item)
+    def create_cropped_image(self, rasterio_src):
+        """Create a cropped image from the rasterio source based on the annotation's bounding box."""
+        self.rasterio_src = rasterio_src
 
-        # Create separate graphics items for center/centroid, bounding box, and brush/mask
-        self.create_center_graphics_item(self.center_xy, scene)
-        self.create_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),
-                                               QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),
-                                               scene)
-        self.create_polygon_graphics_item([self.center_xy], scene)
+        # Calculate the half size of the annotation
+        half_size = self.annotation_size / 2
+
+        # Convert center coordinates to pixel coordinates
+        pixel_x = int(self.center_xy.x())
+        pixel_y = int(self.center_xy.y())
+
+        # Calculate the window for rasterio
+        window = Window(
+            col_off=max(0, pixel_x - half_size),
+            row_off=max(0, pixel_y - half_size),
+            width=min(rasterio_src.width - (pixel_x - half_size), self.annotation_size),
+            height=min(rasterio_src.height - (pixel_y - half_size), self.annotation_size)
+        )
+
+        # Convert rasterio to QImage
+        q_image = rasterio_to_cropped_image(self.rasterio_src, window)
+        # Convert QImage to QPixmap
+        self.cropped_image = QPixmap.fromImage(q_image)
+
+        self.annotationUpdated.emit(self)  # Notify update
 
     def update_graphics_item(self, crop_image=True):
-        if self.graphics_item:
-            # Update the graphic item
-            half_size = self.annotation_size / 2
-            self.graphics_item.setRect(self.center_xy.x() - half_size,
-                                       self.center_xy.y() - half_size,
-                                       self.annotation_size,
-                                       self.annotation_size)
-            color = QColor(self.label.color)
-            color.setAlpha(self.transparency)
+        """Update the graphical representation of the annotation."""
+        super().update_graphics_item(crop_image)
 
-            if self.is_selected:
-                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                pen = QPen(inverse_color, 6, Qt.DotLine)
-            else:
-                pen = QPen(color, 4, Qt.SolidLine)
-
-            self.graphics_item.setPen(pen)
-            brush = QBrush(color)
-            self.graphics_item.setBrush(brush)
-            self.graphics_item.update()
-
-            # Update separate graphics items for center/centroid, bounding box, and brush/mask
-            self.update_center_graphics_item(self.center_xy)
-            self.update_bounding_box_graphics_item(QPointF(self.center_xy.x() - half_size,
-                                                           self.center_xy.y() - half_size),
-                                                   QPointF(self.center_xy.x() + half_size,
-                                                           self.center_xy.y() + half_size))
-
-            self.update_polygon_graphics_item([self.center_xy])
-
-            # Update the cropped image
-            if self.rasterio_src and crop_image:
-                self.create_cropped_image(self.rasterio_src)
+        # Update the cropped image if necessary
+        if self.rasterio_src and crop_image:
+            self.create_cropped_image(self.rasterio_src)
 
     def update_location(self, new_center_xy: QPointF):
+        """Update the location of the annotation."""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-        
-        # Update the location, graphic
-        self.center_xy = QPointF(round(new_center_xy.x(), 2), round(new_center_xy.y(), 2))
+
+        # Update the location using the set_precision method
+        self.set_precision(new_center_xy)
+        self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
     def update_annotation_size(self, size):
-        # Clear the machine confidence
+        """Update the size of the annotation."""
         self.update_user_confidence(self.label)
-        
+
         # Update the size, graphic
         self.annotation_size = size
+        self.set_cropped_bbox()  # Update the bounding box
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
 
     def resize(self, handle: str, new_pos: QPointF):
+        """Resize the annotation based on the handle position."""
         pass
 
     def to_dict(self):
+        """Convert the annotation to a dictionary representation."""
         base_dict = super().to_dict()
         base_dict.update({
             'center_xy': (self.center_xy.x(), self.center_xy.y()),
@@ -201,6 +219,7 @@ class PatchAnnotation(Annotation):
 
     @classmethod
     def from_dict(cls, data, label_window):
+        """Create an annotation from a dictionary representation."""
         annotation = cls(QPointF(*data['center_xy']),
                          data['annotation_size'],
                          data['label_short_code'],
@@ -216,12 +235,13 @@ class PatchAnnotation(Annotation):
             label = label_window.get_label_by_short_code(short_label_code)
             if label:
                 machine_confidence[label] = confidence
-                
+
         annotation.update_machine_confidence(machine_confidence)
 
         return annotation
 
     def __repr__(self):
+        """Return a string representation of the annotation."""
         return (f"PatchAnnotation(id={self.id}, center_xy={self.center_xy}, "
                 f"annotation_size={self.annotation_size}, "
                 f"annotation_color={self.label.color.name()}, "

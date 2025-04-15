@@ -20,6 +20,7 @@ from coralnet_toolbox.Icons import get_icon
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class Segment(Base):
     def __init__(self, parent=None):
         super(Segment, self).__init__(parent)
