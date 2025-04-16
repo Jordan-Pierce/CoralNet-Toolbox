@@ -68,12 +68,6 @@ class RectangleTool(Tool):
             # Cancel the current annotation
             self.cancel_annotation()
 
-    def cancel_annotation(self):
-        self.start_point = None
-        self.end_point = None
-        self.drawing_continuous = False
-        self.annotation_window.toggle_cursor_annotation()
-
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
             return None
@@ -100,3 +94,9 @@ class RectangleTool(Tool):
             self.drawing_continuous = False
 
         return annotation
+    
+    def cancel_annotation(self):
+        self.start_point = None
+        self.end_point = None
+        self.drawing_continuous = False
+        self.annotation_window.toggle_cursor_annotation()
