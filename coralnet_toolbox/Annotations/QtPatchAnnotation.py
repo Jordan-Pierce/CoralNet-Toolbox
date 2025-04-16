@@ -207,15 +207,11 @@ class PatchAnnotation(Annotation):
     def resize(self, handle: str, new_pos: QPointF):
         """Resize the annotation based on the handle position."""
         pass
-
-    def to_dict(self):
-        """Convert the annotation to a dictionary representation."""
-        base_dict = super().to_dict()
-        base_dict.update({
-            'center_xy': (self.center_xy.x(), self.center_xy.y()),
-            'annotation_size': self.annotation_size,
-        })
-        return base_dict
+    
+    @classmethod
+    def merge(cls, annotations: list):
+        """Merge multiple annotations into a single one."""
+        pass
 
     @classmethod
     def from_dict(cls, data, label_window):
