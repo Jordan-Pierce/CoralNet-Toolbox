@@ -50,9 +50,39 @@ class PolygonAnnotation(Annotation):
         self.points = points
 
     def set_centroid(self):
-        """Calculate the centroid of the polygon defined by the points."""
-        centroid_x = sum(point.x() for point in self.points) / len(self.points)
-        centroid_y = sum(point.y() for point in self.points) / len(self.points)
+        """Calculate the centroid of the polygon defined by the points using the shoelace formula."""
+        if len(self.points) < 3:
+            # For fewer than 3 points, use the average as fallback
+            centroid_x = sum(point.x() for point in self.points) / len(self.points)
+            centroid_y = sum(point.y() for point in self.points) / len(self.points)
+            self.center_xy = QPointF(centroid_x, centroid_y)
+            return
+            
+        # Calculate the centroid using the shoelace formula for the proper polygon centroid
+        area = 0.0
+        centroid_x = 0.0
+        centroid_y = 0.0
+        n = len(self.points)
+        
+        for i in range(n):
+            j = (i + 1) % n
+            cross_term = (self.points[i].x() * self.points[j].y() - 
+                          self.points[j].x() * self.points[i].y())
+            area += cross_term
+            centroid_x += (self.points[i].x() + self.points[j].x()) * cross_term
+            centroid_y += (self.points[i].y() + self.points[j].y()) * cross_term
+        
+        # Complete the shoelace formula calculations
+        area = abs(area) / 2.0
+        
+        if area > 1e-10:  # Avoid division by zero
+            centroid_x = centroid_x / (6.0 * area)
+            centroid_y = centroid_y / (6.0 * area)
+        else:
+            # Fallback to simple average if area is very small or zero
+            centroid_x = sum(point.x() for point in self.points) / n
+            centroid_y = sum(point.y() for point in self.points) / n
+            
         self.center_xy = QPointF(centroid_x, centroid_y)
 
     def set_cropped_bbox(self):
