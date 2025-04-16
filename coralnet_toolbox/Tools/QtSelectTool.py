@@ -3,7 +3,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QPen, QBrush
+from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -54,6 +54,16 @@ class SelectTool(Tool):
         if event.button() == Qt.LeftButton:
             position = self.annotation_window.mapToScene(event.pos())
             items = self.get_clickable_items(position)
+            
+            # Check for resize handle clicks when in shift mode
+            if event.modifiers() & Qt.ShiftModifier and self.resize_handles:
+                for item in items:
+                    if item in self.resize_handles:
+                        handle_name = item.data(1)
+                        if handle_name and len(self.annotation_window.selected_annotations) == 1:
+                            self.resize_handle = handle_name
+                            self.resizing = True
+                            return
 
             if event.modifiers() & Qt.ControlModifier:
                 self.rectangle_selection = True
@@ -157,7 +167,12 @@ class SelectTool(Tool):
     def get_clickable_items(self, position):
         """Get items that can be clicked in the scene."""
         items = self.annotation_window.scene.items(position)
-        return [item for item in items if isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem))]
+        # Include ellipse items (resize handles) in clickable items
+        clickable_items = []
+        for item in items:
+            if isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem)):
+                clickable_items.append(item)
+        return clickable_items
 
     def select_annotation(self, position, items, modifiers):
         """Select an annotation based on the click position."""
@@ -360,9 +375,23 @@ class SelectTool(Tool):
                                            point.y() - handle_size // 2,
                                            handle_size,
                                            handle_size)
-
-            ellipse.setPen(QPen(annotation.label.color))
-            ellipse.setBrush(QBrush(annotation.label.color))
+            
+            # Make handle more visible with a contrasting color and thicker border
+            handle_color = QColor(annotation.label.color)
+            border_color = QColor(255 - handle_color.red(), 
+                                  255 - handle_color.green(), 
+                                  255 - handle_color.blue())
+            
+            ellipse.setPen(QPen(border_color, 2))
+            ellipse.setBrush(QBrush(handle_color))
+            
+            # Store the handle name as data in the item
+            ellipse.setData(1, handle)
+            
+            # Make the handle shape well-defined for hit detection
+            ellipse.setAcceptHoverEvents(True)
+            ellipse.setAcceptedMouseButtons(Qt.LeftButton)
+            
             self.annotation_window.scene.addItem(ellipse)
             self.resize_handles.append(ellipse)
 
