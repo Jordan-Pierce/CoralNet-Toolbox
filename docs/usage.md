@@ -15,10 +15,10 @@ This guide provides instructions on how to use the application, including key fu
 - **Segmentation**: Segment objects in an image (Polygon).
 
 ## Thresholds for Computer Vision Tasks
-- Patch Size: Adjust the patch size in the status bar.
-- Uncertainty Threshold: Adjust the uncertainty threshold in the status bar.
-- IoU Threshold: Adjust the IoU threshold in the status bar.
-- Area Threshold: Adjust the min and max area threshold in the status bar.
+- **Patch Size**: Adjust the patch size in the status bar.
+- **Uncertainty Threshold**: Adjust the uncertainty threshold in the status bar.
+- **IoU Threshold**: Adjust the IoU threshold in the status bar.
+- **Area Threshold**: Adjust the min and max area threshold in the status bar.
 
 ## Main Window
 The main window consists of several components:
@@ -109,7 +109,7 @@ The main window consists of several components:
 - **Patch Size**: Manipulate Patch Size (only active when using Patch Tool).
 - **Parameters**: Adjust parameters including uncertainty, IoU, and area thresholds.
 
-## Annotation Window
+## Annotation Window (Tools)
 - **Zoom**: Use the mouse wheel to zoom in and out.
 - **Pan**: Hold Ctrl + Right-click the mouse button to pan the image.
 - **Add Annotation**: Click with the Left mouse button while using one of the annotation tools.
@@ -148,7 +148,7 @@ The main window consists of several components:
 - **Confidence Chart**: Displays a bar chart with confidence scores.
   - **Prediction Selection**: Select a prediction from the list to change the label.
 
-### Hotkeys
+## Hotkeys
 - **Ctrl + Delete**: Delete the selected annotations.
 - **Ctrl + W/A/S/D**: Navigate through labels.
 - **Ctrl + Mouse Wheel**: Adjust annotation size.
@@ -176,3 +176,6 @@ The main window consists of several components:
   - **Space Bar**: Set working area; run prediction; finalize predictions.
   - **Left-Click**: Start a box; press again to end a box.
   - **Backspace**: Discard unfinalized predictions.
+
+## Tips and Tricks
+- Drag and drop images or a project file (JSON) into the AnnotationWindow for faster importing
