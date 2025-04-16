@@ -190,6 +190,39 @@ class AnnotationWindow(QGraphicsView):
             return False
 
         return self.viewport().rect().contains(pos)
+    
+    def get_scene_pos(self, pos=None):
+        """Get a valid scene position from a point or cursor position.
+        
+        Args:
+            pos: Optional QPointF in scene coordinates or QPoint in view coordinates.
+                If None, uses the current cursor position.
+        
+        Returns:
+            QPointF: Valid scene position if within image bounds, None otherwise.
+        """
+        scene_pos = None
+        
+        # If position provided, check if it's already in scene coordinates
+        if pos:
+            if isinstance(pos, QPointF):
+                # Already in scene coordinates
+                scene_pos = pos
+            else:
+                # Convert from view to scene coordinates
+                scene_pos = self.mapToScene(pos)
+                
+        # If no position provided, try to get current cursor position
+        else:
+            cursor_pos = self.mapFromGlobal(QApplication.desktop().cursor().pos())
+            if self.cursorInViewport(cursor_pos):
+                scene_pos = self.mapToScene(cursor_pos)
+        
+        # Validate the scene position is within the image bounds
+        if scene_pos and not self.cursorInWindow(scene_pos, mapped=True):
+            return None
+            
+        return scene_pos
 
     def set_selected_tool(self, tool):
         """Set the currently active tool and deactivate the previous one."""
@@ -667,6 +700,7 @@ class AnnotationWindow(QGraphicsView):
 
     def add_annotation(self, scene_pos: QPointF = None):
         """Add a new annotation at the specified position using the current tool."""
+        
         if not self.selected_label:
             QMessageBox.warning(self,
                                 "No Label Selected",
@@ -677,10 +711,10 @@ class AnnotationWindow(QGraphicsView):
         if not self.active_image or not self.pixmap_image:
             return
 
-        # Return if the position provided isn't in the window
-        if scene_pos:
-            if not self.cursorInWindow(scene_pos, mapped=True):
-                return
+        # Get a valid scene position
+        scene_pos = self.get_scene_pos(scene_pos)
+        if scene_pos is None:
+            return
 
         # Create the annotation for the selected tool
         annotation = self.tools[self.selected_tool].create_annotation(scene_pos, finished=True)
