@@ -24,14 +24,18 @@ class PatchTool(Tool):
         self.active = True
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.main_window.annotation_size_spinbox.setEnabled(True)
+        
+        # Create initial cursor annotation if mouse is over the image
+        scene_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+        self.update_cursor_annotation(self.annotation_window.mapToScene(scene_pos))
 
     def deactivate(self):
         self.active = False
         self.annotation_window.setCursor(Qt.ArrowCursor)
         self.annotation_window.main_window.annotation_size_spinbox.setEnabled(False)
+        self.clear_cursor_annotation()
 
     def mousePressEvent(self, event: QMouseEvent):
-
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",
@@ -41,16 +45,25 @@ class PatchTool(Tool):
         if event.button() == Qt.LeftButton:
             self.annotation_window.unselect_annotations()
             self.annotation_window.add_annotation(self.annotation_window.mapToScene(event.pos()))
+            
+            # After adding annotation, restore cursor annotation
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            self.update_cursor_annotation(scene_pos)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        active_image = self.annotation_window.active_image
-        pixmap_image = self.annotation_window.pixmap_image
-        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-        if active_image and pixmap_image and cursor_in_window:
-            self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
+        # First clear any existing cursor annotation
+        self.clear_cursor_annotation()
+        
+        if self.annotation_window.active_image and self.annotation_window.selected_label:
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            if self.annotation_window.cursorInWindow(event.pos()):
+                self.create_cursor_annotation(scene_pos)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        self.annotation_window.toggle_cursor_annotation()
+        if self.annotation_window.active_image and self.annotation_window.selected_label:
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            if self.annotation_window.cursorInWindow(event.pos()):
+                self.create_cursor_annotation(scene_pos)
 
     def wheelEvent(self, event: QMouseEvent):
         # Handle Zoom wheel for setting annotation size
@@ -61,10 +74,11 @@ class PatchTool(Tool):
             else:
                 self.annotation_window.set_annotation_size(delta=-16)  # Zoom out
 
-            self.annotation_window.toggle_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
+            # Update the cursor annotation with the new size
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            self.update_cursor_annotation(scene_pos)
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
-
         annotation = PatchAnnotation(scene_pos,
                                      self.annotation_window.annotation_size,
                                      self.annotation_window.selected_label.short_label_code,
@@ -74,3 +88,24 @@ class PatchTool(Tool):
                                      self.annotation_window.selected_label.id,
                                      transparency=self.annotation_window.selected_label.transparency)
         return annotation
+
+    def create_cursor_annotation(self, scene_pos: QPointF = None):
+        """Create a patch cursor annotation at the given position."""
+        if not scene_pos or not self.annotation_window.selected_label or not self.annotation_window.active_image:
+            self.clear_cursor_annotation()
+            return
+            
+        # First ensure any existing cursor annotation is removed
+        self.clear_cursor_annotation()
+        
+        # Create a new cursor annotation with semi-transparent appearance
+        self.cursor_annotation = self.create_annotation(scene_pos)
+        if self.cursor_annotation:
+            # Make the cursor annotation semi-transparent to distinguish it from actual annotations
+            self.cursor_annotation.transparency = min(self.cursor_annotation.transparency + 100, 200)
+            self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+
+    def update_cursor_annotation(self, scene_pos: QPointF = None):
+        """Update the cursor annotation position."""
+        self.clear_cursor_annotation()
+        self.create_cursor_annotation(scene_pos)

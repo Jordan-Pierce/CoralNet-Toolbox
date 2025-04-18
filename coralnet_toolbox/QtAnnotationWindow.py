@@ -317,17 +317,16 @@ class AnnotationWindow(QGraphicsView):
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
         """Toggle the cursor annotation on or off at the given position."""
+        # This method is kept for backward compatibility
+        # The tools now handle their own cursor annotations
         if self.cursor_annotation:
             self.cursor_annotation.delete()
             self.cursor_annotation = None
 
-        if not self.selected_label or not self.annotation_color:
-            return
-
-        if scene_pos:
+        if self.selected_tool and self.selected_label and self.annotation_color:
             try:
-                self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
-                self.cursor_annotation.create_graphics_item(self.scene)
+                if scene_pos:
+                    self.tools[self.selected_tool].create_cursor_annotation(scene_pos)
             except:
                 pass
 
@@ -748,6 +747,31 @@ class AnnotationWindow(QGraphicsView):
 
         # Create the annotation for the selected tool
         annotation = self.tools[self.selected_tool].create_annotation(scene_pos, finished=True)
+
+        if annotation is None:
+            self.toggle_cursor_annotation()
+            return
+
+        # Connect update signals
+        annotation.selected.connect(self.select_annotation)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+
+        # Create the graphics item
+        annotation.create_graphics_item(self.scene)
+        annotation.create_cropped_image(self.rasterio_image)
+
+        # Display the cropped image in the confidence window
+        self.main_window.confidence_window.display_cropped_image(annotation)
+
+        # Add to annotation dict
+        self.add_annotation_to_dict(annotation)
+
+        # Update the table in ImageWindow
+        self.annotationCreated.emit(annotation.id)
+        
+    def add_annotation_from_tool(self, annotation):
+        """Add a new annotation at the specified position using the current tool."""
 
         if annotation is None:
             self.toggle_cursor_annotation()
