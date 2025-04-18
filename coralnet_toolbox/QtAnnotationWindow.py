@@ -343,7 +343,10 @@ class AnnotationWindow(QGraphicsView):
         # Set the image representations
         self.pixmap_image = QPixmap(q_image)
         self.scene.addItem(QGraphicsPixmapItem(self.pixmap_image))
+        
+        # Fit the view and ensure the image is centered
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        self.centerOn(self.scene.sceneRect().center())
 
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
@@ -368,7 +371,12 @@ class AnnotationWindow(QGraphicsView):
 
         self.tools["zoom"].reset_zoom()
         self.scene.addItem(QGraphicsPixmapItem(self.pixmap_image))
+        
+        # Fit and center the image in view
         self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        self.centerOn(self.scene.sceneRect().center())
+        
+        # Calculate the minimum zoom level after fitting
         self.tools["zoom"].calculate_min_zoom()
 
         self.toggle_cursor_annotation()
@@ -416,6 +424,28 @@ class AnnotationWindow(QGraphicsView):
 
         # Center the view on the annotation's center
         self.centerOn(annotation_center)
+        
+        # After centering on an annotation, check if we need to adjust view boundaries
+        if self.active_image:
+            self.tools["pan"].ensure_image_in_view()
+
+    def resizeEvent(self, event):
+        """Handle view resize events to maintain proper image centering."""
+        super().resizeEvent(event)
+        
+        # When the view is resized, ensure the image remains centered
+        if self.active_image and self.scene:
+            scene_rect = self.scene.sceneRect()
+            view_rect = self.viewport().rect()
+            
+            # Check if the view is larger than the image
+            if (view_rect.width() > scene_rect.width() * self.zoom_factor or 
+                view_rect.height() > scene_rect.height() * self.zoom_factor):
+                # Recenter the image in the view
+                self.centerOn(scene_rect.center())
+                
+                # Update the view dimensions in the status bar
+                self.viewChanged.emit(*self.get_image_dimensions())
 
     def cycle_annotations(self, direction):
         """Cycle through annotations in the specified direction."""
