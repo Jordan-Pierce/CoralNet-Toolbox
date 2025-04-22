@@ -116,7 +116,11 @@ class PolygonAnnotation(Annotation):
         n = len(self.points)
         for i in range(n):
             j = (i + 1) % n
-            perimeter += self.points[i].distanceToPoint(self.points[j])
+            # Calculate Euclidean distance between points manually
+            dx = self.points[i].x() - self.points[j].x()
+            dy = self.points[i].y() - self.points[j].y()
+            distance = math.sqrt(dx * dx + dy * dy)
+            perimeter += distance
         return perimeter
 
     def get_polygon(self):
