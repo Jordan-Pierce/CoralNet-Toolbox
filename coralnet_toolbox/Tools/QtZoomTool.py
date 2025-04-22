@@ -1,6 +1,6 @@
 import warnings
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent
 
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -46,19 +46,63 @@ class ZoomTool(Tool):
         self.initial_zoom = 1.0
         self.min_zoom_factor = 1.0
         self.annotation_window.zoom_factor = 1.0
+    
+    def center_image_in_view(self):
+        """Center the image in the viewport"""
+        if not self.annotation_window.scene:
+            return
+            
+        # Get the scene rect (image boundaries)
+        scene_rect = self.annotation_window.scene.sceneRect()
+        
+        # Center the view on the scene rect
+        self.annotation_window.centerOn(scene_rect.center())
+        
+        # Update view dimensions in status bar
+        self.annotation_window.viewChanged.emit(
+            *self.annotation_window.get_image_dimensions())
 
     def wheelEvent(self, event: QMouseEvent):
+        """Handle zoom events with proper boundary constraints and centering"""
+        if not self.annotation_window.active_image:
+            return
+            
+        # Determine zoom direction
         if event.angleDelta().y() > 0:
-            factor = 1.1
+            factor = 1.1  # Zoom in
         else:
-            factor = 0.9
+            factor = 0.9  # Zoom out
 
+        # Calculate new zoom level
         new_zoom = self.annotation_window.zoom_factor * factor
         min_zoom = self.calculate_min_zoom()
         
-        # Prevent zooming out beyond minimum
+        # Prevent zooming out beyond minimum (image boundaries)
         if new_zoom < min_zoom and factor < 1:
+            # Instead of returning, set to minimum zoom and force centering
+            new_zoom = min_zoom
+            factor = new_zoom / self.annotation_window.zoom_factor
+            
+            # Apply zoom and save the new factor
+            self.annotation_window.scale(factor, factor)
+            self.annotation_window.zoom_factor = new_zoom
+            
+            # Center the image in view
+            self.center_image_in_view()
             return
-
-        self.annotation_window.zoom_factor = new_zoom
+            
+        # For normal zooming, store position before zoom
+        old_pos = self.annotation_window.mapToScene(event.pos())
+        
+        # Apply zoom and save the new factor
         self.annotation_window.scale(factor, factor)
+        self.annotation_window.zoom_factor = new_zoom
+        
+        # Correct position after zoom for a more natural zoom effect
+        new_pos = self.annotation_window.mapToScene(event.pos())
+        delta = new_pos - old_pos
+        self.annotation_window.translate(delta.x(), delta.y())
+        
+        # When zoomed out completely, ensure perfect centering
+        if abs(new_zoom - min_zoom) < 0.01:
+            self.center_image_in_view()
