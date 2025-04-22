@@ -298,6 +298,60 @@ class PolygonAnnotation(Annotation):
 
             # Notify that the annotation has been updated
             self.annotationUpdated.emit(self)
+            
+    @classmethod
+    def combine(cls, annotations: list):
+        """Cbomine multiple polygon annotations into a single polygon using convex hull.
+        
+        Args:
+            annotations: List of PolygonAnnotation objects to combine.
+            
+        Returns:
+            A new PolygonAnnotation that encompasses all input polygons
+        """
+        if not annotations:
+            raise ValueError("Cannot combine empty list of annotations")
+        
+        # Collect all points from all polygons
+        all_points = []
+        for annotation in annotations:
+            all_points.extend(annotation.points)
+        
+        # Convert to numpy array for convex hull calculation
+        points_array = np.array([(point.x(), point.y()) for point in all_points])
+        
+        # Compute convex hull
+        if len(points_array) > 2:
+            hull = cv2.convexHull(np.array(points_array, dtype=np.float32))
+            hull_points = [QPointF(point[0][0], point[0][1]) for point in hull]
+        else:
+            # Not enough points for convex hull, use original points
+            hull_points = all_points
+            
+        # Extract info from the first annotation
+        short_label_code = annotations[0].short_label_code
+        long_label_code = annotations[0].long_label_code
+        color = annotations[0].label.color
+        image_path = annotations[0].image_path
+        label_id = annotations[0].label_id
+        
+        # Create a new annotation with the combined points
+        new_annotation = cls(
+            points=hull_points,
+            short_label_code=short_label_code,
+            long_label_code=long_label_code,
+            color=color,
+            image_path=image_path,
+            label_id=label_id
+        )
+        
+        # # If all input annotations have the same rasterio source, use it for the new one
+        # if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
+        #     if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
+        #         new_annotation.rasterio_src = annotations[0].rasterio_src
+        #         new_annotation.create_cropped_image(new_annotation.rasterio_src)
+        
+        return new_annotation
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation for serialization."""

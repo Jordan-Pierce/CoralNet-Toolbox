@@ -240,6 +240,55 @@ class RectangleAnnotation(Annotation):
         self.set_centroid()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
+        
+    @classmethod
+    def combine(cls, annotations: list):
+        """Combine multiple rectangle annotations into a single encompassing rectangle.
+        
+        Args:
+            annotations: List of RectangleAnnotations objects to combine.
+            
+        Returns:
+            A new RectangleAnnotations that encompasses all input rectangles.
+        """
+        if not annotations:
+            raise ValueError("Cannot combine empty list of annotations")
+            
+        # Find the minimum top-left and maximum bottom-right coordinates
+        min_x = min(anno.top_left.x() for anno in annotations)
+        min_y = min(anno.top_left.y() for anno in annotations)
+        max_x = max(anno.bottom_right.x() for anno in annotations)
+        max_y = max(anno.bottom_right.y() for anno in annotations)
+        
+        # Create new rectangle with these bounds
+        top_left = QPointF(min_x, min_y)
+        bottom_right = QPointF(max_x, max_y)
+    
+        # Extract info from the first annotation
+        short_label_code = annotations[0].short_label_code
+        long_label_code = annotations[0].long_label_code
+        color = annotations[0].label.color
+        image_path = annotations[0].image_path
+        label_id = annotations[0].label_id
+        
+        # Create a new annotation with the merged points
+        new_annotation = cls(
+            top_left=top_left,
+            bottom_right=bottom_right,
+            short_label_code=short_label_code,
+            long_label_code=long_label_code,
+            color=color,
+            image_path=image_path,
+            label_id=label_id
+        )
+        
+        # # If all input annotations have the same rasterio source, use it for the new one
+        # if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
+        #     if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
+        #         new_annotation.rasterio_src = annotations[0].rasterio_src
+        #         new_annotation.create_cropped_image(new_annotation.rasterio_src)
+        
+        return new_annotation
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation."""

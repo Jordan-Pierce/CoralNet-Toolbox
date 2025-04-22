@@ -99,6 +99,11 @@ class Annotation(QObject):
         """Resize the annotation based on handle position."""
         raise NotImplementedError("Subclasses must implement this method.")
 
+    @classmethod
+    def combine(cls, annotations: list):
+        """Combine multiple annotations into one."""
+        raise NotImplementedError("Subclasses must implement this method.")
+
     def show_warning_message(self):
         """Display a warning message about removing machine suggestions when altering an annotation."""
         msg_box = QMessageBox()
