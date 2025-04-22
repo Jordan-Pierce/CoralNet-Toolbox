@@ -706,6 +706,31 @@ class AnnotationWindow(QGraphicsView):
 
         # Update the table in ImageWindow
         self.annotationCreated.emit(annotation.id)
+        
+    def add_annotation_from_tool(self, annotation):
+        """Add a new annotation at the specified position using the current tool."""
+
+        if annotation is None:
+            self.toggle_cursor_annotation()
+            return
+
+        # Connect update signals
+        annotation.selected.connect(self.select_annotation)
+        annotation.annotationDeleted.connect(self.delete_annotation)
+        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
+
+        # Create the graphics item
+        annotation.create_graphics_item(self.scene)
+        annotation.create_cropped_image(self.rasterio_image)
+
+        # Display the cropped image in the confidence window
+        self.main_window.confidence_window.display_cropped_image(annotation)
+
+        # Add to annotation dict
+        self.add_annotation_to_dict(annotation)
+
+        # Update the table in ImageWindow
+        self.annotationCreated.emit(annotation.id)
 
     def add_annotation_to_dict(self, annotation):
         """Add an annotation to the internal annotation dictionaries."""
