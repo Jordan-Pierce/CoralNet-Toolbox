@@ -336,7 +336,7 @@ class SeeAnythingTool(Tool):
             # If there are user-drawn rectangles ready for processing, run the predictor
             elif len(self.rectangles) > 0 and not self.rectangles_processed:
                 # Create annotation based on the user-drawn rectangles
-                self.create_annotation(None)
+                self.create_annotations_from_rectangles()
                 # Clear the user-drawn rectangles (graphics and data) as they've been used
                 self.clear_all_rectangles()
                 # Mark rectangles as processed for this cycle
@@ -371,13 +371,9 @@ class SeeAnythingTool(Tool):
 
         self.annotation_window.viewport().update()
 
-    def create_annotation(self, scene_pos: QPointF, finished: bool = False):
+    def create_annotations_from_rectangles(self):
         """
-        Create an annotation based on the given scene position and rectangles.
-
-        Args:
-            scene_pos (QPointF): The scene position (not used when using rectangles)
-            finished (bool): Flag to indicate if the annotation is finished
+        Create annotations based on the user-drawn rectangles.
         """
         if not self.annotation_window.active_image:
             return None
@@ -566,19 +562,12 @@ class SeeAnythingTool(Tool):
 
         # Confirm the annotations
         for annotation in self.annotations:
-            # Connect signals needed for proper interaction
-            annotation.selected.connect(self.annotation_window.select_annotation)
-            annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
-            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
             # Create cropped image if not already done
             if not annotation.cropped_image and self.annotation_window.rasterio_image:
                 annotation.create_cropped_image(self.annotation_window.rasterio_image)
 
-            # Add to annotation dict
-            self.annotation_window.add_annotation_to_dict(annotation)
-            # Update the table in ImageWindow
-            self.annotation_window.annotationCreated.emit(annotation.id)
+            # Add the annotation using the add_annotation_from_tool method
+            self.annotation_window.add_annotation_from_tool(annotation)
 
             # Update progress bar
             progress_bar.update_progress()
@@ -701,15 +690,20 @@ class SeeAnythingTool(Tool):
         """
         # Remove all rectangle graphics from scene
         for rect_item in self.rectangle_items:
-            self.annotation_window.scene.removeItem(rect_item)
+            if rect_item in self.annotation_window.scene.items():
+                self.annotation_window.scene.removeItem(rect_item)
 
         # Clear the rectangle graphics if one is being drawn
         if self.current_rect_graphics:
-            self.annotation_window.scene.removeItem(self.current_rect_graphics)
+            if self.current_rect_graphics in self.annotation_window.scene.items():
+                self.annotation_window.scene.removeItem(self.current_rect_graphics)
             self.current_rect_graphics = None
 
         # Reset the graphics list
         self.rectangle_items = []
+        
+        # Force update to ensure graphics are removed visually
+        self.annotation_window.viewport().update()
 
     def clear_rectangle_data(self):
         """
