@@ -55,15 +55,17 @@ class SelectTool(Tool):
             position = self.annotation_window.mapToScene(event.pos())
             items = self.get_clickable_items(position)
             
-            # Check for resize handle clicks when in shift mode
-            if event.modifiers() & Qt.ShiftModifier and self.resize_handles:
-                for item in items:
-                    if item in self.resize_handles:
-                        handle_name = item.data(1)
-                        if handle_name and len(self.annotation_window.selected_annotations) == 1:
-                            self.resize_handle = handle_name
-                            self.resizing = True
-                            return
+            # First check if resize handles exist
+            if self.resize_handles:
+                # Then check if both Ctrl+Shift are pressed
+                if (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier):
+                    for item in items:
+                        if item in self.resize_handles:
+                            handle_name = item.data(1)
+                            if handle_name and len(self.annotation_window.selected_annotations) == 1:
+                                self.resize_handle = handle_name
+                                self.resizing = True
+                                return
 
             if event.modifiers() & Qt.ControlModifier:
                 self.rectangle_selection = True
@@ -114,9 +116,10 @@ class SelectTool(Tool):
 
     def keyPressEvent(self, event):
         """Handle key press events to show resize handles and process hotkeys."""
-        # Handle shift for resize handles
-        if len(self.annotation_window.selected_annotations) == 1 and event.modifiers() & Qt.ShiftModifier:
-            self.display_resize_handles(self.annotation_window.selected_annotations[0])
+        # Handle Ctrl+Shift for resize handles
+        if len(self.annotation_window.selected_annotations) == 1:
+            if event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier:
+                self.display_resize_handles(self.annotation_window.selected_annotations[0])
             
         # Handle Ctrl+Spacebar to update annotation with top machine confidence
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Space:
@@ -124,7 +127,8 @@ class SelectTool(Tool):
 
     def keyReleaseEvent(self, event):
         """Handle key release events to hide resize handles."""
-        if not event.modifiers() & Qt.ShiftModifier:
+        # Hide resize handles if either Ctrl or Shift is released
+        if not (event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier):
             self.remove_resize_handles()
             
     def update_with_top_machine_confidence(self):
@@ -285,7 +289,7 @@ class SelectTool(Tool):
         self.annotation_window.drag_start_pos = position
         self.move_start_pos = position
 
-        if modifiers & Qt.ShiftModifier:
+        if (modifiers & Qt.ShiftModifier) and (modifiers & Qt.ControlModifier):
             self.resize_handle = self.detect_resize_handle(selected_annotation, position)
             if self.resize_handle:
                 self.resizing = True
