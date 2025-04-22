@@ -75,7 +75,9 @@ class SelectTool(Tool):
                 # Add the selection rectangle to the scene
                 self.annotation_window.scene.addItem(self.selection_rectangle)
 
+            # Get the selected annotation based on the clicked position
             selected_annotation = self.select_annotation(position, items, event.modifiers())
+            
             if selected_annotation:
                 self.init_drag_or_resize(selected_annotation, position, event.modifiers())
                 
