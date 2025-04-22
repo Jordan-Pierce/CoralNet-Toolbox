@@ -10,12 +10,14 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class Tool:
     def __init__(self, annotation_window):
         self.annotation_window = annotation_window
         self.active = False
         self.cursor = Qt.ArrowCursor
         self.default_cursor = Qt.ArrowCursor
+        self.cursor_annotation = None
 
     def activate(self):
         self.active = True
@@ -24,6 +26,7 @@ class Tool:
     def deactivate(self):
         self.active = False
         self.annotation_window.setCursor(self.default_cursor)
+        self.clear_cursor_annotation()
 
     def mousePressEvent(self, event: QMouseEvent):
         pass
@@ -42,7 +45,7 @@ class Tool:
 
     def wheelEvent(self, event: QMouseEvent):
         pass
-    
+        
     def create_cursor_annotation(self, scene_pos: QPointF = None):
         """
         Create and display a cursor annotation at the given position.
