@@ -161,12 +161,6 @@ class AnnotationWindow(QGraphicsView):
             self.tools[self.selected_tool].keyPressEvent(event)
         super().keyPressEvent(event)
 
-        # Handle the hot key for deleting (backspace or delete) selected annotations
-        if event.modifiers() & Qt.ControlModifier:
-            if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
-                if self.selected_annotations:
-                    self.delete_selected_annotation()
-
     def keyReleaseEvent(self, event):
         """Handle keyboard release events for the active tool."""
         if self.active_image and self.selected_tool:
@@ -204,6 +198,9 @@ class AnnotationWindow(QGraphicsView):
 
     def set_selected_label(self, label):
         """Set the currently selected label and update selected annotations if needed."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         self.selected_label = label
         self.annotation_color = label.color
 
@@ -216,6 +213,9 @@ class AnnotationWindow(QGraphicsView):
         if self.cursor_annotation:
             if self.cursor_annotation.label.id != label.id:
                 self.toggle_cursor_annotation()
+                
+        # Make cursor normal again
+        QApplication.restoreOverrideCursor()
 
     def set_annotation_location(self, annotation_id, new_center_xy: QPointF):
         """Update the location of an annotation to a new center point."""
@@ -800,21 +800,24 @@ class AnnotationWindow(QGraphicsView):
         for annotation in annotations:
             self.delete_annotation(annotation.id)
 
-    def delete_selected_annotation(self):
+    def delete_selected_annotations(self):
         """Delete all currently selected annotations."""
         # Get the selected annotations
         selected_annotations = self.selected_annotations.copy()
         # Unselect them first
         self.unselect_annotations()
         # Delete each selected annotation
-        for annotation in selected_annotations:
-            self.delete_annotation(annotation.id)
+        self.delete_annotations(selected_annotations)
 
     def delete_label_annotations(self, label):
         """Delete all annotations with the specified label."""
-        for annotation in list(self.annotations_dict.values()):
+        labeled_annotations = []
+        for annotation in self.annotations_dict.values():
             if annotation.label.id == label.id:
-                self.delete_annotation(annotation.id)
+                labeled_annotations.append(annotation)
+                
+        # Delete the labeled annotations
+        self.delete_annotations(labeled_annotations)
 
     def delete_image_annotations(self, image_path):
         """Delete all annotations associated with a specific image path."""

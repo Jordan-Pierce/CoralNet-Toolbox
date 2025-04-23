@@ -367,6 +367,9 @@ class LabelWindow(QWidget):
     def set_label_transparency(self, transparency):
         if not self.active_label:
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         if self.active_label.transparency != transparency:
             # Update the active label's transparency
@@ -378,6 +381,9 @@ class LabelWindow(QWidget):
 
             self.annotation_window.scene.update()
             self.annotation_window.viewport().update()
+            
+        # Make cursor normal again
+        QApplication.restoreOverrideCursor()
 
     def set_all_labels_transparency(self, transparency):
         for label in self.labels:
@@ -398,12 +404,18 @@ class LabelWindow(QWidget):
             self.delete_label(self.active_label)
 
     def update_annotations_with_label(self, label):
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         for annotation in self.annotation_window.selected_annotations:
             if annotation.label.id == label.id:
                 # Get the transparency of the label
                 transparency = self.get_label_transparency(label.id)
                 # Update the annotation transparency
                 annotation.update_transparency(transparency)
+        
+        # Make cursor normal again
+        QApplication.restoreOverrideCursor()
 
     def get_label_color(self, label_id):
         for label in self.labels:
