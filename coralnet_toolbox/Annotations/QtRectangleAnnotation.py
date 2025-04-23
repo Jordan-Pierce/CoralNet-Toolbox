@@ -243,17 +243,41 @@ class RectangleAnnotation(Annotation):
         
     @classmethod
     def combine(cls, annotations: list):
-        """Combine multiple rectangle annotations into a single encompassing rectangle.
+        """Combine multiple rectangle annotations into a single encompassing rectangle,
+        but only if every annotation overlaps with at least one other annotation.
         
         Args:
             annotations: List of RectangleAnnotations objects to combine.
             
         Returns:
-            A new RectangleAnnotations that encompasses all input rectangles.
+            A new RectangleAnnotations that encompasses all input rectangles if every 
+            annotation overlaps with at least one other, otherwise None.
         """
         if not annotations:
-            raise ValueError("Cannot combine empty list of annotations")
+            return None
+        
+        if len(annotations) == 1:
+            return annotations[0]
+        
+        # Check if each annotation overlaps with at least one other annotation
+        for i, anno_i in enumerate(annotations):
+            has_overlap = False
+            for j, anno_j in enumerate(annotations):
+                if i == j:
+                    continue
+                    
+                # Check if these two rectangles overlap
+                if (anno_i.top_left.x() < anno_j.bottom_right.x() and 
+                    anno_i.bottom_right.x() > anno_j.top_left.x() and
+                    anno_i.top_left.y() < anno_j.bottom_right.y() and
+                    anno_i.bottom_right.y() > anno_j.top_left.y()):
+                    has_overlap = True
+                    break
             
+            # If any annotation doesn't overlap with any other, return None
+            if not has_overlap:
+                return None
+                
         # Find the minimum top-left and maximum bottom-right coordinates
         min_x = min(anno.top_left.x() for anno in annotations)
         min_y = min(anno.top_left.y() for anno in annotations)
@@ -263,13 +287,13 @@ class RectangleAnnotation(Annotation):
         # Create new rectangle with these bounds
         top_left = QPointF(min_x, min_y)
         bottom_right = QPointF(max_x, max_y)
-    
+
         # Extract info from the first annotation
-        short_label_code = annotations[0].short_label_code
-        long_label_code = annotations[0].long_label_code
+        short_label_code = annotations[0].label.short_label_code
+        long_label_code = annotations[0].label.long_label_code
         color = annotations[0].label.color
         image_path = annotations[0].image_path
-        label_id = annotations[0].label_id
+        label_id = annotations[0].label.id
         
         # Create a new annotation with the merged points
         new_annotation = cls(
@@ -282,11 +306,11 @@ class RectangleAnnotation(Annotation):
             label_id=label_id
         )
         
-        # # If all input annotations have the same rasterio source, use it for the new one
-        # if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
-        #     if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
-        #         new_annotation.rasterio_src = annotations[0].rasterio_src
-        #         new_annotation.create_cropped_image(new_annotation.rasterio_src)
+        # All input annotations have the same rasterio source, use it for the new one
+        if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
+            if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
+                new_annotation.rasterio_src = annotations[0].rasterio_src
+                new_annotation.create_cropped_image(new_annotation.rasterio_src)
         
         return new_annotation
 

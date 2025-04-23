@@ -390,42 +390,145 @@ class PolygonAnnotation(Annotation):
 
             # Notify that the annotation has been updated
             self.annotationUpdated.emit(self)
-            
+    
     @classmethod
     def combine(cls, annotations: list):
-        """Cbomine multiple polygon annotations into a single polygon using convex hull.
+        """Combine multiple polygon annotations into a single polygon using polygon union,
+        but only if each annotation has overlap with at least one other annotation.
         
         Args:
             annotations: List of PolygonAnnotation objects to combine.
             
         Returns:
-            A new PolygonAnnotation that encompasses all input polygons
+            A new PolygonAnnotation that encompasses all input polygons if all have overlaps,
+            or None if any annotation doesn't overlap with others.
         """
         if not annotations:
-            raise ValueError("Cannot combine empty list of annotations")
+            return None
         
-        # Collect all points from all polygons
-        all_points = []
-        for annotation in annotations:
-            all_points.extend(annotation.points)
+        if len(annotations) == 1:
+            return annotations[0]
         
-        # Convert to numpy array for convex hull calculation
-        points_array = np.array([(point.x(), point.y()) for point in all_points])
+        # Track which annotations have overlaps with others
+        has_overlap = [False] * len(annotations)
         
-        # Compute convex hull
-        if len(points_array) > 2:
-            hull = cv2.convexHull(np.array(points_array, dtype=np.float32))
-            hull_points = [QPointF(point[0][0], point[0][1]) for point in hull]
-        else:
-            # Not enough points for convex hull, use original points
-            hull_points = all_points
+        # Check for overlap between polygons
+        for i in range(len(annotations) - 1):
+            poly1_points = np.array([(p.x(), p.y()) for p in annotations[i].points], dtype=np.int32)
             
+            # Create a mask for the first polygon
+            poly1_bbox = annotations[i].cropped_bbox
+            p1_min_x, p1_min_y = int(poly1_bbox[0]), int(poly1_bbox[1])
+            p1_max_x, p1_max_y = int(poly1_bbox[2]), int(poly1_bbox[3])
+            p1_width = p1_max_x - p1_min_x + 20  # Add padding
+            p1_height = p1_max_y - p1_min_y + 20
+            
+            # Adjust polygon coordinates to mask
+            poly1_adjusted = poly1_points.copy()
+            poly1_adjusted[:, 0] -= p1_min_x - 10
+            poly1_adjusted[:, 1] -= p1_min_y - 10
+            
+            mask1 = np.zeros((p1_height, p1_width), dtype=np.uint8)
+            cv2.fillPoly(mask1, [poly1_adjusted], 255)
+            
+            for j in range(i + 1, len(annotations)):
+                poly2_points = np.array([(p.x(), p.y()) for p in annotations[j].points], dtype=np.int32)
+                
+                # First check bounding box overlap for quick filtering
+                min_x1, min_y1, max_x1, max_y1 = annotations[i].cropped_bbox
+                min_x2, min_y2, max_x2, max_y2 = annotations[j].cropped_bbox
+                
+                # Check if bounding boxes overlap
+                if not (max_x1 < min_x2 or max_x2 < min_x1 or max_y1 < min_y2 or max_y2 < min_y1):
+                    # Create a mask for the second polygon in the same coordinate system as the first
+                    poly2_adjusted = poly2_points.copy()
+                    poly2_adjusted[:, 0] -= p1_min_x - 10
+                    poly2_adjusted[:, 1] -= p1_min_y - 10
+                    
+                    mask2 = np.zeros_like(mask1)
+                    cv2.fillPoly(mask2, [poly2_adjusted], 255)
+                    
+                    # Check for intersection
+                    intersection = cv2.bitwise_and(mask1, mask2)
+                    if np.any(intersection):
+                        has_overlap[i] = True
+                        has_overlap[j] = True
+                
+                # Fallback to point-in-polygon check if no overlap detected yet
+                if not has_overlap[i] or not has_overlap[j]:
+                    # Check if any point of polygon i is inside polygon j
+                    for point in annotations[i].points:
+                        if annotations[j].contains_point(point):
+                            has_overlap[i] = True
+                            has_overlap[j] = True
+                            break
+                            
+                    if not has_overlap[i] or not has_overlap[j]:
+                        # Check if any point of polygon j is inside polygon i
+                        for point in annotations[j].points:
+                            if annotations[i].contains_point(point):
+                                has_overlap[i] = True
+                                has_overlap[j] = True
+                                break
+        
+        # If any polygon doesn't have an overlap, return None
+        if False in has_overlap:
+            return None
+        
+        # Combine polygons by creating a binary mask of all polygons
+        # Determine the bounds of all polygons
+        min_x = min(anno.cropped_bbox[0] for anno in annotations)
+        min_y = min(anno.cropped_bbox[1] for anno in annotations)
+        max_x = max(anno.cropped_bbox[2] for anno in annotations)
+        max_y = max(anno.cropped_bbox[3] for anno in annotations)
+        
+        # Add padding
+        padding = 20
+        min_x -= padding
+        min_y -= padding
+        max_x += padding
+        max_y += padding
+        
+        # Create a mask for the combined shape
+        width = int(max_x - min_x)
+        height = int(max_y - min_y)
+        if width <= 0 or height <= 0:
+            width = max(1, width)
+            height = max(1, height)
+        
+        combined_mask = np.zeros((height, width), dtype=np.uint8)
+        
+        # Draw all polygons on the mask
+        for annotation in annotations:
+            polygon_points = np.array([(point.x() - min_x, point.y() - min_y) for point in annotation.points])
+            cv2.fillPoly(combined_mask, [polygon_points.astype(np.int32)], 255)
+        
+        # Find contours of the combined shape
+        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # Get the largest contour
+            largest_contour = max(contours, key=cv2.contourArea)
+            
+            # Simplify the contour slightly to reduce point count
+            epsilon = 0.0005 * cv2.arcLength(largest_contour, True)
+            approx_contour = cv2.approxPolyDP(largest_contour, epsilon, True)
+            
+            # Convert back to original coordinate system and to QPointF
+            hull_points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx_contour]
+        else:
+            # Fallback to all points if contour finding fails
+            all_points = []
+            for annotation in annotations:
+                all_points.extend(annotation.points)
+            hull_points = all_points
+        
         # Extract info from the first annotation
-        short_label_code = annotations[0].short_label_code
-        long_label_code = annotations[0].long_label_code
+        short_label_code = annotations[0].label.short_label_code
+        long_label_code = annotations[0].label.long_label_code
         color = annotations[0].label.color
         image_path = annotations[0].image_path
-        label_id = annotations[0].label_id
+        label_id = annotations[0].label.id
         
         # Create a new annotation with the combined points
         new_annotation = cls(
@@ -437,11 +540,11 @@ class PolygonAnnotation(Annotation):
             label_id=label_id
         )
         
-        # # If all input annotations have the same rasterio source, use it for the new one
-        # if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
-        #     if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
-        #         new_annotation.rasterio_src = annotations[0].rasterio_src
-        #         new_annotation.create_cropped_image(new_annotation.rasterio_src)
+        # All input annotations have the same rasterio source, use it for the new one
+        if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
+            if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
+                new_annotation.rasterio_src = annotations[0].rasterio_src
+                new_annotation.create_cropped_image(new_annotation.rasterio_src)
         
         return new_annotation
 

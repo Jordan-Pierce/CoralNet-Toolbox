@@ -114,6 +114,10 @@ class SelectTool(Tool):
         # Handle Ctrl+Spacebar to update annotation with top machine confidence
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Space:
             self.update_with_top_machine_confidence()
+            
+        # Handle Ctrl+C to combine selected annotations
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:
+            self.combine_selected_annotations()
 
     def keyReleaseEvent(self, event):
         """Handle key release events to hide resize handles."""
@@ -432,3 +436,59 @@ class SelectTool(Tool):
     def calculate_distance(self, point1, point2):
         """Calculate the distance between two points."""
         return (point1 - point2).manhattanLength()
+
+    def combine_selected_annotations(self):
+        """Combine multiple selected annotations of the same type."""
+        selected_annotations = self.annotation_window.selected_annotations
+        
+        if len(selected_annotations) <= 1:
+            return  # Need at least 2 annotations to combine
+        
+        # Check if all are the same type (only combine rectangles with rectangles, polygons with polygons)
+        first_type = type(selected_annotations[0])
+        if not all(isinstance(annotation, first_type) for annotation in selected_annotations):
+            QMessageBox.warning(
+                self.annotation_window,
+                "Cannot Combine",
+                "Can only combine annotations of the same type (rectangles with rectangles, polygons with polygons)."
+            )
+            return
+        
+        # Check if any annotations have machine confidence
+        if any(annotation.machine_confidence for annotation in selected_annotations):
+            QMessageBox.warning(
+                self.annotation_window,
+                "Cannot Combine",
+                "Cannot combine annotations with machine confidence. Confirm predictions (Ctrl+Space) first."
+            )
+            return
+        
+        # Check that all selected annotations have the same label
+        if not all(annotation.label.id == selected_annotations[0].label.id for annotation in selected_annotations):
+            QMessageBox.warning(
+                self.annotation_window,
+                "Cannot Combine",
+                "Cannot combine annotations with different labels. Select annotations with the same label."
+            )
+            return
+        
+        # Handle different annotation types
+        if isinstance(selected_annotations[0], RectangleAnnotation):
+            combined_annotation = RectangleAnnotation.combine(selected_annotations)
+        elif isinstance(selected_annotations[0], PolygonAnnotation):
+            combined_annotation = PolygonAnnotation.combine(selected_annotations)
+        else:
+            return  # Unsupported annotation type
+        
+        if not combined_annotation:
+            print("Failed to combine annotations. Please check the selected annotations.")
+            return  # Failed to combine annotations
+        
+        # Add the new combined annotation to the scene
+        self.annotation_window.add_annotation_from_tool(combined_annotation)
+        
+        # Delete the original annotations
+        self.annotation_window.delete_selected_annotations()
+        
+        # Select the new combined annotation
+        self.annotation_window.select_annotation(combined_annotation)
