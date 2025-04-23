@@ -853,6 +853,11 @@ class MainWindow(QMainWindow):
 
         # Enable drag and drop
         self.setAcceptDrops(True)
+        
+        # -----------------------------------------
+        # Check for updates on opening
+        # -----------------------------------------
+        self.open_check_for_updates_dialog(on_open=True)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1793,7 +1798,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
-    def open_check_for_updates_dialog(self):
+    def open_check_for_updates_dialog(self, on_open=False):
         """
         Checks if package version is up to date with PyPI.
         """
@@ -1810,21 +1815,23 @@ class MainWindow(QMainWindow):
             needs_update = version.parse(latest_version) > version.parse(self.version)
             
             if needs_update:
-                pip_command = "pip install coralnet-toolbox=={}".format(latest_version)
+                pip_command = "pip install -U coralnet-toolbox=={}".format(latest_version)
                 QMessageBox.information(self,
                                         "Hey, there's an update available!",
                                         f"A new version ({latest_version}) is available.\n\n"
                                         f"To update, run the following command in your terminal:\n\n{pip_command}")
             else:
-                QMessageBox.information(self,
-                                        "Nope, you're good!",
-                                        f"You are using the most current version ({self.version}).")
+                if not on_open:
+                    QMessageBox.information(self,
+                                            "Nope, you're good!",
+                                            f"You are using the most current version ({self.version}).")
             
         except (requests.RequestException, KeyError, ValueError) as e:
-            QMessageBox.warning(self,
-                                "Update Check Failed",
-                                f"Could not check for updates.\nError: {e}")
-            
+            if not on_open:
+                QMessageBox.warning(self,
+                                    "Update Check Failed",
+                                    f"Could not check for updates.\nError: {e}")
+                
     def open_create_new_issue_dialog(self):
         """Display QMessageBox with link to create new issue on GitHub."""
         try:
