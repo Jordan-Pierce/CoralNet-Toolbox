@@ -32,8 +32,6 @@ class PanTool(Tool):
         if event.button() == Qt.RightButton:
             self.annotation_window.pan_active = False
             self.annotation_window.setCursor(Qt.ArrowCursor)
-            # Ensure the image is properly centered if panned too far
-            self.ensure_image_in_view()
 
     def pan(self, pos):
         """Pan the view with boundary constraints to keep image in view"""
@@ -55,9 +53,6 @@ class PanTool(Tool):
         # Apply the new scroll positions
         h_scroll.setValue(new_x)
         v_scroll.setValue(new_y)
-        
-        # Check if view needs to be adjusted to keep image centered
-        self.ensure_image_in_view()
     
     def ensure_image_in_view(self):
         """Ensure the image stays within view boundaries and centered appropriately"""

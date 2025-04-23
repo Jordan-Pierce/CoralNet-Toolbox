@@ -91,21 +91,30 @@ class PolygonTool(Tool):
         if event.key() == Qt.Key_Backspace:
             self.cancel_annotation()
         elif event.key() == Qt.Key_Control:
-            self.ctrl_pressed = True
-            # Only update the cursor annotation for straight line preview
-            if self.drawing_continuous and self.last_click_point:
+            # Check if drawing is active and if Ctrl wasn't already pressed
+            if self.drawing_continuous and not self.ctrl_pressed:
+                self.ctrl_pressed = True
                 cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
                 scene_pos = self.annotation_window.mapToScene(cursor_pos)
-                self.update_cursor_annotation(scene_pos)
+                # Add the current point when switching to straight-line mode
+                if not self.points or scene_pos != self.points[-1]:
+                    self.points.append(scene_pos)
+                self.last_click_point = scene_pos  # Update the anchor for the straight line
+                self.update_cursor_annotation(scene_pos)  # Update preview for straight line
 
     def keyReleaseEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Control:
-            self.ctrl_pressed = False
-            # Resume free-hand preview
-            if self.drawing_continuous and self.last_click_point:
+            # Check if drawing is active and if Ctrl was actually pressed
+            if self.drawing_continuous and self.ctrl_pressed:
+                self.ctrl_pressed = False
                 cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
                 scene_pos = self.annotation_window.mapToScene(cursor_pos)
-                self.update_cursor_annotation(scene_pos)
+                # Add the current point when switching back to free-hand mode
+                if not self.points or scene_pos != self.points[-1]:
+                    self.points.append(scene_pos)
+                # Update last_click_point, although less critical for free-hand mode start
+                self.last_click_point = scene_pos
+                self.update_cursor_annotation(scene_pos)  # Update preview for free-hand
 
     def cancel_annotation(self):
         self.points = []
@@ -147,30 +156,26 @@ class PolygonTool(Tool):
             return
 
         if self.drawing_continuous and len(self.points) > 0:
-            if self.ctrl_pressed and self.last_click_point:
-                # Preview a straight line from last point to cursor
-                preview_points = self.points + [scene_pos]
-                annotation = PolygonAnnotation(
-                    preview_points,
-                    self.annotation_window.selected_label.short_label_code,
-                    self.annotation_window.selected_label.long_label_code,
-                    self.annotation_window.selected_label.color,
-                    self.annotation_window.current_image_path,
-                    self.annotation_window.selected_label.id,
-                    min(self.annotation_window.selected_label.transparency + 100, 200)
-                )
-                annotation.create_graphics_item(self.annotation_window.scene)
-                self.cursor_annotation = annotation
-            else:
-                # Free-hand preview
-                annotation = self.create_annotation(scene_pos)
-                if annotation:
-                    annotation.transparency = min(annotation.transparency + 100, 200)
-                    annotation.create_graphics_item(self.annotation_window.scene)
-                    self.cursor_annotation = annotation
+            # Determine points for preview: always include current scene_pos
+            preview_points = self.points + [scene_pos]
+
+            # Create the preview annotation using preview_points
+            annotation = PolygonAnnotation(
+                preview_points,
+                self.annotation_window.selected_label.short_label_code,
+                self.annotation_window.selected_label.long_label_code,
+                self.annotation_window.selected_label.color,
+                self.annotation_window.current_image_path,
+                self.annotation_window.selected_label.id,
+                min(self.annotation_window.selected_label.transparency + 100, 200) # Increased transparency for preview
+            )
+            annotation.create_graphics_item(self.annotation_window.scene)
+            self.cursor_annotation = annotation
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""
+        # Clear previous preview first to avoid flickering or overlap
         self.clear_cursor_annotation()
+        # Create the new preview at the current cursor position
         self.create_cursor_annotation(scene_pos)
 
