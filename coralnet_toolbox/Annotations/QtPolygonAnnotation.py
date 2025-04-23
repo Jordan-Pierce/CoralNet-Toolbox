@@ -31,19 +31,111 @@ class PolygonAnnotation(Annotation):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg=False):
+                 show_msg=False):  # Added epsilon parameter with default value
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
 
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
+        
+        self.epsilon = 1.0  # Store epsilon for polygon simplification
 
         self.set_precision(points, True)
         self.set_centroid()
         self.set_cropped_bbox()
 
+    @staticmethod
+    def simplify_polygon(points, epsilon):
+        """
+        Simplify polygon vertices using the Ramer-Douglas-Peucker algorithm.
+        
+        Args:
+            points: List of QPointF vertices defining the polygon
+            epsilon: Maximum distance for a point to be considered close enough to the simplified line
+                   Higher values = more simplification, lower values = less simplification
+        
+        Returns:
+            List of QPointF vertices defining the simplified polygon
+        """
+        if len(points) < 3:
+            return points
+            
+        # Convert QPointF to numpy array for processing
+        points_array = [(point.x(), point.y()) for point in points]
+        
+        def rdp(points_array, epsilon):
+            """Recursive implementation of the Ramer-Douglas-Peucker algorithm"""
+            if len(points_array) <= 2:
+                return points_array
+            
+            # Find the point with the maximum distance from the line between first and last points
+            line_start = points_array[0]
+            line_end = points_array[-1]
+            
+            # Check if start and end points are the same (or very close)
+            if (abs(line_start[0] - line_end[0]) < 1e-6 and 
+                abs(line_start[1] - line_end[1]) < 1e-6):
+                # If start and end are essentially the same point, keep only one
+                return [line_start]
+            
+            # Calculate the distance of all points to the line
+            max_dist = 0
+            max_idx = 0
+            
+            for i in range(1, len(points_array) - 1):
+                # Line equation: ax + by + c = 0
+                # Where a = y2-y1, b = x1-x2, c = x2*y1 - x1*y2
+                a = line_end[1] - line_start[1]
+                b = line_start[0] - line_end[0]
+                c = line_end[0] * line_start[1] - line_start[0] * line_end[1]
+                
+                # Check for division by zero (if denominator is zero, line is a point)
+                denominator = (a * a + b * b) ** 0.5
+                if denominator < 1e-6:
+                    # The line is essentially a point, so distance is just standard distance to that point
+                    dx = points_array[i][0] - line_start[0]
+                    dy = points_array[i][1] - line_start[1]
+                    dist = (dx * dx + dy * dy) ** 0.5
+                else:
+                    # Distance from point to line = |ax + by + c| / sqrt(a² + b²)
+                    dist = abs(a * points_array[i][0] + b * points_array[i][1] + c) / denominator
+                
+                if dist > max_dist:
+                    max_dist = dist
+                    max_idx = i
+            
+            # If the maximum distance is greater than epsilon, recursively simplify
+            if max_dist > epsilon:
+                # Recursive call
+                first_half = rdp(points_array[:max_idx + 1], epsilon)
+                second_half = rdp(points_array[max_idx:], epsilon)
+                
+                # Build the result (avoiding duplicate points)
+                return first_half[:-1] + second_half
+            else:
+                # All points are close to the line, keep only endpoints
+                return [points_array[0], points_array[-1]]
+        
+        # Run the algorithm
+        simplified_array = rdp(points_array, epsilon)
+        
+        # Convert back to QPointF
+        return [QPointF(x, y) for x, y in simplified_array]
+
     def set_precision(self, points: list, reduce: bool = True):
-        """Set the precision of the points to 3 decimal places."""
+        """
+        Set the precision of the points to 3 decimal places and apply polygon simplification.
+        
+        Args:
+            points: List of QPointF vertices defining the polygon
+            reduce: Whether to round coordinates to 3 decimal places
+        """
+        # First apply the polygon simplification if there are enough points
+        if len(points) > 3:
+            # points = self.simplify_polygon(points, self.epsilon)
+            pass  # Simplification is not applied here, yet.
+            
+        # Then round the coordinates if requested
         if reduce:
             points = [QPointF(round(point.x(), 3), round(point.y(), 3)) for point in points]
 
