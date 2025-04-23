@@ -82,15 +82,29 @@ class GlobalEventFilter(QObject):
 
             # Select all annotations on < key press with Shift+Ctrl
             if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
-                if self.main_window.select_tool_action.isChecked():
-                    self.annotation_window.select_annotations()
-                    return True
+                if not self.main_window.select_tool_action.isChecked():
+                    # Untoggle all tools first (clear buttons)
+                    self.main_window.untoggle_all_tools()
+                    # Switch to select tool in main window (sets button)
+                    self.main_window.handle_tool_changed("select")
+                    # Set the select tool in the annotation window (sets tool)
+                    self.annotation_window.set_selected_tool("select")
+                
+                self.annotation_window.select_annotations()
+                return True
 
             # Unselect all annotations on > key press with Shift+Ctrl
             if event.key() == Qt.Key_Greater and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
-                if self.main_window.select_tool_action.isChecked():
-                    self.annotation_window.unselect_annotations()
-                    return True
+                if not self.main_window.select_tool_action.isChecked():
+                    # Untoggle all tools first (clear buttons)
+                    self.main_window.untoggle_all_tools()
+                    # Switch to select tool in main window (sets button)
+                    self.main_window.handle_tool_changed("select")
+                    # Set the select tool in the annotation window (sets tool)
+                    self.annotation_window.set_selected_tool("select")
+                
+                self.annotation_window.unselect_annotations()
+                return True
 
             # Handle Escape key for exiting program
             if event.key() == Qt.Key_Escape:
