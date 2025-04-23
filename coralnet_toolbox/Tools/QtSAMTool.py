@@ -63,8 +63,6 @@ class SAMTool(Tool):
         self.drawing_rectangle = False
         self.rectangle_graphics = None
         
-        # List to store temporary annotations that haven't been confirmed
-        self.temporary_annotations = []
         self.results = None
         
         # Flag to track if we have active prompts
@@ -86,7 +84,6 @@ class SAMTool(Tool):
         self.active = False
         self.annotation_window.setCursor(Qt.ArrowCursor)
         self.sam_dialog = None
-        self.clear_temporary_annotations()
         self.cancel_working_area()
         self.hover_active = False  # Ensure hover is inactive when SAMTool is deactivated
         self.has_active_prompts = False
@@ -122,8 +119,8 @@ class SAMTool(Tool):
 
                 # Add the adjusted point to the list
                 self.hover_point = adjusted_pos
-                # Toggle the cursor annotation
-                self.annotation_window.toggle_cursor_annotation(adjusted_pos)
+                # Create cursor annotation at the adjusted position
+                self.create_cursor_annotation(self.hover_pos)
 
     def display_rectangle_annotation(self):
         """
@@ -149,7 +146,8 @@ class SAMTool(Tool):
             self.bottom_right = QPointF(bottom_right.x() - working_area_top_left.x(),
                                         bottom_right.y() - working_area_top_left.y())
 
-            self.annotation_window.toggle_cursor_annotation()
+            # Update cursor annotation to show preview of segmentation
+            self.update_cursor_annotation(self.end_point)
 
     def mousePressEvent(self, event: QMouseEvent):
         """
@@ -202,7 +200,7 @@ class SAMTool(Tool):
                 self.has_active_prompts = True
 
             # Update the cursor annotation
-            self.annotation_window.toggle_cursor_annotation(event.pos())
+            self.update_cursor_annotation(scene_pos)
 
         elif event.modifiers() != Qt.ControlModifier:
 
@@ -225,13 +223,13 @@ class SAMTool(Tool):
                 self.has_active_prompts = True
 
             # Update the cursor annotation
-            self.annotation_window.toggle_cursor_annotation()
+            self.update_cursor_annotation(scene_pos)
 
         elif event.button() == Qt.RightButton and self.drawing_rectangle:
             # Panning the image while drawing
             pass
 
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """
@@ -250,7 +248,8 @@ class SAMTool(Tool):
             pixmap_image = self.annotation_window.pixmap_image
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
             if active_image and pixmap_image and cursor_in_window and self.start_point:
-                self.annotation_window.toggle_cursor_annotation(self.end_point)
+                # Always update cursor annotation during rectangle drawing
+                self.update_cursor_annotation(self.end_point)
         else:
             if self.annotation_window.cursorInWindow(event.pos()):
                 self.start_hover_timer(event.pos())
@@ -258,7 +257,7 @@ class SAMTool(Tool):
                 self.cancel_hover_annotation()
                 self.stop_hover_timer()
 
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update()
 
     def keyPressEvent(self, event: QKeyEvent):
         """
@@ -272,20 +271,21 @@ class SAMTool(Tool):
             if not self.working_area:
                 self.set_working_area()
                 self.sam_dialog.set_image(self.image, self.image_path)
-            # If there are active prompts, process them into temporary annotations
+            # If there are active prompts, process them into annotations
             elif self.has_active_prompts:
-                self.create_temporary_annotation()
-                self.has_active_prompts = False
-            # If there are temporary annotations but no active prompts, confirm all temporary annotations
-            elif len(self.temporary_annotations) > 0 and not self.has_active_prompts:
-                self.confirm_temporary_annotations()
-                # Cancel the working area after confirming annotations
-                self.cancel_working_area()
-            # If no active prompts and no temporary annotations, just cancel the working area
+                annotation = self.create_annotation(None, True)
+                if annotation:
+                    # Use annotation_window's method to add the annotation
+                    self.annotation_window.add_annotation_from_tool(annotation)
+                    self.has_active_prompts = False
+                    
+                    # Clear the points and graphics after creating an annotation
+                    self.clear_prompt_graphics()
+            # If no more active prompts, cancel the working area
             else:
                 self.cancel_working_area()
 
-            self.annotation_window.viewport().update()
+            self.annotation_window.scene.update()
             
         elif event.key() == Qt.Key_Backspace:
             # Cancel current rectangle being drawn
@@ -296,14 +296,11 @@ class SAMTool(Tool):
             elif self.has_active_prompts:
                 self.cancel_annotation()
                 self.has_active_prompts = False
-            # If no active prompts but we have temporary annotations, clear them
-            elif self.working_area and len(self.temporary_annotations) > 0:
-                self.clear_temporary_annotations()
-            # If no prompts or temporary annotations, cancel working area
+            # If no prompts, cancel working area
             else:
                 self.cancel_working_area()
                 
-            self.annotation_window.viewport().update()
+            self.annotation_window.scene.update()
 
     def set_working_area(self):
         """
@@ -374,61 +371,42 @@ class SAMTool(Tool):
         self.image = self.original_image[top:bottom, left:right]
 
         self.annotation_window.setCursor(Qt.CrossCursor)
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update()
 
-    def create_temporary_annotation(self):
+    def clear_prompt_graphics(self):
         """
-        Create temporary annotation(s) from the current prompts.
+        Clear all prompt graphics (points, rectangles) but keep the working area.
         """
-        if not self.annotation_window.active_image:
-            return None
-
-        if not self.annotation_window.pixmap_image:
-            return None
-
-        if not self.working_area:
-            return None
-            
-        # Check if we have any prompts to process
-        has_points = len(self.positive_points) > 0
-        has_rectangle = self.start_point is not None and self.end_point is not None and not self.drawing_rectangle
+        # Remove point graphics
+        for point in self.point_graphics:
+            self.annotation_window.scene.removeItem(point)
+        self.point_graphics = []
         
-        if not (has_points or has_rectangle):
-            return None
-
-        # Use the existing create_annotation method to create the annotation
-        annotation = self.create_annotation(None, True)
+        # Clear points lists
+        self.points = []
+        self.positive_points = []
+        self.negative_points = []
         
-        if annotation is None:
-            return None
-
-        # Remove hover graphics if it exists (since this is a confirmed annotation)
-        if self.hover_graphics:
-            self.annotation_window.scene.removeItem(self.hover_graphics)
-            self.hover_graphics = None
-
-        # Ensure the PolygonAnnotation is added to the scene after creation
-        annotation.create_graphics_item(self.annotation_window.scene)
-
+        # Clear rectangle 
+        self.start_point = None
+        self.end_point = None
+        self.top_left = None
+        self.bottom_right = None
+        
+        # Remove rectangle graphics if any
         if self.rectangle_graphics:
             self.annotation_window.scene.removeItem(self.rectangle_graphics)
             self.rectangle_graphics = None
-
-        # Add this annotation to our temporary list
-        self.temporary_annotations.append(annotation)
-
-        # Clear the points and rectangle after creating an annotation
-        # But keep the working area so user can add more prompts
-        self.cancel_annotation()
-
-        self.annotation_window.viewport().update()
-
-        return annotation
+            
+        # Clear any hover annotation
+        self.cancel_hover_annotation()
+        
+        self.annotation_window.scene.update()
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         """
         Create an annotation based on the given scene position.
-        This is used for hover annotation and also called by create_temporary_annotation.
+        This is used for hover annotation and also for creating final annotations.
 
         Args:
             scene_pos (QPointF): The scene position
@@ -454,19 +432,26 @@ class SAMTool(Tool):
         negative = [[point.x(), point.y()] for point in self.negative_points]
         bbox = np.array([])
 
-        if self.hover_point and not finished:
+        if self.hover_point and not finished and not self.drawing_rectangle:
             positive.append([self.hover_point.x(), self.hover_point.y()])
             transparency //= 4
 
         if self.start_point and self.end_point:
-            bbox = np.array([self.top_left.x(),
-                             self.top_left.y(),
-                             self.bottom_right.x(),
-                             self.bottom_right.y()])
+            # If we have rectangle coordinates, use them for prediction
+            if self.top_left is not None and self.bottom_right is not None:
+                bbox = np.array([self.top_left.x(),
+                                self.top_left.y(),
+                                self.bottom_right.x(),
+                                self.bottom_right.y()])
 
         # Create the labels, points, and bbox as numpy arrays
         labels = np.array([1] * len(positive) + [0] * len(negative))
         points = np.array(positive + negative)
+
+        # If we have no prompts (no positive points, no negative points, no bbox), return None
+        if len(points) == 0 and bbox.size == 0:
+            QApplication.restoreOverrideCursor()
+            return None
 
         # Predict the mask provided prompts
         results = self.sam_dialog.predict_from_prompts(bbox, points, labels)
@@ -482,11 +467,21 @@ class SAMTool(Tool):
         # Get the points of the top1 mask
         top1_index = np.argmax(results.boxes.conf)
         predictions = results[top1_index].masks.xy[0]
+        
+        # Safety check: make sure we have predicted points
+        if len(predictions) == 0:
+            QApplication.restoreOverrideCursor()
+            return None
 
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect().topLeft()
         points = [(point[0] + working_area_top_left.x(), point[1] + working_area_top_left.y()) for point in predictions]
         self.points = [QPointF(*point) for point in points]
+        
+        # Safety check: make sure we have at least 3 points to create a valid polygon
+        if len(self.points) < 3:
+            QApplication.restoreOverrideCursor()
+            return None
 
         # Get confidence for the annotation
         confidence = results.boxes.conf[top1_index].item()
@@ -506,76 +501,67 @@ class SAMTool(Tool):
         # Create cropped image
         annotation.create_cropped_image(self.annotation_window.rasterio_image)
 
-        # For hover annotations, store the graphics item separately
-        if not finished:
-            self.hover_graphics = annotation.graphics_item
-
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
         return annotation
 
-    def confirm_temporary_annotations(self):
+    def create_cursor_annotation(self, scene_pos: QPointF = None):
         """
-        Confirm all temporary annotations and add them to the annotation window.
-        """
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, "Confirming Annotations")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.temporary_annotations))
-
-        # Confirm the annotations
-        for annotation in self.temporary_annotations:
-            # Connect signals needed for proper interaction
-            annotation.selected.connect(self.annotation_window.select_annotation)
-            annotation.annotationDeleted.connect(self.annotation_window.delete_annotation)
-            annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-            # Add to annotation dict
-            self.annotation_window.add_annotation_to_dict(annotation)
-            # Update the table in ImageWindow
-            self.annotation_window.annotationCreated.emit(annotation.id)
-
-            # Update progress bar
-            progress_bar.update_progress()
-
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
-        progress_bar = None
-
-        # Clear the annotations list since they've been confirmed
-        self.temporary_annotations = []
-
-    def clear_temporary_annotations(self):
-        """
-        Clear all temporary annotations created by this tool from the scene without confirming them.
-        """
-        # Remove all annotations from the scene
-        for annotation in self.temporary_annotations:
-            if annotation.graphics_item:
-                self.annotation_window.scene.removeItem(annotation.graphics_item)
-
-            annotation.delete()
-
-        # Clear the annotations list
-        self.temporary_annotations = []
+        Override parent method: Create a cursor annotation at the given position.
         
-        self.annotation_window.viewport().update()
+        Args:
+            scene_pos (QPointF): The scene position for the cursor annotation
+        """
+        # Clear any existing cursor annotation
+        self.clear_cursor_annotation()
+        
+        if not scene_pos or not self.annotation_window.selected_label or not self.annotation_window.active_image:
+            return
+        
+        if self.working_area and self.hover_active:
+            # Allow cursor annotation during rectangle drawing if we have both start and end points
+            if self.drawing_rectangle and self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
+                self.cursor_annotation = self.create_annotation(scene_pos, False)
+                if self.cursor_annotation:
+                    # Store the hover graphics item for easy removal later
+                    self.hover_graphics = self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+            # Normal hover annotation (at least one positive point or hover point)
+            elif not self.drawing_rectangle and (len(self.positive_points) > 0 or self.hover_point):
+                self.cursor_annotation = self.create_annotation(scene_pos, False)
+                if self.cursor_annotation:
+                    # Store the hover graphics item for easy removal later
+                    self.hover_graphics = self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+
+    def update_cursor_annotation(self, scene_pos: QPointF = None):
+        """
+        Override parent method: Update the cursor annotation to a new position.
+        
+        Args:
+            scene_pos (QPointF): The new scene position for the cursor annotation
+        """
+        # Remove the current cursor annotation and create a new one
+        self.clear_cursor_annotation()
+        self.create_cursor_annotation(scene_pos)
+
+    def clear_cursor_annotation(self):
+        """
+        Override parent method: Clear the current cursor annotation.
+        """
+        if self.cursor_annotation:
+            if self.hover_graphics:
+                self.annotation_window.scene.removeItem(self.hover_graphics)
+                self.hover_graphics = None
+            self.cursor_annotation.delete()
+            self.cursor_annotation = None
 
     def cancel_hover_annotation(self):
         """
         Cancel the hover annotation.
         """
-        if self.hover_graphics:
-            self.annotation_window.scene.removeItem(self.hover_graphics)
-
+        self.clear_cursor_annotation()
         self.hover_point = None
-        self.hover_graphics = None
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update()
 
     def cancel_rectangle_annotation(self):
         """
@@ -584,13 +570,13 @@ class SAMTool(Tool):
         self.start_point = None
         self.end_point = None
         self.drawing_rectangle = False
-        self.annotation_window.toggle_cursor_annotation()
+        self.clear_cursor_annotation()
 
         if self.rectangle_graphics:
             self.annotation_window.scene.removeItem(self.rectangle_graphics)
             self.rectangle_graphics = None
 
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update()
 
     def cancel_annotation(self):
         """
@@ -602,12 +588,6 @@ class SAMTool(Tool):
         if self.annotation_graphics:
             self.annotation_window.scene.removeItem(self.annotation_graphics)
 
-        if self.hover_graphics:
-            self.annotation_window.scene.removeItem(self.hover_graphics)
-
-        if self.rectangle_graphics:
-            self.annotation_window.scene.removeItem(self.rectangle_graphics)
-
         self.points = []
         self.positive_points = []
         self.negative_points = []
@@ -616,7 +596,7 @@ class SAMTool(Tool):
 
         self.cancel_hover_annotation()
         self.cancel_rectangle_annotation()
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update()
 
     def cancel_working_area(self):
         """
@@ -634,8 +614,8 @@ class SAMTool(Tool):
         self.original_image = None
         self.image = None
         
-        # Clear all temporary annotations when canceling the working area
-        self.clear_temporary_annotations()
-        
         # Reset the active prompts flag
         self.has_active_prompts = False
+        
+        # Clean up any remaining graphics
+        self.cancel_annotation()
