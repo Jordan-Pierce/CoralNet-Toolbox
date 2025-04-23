@@ -17,29 +17,39 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 
 class SelectTool(Tool):
+    """Tool for selecting, moving, and resizing annotations."""
+    
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.cursor = Qt.PointingHandCursor
+        
+        # State flags
         self.resizing = False
         self.moving = False
+        self.rectangle_selection = False
+        
+        # Resize handle tracking
         self.resize_handle = None
         self.resize_start_pos = None
-        self.move_start_pos = None
         self.resize_handles = []
         self.buffer = 50
-        self.rectangle_selection = False
+        
+        # Movement tracking
+        self.move_start_pos = None
+        
+        # Rectangle selection
         self.selection_rectangle = None
         self.selection_start_pos = None
 
-        # Manage selected annotations
+        # Connect signals
+        self._connect_signals()
+    
+    def _connect_signals(self):
+        """Connect signals for annotation changes."""
         self.annotation_window.annotationSelected.connect(self.clear_resize_handles)
         self.annotation_window.annotationSizeChanged.connect(self.clear_resize_handles)
         self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
-
-    def clear_resize_handles(self, annotation_id=None):
-        """Clear resize handles if annotations change."""
-        self.remove_resize_handles()
-
+    
     def wheelEvent(self, event: QMouseEvent):
         """Handle zoom using the mouse wheel."""
         if event.modifiers() & Qt.ControlModifier:
@@ -55,59 +65,39 @@ class SelectTool(Tool):
             position = self.annotation_window.mapToScene(event.pos())
             items = self.get_clickable_items(position)
             
-            # First check if resize handles exist
+            # Check for resize handle interactions when Ctrl+Shift are pressed
             if self.resize_handles:
-                # Then check if both Ctrl+Shift are pressed
                 if (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier):
-                    for item in items:
-                        if item in self.resize_handles:
-                            handle_name = item.data(1)
-                            if handle_name and len(self.annotation_window.selected_annotations) == 1:
-                                self.resize_handle = handle_name
-                                self.resizing = True
-                                return
+                    if self._handle_resize_press(items):
+                        return
 
+            # Handle rectangle selection with Ctrl
             if event.modifiers() & Qt.ControlModifier:
-                self.rectangle_selection = True
-                self.selection_start_pos = position
-                self.selection_rectangle = QGraphicsRectItem()
-                # Use the dedicated method to calculate line thickness
-                line_thickness = self.get_selection_thickness()
-                self.selection_rectangle.setPen(QPen(Qt.black, line_thickness, Qt.DashLine))
-                # Add the selection rectangle to the scene
-                self.annotation_window.scene.addItem(self.selection_rectangle)
+                self._init_rectangle_selection(position)
 
-            # Get the selected annotation based on the clicked position
+            # Select annotation based on click position
             selected_annotation = self.select_annotation(position, items, event.modifiers())
-            
             if selected_annotation:
                 self.init_drag_or_resize(selected_annotation, position, event.modifiers())
                 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move events for resizing, moving, or drawing selection rectangle."""
         current_pos = self.annotation_window.mapToScene(event.pos())
+        
         if self.rectangle_selection:
             self.update_selection_rectangle(current_pos)
         elif self.resizing:
             self.handle_resize(current_pos)
         elif self.moving:
-            # Check if the selected annotation has a warning message
-            if len(self.annotation_window.selected_annotations):
-                selected_annotation = self.annotation_window.selected_annotations[0]
-                if not self.annotation_window.is_annotation_moveable(selected_annotation):
-                    self.moving = False
-                else:
-                    self.handle_move(current_pos)
+            self._handle_annotation_move(current_pos)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events to stop moving, resizing, or finalize selection rectangle."""
         if self.rectangle_selection:
             self.finalize_selection_rectangle()
-            self.rectangle_selection = False
-            self.selection_start_pos = None
-            self.annotation_window.scene.removeItem(self.selection_rectangle)
-            self.selection_rectangle = None
+            self._cleanup_rectangle_selection()
 
+        # Reset state
         self.resizing = False
         self.moving = False
         self.resize_handle = None
@@ -130,95 +120,49 @@ class SelectTool(Tool):
         # Hide resize handles if either Ctrl or Shift is released
         if not (event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier):
             self.remove_resize_handles()
+    
+    # Selection and rectangle selection methods
             
     def update_with_top_machine_confidence(self):
         """Update the selected annotation(s) with their top machine confidence predictions."""
-        # Return if no annotations are selected
         if not self.annotation_window.selected_annotations:
             return
         
         updated_count = 0
         for annotation in self.annotation_window.selected_annotations:
-            # Skip if no machine confidence predictions are available
             if not annotation.machine_confidence:
                 continue
             
-            # Get the top confidence prediction (the prediction dict is already sorted by confidence)
+            # Get the top confidence prediction
             top_label = next(iter(annotation.machine_confidence))
-            
-            # Update the annotation with the top prediction label
             annotation.update_user_confidence(top_label)
-            
             updated_count += 1
         
-        # If only one annotation is selected, update the label window to reflect the change
+        # Update UI based on selection state
         if len(self.annotation_window.selected_annotations) == 1 and updated_count == 1:
             selected_annotation = self.annotation_window.selected_annotations[0]
             self.annotation_window.labelSelected.emit(selected_annotation.label.id)
         else:
-            # Unselect all annotations to clear the confidence window display
             self.annotation_window.unselect_annotations()
-            
-    def get_selection_thickness(self):
-        """Calculate appropriate line thickness based on current view dimensions."""
-        extent = self.annotation_window.viewportToScene()
-        view_width = round(extent.width())
-        view_height = round(extent.height())
-        return max(5, min(20, max(view_width, view_height) // 1000))
-
-    def get_locked_label(self):
-        """Get the locked label if it exists."""
-        return self.annotation_window.main_window.label_window.locked_label
-
-    def get_clickable_items(self, position):
-        """Get items that can be clicked in the scene."""
-        items = self.annotation_window.scene.items(position)
-        # Include ellipse items (resize handles) in clickable items
-        clickable_items = []
-        for item in items:
-            if isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem)):
-                clickable_items.append(item)
-        return clickable_items
-
-    def select_annotation(self, position, items, modifiers):
-        """Select an annotation based on the click position."""
-        # Get the locked label if it exists
-        locked_label = self.get_locked_label()
-
-        center_proximity_items = []
-        for item in items:
-            if self.is_annotation_clickable(item, position):
-                center_proximity_items.append((item, self.calculate_distance(position, self.get_item_center(item))))
-
-        # Sort by proximity to the center
-        center_proximity_items.sort(key=lambda x: x[1])
-
-        # Select the closest annotation
-        for item, _ in center_proximity_items:
-            # Get the annotation object from the item
-            annotation_id = item.data(0)
-            selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
-
-            if selected_annotation:
-                # Check if a label is locked
-                if locked_label:
-                    # If locked_label is set, select only annotations with this label
-                    if selected_annotation.label.id != locked_label.id:
-                        continue  # Skip annotations with a different label
-
-                ctrl_pressed = modifiers & Qt.ControlModifier
-                if selected_annotation in self.annotation_window.selected_annotations and ctrl_pressed:
-                    # Unselect the annotation if Ctrl is pressed and it is already selected
-                    self.annotation_window.unselect_annotation(selected_annotation)
-                    return None
-                else:
-                    return self.handle_selection(selected_annotation, modifiers)
-
-        return None
-
+    
+    def _init_rectangle_selection(self, position):
+        """Initialize rectangle selection mode."""
+        self.rectangle_selection = True
+        self.selection_start_pos = position
+        self.selection_rectangle = QGraphicsRectItem()
+        line_thickness = self.get_selection_thickness()
+        self.selection_rectangle.setPen(QPen(Qt.black, line_thickness, Qt.DashLine))
+        self.annotation_window.scene.addItem(self.selection_rectangle)
+    
+    def _cleanup_rectangle_selection(self):
+        """Clean up rectangle selection mode."""
+        self.rectangle_selection = False
+        self.selection_start_pos = None
+        self.annotation_window.scene.removeItem(self.selection_rectangle)
+        self.selection_rectangle = None
+    
     def update_selection_rectangle(self, current_pos):
         """Update the selection rectangle while dragging."""
-        # Only update the rectangle if the cursor is within the window
         if self.selection_rectangle and self.annotation_window.cursorInWindow(current_pos, mapped=True):
             rect = QRectF(self.selection_start_pos, current_pos).normalized()
             self.selection_rectangle.setRect(rect)
@@ -237,17 +181,51 @@ class SelectTool(Tool):
                         continue
                     if annotation not in self.annotation_window.selected_annotations:
                         self.annotation_window.select_annotation(annotation, True)
+    
+    def get_locked_label(self):
+        """Get the locked label if it exists."""
+        return self.annotation_window.main_window.label_window.locked_label
 
-    def get_item_center(self, item):
-        """Return the center point of the item."""
-        if isinstance(item, QGraphicsRectItem):
-            rect = item.rect()
-            return QPointF(rect.x() + rect.width() / 2, rect.y() + rect.height() / 2)
-        elif isinstance(item, QGraphicsPolygonItem):
-            return item.polygon().boundingRect().center()
-        elif isinstance(item, QGraphicsEllipseItem):
-            return item.rect().center()
-        return QPointF(0, 0)  # Default if item type is unsupported
+    def get_clickable_items(self, position):
+        """Get items that can be clicked in the scene."""
+        items = self.annotation_window.scene.items(position)
+        # Include ellipse items (resize handles) in clickable items
+        clickable_items = []
+        for item in items:
+            if isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem)):
+                clickable_items.append(item)
+        return clickable_items
+
+    def select_annotation(self, position, items, modifiers):
+        """Select an annotation based on the click position."""
+        locked_label = self.get_locked_label()
+
+        # Find items sorted by proximity to center
+        center_proximity_items = [
+            (item, self.calculate_distance(position, self.get_item_center(item)))
+            for item in items if self.is_annotation_clickable(item, position)
+        ]
+        center_proximity_items.sort(key=lambda x: x[1])
+
+        # Select the closest annotation
+        for item, _ in center_proximity_items:
+            annotation_id = item.data(0)
+            selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
+
+            if selected_annotation:
+                # Check if a label is locked
+                if locked_label and selected_annotation.label.id != locked_label.id:
+                    continue  # Skip annotations with a different label
+
+                ctrl_pressed = modifiers & Qt.ControlModifier
+                if selected_annotation in self.annotation_window.selected_annotations and ctrl_pressed:
+                    # Unselect the annotation if Ctrl is pressed and it is already selected
+                    self.annotation_window.unselect_annotation(selected_annotation)
+                    return None
+                else:
+                    return self.handle_selection(selected_annotation, modifiers)
+
+        return None
 
     def is_annotation_clickable(self, item, position):
         """Check if the clicked position is within the annotation."""
@@ -281,8 +259,29 @@ class SelectTool(Tool):
 
             # Add to selection
             self.annotation_window.select_annotation(selected_annotation, True)
-
             return selected_annotation
+    
+    def _handle_annotation_move(self, current_pos):
+        """Handle moving the selected annotation with checks."""
+        if not self.annotation_window.selected_annotations:
+            return
+
+        selected_annotation = self.annotation_window.selected_annotations[0]
+        if not self.annotation_window.is_annotation_moveable(selected_annotation):
+            self.moving = False
+        else:
+            self.handle_move(current_pos)
+    
+    def _handle_resize_press(self, items):
+        """Handle mouse press on resize handles."""
+        for item in items:
+            if item in self.resize_handles:
+                handle_name = item.data(1)
+                if handle_name and len(self.annotation_window.selected_annotations) == 1:
+                    self.resize_handle = handle_name
+                    self.resizing = True
+                    return True
+        return False
 
     def init_drag_or_resize(self, selected_annotation, position, modifiers):
         """Initialize dragging or resizing based on the current state."""
@@ -298,7 +297,7 @@ class SelectTool(Tool):
 
     def handle_move(self, current_pos):
         """Handle moving the selected annotation."""
-        if not len(self.annotation_window.selected_annotations):
+        if not self.annotation_window.selected_annotations:
             return
 
         selected_annotation = self.annotation_window.selected_annotations[0]
@@ -311,7 +310,7 @@ class SelectTool(Tool):
 
     def handle_resize(self, current_pos):
         """Handle resizing the selected annotation."""
-        if not len(self.annotation_window.selected_annotations):
+        if not self.annotation_window.selected_annotations:
             return
 
         selected_annotation = self.annotation_window.selected_annotations[0]
@@ -320,6 +319,10 @@ class SelectTool(Tool):
 
         self.resize_annotation(selected_annotation, current_pos)
         self.display_resize_handles(selected_annotation)
+    
+    def clear_resize_handles(self, annotation_id=None):
+        """Clear resize handles if annotations change."""
+        self.remove_resize_handles()
 
     def detect_resize_handle(self, annotation, current_pos):
         """Detect the closest resize handle to the current position."""
@@ -337,7 +340,7 @@ class SelectTool(Tool):
         if closest_handle[0] and self.calculate_distance(current_pos, closest_handle[1]) <= self.buffer:
             return closest_handle[0]
 
-        return None  # Default if no handle is found
+        return None
 
     def get_handles(self, annotation):
         """Return the handles based on the annotation type."""
@@ -346,10 +349,6 @@ class SelectTool(Tool):
         elif isinstance(annotation, PolygonAnnotation):
             return self.get_polygon_handles(annotation)
         return {}
-
-    def calculate_distance(self, point1, point2):
-        """Calculate the distance between two points."""
-        return (point1 - point2).manhattanLength()
 
     def get_rectangle_handles(self, annotation):
         """Return resize handles for a rectangle annotation."""
@@ -411,3 +410,25 @@ class SelectTool(Tool):
         for handle in self.resize_handles:
             self.annotation_window.scene.removeItem(handle)
         self.resize_handles.clear()
+        
+    def get_selection_thickness(self):
+        """Calculate appropriate line thickness based on current view dimensions."""
+        extent = self.annotation_window.viewportToScene()
+        view_width = round(extent.width())
+        view_height = round(extent.height())
+        return max(5, min(20, max(view_width, view_height) // 1000))
+
+    def get_item_center(self, item):
+        """Return the center point of the item."""
+        if isinstance(item, QGraphicsRectItem):
+            rect = item.rect()
+            return QPointF(rect.x() + rect.width() / 2, rect.y() + rect.height() / 2)
+        elif isinstance(item, QGraphicsPolygonItem):
+            return item.polygon().boundingRect().center()
+        elif isinstance(item, QGraphicsEllipseItem):
+            return item.rect().center()
+        return QPointF(0, 0)  # Default if item type is unsupported
+
+    def calculate_distance(self, point1, point2):
+        """Calculate the distance between two points."""
+        return (point1 - point2).manhattanLength()
