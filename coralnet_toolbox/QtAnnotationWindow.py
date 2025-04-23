@@ -495,6 +495,9 @@ class AnnotationWindow(QGraphicsView):
 
     def select_annotations(self):
         """Select all annotations in the current image."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # First unselect any currently selected annotations
         self.unselect_annotations()
         
@@ -513,6 +516,9 @@ class AnnotationWindow(QGraphicsView):
                 
             # Use ctrl_pressed=True to add to selection without clearing
             self.select_annotation(annotation, ctrl_pressed=True)
+
+        # Make cursor normal again
+        QApplication.restoreOverrideCursor()
 
     def unselect_annotation(self, annotation):
         """Unselect a specific annotation."""
@@ -540,6 +546,9 @@ class AnnotationWindow(QGraphicsView):
 
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         # Create a copy to safely iterate through
         annotations_to_unselect = self.selected_annotations.copy()
         
@@ -563,6 +572,9 @@ class AnnotationWindow(QGraphicsView):
         
         # Update the viewport once for all changes
         self.viewport().update()
+        
+        # Make cursor normal again
+        QApplication.restoreOverrideCursor()
 
     def load_annotation(self, annotation):
         """Load a single annotation into the scene."""
