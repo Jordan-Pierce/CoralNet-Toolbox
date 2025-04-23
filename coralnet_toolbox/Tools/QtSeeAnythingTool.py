@@ -98,7 +98,7 @@ class SeeAnythingTool(Tool):
         self.results = None
 
         # Update the viewport
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update()  
 
     def get_workarea_thickness(self):
         """Calculate appropriate line thickness based on current view dimensions."""
@@ -176,8 +176,9 @@ class SeeAnythingTool(Tool):
         self.image = self.original_image[top:bottom, left:right]
 
         self.annotation_window.setCursor(Qt.CrossCursor)
-        self.annotation_window.viewport().update()
-
+        
+        self.annotation_window.scene.update()  
+        
     def create_rectangle_graphics(self):
         """
         Create a new rectangle graphics item for drawing with the selected label color.
@@ -193,7 +194,9 @@ class SeeAnythingTool(Tool):
 
             # Remove current rectangle being drawn if it exists
             if self.current_rect_graphics:
-                self.annotation_window.scene.removeItem(self.current_rect_graphics)
+                if self.current_rect_graphics in self.annotation_window.scene.items():
+                    self.annotation_window.scene.removeItem(self.current_rect_graphics)
+                self.current_rect_graphics = None
 
             # Create a new rectangle graphics item
             self.current_rect_graphics = QGraphicsRectItem(rect)
@@ -233,8 +236,13 @@ class SeeAnythingTool(Tool):
         Add the completed rectangle to the list of rectangles and their graphics.
         """
         if self.current_rect_graphics:
-            # Add the current rectangle graphics item to the list
-            self.rectangle_items.append(self.current_rect_graphics)
+            # Add the current rectangle graphics item to the list if it's in the scene
+            if self.current_rect_graphics in self.annotation_window.scene.items():
+                self.rectangle_items.append(self.current_rect_graphics)
+            else:
+                # If it's not in the scene anymore for some reason, don't track it
+                self.current_rect_graphics = None
+                return
 
             # Calculate rectangle coordinates relative to working area
             working_area_top_left = self.working_area.rect().topLeft()
@@ -253,8 +261,10 @@ class SeeAnythingTool(Tool):
             rectangle = np.array([top_left.x(), top_left.y(), bottom_right.x(), bottom_right.y()])
             self.rectangles.append(rectangle)
 
-            # Reset the current rectangle graphics item
+            # Reset the current rectangle graphics item without removing from scene
+            # It's now tracked in rectangle_items
             self.current_rect_graphics = None
+            
             # Set rectangles_processed to False since we have new user rectangles
             self.rectangles_processed = False  # Indicate prediction is needed
 
@@ -304,8 +314,8 @@ class SeeAnythingTool(Tool):
             self.start_point = None
             self.end_point = None
 
-        self.annotation_window.viewport().update()
-
+        self.annotation_window.scene.update()  
+        
     def mouseMoveEvent(self, event: QMouseEvent):
         """
         Handles the mouse move event.
@@ -318,8 +328,8 @@ class SeeAnythingTool(Tool):
             self.end_point = self.annotation_window.mapToScene(event.pos())
             self.update_rectangle_graphics()
 
-        self.annotation_window.viewport().update()
-
+        self.annotation_window.scene.update()  
+        
     def keyPressEvent(self, event: QKeyEvent):
         """
         Handles the key press event.
@@ -369,8 +379,8 @@ class SeeAnythingTool(Tool):
             else:
                 self.clear_all_rectangles()  # Clears user input rectangles
 
-        self.annotation_window.viewport().update()
-
+        self.annotation_window.scene.update()  
+        
     def create_annotations_from_rectangles(self):
         """
         Create annotations based on the user-drawn rectangles.
@@ -412,7 +422,7 @@ class SeeAnythingTool(Tool):
                                              max_area_thresh=self.main_window.get_area_thresh_max())
         # Merge
         if self.results:
-            results = results_processor.merge_results([self.results, results])
+            results = results_processor.combine_results([self.results, results])
             
         # Filter
         self.results = results_processor.apply_filters(results)
@@ -489,8 +499,8 @@ class SeeAnythingTool(Tool):
                 # Create the rectangle annotation and add it to self.annotations
                 self.create_rectangle_annotation(box_abs, confidence, transparency)
 
-        self.annotation_window.viewport().update()
-
+        self.annotation_window.scene.update()  
+        
         # Make cursor normal
         QApplication.restoreOverrideCursor()
 
@@ -578,6 +588,9 @@ class SeeAnythingTool(Tool):
         progress_bar.stop_progress()
         progress_bar.close()
         progress_bar = None
+
+        # Clear all rectangles explicitly before clearing the working area
+        self.clear_all_rectangles()
 
         # Clear the working area
         self.cancel_working_area()
@@ -682,7 +695,7 @@ class SeeAnythingTool(Tool):
         # Clear the list holding the unconfirmed annotations
         self.annotations = []
 
-        self.annotation_window.viewport().update()
+        self.annotation_window.scene.update() 
 
     def clear_rectangle_graphics(self):
         """
@@ -691,20 +704,33 @@ class SeeAnythingTool(Tool):
         # Remove all rectangle graphics from scene
         for rect_item in self.rectangle_items:
             if rect_item in self.annotation_window.scene.items():
+                # Ensure any child items are removed first (like borders or handles)
+                child_items = rect_item.childItems()
+                for child in child_items:
+                    self.annotation_window.scene.removeItem(child)
+                
+                # Remove the rectangle item itself
                 self.annotation_window.scene.removeItem(rect_item)
+            rect_item = None  # Explicitly dereference
 
         # Clear the rectangle graphics if one is being drawn
         if self.current_rect_graphics:
             if self.current_rect_graphics in self.annotation_window.scene.items():
+                # Remove any child items first
+                child_items = self.current_rect_graphics.childItems()
+                for child in child_items:
+                    self.annotation_window.scene.removeItem(child)
+                    
                 self.annotation_window.scene.removeItem(self.current_rect_graphics)
             self.current_rect_graphics = None
 
         # Reset the graphics list
         self.rectangle_items = []
         
-        # Force update to ensure graphics are removed visually
+        # Force a full scene update and repaint
+        self.annotation_window.scene.update()
         self.annotation_window.viewport().update()
-
+        
     def clear_rectangle_data(self):
         """
         Clear rectangle data structures but keep the graphics.
@@ -744,3 +770,7 @@ class SeeAnythingTool(Tool):
 
         self.annotations = []
         self.results = None
+        
+        # Force update to ensure graphics are removed visually
+        self.annotation_window.scene.update()  
+        
