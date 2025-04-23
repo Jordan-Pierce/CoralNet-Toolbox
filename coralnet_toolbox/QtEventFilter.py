@@ -74,6 +74,13 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Down:
                     self.image_window.cycle_next_image()
                     return True
+                
+                # Delete (backspace or delete key) selected annotations when select tool is active
+                if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                    if self.main_window.select_tool_action.isChecked():
+                        if self.annotation_window.selected_annotations:
+                            self.annotation_window.delete_selected_annotations()
+                    return True
 
             # Handle Ctrl + Shift + S for saving project
             if event.key() == Qt.Key_S and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
@@ -82,15 +89,29 @@ class GlobalEventFilter(QObject):
 
             # Select all annotations on < key press with Shift+Ctrl
             if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
-                if self.main_window.select_tool_action.isChecked():
-                    self.annotation_window.select_annotations()
-                    return True
+                if not self.main_window.select_tool_action.isChecked():
+                    # Untoggle all tools first (clear buttons)
+                    self.main_window.untoggle_all_tools()
+                    # Switch to select tool in main window (sets button)
+                    self.main_window.handle_tool_changed("select")
+                    # Set the select tool in the annotation window (sets tool)
+                    self.annotation_window.set_selected_tool("select")
+                
+                self.annotation_window.select_annotations()
+                return True
 
             # Unselect all annotations on > key press with Shift+Ctrl
             if event.key() == Qt.Key_Greater and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
-                if self.main_window.select_tool_action.isChecked():
-                    self.annotation_window.unselect_annotations()
-                    return True
+                if not self.main_window.select_tool_action.isChecked():
+                    # Untoggle all tools first (clear buttons)
+                    self.main_window.untoggle_all_tools()
+                    # Switch to select tool in main window (sets button)
+                    self.main_window.handle_tool_changed("select")
+                    # Set the select tool in the annotation window (sets tool)
+                    self.annotation_window.set_selected_tool("select")
+                
+                self.annotation_window.unselect_annotations()
+                return True
 
             # Handle Escape key for exiting program
             if event.key() == Qt.Key_Escape:

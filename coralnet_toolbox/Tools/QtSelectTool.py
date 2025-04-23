@@ -3,7 +3,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QPen, QBrush
+from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -54,6 +54,18 @@ class SelectTool(Tool):
         if event.button() == Qt.LeftButton:
             position = self.annotation_window.mapToScene(event.pos())
             items = self.get_clickable_items(position)
+            
+            # First check if resize handles exist
+            if self.resize_handles:
+                # Then check if both Ctrl+Shift are pressed
+                if (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier):
+                    for item in items:
+                        if item in self.resize_handles:
+                            handle_name = item.data(1)
+                            if handle_name and len(self.annotation_window.selected_annotations) == 1:
+                                self.resize_handle = handle_name
+                                self.resizing = True
+                                return
 
             if event.modifiers() & Qt.ControlModifier:
                 self.rectangle_selection = True
@@ -65,7 +77,9 @@ class SelectTool(Tool):
                 # Add the selection rectangle to the scene
                 self.annotation_window.scene.addItem(self.selection_rectangle)
 
+            # Get the selected annotation based on the clicked position
             selected_annotation = self.select_annotation(position, items, event.modifiers())
+            
             if selected_annotation:
                 self.init_drag_or_resize(selected_annotation, position, event.modifiers())
                 
@@ -102,9 +116,10 @@ class SelectTool(Tool):
 
     def keyPressEvent(self, event):
         """Handle key press events to show resize handles and process hotkeys."""
-        # Handle shift for resize handles
-        if len(self.annotation_window.selected_annotations) == 1 and event.modifiers() & Qt.ShiftModifier:
-            self.display_resize_handles(self.annotation_window.selected_annotations[0])
+        # Handle Ctrl+Shift for resize handles
+        if len(self.annotation_window.selected_annotations) == 1:
+            if event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier:
+                self.display_resize_handles(self.annotation_window.selected_annotations[0])
             
         # Handle Ctrl+Spacebar to update annotation with top machine confidence
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Space:
@@ -112,7 +127,8 @@ class SelectTool(Tool):
 
     def keyReleaseEvent(self, event):
         """Handle key release events to hide resize handles."""
-        if not event.modifiers() & Qt.ShiftModifier:
+        # Hide resize handles if either Ctrl or Shift is released
+        if not (event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier):
             self.remove_resize_handles()
             
     def update_with_top_machine_confidence(self):
@@ -157,7 +173,12 @@ class SelectTool(Tool):
     def get_clickable_items(self, position):
         """Get items that can be clicked in the scene."""
         items = self.annotation_window.scene.items(position)
-        return [item for item in items if isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem))]
+        # Include ellipse items (resize handles) in clickable items
+        clickable_items = []
+        for item in items:
+            if isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem)):
+                clickable_items.append(item)
+        return clickable_items
 
     def select_annotation(self, position, items, modifiers):
         """Select an annotation based on the click position."""
@@ -268,7 +289,7 @@ class SelectTool(Tool):
         self.annotation_window.drag_start_pos = position
         self.move_start_pos = position
 
-        if modifiers & Qt.ShiftModifier:
+        if (modifiers & Qt.ShiftModifier) and (modifiers & Qt.ControlModifier):
             self.resize_handle = self.detect_resize_handle(selected_annotation, position)
             if self.resize_handle:
                 self.resizing = True
@@ -360,9 +381,23 @@ class SelectTool(Tool):
                                            point.y() - handle_size // 2,
                                            handle_size,
                                            handle_size)
-
-            ellipse.setPen(QPen(annotation.label.color))
-            ellipse.setBrush(QBrush(annotation.label.color))
+            
+            # Make handle more visible with a contrasting color and thicker border
+            handle_color = QColor(annotation.label.color)
+            border_color = QColor(255 - handle_color.red(), 
+                                  255 - handle_color.green(), 
+                                  255 - handle_color.blue())
+            
+            ellipse.setPen(QPen(border_color, 2))
+            ellipse.setBrush(QBrush(handle_color))
+            
+            # Store the handle name as data in the item
+            ellipse.setData(1, handle)
+            
+            # Make the handle shape well-defined for hit detection
+            ellipse.setAcceptHoverEvents(True)
+            ellipse.setAcceptedMouseButtons(Qt.LeftButton)
+            
             self.annotation_window.scene.addItem(ellipse)
             self.resize_handles.append(ellipse)
 
