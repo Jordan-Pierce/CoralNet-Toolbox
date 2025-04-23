@@ -547,6 +547,98 @@ class PolygonAnnotation(Annotation):
                 new_annotation.create_cropped_image(new_annotation.rasterio_src)
         
         return new_annotation
+    
+    @classmethod
+    def cut(cls, annotations: list, cutting_points: list):
+        """Cut polygon annotations where they intersect with a cutting shape.
+        
+        Args:
+            annotations: List of PolygonAnnotation objects to process.
+            cutting_points: List of QPointF objects defining a cutting line or polygon.
+            
+        Returns:
+            List of new PolygonAnnotation objects resulting from the cuts.
+        """
+        if not annotations or not cutting_points or len(cutting_points) < 2:
+            return annotations
+        
+        result_annotations = []
+        
+        # Create a polygon from the cutting points
+        cutting_polygon = QPolygonF(cutting_points)
+        
+        for annotation in annotations:
+            # Get the polygon points
+            polygon_points = annotation.points
+            polygon = QPolygonF(polygon_points)
+            
+            # Check if the cutting shape intersects this polygon
+            if not any(cutting_polygon.containsPoint(polygon.at(i), Qt.WindingFill) for i in range(polygon.count())):
+                # If no intersection, keep the original annotation unchanged
+                result_annotations.append(annotation)
+                continue
+                        
+            # Convert annotation polygon and cutting polygon to numpy arrays
+            anno_points_np = np.array([(point.x(), point.y()) for point in polygon_points], dtype=np.int32)
+            cutting_points_np = np.array([(point.x(), point.y()) for point in cutting_points], dtype=np.int32)
+            
+            # Create masks
+            min_x = min(np.min(anno_points_np[:, 0]), np.min(cutting_points_np[:, 0])) - 10
+            min_y = min(np.min(anno_points_np[:, 1]), np.min(cutting_points_np[:, 1])) - 10
+            max_x = max(np.max(anno_points_np[:, 0]), np.max(cutting_points_np[:, 0])) + 10
+            max_y = max(np.max(anno_points_np[:, 1]), np.max(cutting_points_np[:, 1])) + 10
+            
+            width = int(max_x - min_x)
+            height = int(max_y - min_y)
+            
+            # Adjust coordinates to be relative to the mask origin
+            anno_points_adj = anno_points_np.copy()
+            anno_points_adj[:, 0] -= min_x
+            anno_points_adj[:, 1] -= min_y
+            
+            cutting_points_adj = cutting_points_np.copy()
+            cutting_points_adj[:, 0] -= min_x
+            cutting_points_adj[:, 1] -= min_y
+            
+            # Create masks
+            poly_mask = np.zeros((height, width), dtype=np.uint8)
+            cutting_mask = np.zeros((height, width), dtype=np.uint8)
+            
+            cv2.fillPoly(poly_mask, [anno_points_adj], 255)
+            cv2.fillPoly(cutting_mask, [cutting_points_adj], 255)
+            
+            # Get the cut parts (parts that don't overlap with the cutting shape)
+            result_mask = cv2.subtract(poly_mask, cutting_mask)
+            
+            # Find contours in the result mask
+            contours, _ = cv2.findContours(result_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                # Simplify the contour
+                epsilon = 0.001 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                
+                # Convert back to original coordinate system and to QPointF
+                new_points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx]
+                
+                # Create a new polygon annotation
+                new_anno = cls(
+                    points=new_points,
+                    short_label_code=annotation.label.short_label_code,
+                    long_label_code=annotation.label.long_label_code,
+                    color=annotation.label.color,
+                    image_path=annotation.image_path,
+                    label_id=annotation.label.id
+                )
+                
+                # Transfer rasterio source if available
+                if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
+                    new_anno.rasterio_src = annotation.rasterio_src
+                    new_anno.create_cropped_image(new_anno.rasterio_src)
+                    
+                result_annotations.append(new_anno)
+        
+        return result_annotations
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation for serialization."""

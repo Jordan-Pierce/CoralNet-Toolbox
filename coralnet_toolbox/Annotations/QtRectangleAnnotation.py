@@ -313,6 +313,114 @@ class RectangleAnnotation(Annotation):
                 new_annotation.create_cropped_image(new_annotation.rasterio_src)
         
         return new_annotation
+    
+    @classmethod
+    def cut(cls, annotations: list, cutting_points: list):
+        """Cut rectangle annotations where they intersect with a cutting shape.
+        
+        Args:
+            annotations: List of RectangleAnnotation objects to process.
+            cutting_points: List of QPointF objects defining a cutting line or polygon.
+            
+        Returns:
+            List of new RectangleAnnotation objects resulting from the cuts.
+        """
+        if not annotations or not cutting_points or len(cutting_points) < 2:
+            return annotations
+        
+        result_annotations = []
+        
+        # Create a polygon from the cutting points for intersection testing
+        cutting_polygon = QPolygonF(cutting_points)
+        
+        for annotation in annotations:
+            # Get the polygon representation of the rectangle
+            rect_polygon = annotation.get_polygon()
+            
+            # Check if the cutting shape intersects this rectangle
+            if not rect_polygon.intersects(cutting_polygon):
+                # If no intersection, keep the original annotation unchanged
+                result_annotations.append(annotation)
+                continue
+                
+            # Get rectangle bounds
+            x1, y1 = annotation.top_left.x(), annotation.top_left.y()
+            x2, y2 = annotation.bottom_right.x(), annotation.bottom_right.y()
+            
+            # Find center point of the rectangle
+            mid_x = (x1 + x2) / 2
+            mid_y = (y1 + y2) / 2
+            
+            # Create 4 sub-rectangles with their polygon representations
+            sub_rectangles = [
+                # Top-left quadrant
+                {
+                    'top_left': QPointF(x1, y1),
+                    'bottom_right': QPointF(mid_x, mid_y),
+                    'polygon': QPolygonF([
+                        QPointF(x1, y1),
+                        QPointF(mid_x, y1),
+                        QPointF(mid_x, mid_y),
+                        QPointF(x1, mid_y)
+                    ])
+                },
+                # Top-right quadrant
+                {
+                    'top_left': QPointF(mid_x, y1),
+                    'bottom_right': QPointF(x2, mid_y),
+                    'polygon': QPolygonF([
+                        QPointF(mid_x, y1),
+                        QPointF(x2, y1),
+                        QPointF(x2, mid_y),
+                        QPointF(mid_x, mid_y)
+                    ])
+                },
+                # Bottom-left quadrant
+                {
+                    'top_left': QPointF(x1, mid_y),
+                    'bottom_right': QPointF(mid_x, y2),
+                    'polygon': QPolygonF([
+                        QPointF(x1, mid_y),
+                        QPointF(mid_x, mid_y),
+                        QPointF(mid_x, y2),
+                        QPointF(x1, y2)
+                    ])
+                },
+                # Bottom-right quadrant
+                {
+                    'top_left': QPointF(mid_x, mid_y),
+                    'bottom_right': QPointF(x2, y2),
+                    'polygon': QPolygonF([
+                        QPointF(mid_x, mid_y),
+                        QPointF(x2, mid_y),
+                        QPointF(x2, y2),
+                        QPointF(mid_x, y2)
+                    ])
+                }
+            ]
+            
+            # Check each sub-rectangle for intersection with the cutting shape
+            for sub_rect in sub_rectangles:
+                # If no intersection with cutting shape, create a new annotation
+                if not sub_rect['polygon'].intersects(cutting_polygon):
+                    new_anno = cls(
+                        top_left=sub_rect['top_left'],
+                        bottom_right=sub_rect['bottom_right'],
+                        short_label_code=annotation.label.short_label_code,
+                        long_label_code=annotation.label.long_label_code,
+                        color=annotation.label.color,
+                        image_path=annotation.image_path,
+                        label_id=annotation.label.id
+                    )
+                    
+                    # Transfer rasterio source if available
+                    if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
+                        new_anno.rasterio_src = annotation.rasterio_src
+                        new_anno.create_cropped_image(new_anno.rasterio_src)
+                        
+                    result_annotations.append(new_anno)
+        
+        return result_annotations
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation."""
