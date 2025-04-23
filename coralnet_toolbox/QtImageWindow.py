@@ -33,6 +33,7 @@ class ImageWindow(QWidget):
     imageChanged = pyqtSignal()  # New signal for image change
 
     def __init__(self, main_window):
+        """Initialize the ImageWindow widget."""
         super().__init__()
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
@@ -241,15 +242,19 @@ class ImageWindow(QWidget):
         self.tableWidget.viewport().installEventFilter(self)
         
     def dragEnterEvent(self, event):
+        """Ignore drag enter events."""
         event.ignore()
 
     def dropEvent(self, event):
+        """Ignore drop events."""
         event.ignore()
 
     def dragMoveEvent(self, event):
+        """Ignore drag move events."""
         event.ignore()
         
     def dragLeaveEvent(self, event):
+        """Ignore drag leave events."""
         event.ignore()
         
     def eventFilter(self, source, event):
@@ -336,6 +341,7 @@ class ImageWindow(QWidget):
             QApplication.processEvents()
 
     def update_table_widget(self):
+        """Update the table widget with filtered image paths."""
         self.tableWidget.setRowCount(0)  # Clear the table
 
         # Center align the column headers
@@ -352,6 +358,7 @@ class ImageWindow(QWidget):
         self.update_table_selection()
         
     def update_table_row(self, path):
+        """Update a specific row in the table widget."""
         if path in self.filtered_image_paths:
             row = self.filtered_image_paths.index(path)
 
@@ -380,6 +387,7 @@ class ImageWindow(QWidget):
             self.tableWidget.setItem(row, 2, annotation_item)
 
     def update_table_selection(self):
+        """Update the selection in the table widget based on the selected image path."""
         if self.selected_image_path in self.filtered_image_paths:
             # Get the row index of the selected image
             row = self.filtered_image_paths.index(self.selected_image_path)
@@ -408,10 +416,12 @@ class ImageWindow(QWidget):
             self.tableWidget.clearSelection()
 
     def update_image_count_label(self):
+        """Update the label displaying the total number of images."""
         total_images = len(set(self.filtered_image_paths))
         self.image_count_label.setText(f"Total Images: {total_images}")
 
     def update_current_image_index_label(self):
+        """Update the label displaying the index of the currently selected image."""
         if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
             index = self.filtered_image_paths.index(self.selected_image_path) + 1
             self.current_image_index_label.setText(f"Current Image: {index}")
@@ -419,6 +429,7 @@ class ImageWindow(QWidget):
             self.current_image_index_label.setText("Current Image: None")
 
     def update_image_annotations(self, image_path):
+        """Update annotation-related information for a specific image."""
         if image_path in self.image_dict:
             # Check for any annotations
             annotations = self.annotation_window.get_image_annotations(image_path)
@@ -434,10 +445,12 @@ class ImageWindow(QWidget):
             self.update_table_row(image_path)
             
     def update_current_image_annotations(self):
+        """Update annotations for the currently selected image."""
         if self.selected_image_path:
             self.update_image_annotations(self.selected_image_path)
 
     def update_annotation_count(self, annotation_id):
+        """Update the annotation count for an image when an annotation is created or deleted."""
         if annotation_id in self.annotation_window.annotations_dict:
             # Get the image path associated with the annotation
             image_path = self.annotation_window.annotations_dict[annotation_id].image_path
@@ -519,12 +532,14 @@ class ImageWindow(QWidget):
             QApplication.restoreOverrideCursor()
 
     def closeEvent(self, event):
+        """Handle the window close event."""
         # Hide tooltip when window is closed
         self.hide_image_preview()
         QApplication.restoreOverrideCursor()
         super().closeEvent(event)
 
     def show_context_menu(self, position):
+        """Show the context menu for the table widget."""
         # Get selected checkboxes
         selected_paths = self._get_selected_image_paths()
 
@@ -552,6 +567,7 @@ class ImageWindow(QWidget):
         return selected_paths
 
     def delete_selected_images(self):
+        """Delete images corresponding to the checked rows."""
         selected_paths = self._get_selected_image_paths()
         
         if not selected_paths:
@@ -568,6 +584,7 @@ class ImageWindow(QWidget):
             self.delete_images(selected_paths)
                 
     def delete_selected_images_annotations(self):
+        """Delete annotations for images corresponding to the checked rows."""
         selected_paths = self._get_selected_image_paths()
         
         if not selected_paths:
@@ -729,6 +746,7 @@ class ImageWindow(QWidget):
             return False
 
     def tableWidget_keyPressEvent(self, event):
+        """Handle key press events in the table widget, ignoring up/down arrows."""
         if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
             # Ignore up and down arrow keys
             return
@@ -737,6 +755,7 @@ class ImageWindow(QWidget):
             super(QTableWidget, self.tableWidget).keyPressEvent(event)
 
     def cycle_previous_image(self):
+        """Load the previous image in the filtered list."""
         if not self.filtered_image_paths:
             return
 
@@ -745,6 +764,7 @@ class ImageWindow(QWidget):
         self.load_image_by_path(self.filtered_image_paths[new_index])
 
     def cycle_next_image(self):
+        """Load the next image in the filtered list."""
         if not self.filtered_image_paths:
             return
 
@@ -753,6 +773,7 @@ class ImageWindow(QWidget):
         self.load_image_by_path(self.filtered_image_paths[new_index])
 
     def filter_images(self):
+        """Filter the images based on the current search and filter criteria."""
         # Store the currently selected image path before filtering
         current_selected_path = self.selected_image_path
 
@@ -884,11 +905,13 @@ class ImageWindow(QWidget):
         return path
 
     def load_first_filtered_image(self):
+        """Load the first image in the currently filtered list."""
         if self.filtered_image_paths:
             self.annotation_window.clear_scene()
             self.load_image_by_path(self.filtered_image_paths[0])
             
     def update_search_bars(self):
+        """Update the items in the image and label search bars."""
         # Store current search texts
         current_image_search = self.search_bar_images.currentText()
         current_label_search = self.search_bar_labels.currentText()
@@ -920,12 +943,14 @@ class ImageWindow(QWidget):
             self.search_bar_labels.setPlaceholderText("Type to search labels")
 
     def select_all_checkboxes(self):
+        """Check all checkboxes in the table widget."""
         for row in range(self.tableWidget.rowCount()):
             checkbox = self.tableWidget.cellWidget(row, 0)
             if checkbox:
                 checkbox.setChecked(True)
 
     def deselect_all_checkboxes(self):
+        """Uncheck all checkboxes in the table widget."""
         for row in range(self.tableWidget.rowCount()):
             checkbox = self.tableWidget.cellWidget(row, 0)
             if checkbox:
@@ -937,6 +962,7 @@ class ImagePreviewTooltip(QFrame):
     A custom tooltip widget that displays an image preview and information text.
     """
     def __init__(self, parent=None):
+        """Initialize the ImagePreviewTooltip."""
         super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
         
         # Configure appearance

@@ -17,6 +17,7 @@ class ConfidenceBar(QFrame):
     barClicked = pyqtSignal(object)  # Define a signal that takes an object (label)
 
     def __init__(self, confidence_window, label, confidence, parent=None):
+        """Initialize the ConfidenceBar widget."""
         super().__init__(parent)
         self.confidence_window = confidence_window
 
@@ -26,6 +27,7 @@ class ConfidenceBar(QFrame):
         self.setFixedHeight(20)  # Set a fixed height for the bars
 
     def paintEvent(self, event):
+        """Handle the paint event to draw the confidence bar."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
@@ -46,17 +48,20 @@ class ConfidenceBar(QFrame):
         painter.setPen(Qt.black)
 
     def mousePressEvent(self, event):
+        """Handle mouse press events on the bar."""
         super().mousePressEvent(event)
         if event.button() == Qt.LeftButton:
             self.handle_click()
 
     def handle_click(self):
+        """Handle the logic when the bar is clicked."""
         # Check if the Selector tool is active
         if self.confidence_window.main_window.annotation_window.selected_tool == "select":
             # Emit the signal with the label object
             self.barClicked.emit(self.label)
 
     def enterEvent(self, event):
+        """Handle mouse enter events to change the cursor."""
         super().enterEvent(event)
         # Change cursor based on the active tool
         if self.confidence_window.main_window.annotation_window.selected_tool == "select":
@@ -65,12 +70,14 @@ class ConfidenceBar(QFrame):
             self.setCursor(QCursor(Qt.ForbiddenCursor))  # Use a forbidden cursor icon
 
     def leaveEvent(self, event):
+        """Handle mouse leave events to reset the cursor."""
         super().leaveEvent(event)
         self.setCursor(QCursor(Qt.ArrowCursor))  # Reset to the default cursor
 
 
 class ConfidenceWindow(QWidget):
     def __init__(self, main_window, parent=None):
+        """Initialize the ConfidenceWindow widget."""
         super().__init__(parent)
         self.main_window = main_window
         self.label_window = main_window.label_window
@@ -109,11 +116,13 @@ class ConfidenceWindow(QWidget):
         self.layout.addWidget(self.groupBox)
 
     def resizeEvent(self, event):
+        """Handle resize events for the widget."""
         super().resizeEvent(event)
         self.update_blank_pixmap()
         self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
 
     def init_graphics_view(self):
+        """Initialize the graphics view for displaying the cropped image."""
         self.graphics_view = QGraphicsView(self)
         self.scene = QGraphicsScene(self)
         self.graphics_view.setScene(self.scene)
@@ -121,6 +130,7 @@ class ConfidenceWindow(QWidget):
         self.update_blank_pixmap()
 
     def init_bar_chart_widget(self):
+        """Initialize the widget and layout for the confidence bar chart."""
         self.bar_chart_widget = QWidget()
         self.bar_chart_layout = QVBoxLayout(self.bar_chart_widget)
         self.bar_chart_layout.setContentsMargins(0, 0, 0, 0)
@@ -128,6 +138,7 @@ class ConfidenceWindow(QWidget):
         self.groupBoxLayout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
 
     def update_blank_pixmap(self):
+        """Update the graphics view with a blank transparent pixmap."""
         view_size = self.graphics_view.size()
         new_pixmap = QPixmap(view_size)
         new_pixmap.fill(Qt.transparent)
@@ -135,6 +146,7 @@ class ConfidenceWindow(QWidget):
         self.scene.addPixmap(new_pixmap)
 
     def update_annotation(self, annotation):
+        """Update the currently displayed annotation data."""
         if annotation:
             self.annotation = annotation
             self.user_confidence = annotation.user_confidence
@@ -204,6 +216,7 @@ class ConfidenceWindow(QWidget):
             print(f"Error displaying cropped image: {e}")
 
     def create_bar_chart(self):
+        """Create and populate the confidence bar chart."""
         self.clear_layout(self.bar_chart_layout)
 
         labels, confidences = self.get_chart_data()
@@ -216,6 +229,7 @@ class ConfidenceWindow(QWidget):
             self.add_bar_to_layout(bar_widget, label, confidence)
 
     def get_chart_data(self):
+        """Retrieve the top 5 labels and confidences from the current chart dictionary."""
         keys = list(self.chart_dict.keys())[:5]
         return (
             keys,
@@ -223,6 +237,7 @@ class ConfidenceWindow(QWidget):
         )
 
     def add_bar_to_layout(self, bar_widget, label, confidence):
+        """Add a single confidence bar widget to the bar chart layout."""
         bar_layout = QHBoxLayout(bar_widget)
         bar_layout.setContentsMargins(5, 2, 5, 2)
 
@@ -239,6 +254,7 @@ class ConfidenceWindow(QWidget):
         self.bar_chart_layout.addWidget(bar_widget)
 
     def clear_layout(self, layout):
+        """Remove all widgets from the specified layout."""
         for i in reversed(range(layout.count())):
             layout.itemAt(i).widget().setParent(None)
 
@@ -256,6 +272,7 @@ class ConfidenceWindow(QWidget):
         self.dimensions_label.setText("")
 
     def handle_bar_click(self, label):
+        """Handle clicks on a confidence bar to update the annotation."""
         # Update the confidences to whichever bar was selected
         self.annotation.update_user_confidence(label)
         # Update the label to whichever bar was selected

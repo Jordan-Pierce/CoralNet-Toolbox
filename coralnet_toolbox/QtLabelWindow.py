@@ -24,6 +24,7 @@ class Label(QWidget):
     label_deleted = pyqtSignal(object)  # Signal to emit when the label is deleted
 
     def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None):
+        """Initialize the Label widget."""
         super().__init__()
 
         self.id = str(uuid.uuid4()) if label_id is None else label_id
@@ -47,6 +48,7 @@ class Label(QWidget):
         self.drag_start_position = None
 
     def mousePressEvent(self, event):
+        """Handle mouse press events for selection and initiating drag."""
         if event.button() == Qt.LeftButton:
             self.is_selected = not self.is_selected
             self.update_selection()
@@ -59,6 +61,7 @@ class Label(QWidget):
             self.drag_start_position = event.pos()
 
     def mouseMoveEvent(self, event):
+        """Handle mouse move events for dragging."""
         if event.buttons() == Qt.RightButton and self.drag_start_position:
             drag = QDrag(self)
             mime_data = QMimeData()
@@ -67,40 +70,49 @@ class Label(QWidget):
             drag.exec_(Qt.MoveAction)
 
     def mouseReleaseEvent(self, event):
+        """Handle mouse release events to stop dragging."""
         if event.button() == Qt.RightButton:
             self.drag_start_position = None
 
     def select(self):
+        """Select the label."""
         if not self.is_selected:
             self.is_selected = True
             self.update_selection()
             self.selected.emit(self)
 
     def deselect(self):
+        """Deselect the label."""
         if self.is_selected:
             self.is_selected = False
             self.update_selection()
 
     def update_color(self):
+        """Trigger a repaint to reflect color changes."""
         self.update()  # Trigger a repaint
 
     def update_selection(self):
+        """Trigger a repaint to reflect selection changes."""
         self.update()  # Trigger a repaint
 
     def update_label_color(self, new_color: QColor):
+        """Update the label's color and emit the colorChanged signal."""
         if self.color != new_color:
             self.color = new_color
             self.update_color()
             self.colorChanged.emit(new_color)
 
     def update_transparency(self, transparency):
+        """Update the label's transparency value."""
         self.transparency = transparency
 
     def delete_label(self):
+        """Emit the label_deleted signal and schedule the widget for deletion."""
         self.label_deleted.emit(self)
         self.deleteLater()
 
     def paintEvent(self, event):
+        """Paint the label widget with its color, text, and selection state."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
@@ -134,6 +146,7 @@ class Label(QWidget):
         super().paintEvent(event)
 
     def to_dict(self):
+        """Convert the label's properties to a dictionary."""
         return {
             'id': self.id,
             'short_label_code': self.short_label_code,
@@ -143,12 +156,14 @@ class Label(QWidget):
 
     @classmethod
     def from_dict(cls, data):
+        """Create a Label instance from a dictionary."""
         return cls(data['short_label_code'], 
                    data['long_label_code'], 
                    QColor(*data['color']),
                    data['id'])
 
     def __repr__(self):
+        """Return a string representation of the Label object."""
         return (f"Label(id={self.id}, "
                 f"short_label_code={self.short_label_code}, "
                 f"long_label_code={self.long_label_code}, "
@@ -160,6 +175,7 @@ class LabelWindow(QWidget):
     transparencyChanged = pyqtSignal(int)
 
     def __init__(self, main_window):
+        """Initialize the LabelWindow widget."""
         super().__init__()
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
@@ -266,15 +282,18 @@ class LabelWindow(QWidget):
         self.setAcceptDrops(True)
 
     def resizeEvent(self, event):
+        """Handle resize events to update the label grid layout."""
         super().resizeEvent(event)
         self.update_labels_per_row()
         self.reorganize_labels()
         
     def dragEnterEvent(self, event):
+        """Accept drag events if they contain text."""
         if event.mimeData().hasText():
             event.acceptProposedAction()
 
     def dropEvent(self, event):
+        """Handle drop events to reorder labels."""
         label_id = event.mimeData().text()
         label = self.get_label_by_id(label_id)
         if label:
@@ -283,26 +302,31 @@ class LabelWindow(QWidget):
             self.reorganize_labels()
 
     def calculate_new_index(self, pos):
+        """Calculate the grid index based on the drop position."""
         row = pos.y() // self.label_width
         col = pos.x() // self.label_width
         return row * self.labels_per_row + col
 
     def update_label_count(self):
+        """Update the label count display."""
         count = len(self.labels)
         self.label_count_display.setText(f"# Labels: {count}")
 
     def update_labels_per_row(self):
+        """Calculate and update the number of labels per row based on width."""
         available_width = self.scroll_area.width() - self.scroll_area.verticalScrollBar().width()
         self.labels_per_row = max(1, available_width // self.label_width)
         self.scroll_content.setFixedWidth(self.labels_per_row * self.label_width)
 
     def reorganize_labels(self):
+        """Rearrange labels in the grid layout based on the current order and labels_per_row."""
         for i, label in enumerate(self.labels):
             row = i // self.labels_per_row
             col = i % self.labels_per_row
             self.grid_layout.addWidget(label, row, col)
 
     def open_add_label_dialog(self):
+        """Open the dialog to add a new label."""
         dialog = AddLabelDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             short_label_code, long_label_code, color = dialog.get_label_details()
@@ -315,6 +339,7 @@ class LabelWindow(QWidget):
                 self.set_active_label(new_label)
 
     def open_edit_label_dialog(self):
+        """Open the dialog to edit the active label."""
         if self.active_label:
             dialog = EditLabelDialog(self, self.active_label)
             if dialog.exec_() == QDialog.Accepted:
@@ -324,6 +349,7 @@ class LabelWindow(QWidget):
                 self.reorganize_labels()
 
     def add_label(self, short_label_code, long_label_code, color, label_id=None):
+        """Add a new label to the window."""
         # Create the label
         label = Label(short_label_code, long_label_code, color, label_id)
         # Connect
@@ -342,7 +368,7 @@ class LabelWindow(QWidget):
         return label
 
     def set_active_label(self, selected_label):
-        
+        """Set the currently active label, updating UI and emitting signals."""
         if self.active_label and self.active_label != selected_label:
             # Deselect the active label
             self.deselect_active_label()
@@ -365,6 +391,7 @@ class LabelWindow(QWidget):
         self.scroll_area.ensureWidgetVisible(self.active_label)
 
     def set_label_transparency(self, transparency):
+        """Set the transparency for the active label and its associated annotations."""
         if not self.active_label:
             return
         
@@ -386,6 +413,7 @@ class LabelWindow(QWidget):
         QApplication.restoreOverrideCursor()
 
     def set_all_labels_transparency(self, transparency):
+        """Set the transparency for all labels and annotations."""
         for label in self.labels:
             label.update_transparency(transparency)
 
@@ -396,14 +424,17 @@ class LabelWindow(QWidget):
         self.annotation_window.viewport().update()
 
     def deselect_active_label(self):
+        """Deselect the currently active label."""
         if self.active_label:
             self.active_label.deselect()
 
     def delete_active_label(self):
+        """Delete the currently active label."""
         if self.active_label:
             self.delete_label(self.active_label)
 
     def update_annotations_with_label(self, label):
+        """Update selected annotations based on the properties of the given label."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
@@ -418,42 +449,49 @@ class LabelWindow(QWidget):
         QApplication.restoreOverrideCursor()
 
     def get_label_color(self, label_id):
+        """Get the color of a label by its ID."""
         for label in self.labels:
             if label.id == label_id:
                 return label.color
         return None
 
     def get_label_transparency(self, label_id):
+        """Get the transparency of a label by its ID."""
         for label in self.labels:
             if label.id == label_id:
                 return label.transparency
         return None
 
     def get_label_by_id(self, label_id):
+        """Find and return a label by its ID."""
         for label in self.labels:
             if label.id == label_id:
                 return label
         return None
 
     def get_label_by_codes(self, short_label_code, long_label_code):
+        """Find and return a label by its short and long codes."""
         for label in self.labels:
             if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
                 return label
         return None
 
     def get_label_by_short_code(self, short_label_code):
+        """Find and return a label by its short code."""
         for label in self.labels:
             if short_label_code == label.short_label_code:
                 return label
         return None
 
     def get_label_by_long_code(self, long_label_code):
+        """Find and return a label by its long code."""
         for label in self.labels:
             if long_label_code == label.long_label_code:
                 return label
         return None
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
+        """Check if a label with the given codes or ID already exists."""
         for label in self.labels:
             if label_id is not None and label.id == label_id:
                 return True
@@ -464,16 +502,19 @@ class LabelWindow(QWidget):
         return False
 
     def add_label_if_not_exists(self, short_label_code, long_label_code, color, label_id=None):
+        """Add a label only if it doesn't already exist."""
         if not self.label_exists(short_label_code, long_label_code, label_id):
             self.add_label(short_label_code, long_label_code, color, label_id)
 
     def set_selected_label(self, label_id):
+        """Set the active label based on the provided label ID."""
         for lbl in self.labels:
             if lbl.id == label_id:
                 self.set_active_label(lbl)
                 break
 
     def edit_labels(self, old_label, new_label, delete_old=False):
+        """Update annotations from old_label to new_label, optionally deleting the old one."""
         # Update annotations to use the new label
         for annotation in self.annotation_window.annotations_dict.values():
             if annotation.label.id == old_label.id:
@@ -498,6 +539,7 @@ class LabelWindow(QWidget):
             self.annotation_window.set_image(current_image_path)
 
     def delete_label(self, label):
+        """Delete the specified label and its associated annotations after confirmation."""
         if (label.short_label_code == "Review" and
                 label.long_label_code == "Review" and
                 label.color == QColor(255, 255, 255)):
@@ -544,6 +586,7 @@ class LabelWindow(QWidget):
         self.update_label_count()
 
     def handle_wasd_key(self, key):
+        """Handle WASD key presses to navigate the label grid."""
         if not self.active_label or self.label_locked:
             return
 
@@ -609,6 +652,7 @@ class LabelWindow(QWidget):
         self.label_locked = checked
 
     def unlock_label_lock(self):
+        """Unlock the label lock by unchecking the lock button."""
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
         
@@ -654,6 +698,7 @@ class LabelWindow(QWidget):
 
 class AddLabelDialog(QDialog):
     def __init__(self, label_window, parent=None):
+        """Initialize the AddLabelDialog."""
         super().__init__(parent)
         self.label_window = label_window
 
@@ -691,21 +736,26 @@ class AddLabelDialog(QDialog):
         self.update_color_button()
 
     def generate_random_color(self):
+        """Generate a random QColor."""
         return QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
     def update_color_button(self):
+        """Update the color button's background color."""
         self.color_button.setStyleSheet(f"background-color: {self.color.name()};")
 
     def select_color(self):
+        """Open a color dialog to select the label color."""
         color = QColorDialog.getColor(self.color, self, "Select Label Color")
         if color.isValid():
             self.color = color
             self.update_color_button()
 
     def get_label_details(self):
+        """Return the entered short label, long label, and selected color."""
         return self.short_label_input.text(), self.long_label_input.text(), self.color
 
     def validate_and_accept(self):
+        """Validate the input fields and accept the dialog if valid."""
         short_label_code = self.short_label_input.text().strip()
         long_label_code = self.long_label_input.text().strip()
 
@@ -722,6 +772,7 @@ class AddLabelDialog(QDialog):
 
 class EditLabelDialog(QDialog):
     def __init__(self, label_window, label, parent=None):
+        """Initialize the EditLabelDialog."""
         super().__init__(parent)
         self.label_window = label_window
         self.label = label
@@ -762,15 +813,18 @@ class EditLabelDialog(QDialog):
         self.update_color_button()
 
     def update_color_button(self):
+        """Update the color button's background color."""
         self.color_button.setStyleSheet(f"background-color: {self.color.name()};")
 
     def select_color(self):
+        """Open a color dialog to select the label color."""
         color = QColorDialog.getColor(self.color, self, "Select Label Color")
         if color.isValid():
             self.color = color
             self.update_color_button()
 
     def validate_and_accept(self):
+        """Validate the input fields, handle potential merges, and accept the dialog."""
         # Cannot edit Review
         if self.label.short_label_code == 'Review' and self.label.long_label_code == 'Review':
             QMessageBox.warning(self, 
