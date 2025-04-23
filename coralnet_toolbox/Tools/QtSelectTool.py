@@ -442,6 +442,7 @@ class SelectTool(Tool):
         selected_annotations = self.annotation_window.selected_annotations
         
         if len(selected_annotations) <= 1:
+            print("Need at least 2 annotations to combine.")
             return  # Need at least 2 annotations to combine
         
         # Check if all are the same type (only combine rectangles with rectangles, polygons with polygons)
@@ -478,6 +479,7 @@ class SelectTool(Tool):
         elif isinstance(selected_annotations[0], PolygonAnnotation):
             combined_annotation = PolygonAnnotation.combine(selected_annotations)
         else:
+            print("Failed to combine annotations. Unsupported annotation types.")
             return  # Unsupported annotation type
         
         if not combined_annotation:
