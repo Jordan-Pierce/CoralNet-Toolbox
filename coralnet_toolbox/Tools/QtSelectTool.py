@@ -1,14 +1,14 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor
+from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor, QPolygonF
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem, QMessageBox
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -17,7 +17,7 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 
 class SelectTool(Tool):
-    """Tool for selecting, moving, and resizing annotations."""
+    """Tool for selecting, moving, resizing, and cutting annotations."""
     
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
@@ -27,6 +27,7 @@ class SelectTool(Tool):
         self.resizing = False
         self.moving = False
         self.rectangle_selection = False
+        self.cutting_mode = False
         
         # Resize handle tracking
         self.resize_handle = None
@@ -41,6 +42,10 @@ class SelectTool(Tool):
         self.selection_rectangle = None
         self.selection_start_pos = None
 
+        # Cutting tool
+        self.cutting_points = []
+        self.cutting_polygon = None
+        
         # Connect signals
         self._connect_signals()
     
@@ -57,8 +62,14 @@ class SelectTool(Tool):
             self.annotation_window.set_annotation_size(delta=16 if delta > 0 else -16)
 
     def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press events to select annotations."""
+        """Handle mouse press events to select annotations or add cutting points."""
         if not self.annotation_window.cursorInWindow(event.pos()):
+            return
+
+        # If in cutting mode, add points to the cutting shape
+        if self.cutting_mode and event.button() == Qt.LeftButton:
+            position = self.annotation_window.mapToScene(event.pos())
+            self.add_cutting_point(position)
             return
 
         if event.button() == Qt.LeftButton:
@@ -90,6 +101,8 @@ class SelectTool(Tool):
             self.handle_resize(current_pos)
         elif self.moving:
             self._handle_annotation_move(current_pos)
+        # Don't need anything special for cutting mode mouse movement
+        # Points are only added on mouse press
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events to stop moving, resizing, or finalize selection rectangle."""
@@ -97,7 +110,7 @@ class SelectTool(Tool):
             self.finalize_selection_rectangle()
             self._cleanup_rectangle_selection()
 
-        # Reset state
+        # Reset state (don't reset cutting mode here)
         self.resizing = False
         self.moving = False
         self.resize_handle = None
@@ -115,9 +128,20 @@ class SelectTool(Tool):
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Space:
             self.update_with_top_machine_confidence()
             
-        # Handle Ctrl+C to combine selected annotations
+        # Handle Ctrl+C to combine selected annotations or to enter cutting mode
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:
-            self.combine_selected_annotations()
+            if len(self.annotation_window.selected_annotations) > 1:
+                self.combine_selected_annotations()
+            elif len(self.annotation_window.selected_annotations) == 1:
+                self.start_cutting_mode()
+                
+        # Handle Space to finalize cutting when in cutting mode
+        if event.key() == Qt.Key_Space and self.cutting_mode:
+            self.cut_selected_annotation()
+            
+        # Handle Escape to cancel cutting mode
+        if event.key() == Qt.Key_Backspace and self.cutting_mode:
+            self.cancel_cutting_mode()
 
     def keyReleaseEvent(self, event):
         """Handle key release events to hide resize handles."""
@@ -494,3 +518,88 @@ class SelectTool(Tool):
         
         # Select the new combined annotation
         self.annotation_window.select_annotation(combined_annotation)
+
+    def start_cutting_mode(self):
+        """Start cutting mode for the currently selected annotation."""
+        if len(self.annotation_window.selected_annotations) != 1:
+            return
+            
+        self.cutting_mode = True
+        self.cutting_points = []
+        
+        # Create polygon graphics item for the cutting line/shape
+        self.cutting_polygon = QGraphicsPolygonItem()
+        line_thickness = self.get_selection_thickness()
+        self.cutting_polygon.setPen(QPen(Qt.red, line_thickness, Qt.DashLine))
+        self.annotation_window.scene.addItem(self.cutting_polygon)
+        
+        # Change cursor to indicate cutting mode
+        self.annotation_window.viewport().setCursor(Qt.CrossCursor)
+        
+        # Show message to guide the user
+        QMessageBox.information(
+            self.annotation_window,
+            "Cutting Mode",
+            "Click to add points for cutting line/shape. Press SPACE to finalize or ESC to cancel."
+        )
+
+    def add_cutting_point(self, position):
+        """Add a point to the cutting line/shape."""
+        self.cutting_points.append(position)
+        
+        # Update cutting shape visualization
+        if len(self.cutting_points) >= 2:
+            polygon = QPolygonF(self.cutting_points)
+            self.cutting_polygon.setPolygon(polygon)
+
+    def cut_selected_annotation(self):
+        """Finalize the cutting operation using the created cutting line/shape."""
+        if not self.cutting_mode or len(self.cutting_points) < 2:
+            self.cancel_cutting_mode()
+            return
+        
+        annotation = self.annotation_window.selected_annotations[0]
+        
+        # Call the appropriate cut method based on annotation type
+        if isinstance(annotation, RectangleAnnotation):
+            new_annotations = RectangleAnnotation.cut([annotation], self.cutting_points)
+        elif isinstance(annotation, PolygonAnnotation):
+            new_annotations = PolygonAnnotation.cut([annotation], self.cutting_points)
+        else:
+            self.cancel_cutting_mode()
+            return
+            
+        if not new_annotations:
+            QMessageBox.warning(
+                self.annotation_window,
+                "Cutting Failed",
+                "Failed to cut the annotation. Try a different cutting line."
+            )
+            self.cancel_cutting_mode()
+            return
+            
+        # Remove the original annotation
+        self.annotation_window.delete_annotation(annotation)
+        
+        # Add the new cut annotations
+        for new_annotation in new_annotations:
+            self.annotation_window.add_annotation_from_tool(new_annotation)
+            
+        # Select the new annotations
+        self.annotation_window.unselect_annotations()
+        for new_annotation in new_annotations:
+            self.annotation_window.select_annotation(new_annotation, True)
+            
+        self.cancel_cutting_mode()
+
+    def cancel_cutting_mode(self):
+        """Cancel cutting mode and clean up."""
+        self.cutting_mode = False
+        self.cutting_points = []
+        
+        if self.cutting_polygon:
+            self.annotation_window.scene.removeItem(self.cutting_polygon)
+            self.cutting_polygon = None
+            
+        # Reset cursor
+        self.annotation_window.viewport().setCursor(self.cursor)
