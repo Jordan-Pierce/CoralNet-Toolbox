@@ -297,6 +297,21 @@ class AnnotationWindow(QGraphicsView):
                 self.cursor_annotation.create_graphics_item(self.scene)
             except:
                 pass
+            
+    def clear_scene(self):
+        """Clear the graphics scene and reset related variables."""
+        # Clean up
+        self.unselect_annotations()
+
+        # Clear the previous scene and delete its items
+        if self.scene:
+            for item in self.scene.items():
+                if item.scene() == self.scene:
+                    self.scene.removeItem(item)
+                    del item
+            self.scene.deleteLater()
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
 
     def display_image(self, q_image):
         """Display a QImage in the annotation window without setting it."""
@@ -719,9 +734,11 @@ class AnnotationWindow(QGraphicsView):
         annotation.annotationDeleted.connect(self.delete_annotation)
         annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
 
-        # Create the graphics item
-        annotation.create_graphics_item(self.scene)
-        annotation.create_cropped_image(self.rasterio_image)
+        # Create the graphics item and cropped image
+        if not annotation.graphics_item:
+            annotation.create_graphics_item(self.scene)
+        if not annotation.cropped_image:
+            annotation.create_cropped_image(self.rasterio_image)
 
         # Display the cropped image in the confidence window
         self.main_window.confidence_window.display_cropped_image(annotation)
@@ -808,18 +825,3 @@ class AnnotationWindow(QGraphicsView):
             self.pixmap_image = None
             self.rasterio_image = None
             self.active_image = False
-
-    def clear_scene(self):
-        """Clear the graphics scene and reset related variables."""
-        # Clean up
-        self.unselect_annotations()
-
-        # Clear the previous scene and delete its items
-        if self.scene:
-            for item in self.scene.items():
-                if item.scene() == self.scene:
-                    self.scene.removeItem(item)
-                    del item
-            self.scene.deleteLater()
-        self.scene = QGraphicsScene(self)
-        self.setScene(self.scene)
