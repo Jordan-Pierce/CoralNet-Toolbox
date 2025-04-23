@@ -22,6 +22,8 @@ class PolygonTool(Tool):
         self.points = []
         self.drawing_continuous = False  # Flag to indicate continuous drawing mode
         self.epsilon = 1.0  # Default epsilon value for polygon simplification (in pixels)
+        self.ctrl_pressed = False  # Flag to track Ctrl key state for straight line drawing
+        self.last_click_point = None  # Store the last clicked point for straight line drawing
 
     def activate(self):
         self.active = True
@@ -33,6 +35,8 @@ class PolygonTool(Tool):
         self.clear_cursor_annotation()
         self.points = []
         self.drawing_continuous = False
+        self.ctrl_pressed = False
+        self.last_click_point = None
 
     def mousePressEvent(self, event: QMouseEvent):
         if not self.annotation_window.selected_label:
@@ -42,52 +46,72 @@ class PolygonTool(Tool):
             return None
 
         if event.button() == Qt.LeftButton and not self.drawing_continuous:
-            # Start continuous drawing mode
             self.drawing_continuous = True
             self.annotation_window.unselect_annotations()
-            self.points.append(self.annotation_window.mapToScene(event.pos()))
-            self.create_cursor_annotation(self.annotation_window.mapToScene(event.pos()))
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            self.points.append(scene_pos)
+            self.last_click_point = scene_pos
+            self.create_cursor_annotation(scene_pos)
         elif event.button() == Qt.LeftButton and self.drawing_continuous:
-            # Finish the current annotation
-            self.points.append(self.annotation_window.mapToScene(event.pos()))
-            self.annotation_window.unselect_annotations()
-            
-            # Create and add the final annotation
-            # The simplification is now handled in the PolygonAnnotation class
-            annotation = self.create_annotation(self.annotation_window.mapToScene(event.pos()), finished=True)
-            
-            self.annotation_window.add_annotation_from_tool(annotation)
-            
-            self.drawing_continuous = False
-            self.clear_cursor_annotation()
+            scene_pos = self.annotation_window.mapToScene(event.pos())
+            if self.ctrl_pressed and self.last_click_point:
+                # Add a straight line segment from last point to this click
+                self.points.append(scene_pos)
+                self.last_click_point = scene_pos
+                self.update_cursor_annotation(scene_pos)
+            else:
+                # Free-hand: finish polygon
+                self.points.append(scene_pos)
+                self.annotation_window.unselect_annotations()
+                annotation = self.create_annotation(scene_pos, finished=True)
+                self.annotation_window.add_annotation_from_tool(annotation)
+                self.drawing_continuous = False
+                self.clear_cursor_annotation()
         elif event.button() == Qt.RightButton and self.drawing_continuous:
-            # Panning the image while drawing
             pass
         else:
             self.cancel_annotation()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.drawing_continuous:
-            # Update the last point in continuous drawing mode
             scene_pos = self.annotation_window.mapToScene(event.pos())
-            
-            # Update the annotation graphics
             active_image = self.annotation_window.active_image
             pixmap_image = self.annotation_window.pixmap_image
             cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
             if active_image and pixmap_image and cursor_in_window and self.points:
-                self.points.append(scene_pos)
-                self.update_cursor_annotation(scene_pos)
+                if self.ctrl_pressed and self.last_click_point:
+                    # Show a straight line preview from last point to cursor, do not modify self.points
+                    self.update_cursor_annotation(scene_pos)
+                else:
+                    # Free-hand: add points as the mouse moves
+                    self.points.append(scene_pos)
+                    self.update_cursor_annotation(scene_pos)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key_Backspace:
-            # Cancel the current annotation
             self.cancel_annotation()
+        elif event.key() == Qt.Key_Control:
+            self.ctrl_pressed = True
+            # Only update the cursor annotation for straight line preview
+            if self.drawing_continuous and self.last_click_point:
+                cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+                scene_pos = self.annotation_window.mapToScene(cursor_pos)
+                self.update_cursor_annotation(scene_pos)
+
+    def keyReleaseEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key_Control:
+            self.ctrl_pressed = False
+            # Resume free-hand preview
+            if self.drawing_continuous and self.last_click_point:
+                cursor_pos = self.annotation_window.mapFromGlobal(self.annotation_window.cursor().pos())
+                scene_pos = self.annotation_window.mapToScene(cursor_pos)
+                self.update_cursor_annotation(scene_pos)
 
     def cancel_annotation(self):
         self.points = []
         self.drawing_continuous = False
         self.clear_cursor_annotation()
+        self.last_click_point = None
 
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         if not self.annotation_window.active_image or not self.annotation_window.pixmap_image:
@@ -112,6 +136,7 @@ class PolygonTool(Tool):
             # Reset the tool
             self.points = []
             self.drawing_continuous = False
+            self.last_click_point = None
 
         return annotation
         
@@ -120,15 +145,29 @@ class PolygonTool(Tool):
         if not scene_pos or not self.annotation_window.selected_label or not self.annotation_window.active_image:
             self.clear_cursor_annotation()
             return
-            
-        # Create a temporary polygon for visualization
+
         if self.drawing_continuous and len(self.points) > 0:
-            # Create a new cursor annotation with semi-transparent appearance
-            self.cursor_annotation = self.create_annotation(scene_pos)
-            if self.cursor_annotation:
-                # Make the cursor annotation semi-transparent to distinguish it from actual annotations
-                self.cursor_annotation.transparency = min(self.cursor_annotation.transparency + 100, 200)
-                self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+            if self.ctrl_pressed and self.last_click_point:
+                # Preview a straight line from last point to cursor
+                preview_points = self.points + [scene_pos]
+                annotation = PolygonAnnotation(
+                    preview_points,
+                    self.annotation_window.selected_label.short_label_code,
+                    self.annotation_window.selected_label.long_label_code,
+                    self.annotation_window.selected_label.color,
+                    self.annotation_window.current_image_path,
+                    self.annotation_window.selected_label.id,
+                    min(self.annotation_window.selected_label.transparency + 100, 200)
+                )
+                annotation.create_graphics_item(self.annotation_window.scene)
+                self.cursor_annotation = annotation
+            else:
+                # Free-hand preview
+                annotation = self.create_annotation(scene_pos)
+                if annotation:
+                    annotation.transparency = min(annotation.transparency + 100, 200)
+                    annotation.create_graphics_item(self.annotation_window.scene)
+                    self.cursor_annotation = annotation
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
         """Update the cursor annotation position."""
