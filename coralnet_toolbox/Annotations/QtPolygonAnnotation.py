@@ -396,14 +396,14 @@ class PolygonAnnotation(Annotation):
     @classmethod
     def combine(cls, annotations: list):
         """Combine multiple polygon annotations into a single polygon using polygon union,
-        but only if each annotation has overlap with at least one other annotation.
+        as long as the polygons form a connected component (directly or indirectly connected).
         
         Args:
             annotations: List of PolygonAnnotation objects to combine.
             
         Returns:
-            A new PolygonAnnotation that encompasses all input polygons if all have overlaps,
-            or None if any annotation doesn't overlap with others.
+            A new PolygonAnnotation that encompasses all input polygons if they form a connected component,
+            or None if the polygons form disconnected groups.
         """
         if not annotations:
             return None
@@ -411,8 +411,10 @@ class PolygonAnnotation(Annotation):
         if len(annotations) == 1:
             return annotations[0]
         
-        # Track which annotations have overlaps with others
-        has_overlap = [False] * len(annotations)
+        # Build an adjacency graph where an edge represents polygon overlap
+        overlap_graph = {}
+        for i in range(len(annotations)):
+            overlap_graph[i] = set()
         
         # Check for overlap between polygons
         for i in range(len(annotations) - 1):
@@ -440,6 +442,8 @@ class PolygonAnnotation(Annotation):
                 min_x1, min_y1, max_x1, max_y1 = annotations[i].cropped_bbox
                 min_x2, min_y2, max_x2, max_y2 = annotations[j].cropped_bbox
                 
+                has_overlap = False
+                
                 # Check if bounding boxes overlap
                 if not (max_x1 < min_x2 or max_x2 < min_x1 or max_y1 < min_y2 or max_y2 < min_y1):
                     # Create a mask for the second polygon in the same coordinate system as the first
@@ -453,28 +457,42 @@ class PolygonAnnotation(Annotation):
                     # Check for intersection
                     intersection = cv2.bitwise_and(mask1, mask2)
                     if np.any(intersection):
-                        has_overlap[i] = True
-                        has_overlap[j] = True
+                        has_overlap = True
                 
                 # Fallback to point-in-polygon check if no overlap detected yet
-                if not has_overlap[i] or not has_overlap[j]:
+                if not has_overlap:
                     # Check if any point of polygon i is inside polygon j
                     for point in annotations[i].points:
                         if annotations[j].contains_point(point):
-                            has_overlap[i] = True
-                            has_overlap[j] = True
+                            has_overlap = True
                             break
                             
-                    if not has_overlap[i] or not has_overlap[j]:
+                    if not has_overlap:
                         # Check if any point of polygon j is inside polygon i
                         for point in annotations[j].points:
                             if annotations[i].contains_point(point):
-                                has_overlap[i] = True
-                                has_overlap[j] = True
+                                has_overlap = True
                                 break
+                
+                # If overlap is found, add an edge between i and j in the graph
+                if has_overlap:
+                    overlap_graph[i].add(j)
+                    overlap_graph[j].add(i)
         
-        # If any polygon doesn't have an overlap, return None
-        if False in has_overlap:
+        # Check if all polygons form a connected component using BFS
+        visited = [False] * len(annotations)
+        queue = [0]  # Start from the first polygon
+        visited[0] = True
+        
+        while queue:
+            node = queue.pop(0)
+            for neighbor in overlap_graph[node]:
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    queue.append(neighbor)
+        
+        # If any polygon is not visited, the annotations don't form a connected component
+        if False in visited:
             return None
         
         # Combine polygons by creating a binary mask of all polygons
