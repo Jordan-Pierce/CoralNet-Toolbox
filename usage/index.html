@@ -726,10 +726,10 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h2 id="thresholds-for-computer-vision-tasks">Thresholds for Computer Vision Tasks<a class="headerlink" href="#thresholds-for-computer-vision-tasks" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Patch Size: Adjust the patch size in the status bar.</li>
-<li>Uncertainty Threshold: Adjust the uncertainty threshold in the status bar.</li>
-<li>IoU Threshold: Adjust the IoU threshold in the status bar.</li>
-<li>Area Threshold: Adjust the min and max area threshold in the status bar.</li>
+<li><strong>Patch Size</strong>: Adjust the patch size in the status bar.</li>
+<li><strong>Uncertaint</strong> Threshold: Adjust the uncertainty threshold in the status bar.</li>
+<li><strong>IoU Threshold</strong>: Adjust the IoU threshold in the status bar.</li>
+<li><strong>Area Threshold</strong>: Adjust the min and max area threshold in the status bar.</li>
 </ul>
 <h2 id="main-window">Main Window<a class="headerlink" href="#main-window" title="Permanent link">&para;</a></h2>
 <p>The main window consists of several components:
@@ -833,12 +833,38 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h2 id="tool-bar">Tool Bar<a class="headerlink" href="#tool-bar" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Select Tool</strong>: Select multiple annotations; move and change the size of annotations.</li>
-<li><strong>Patch Tool</strong>: Add new PatchAnnotations.</li>
-<li><strong>Polygon Tool</strong>: Add new PolygonAnnotations.</li>
-<li><strong>Rectangle Tool</strong>: Add new RectangleAnnotations.</li>
-<li><strong>SAM Tool</strong>: Use <code>SAM</code> model for automatic segmentation (points, box).</li>
-<li><strong>See Anything Tool</strong>: Use See Anything (<code>YOLOE</code>) to provide references of object, and detect other similar appearing.</li>
+<li>
+<p><strong>Select Tool</strong>:
+  -</p>
+</li>
+<li>
+<p><strong>Patch Tool</strong>:</p>
+</li>
+<li></li>
+<li>
+<p><strong>Rectangle Tool</strong>:
+  -</p>
+</li>
+<li>
+<p><strong>Polygon Tool</strong>:
+  -</p>
+</li>
+<li>
+<p><strong>SAM Tool</strong>: After a model is loaded</p>
+</li>
+<li><strong>Space Bar</strong>: Set working area; confirm prediction; finalize predictions and exit working area.</li>
+<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
+<li><strong>Ctrl + Left-Click</strong>: Add positive point.</li>
+<li><strong>Ctrl + Right-Click</strong>: Add negative point.</li>
+<li>
+<p><strong>Backspace</strong>: Discard unfinalized predictions.</p>
+</li>
+<li>
+<p><strong>See Anything (YOLOE) Tool</strong>: After a model is loaded</p>
+</li>
+<li><strong>Space Bar</strong>: Set working area; run prediction; finalize predictions and exit working area.</li>
+<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
+<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
 </ul>
 <h2 id="status-bar">Status Bar<a class="headerlink" href="#status-bar" title="Permanent link">&para;</a></h2>
 <ul>
@@ -855,19 +881,6 @@ This guide provides instructions on how to use the application, including key fu
 <ul>
 <li><strong>Zoom</strong>: Use the mouse wheel to zoom in and out.</li>
 <li><strong>Pan</strong>: Hold Ctrl + Right-click the mouse button to pan the image.</li>
-<li><strong>Add Annotation</strong>: Click with the Left mouse button while using one of the annotation tools.</li>
-<li><strong>Select Annotations</strong>:</li>
-<li>Ctrl + Left-Click on multiple annotations while using the select tool.</li>
-<li>Ctrl + Left-Click and drag to select multiple annotations while using the select tool.</li>
-<li>Ctrl + Shift + &lt; to select all annotations</li>
-<li>Ctrl + Shift + &gt; to deselect all annotations<ul>
-<li><strong>Move Annotation</strong>: Drag a selected annotation.</li>
-<li><strong>Modify Annotation</strong>: Hold Shift and drag the vertices of the selected annotation (Rectangle, Polygon).</li>
-<li><strong>Resize Annotation</strong>: Hold Ctrl and Zoom in / out to increase / decrease a selected annotation's size.</li>
-<li><strong>Confirm Prediction</strong>: Press Ctrl + Space bar to confirm selected annotations' machine learning prediction.</li>
-<li><strong>Delete Annotations</strong>: Press Ctrl + Delete to delete the selected annotations.</li>
-</ul>
-</li>
 </ul>
 <h2 id="label-window">Label Window<a class="headerlink" href="#label-window" title="Permanent link">&para;</a></h2>
 <ul>
@@ -898,9 +911,7 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h3 id="hotkeys">Hotkeys<a class="headerlink" href="#hotkeys" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Ctrl + Delete</strong>: Delete the selected annotations.</li>
 <li><strong>Ctrl + W/A/S/D</strong>: Navigate through labels.</li>
-<li><strong>Ctrl + Mouse Wheel</strong>: Adjust annotation size.</li>
 <li><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</li>
 <li><strong>Ctrl + Up/Down</strong>: Cycle through images.</li>
 <li><strong>Ctrl + Shift + &lt;</strong>: Select all annotations.</li>
@@ -915,25 +926,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Ctrl + 2</strong>: Make predictions using Object Detection model.</li>
 <li><strong>Ctrl + 3</strong>: Make predictions using Instance Segmentation model.</li>
 <li><strong>Ctrl + 4</strong>: Make predictions using FastSAM model.</li>
-<li>
-<p><strong>Ctrl + 5</strong>: Make predictions using AutoDistill model.</p>
-</li>
-<li>
-<p><strong>SAM</strong>: After a model is loaded</p>
-</li>
-<li><strong>Space Bar</strong>: Set working area; confirm prediction; finalize predictions.</li>
-<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
-<li><strong>Ctrl + Left-Click</strong>: Add positive point.</li>
-<li><strong>Ctrl + Right-Click</strong>: Add negative point.</li>
-<li>
-<p><strong>Backspace</strong>: Discard unfinalized predictions.</p>
-</li>
-<li>
-<p><strong>See Anything (YOLOE)</strong>: After a model is loaded</p>
-</li>
-<li><strong>Space Bar</strong>: Set working area; run prediction; finalize predictions.</li>
-<li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
-<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
+<li><strong>Ctrl + 5</strong>: Make predictions using AutoDistill model.</li>
 </ul>
 
 
@@ -957,7 +950,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 15, 2025 17:30:09"><span class="timeago" datetime="2025-04-15T17:30:09+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 15, 2025 17:30:09">2025-04-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 24, 2025 17:27:40"><span class="timeago" datetime="2025-04-24T17:27:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 24, 2025 17:27:40">2025-04-24</span>
   </span>
 
     
