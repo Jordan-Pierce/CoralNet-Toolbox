@@ -150,6 +150,147 @@ class SAMTool(Tool):
             # Update cursor annotation to show preview of segmentation
             self.update_cursor_annotation(self.end_point)
 
+    def get_workarea_thickness(self):
+        """
+        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
+        """
+        view = self.annotation_window
+        if not view.pixmap_image:
+            return 7  # fallback
+
+        # Get the current zoom scale from the view's transformation matrix
+        # m11() is the horizontal scale factor (scene to view)
+        scale = view.transform().m11()
+        if scale == 0:
+            scale = 1  # avoid division by zero
+
+        desired_px = 7  # Desired thickness in screen pixels
+
+        # To keep the line visually consistent, divide by the scale
+        thickness = max(1, int(round(desired_px / scale)))
+        return thickness
+    
+    def set_working_area(self):
+        """
+        Set the working area for the tool.
+        """
+        self.annotation_window.setCursor(Qt.WaitCursor)
+
+        # Cancel the current working area if it exists
+        self.cancel_working_area()
+
+        # Original image (grab current from the annotation window)
+        self.image_path = self.annotation_window.current_image_path
+        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
+        self.original_width = self.annotation_window.pixmap_image.size().width()
+        self.original_height = self.annotation_window.pixmap_image.size().height()
+
+        # Current extent (view)
+        extent = self.annotation_window.viewportToScene()
+
+        top = round(extent.top())
+        left = round(extent.left())
+        width = round(extent.width())
+        height = round(extent.height())
+        bottom = top + height
+        right = left + width
+
+        # If the current extent includes areas outside the
+        # original image, reduce it to be only the original image
+        if top < 0:
+            top = 0
+        if left < 0:
+            left = 0
+        if bottom > self.original_height:
+            bottom = self.original_height
+        if right > self.original_width:
+            right = self.original_width
+
+        # Set the working area
+        working_rect = QRectF(left, top, right - left, bottom - top)
+
+        # Create the graphic for the working area
+        pen = QPen(Qt.green)
+        pen.setStyle(Qt.DashLine)
+        pen.setWidth(self.get_workarea_thickness())
+        self.working_area = QGraphicsRectItem(working_rect)
+        self.working_area.setPen(pen)
+
+        # Add the working area to the scene
+        self.annotation_window.scene.addItem(self.working_area)
+
+        # Create a semi-transparent overlay for the shadow
+        shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
+        shadow_path = QPainterPath()
+        shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
+        shadow_path.addRect(working_rect)  # Add the work area rect
+        # Subtract the work area from the overlay
+        shadow_path = shadow_path.simplified()
+
+        # Create the shadow item
+        self.shadow_area = QGraphicsPathItem(shadow_path)
+        self.shadow_area.setBrush(shadow_brush)
+        self.shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
+
+        # Add the shadow item to the scene
+        self.annotation_window.scene.addItem(self.shadow_area)
+
+        # Crop the image based on the working_rect
+        self.image = self.original_image[top:bottom, left:right]
+
+        self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.scene.update()
+        
+    def get_rectangle_graphic_thickness(self):
+        """
+        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
+        """
+        view = self.annotation_window
+        if not view.pixmap_image:
+            return 2  # fallback
+
+        # Get the current zoom scale from the view's transformation matrix
+        # m11() is the horizontal scale factor (scene to view)
+        scale = view.transform().m11()
+        if scale == 0:
+            scale = 1  # avoid division by zero
+
+        desired_px = 2  # Desired thickness in screen pixels
+
+        # To keep the line visually consistent, divide by the scale
+        thickness = max(1, int(round(desired_px / scale)))
+        return thickness 
+
+    def clear_prompt_graphics(self):
+        """
+        Clear all prompt graphics (points, rectangles) but keep the working area.
+        """
+        # Remove point graphics
+        for point in self.point_graphics:
+            self.annotation_window.scene.removeItem(point)
+        self.point_graphics = []
+        
+        # Clear points lists
+        self.points = []
+        self.positive_points = []
+        self.negative_points = []
+        
+        # Clear rectangle 
+        self.start_point = None
+        self.end_point = None
+        self.top_left = None
+        self.bottom_right = None
+        
+        # Remove rectangle graphics if any
+        if self.rectangle_graphics:
+            self.annotation_window.scene.removeItem(self.rectangle_graphics)
+            self.rectangle_graphics = None
+            
+        # Clear any hover annotation
+        self.cancel_hover_annotation()
+        
+        self.annotation_window.scene.update()
+
     def mousePressEvent(self, event: QMouseEvent):
         """
         Handles the mouse press event.
@@ -324,107 +465,6 @@ class SAMTool(Tool):
                 
             self.annotation_window.scene.update()
 
-    def set_working_area(self):
-        """
-        Set the working area for the tool.
-        """
-        self.annotation_window.setCursor(Qt.WaitCursor)
-
-        # Cancel the current working area if it exists
-        self.cancel_working_area()
-
-        # Original image (grab current from the annotation window)
-        self.image_path = self.annotation_window.current_image_path
-        self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
-        self.original_width = self.annotation_window.pixmap_image.size().width()
-        self.original_height = self.annotation_window.pixmap_image.size().height()
-
-        # Current extent (view)
-        extent = self.annotation_window.viewportToScene()
-
-        top = round(extent.top())
-        left = round(extent.left())
-        width = round(extent.width())
-        height = round(extent.height())
-        bottom = top + height
-        right = left + width
-
-        # If the current extent includes areas outside the
-        # original image, reduce it to be only the original image
-        if top < 0:
-            top = 0
-        if left < 0:
-            left = 0
-        if bottom > self.original_height:
-            bottom = self.original_height
-        if right > self.original_width:
-            right = self.original_width
-
-        # Set the working area
-        working_rect = QRectF(left, top, right - left, bottom - top)
-
-        # Create the graphic for the working area
-        pen = QPen(Qt.green)
-        pen.setStyle(Qt.DashLine)
-        pen.setWidth(10)
-        self.working_area = QGraphicsRectItem(working_rect)
-        self.working_area.setPen(pen)
-
-        # Add the working area to the scene
-        self.annotation_window.scene.addItem(self.working_area)
-
-        # Create a semi-transparent overlay for the shadow
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
-        shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
-        shadow_path.addRect(working_rect)  # Add the work area rect
-        # Subtract the work area from the overlay
-        shadow_path = shadow_path.simplified()
-
-        # Create the shadow item
-        self.shadow_area = QGraphicsPathItem(shadow_path)
-        self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
-
-        # Add the shadow item to the scene
-        self.annotation_window.scene.addItem(self.shadow_area)
-
-        # Crop the image based on the working_rect
-        self.image = self.original_image[top:bottom, left:right]
-
-        self.annotation_window.setCursor(Qt.CrossCursor)
-        self.annotation_window.scene.update()
-
-    def clear_prompt_graphics(self):
-        """
-        Clear all prompt graphics (points, rectangles) but keep the working area.
-        """
-        # Remove point graphics
-        for point in self.point_graphics:
-            self.annotation_window.scene.removeItem(point)
-        self.point_graphics = []
-        
-        # Clear points lists
-        self.points = []
-        self.positive_points = []
-        self.negative_points = []
-        
-        # Clear rectangle 
-        self.start_point = None
-        self.end_point = None
-        self.top_left = None
-        self.bottom_right = None
-        
-        # Remove rectangle graphics if any
-        if self.rectangle_graphics:
-            self.annotation_window.scene.removeItem(self.rectangle_graphics)
-            self.rectangle_graphics = None
-            
-        # Clear any hover annotation
-        self.cancel_hover_annotation()
-        
-        self.annotation_window.scene.update()
-
     def create_annotation(self, scene_pos: QPointF, finished: bool = False):
         """
         Create an annotation based on the given scene position.
@@ -456,7 +496,7 @@ class SAMTool(Tool):
 
         if self.hover_point and not finished and not self.drawing_rectangle:
             positive.append([self.hover_point.x(), self.hover_point.y()])
-            transparency //= 4
+            transparency //= 2
 
         if self.start_point and self.end_point:
             # If we have rectangle coordinates, use them for prediction

@@ -985,6 +985,7 @@ class MainWindow(QMainWindow):
                 self.patch_tool_action.setChecked(False)
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
         
                 self.toolChanged.emit("sam")
             else:
