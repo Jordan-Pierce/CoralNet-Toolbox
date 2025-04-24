@@ -212,6 +212,11 @@ class PatchAnnotation(Annotation):
     def combine(cls, annotations: list):
         """Combine multiple annotations into a single one."""
         pass
+    
+    @classmethod
+    def cut(cls, annotations: list, cutting_points: list):
+        """Cut the annotations based on the provided cutting points."""
+        pass
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation."""

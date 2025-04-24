@@ -14,6 +14,7 @@ import numpy as np
 
 import rasterio
 from rasterio.windows import Window
+from shapely.geometry import Polygon
 
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton
@@ -345,53 +346,6 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         return np.zeros((100, 100, 3), dtype=np.uint8)
     
 
-# def pixmap_to_numpy(pixmap):
-#     """
-#     Convert a QPixmap to a NumPy array.
-
-#     :param pixmap: QPixmap to convert
-#     :return: numpy.ndarray in format (h, w, 3) with RGB values
-#     """
-#     try:
-#         # Convert QPixmap to QImage
-#         image = pixmap.toImage()
-
-#         # Get image dimensions
-#         width = image.width()
-#         height = image.height()
-
-#         # Get proper bytes per line
-#         bytes_per_line = image.bytesPerLine()
-
-#         # Get image format
-#         img_format = image.format()
-
-#         # Convert QImage to numpy array based on format
-#         if img_format in [QImage.Format_RGB32, QImage.Format_ARGB32, QImage.Format_ARGB32_Premultiplied]:
-#             byte_array = image.bits().asstring(height * bytes_per_line)
-#             numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 4, 4))
-#             # BGRA to RGB
-#             numpy_array = numpy_array[:, :width, [2, 1, 0]]
-#         elif img_format == QImage.Format_RGB888:
-#             byte_array = image.bits().asstring(height * bytes_per_line)
-#             numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 3, 3))
-#             numpy_array = numpy_array[:, :width, :]
-#         else:
-#             # Convert to RGB888 format if not in a directly supported format
-#             converted_image = image.convertToFormat(QImage.Format_RGB888)
-#             bytes_per_line = converted_image.bytesPerLine()
-#             byte_array = converted_image.bits().asstring(height * bytes_per_line)
-#             numpy_array = np.frombuffer(byte_array, dtype=np.uint8).reshape((height, bytes_per_line // 3, 3))
-#             numpy_array = numpy_array[:, :width, :]
-
-#         return numpy_array
-
-#     except Exception as e:
-#         print(f"Error converting QPixmap to numpy: {e}")
-#         # Return a small empty array if conversion fails
-#         return np.zeros((100, 100, 3), dtype=np.uint8)
-
-
 def pixmap_to_numpy(pixmap):
     """
     Convert a QPixmap to a NumPy array.
@@ -467,6 +421,90 @@ def attempt_download_asset(app, asset_name, asset_url):
     progress_dialog.set_value(progress_dialog.max_value)
     progress_dialog.close()
 
+
+def simplify_polygon(self, points, tolerance=0.2):
+    """
+    Creates a polygon from points, identifies the largest component,
+    simplifies it using the Ramer-Douglas-Peucker algorithm, ensures
+    a single Polygon results, and returns its exterior coordinates.
+
+    Args:
+        points (list): List of coordinate tuples [(x1, y1), (x2, y2), ...].
+        tolerance (float): The tolerance for simplification (RDP algorithm).
+                            Defaults to 0.2.
+
+    Returns:
+        list: Simplified list of exterior coordinates [(x1, y1), (x2, y2), ...].
+                Returns an empty list if no valid polygon can be formed or simplified.
+    """
+    if len(points) < 3:
+        return [] # Need at least 3 points for a polygon
+
+    try:
+        # Create initial geometry. buffer(0) helps fix invalid geometries
+        # like self-intersections and can result in Polygon or MultiPolygon.
+        initial_geom = Polygon(points).buffer(0)
+
+        # Check if buffer(0) resulted in a valid Polygon or MultiPolygon
+        if initial_geom.is_empty or initial_geom.geom_type not in ['Polygon', 'MultiPolygon']:
+            return []
+
+        # Identify the target polygon (largest component if MultiPolygon)
+        target_polygon = None
+        if initial_geom.geom_type == 'MultiPolygon':
+            # Filter out any non-Polygon geometries that might arise from buffer(0)
+            polygons = [p for p in initial_geom.geoms if p.geom_type == 'Polygon']
+            if not polygons: 
+                return []
+            # Select the polygon with the largest area
+            target_polygon = max(polygons, key=lambda p: p.area)
+        elif initial_geom.geom_type == 'Polygon':
+            target_polygon = initial_geom
+        else: 
+            # Should not be reachable due to earlier check
+            return []
+
+        # Ensure we have a valid polygon to simplify
+        if not target_polygon or not target_polygon.is_valid:
+            # Attempt buffer(0) again just in case
+            target_polygon = target_polygon.buffer(0)
+            if not target_polygon or not target_polygon.is_valid or target_polygon.geom_type != 'Polygon':
+                return []
+
+        # Simplify the target polygon
+        # preserve_topology=False allows simplification that might change topology (e.g., split polygon)
+        simplified_geom = target_polygon.simplify(tolerance, preserve_topology=False)
+
+        # Check if simplification resulted in a valid Polygon or MultiPolygon
+        if simplified_geom.is_empty or simplified_geom.geom_type not in ['Polygon', 'MultiPolygon']:
+            return []
+
+        # Ensure the final result is a single Polygon
+        # (take largest if simplification created a MultiPolygon)
+        final_polygon = None
+        if simplified_geom.geom_type == 'MultiPolygon':
+            # Filter out any non-Polygon geometries
+            polygons = [p for p in simplified_geom.geoms if p.geom_type == 'Polygon']
+            if not polygons: 
+                return []
+            # Select the polygon with the largest area
+            final_polygon = max(polygons, key=lambda p: p.area)
+        elif simplified_geom.geom_type == 'Polygon':
+            final_polygon = simplified_geom
+        else: 
+            # Should not be reachable
+            return []
+
+        # Return exterior coordinates of the final polygon
+        # Ensure the final polygon is valid and has an exterior ring with enough points
+        if final_polygon and final_polygon.is_valid and final_polygon.exterior:
+            return list(final_polygon.exterior.coords)
+        else:
+            # If final polygon is invalid after all steps, return empty
+            return []
+
+    except Exception:
+        return []
 
 # TODO deal with optimized model types
 def check_model_architecture(weights_file):

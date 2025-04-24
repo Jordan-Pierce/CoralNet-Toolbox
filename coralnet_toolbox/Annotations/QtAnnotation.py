@@ -103,6 +103,11 @@ class Annotation(QObject):
     def combine(cls, annotations: list):
         """Combine multiple annotations into one."""
         raise NotImplementedError("Subclasses must implement this method.")
+    
+    @classmethod
+    def cut(cls, annotations: list, cutting_points: list):
+        """Cut multiple annotations using specified cutting points."""
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def show_warning_message(self):
         """Display a warning message about removing machine suggestions when altering an annotation."""

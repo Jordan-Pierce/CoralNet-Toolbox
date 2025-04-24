@@ -283,20 +283,24 @@ class AnnotationWindow(QGraphicsView):
         return True
 
     def toggle_cursor_annotation(self, scene_pos: QPointF = None):
-        """Toggle the cursor annotation on or off at the given position."""
-        if self.cursor_annotation:
-            self.cursor_annotation.delete()
-            self.cursor_annotation = None
-
-        if not self.selected_label or not self.annotation_color:
-            return
-
-        if scene_pos:
-            try:
-                self.cursor_annotation = self.tools[self.selected_tool].create_annotation(scene_pos)
-                self.cursor_annotation.create_graphics_item(self.scene)
-            except:
-                pass
+        """
+        Toggle cursor annotation visibility by delegating to the active tool.
+        
+        This method serves as a bridge between annotation window events and tool-specific
+        cursor annotation handling.
+        
+        Args:
+            scene_pos: Position in scene coordinates. If provided, creates/updates
+                      cursor annotation at this position. If None, clears the annotation.
+        """
+        if self.selected_tool and self.active_image and self.selected_label:
+            if scene_pos:
+                self.tools[self.selected_tool].update_cursor_annotation(scene_pos)
+            else:
+                self.tools[self.selected_tool].clear_cursor_annotation()
+        
+        # Clear our reference to any cursor annotation
+        self.cursor_annotation = None
             
     def clear_scene(self):
         """Clear the graphics scene and reset related variables."""
@@ -691,48 +695,6 @@ class AnnotationWindow(QGraphicsView):
 
         if return_annotations:
             return annotations
-
-    def add_annotation(self, scene_pos: QPointF = None):
-        """Add a new annotation at the specified position using the current tool."""
-        if not self.selected_label:
-            QMessageBox.warning(self,
-                                "No Label Selected",
-                                "A label must be selected before adding an annotation.")
-            return
-
-        # Return if the isn't an active image
-        if not self.active_image or not self.pixmap_image:
-            return
-
-        # Return if the position provided isn't in the window
-        if scene_pos:
-            if not self.cursorInWindow(scene_pos, mapped=True):
-                return
-
-        # Create the annotation for the selected tool
-        annotation = self.tools[self.selected_tool].create_annotation(scene_pos, finished=True)
-
-        if annotation is None:
-            self.toggle_cursor_annotation()
-            return
-
-        # Connect update signals
-        annotation.selected.connect(self.select_annotation)
-        annotation.annotationDeleted.connect(self.delete_annotation)
-        annotation.annotationUpdated.connect(self.main_window.confidence_window.display_cropped_image)
-
-        # Create the graphics item
-        annotation.create_graphics_item(self.scene)
-        annotation.create_cropped_image(self.rasterio_image)
-
-        # Display the cropped image in the confidence window
-        self.main_window.confidence_window.display_cropped_image(annotation)
-
-        # Add to annotation dict
-        self.add_annotation_to_dict(annotation)
-
-        # Update the table in ImageWindow
-        self.annotationCreated.emit(annotation.id)
         
     def add_annotation_from_tool(self, annotation):
         """Add a new annotation at the specified position using the current tool."""

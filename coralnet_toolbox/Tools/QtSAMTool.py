@@ -13,6 +13,7 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import simplify_polygon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -177,8 +178,10 @@ class SAMTool(Tool):
         adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
                                scene_pos.y() - working_area_top_left.y())
 
-        if event.modifiers() == Qt.ControlModifier:
+        # Clear any existing annotation preview
+        self.clear_cursor_annotation()
 
+        if event.modifiers() == Qt.ControlModifier:
             if event.button() == Qt.LeftButton:
                 self.positive_points.append(adjusted_pos)
                 point = QGraphicsEllipseItem(scene_pos.x() - 10, scene_pos.y() - 10, 20, 20)
@@ -188,6 +191,14 @@ class SAMTool(Tool):
                 self.point_graphics.append(point)
                 # Set flag indicating we have active prompts
                 self.has_active_prompts = True
+                
+                # Create and display the annotation immediately
+                temp_annotation = self.create_annotation(scene_pos, False)
+                if temp_annotation:
+                    if self.hover_graphics:
+                        self.annotation_window.scene.removeItem(self.hover_graphics)
+                    self.hover_graphics = temp_annotation.create_graphics_item(self.annotation_window.scene)
+                    self.cursor_annotation = temp_annotation
 
             elif event.button() == Qt.RightButton:
                 self.negative_points.append(adjusted_pos)
@@ -198,12 +209,16 @@ class SAMTool(Tool):
                 self.point_graphics.append(point)
                 # Set flag indicating we have active prompts
                 self.has_active_prompts = True
-
-            # Update the cursor annotation
-            self.update_cursor_annotation(scene_pos)
+                
+                # Create and display the annotation immediately
+                temp_annotation = self.create_annotation(scene_pos, False)
+                if temp_annotation:
+                    if self.hover_graphics:
+                        self.annotation_window.scene.removeItem(self.hover_graphics)
+                    self.hover_graphics = temp_annotation.create_graphics_item(self.annotation_window.scene)
+                    self.cursor_annotation = temp_annotation
 
         elif event.modifiers() != Qt.ControlModifier:
-
             if event.button() == Qt.LeftButton and not self.drawing_rectangle:
                 # Remove the hover annotation
                 self.cancel_hover_annotation()
@@ -217,13 +232,20 @@ class SAMTool(Tool):
             elif event.button() == Qt.LeftButton and self.drawing_rectangle:
                 # Get the end point
                 self.end_point = self.annotation_window.mapToScene(event.pos())
+                # Calculate rectangle coordinates
+                self.display_rectangle_annotation()
                 # Finish drawing the rectangle
                 self.drawing_rectangle = False
                 # Set flag indicating we have active prompts (rectangle is complete)
                 self.has_active_prompts = True
-
-            # Update the cursor annotation
-            self.update_cursor_annotation(scene_pos)
+                
+                # Create and display the annotation immediately
+                temp_annotation = self.create_annotation(scene_pos, False)
+                if temp_annotation:
+                    if self.hover_graphics:
+                        self.annotation_window.scene.removeItem(self.hover_graphics)
+                    self.hover_graphics = temp_annotation.create_graphics_item(self.annotation_window.scene)
+                    self.cursor_annotation = temp_annotation
 
         elif event.button() == Qt.RightButton and self.drawing_rectangle:
             # Panning the image while drawing
@@ -467,11 +489,14 @@ class SAMTool(Tool):
         # Get the points of the top1 mask
         top1_index = np.argmax(results.boxes.conf)
         predictions = results[top1_index].masks.xy[0]
-        
+
         # Safety check: make sure we have predicted points
         if len(predictions) == 0:
             QApplication.restoreOverrideCursor()
             return None
+
+        # Simplify the polygon using the Ramer-Douglas-Peucker algorithm
+        predictions = simplify_polygon(predictions, tolerance=0.2)
 
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect().topLeft()
@@ -494,12 +519,13 @@ class SAMTool(Tool):
                                        self.annotation_window.current_image_path,
                                        self.annotation_window.selected_label.id,
                                        transparency)
-                                       
+                                    
         # Update the confidence score of annotation
         annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
         # Create cropped image
-        annotation.create_cropped_image(self.annotation_window.rasterio_image)
+        if hasattr(self.annotation_window, 'rasterio_image'):
+            annotation.create_cropped_image(self.annotation_window.rasterio_image)
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
@@ -516,19 +542,32 @@ class SAMTool(Tool):
         # Clear any existing cursor annotation
         self.clear_cursor_annotation()
         
-        if not scene_pos or not self.annotation_window.selected_label or not self.annotation_window.active_image:
+        if not self.annotation_window.selected_label or not self.annotation_window.active_image:
+            return
+        
+        # Always use the scene position if provided, otherwise use the last hover position
+        position = scene_pos if scene_pos else self.hover_pos
+        
+        if not position:
             return
         
         if self.working_area and self.hover_active:
-            # Allow cursor annotation during rectangle drawing if we have both start and end points
-            if self.drawing_rectangle and self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
-                self.cursor_annotation = self.create_annotation(scene_pos, False)
+            # Show annotation for points (positive or negative) regardless of hover state
+            if len(self.positive_points) > 0 or len(self.negative_points) > 0:
+                self.cursor_annotation = self.create_annotation(position, False)
                 if self.cursor_annotation:
                     # Store the hover graphics item for easy removal later
                     self.hover_graphics = self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
-            # Normal hover annotation (at least one positive point or hover point)
-            elif not self.drawing_rectangle and (len(self.positive_points) > 0 or self.hover_point):
-                self.cursor_annotation = self.create_annotation(scene_pos, False)
+            # Allow cursor annotation during rectangle drawing if we have both start and end points
+            elif self.drawing_rectangle and self.start_point and self.end_point:
+                if self.top_left is not None and self.bottom_right is not None:
+                    self.cursor_annotation = self.create_annotation(position, False)
+                    if self.cursor_annotation:
+                        # Store the hover graphics item for easy removal later
+                        self.hover_graphics = self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
+            # Normal hover annotation (just hover point)
+            elif not self.drawing_rectangle and self.hover_point:
+                self.cursor_annotation = self.create_annotation(position, False)
                 if self.cursor_annotation:
                     # Store the hover graphics item for easy removal later
                     self.hover_graphics = self.cursor_annotation.create_graphics_item(self.annotation_window.scene)
@@ -543,6 +582,7 @@ class SAMTool(Tool):
         # Remove the current cursor annotation and create a new one
         self.clear_cursor_annotation()
         self.create_cursor_annotation(scene_pos)
+        self.annotation_window.scene.update()
 
     def clear_cursor_annotation(self):
         """

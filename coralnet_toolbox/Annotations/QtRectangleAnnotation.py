@@ -2,6 +2,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from rasterio.windows import Window
+from shapely.ops import split
+from shapely.geometry import Polygon, LineString, box
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter
@@ -243,17 +245,41 @@ class RectangleAnnotation(Annotation):
         
     @classmethod
     def combine(cls, annotations: list):
-        """Combine multiple rectangle annotations into a single encompassing rectangle.
+        """Combine multiple rectangle annotations into a single encompassing rectangle,
+        but only if every annotation overlaps with at least one other annotation.
         
         Args:
             annotations: List of RectangleAnnotations objects to combine.
             
         Returns:
-            A new RectangleAnnotations that encompasses all input rectangles.
+            A new RectangleAnnotations that encompasses all input rectangles if every 
+            annotation overlaps with at least one other, otherwise None.
         """
         if not annotations:
-            raise ValueError("Cannot combine empty list of annotations")
+            return None
+        
+        if len(annotations) == 1:
+            return annotations[0]
+        
+        # Check if each annotation overlaps with at least one other annotation
+        for i, anno_i in enumerate(annotations):
+            has_overlap = False
+            for j, anno_j in enumerate(annotations):
+                if i == j:
+                    continue
+                    
+                # Check if these two rectangles overlap
+                if (anno_i.top_left.x() < anno_j.bottom_right.x() and 
+                    anno_i.bottom_right.x() > anno_j.top_left.x() and
+                    anno_i.top_left.y() < anno_j.bottom_right.y() and
+                    anno_i.bottom_right.y() > anno_j.top_left.y()):
+                    has_overlap = True
+                    break
             
+            # If any annotation doesn't overlap with any other, return None
+            if not has_overlap:
+                return None
+                
         # Find the minimum top-left and maximum bottom-right coordinates
         min_x = min(anno.top_left.x() for anno in annotations)
         min_y = min(anno.top_left.y() for anno in annotations)
@@ -263,13 +289,13 @@ class RectangleAnnotation(Annotation):
         # Create new rectangle with these bounds
         top_left = QPointF(min_x, min_y)
         bottom_right = QPointF(max_x, max_y)
-    
+
         # Extract info from the first annotation
-        short_label_code = annotations[0].short_label_code
-        long_label_code = annotations[0].long_label_code
+        short_label_code = annotations[0].label.short_label_code
+        long_label_code = annotations[0].label.long_label_code
         color = annotations[0].label.color
         image_path = annotations[0].image_path
-        label_id = annotations[0].label_id
+        label_id = annotations[0].label.id
         
         # Create a new annotation with the merged points
         new_annotation = cls(
@@ -282,13 +308,117 @@ class RectangleAnnotation(Annotation):
             label_id=label_id
         )
         
-        # # If all input annotations have the same rasterio source, use it for the new one
-        # if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
-        #     if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
-        #         new_annotation.rasterio_src = annotations[0].rasterio_src
-        #         new_annotation.create_cropped_image(new_annotation.rasterio_src)
+        # All input annotations have the same rasterio source, use it for the new one
+        if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
+            if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
+                new_annotation.rasterio_src = annotations[0].rasterio_src
+                new_annotation.create_cropped_image(new_annotation.rasterio_src)
         
         return new_annotation
+    
+    @classmethod
+    def cut(cls, annotation, cutting_points: list):
+        """Cut a rectangle annotation where it intersects with a cutting line.
+        
+        Args:
+            annotation: A RectangleAnnotation object to process.
+            cutting_points: List of QPointF objects defining a cutting line (potentially non-linear).
+            
+        Returns:
+            List of new RectangleAnnotation objects resulting from the cut.
+            If the line doesn't intersect the rectangle, returns a list with the original annotation.
+        """
+        if not annotation or len(cutting_points) < 2:
+            return [annotation] if annotation else []
+        
+        # Get rectangle bounds
+        x1, y1 = annotation.top_left.x(), annotation.top_left.y()
+        x2, y2 = annotation.bottom_right.x(), annotation.bottom_right.y()
+        
+        # Create a shapely box from rectangle coordinates
+        rect_shapely = box(x1, y1, x2, y2)
+        
+        # Create a line from the cutting points
+        line_points = [(point.x(), point.y()) for point in cutting_points]
+        cutting_line = LineString(line_points)
+        
+        # Check if the line intersects the rectangle
+        if not rect_shapely.intersects(cutting_line):
+            return [annotation]  # No intersection, return original
+        
+        # Extend the cutting line to ensure it fully cuts through the rectangle
+        def extend_line(line, distance=1000):
+            """Extend line segments at both ends to ensure complete cutting."""
+            coords = list(line.coords)
+            if len(coords) < 2:
+                return line
+            
+            # Extend the first segment
+            first, second = coords[0], coords[1]
+            dx, dy = first[0] - second[0], first[1] - second[1]
+            length = (dx**2 + dy**2)**0.5
+            if length > 0:
+                dx, dy = dx / length * distance, dy / length * distance
+            extended_first = (first[0] + dx, first[1] + dy)
+            
+            # Extend the last segment
+            last, second_last = coords[-1], coords[-2]
+            dx, dy = last[0] - second_last[0], last[1] - second_last[1]
+            length = (dx**2 + dy**2)**0.5
+            if length > 0:
+                dx, dy = dx / length * distance, dy / length * distance
+            extended_last = (last[0] + dx, last[1] + dy)
+            
+            # Create new line with extended endpoints
+            return LineString([extended_first] + coords[1:-1] + [extended_last])
+        
+        # Extend the cutting line
+        extended_line = extend_line(cutting_line)
+        
+        try:
+            # Split the rectangle with the extended line
+            split_result = split(rect_shapely, extended_line)
+            
+            result_annotations = []
+            min_area = 10  # Minimum area threshold
+            
+            for geom in split_result.geoms:
+                # Skip tiny fragments
+                if geom.area < min_area:
+                    continue
+                
+                # Get the bounds of the split geometry
+                minx, miny, maxx, maxy = geom.bounds
+                
+                # Avoid creating degenerate rectangles
+                if maxx - minx < 1 or maxy - miny < 1:
+                    continue
+                    
+                # Create a new rectangle annotation with the bounds
+                new_anno = cls(
+                    top_left=QPointF(minx, miny),
+                    bottom_right=QPointF(maxx, maxy),
+                    short_label_code=annotation.label.short_label_code,
+                    long_label_code=annotation.label.long_label_code,
+                    color=annotation.label.color,
+                    image_path=annotation.image_path,
+                    label_id=annotation.label.id
+                )
+                
+                # Transfer rasterio source if available
+                if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
+                    new_anno.rasterio_src = annotation.rasterio_src
+                    new_anno.create_cropped_image(new_anno.rasterio_src)
+                    
+                result_annotations.append(new_anno)
+            
+            # If cutting didn't produce any results, return the original annotation
+            return result_annotations if result_annotations else [annotation]
+            
+        except Exception as e:
+            # Log the error and return the original rectangle
+            print(f"Error during rectangle cutting: {e}")
+            return [annotation]
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation."""

@@ -7,6 +7,8 @@ import math
 import numpy as np
 
 from rasterio.windows import Window
+from shapely.geometry import Point
+from shapely.geometry import Polygon, LineString
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter
@@ -137,7 +139,7 @@ class PolygonAnnotation(Annotation):
             
         # Then round the coordinates if requested
         if reduce:
-            points = [QPointF(round(point.x(), 3), round(point.y(), 3)) for point in points]
+            points = [QPointF(round(point.x(), 6), round(point.y(), 6)) for point in points]
 
         self.points = points
 
@@ -390,42 +392,163 @@ class PolygonAnnotation(Annotation):
 
             # Notify that the annotation has been updated
             self.annotationUpdated.emit(self)
-            
+    
     @classmethod
     def combine(cls, annotations: list):
-        """Cbomine multiple polygon annotations into a single polygon using convex hull.
+        """Combine multiple polygon annotations into a single polygon using polygon union,
+        as long as the polygons form a connected component (directly or indirectly connected).
         
         Args:
             annotations: List of PolygonAnnotation objects to combine.
             
         Returns:
-            A new PolygonAnnotation that encompasses all input polygons
+            A new PolygonAnnotation that encompasses all input polygons if they form a connected component,
+            or None if the polygons form disconnected groups.
         """
         if not annotations:
-            raise ValueError("Cannot combine empty list of annotations")
+            return None
         
-        # Collect all points from all polygons
-        all_points = []
-        for annotation in annotations:
-            all_points.extend(annotation.points)
+        if len(annotations) == 1:
+            return annotations[0]
         
-        # Convert to numpy array for convex hull calculation
-        points_array = np.array([(point.x(), point.y()) for point in all_points])
+        # Build an adjacency graph where an edge represents polygon overlap
+        overlap_graph = {}
+        for i in range(len(annotations)):
+            overlap_graph[i] = set()
         
-        # Compute convex hull
-        if len(points_array) > 2:
-            hull = cv2.convexHull(np.array(points_array, dtype=np.float32))
-            hull_points = [QPointF(point[0][0], point[0][1]) for point in hull]
-        else:
-            # Not enough points for convex hull, use original points
-            hull_points = all_points
+        # Check for overlap between polygons
+        for i in range(len(annotations) - 1):
+            poly1_points = np.array([(p.x(), p.y()) for p in annotations[i].points], dtype=np.int32)
             
+            # Create a mask for the first polygon
+            poly1_bbox = annotations[i].cropped_bbox
+            p1_min_x, p1_min_y = int(poly1_bbox[0]), int(poly1_bbox[1])
+            p1_max_x, p1_max_y = int(poly1_bbox[2]), int(poly1_bbox[3])
+            p1_width = p1_max_x - p1_min_x + 20  # Add padding
+            p1_height = p1_max_y - p1_min_y + 20
+            
+            # Adjust polygon coordinates to mask
+            poly1_adjusted = poly1_points.copy()
+            poly1_adjusted[:, 0] -= p1_min_x - 10
+            poly1_adjusted[:, 1] -= p1_min_y - 10
+            
+            mask1 = np.zeros((p1_height, p1_width), dtype=np.uint8)
+            cv2.fillPoly(mask1, [poly1_adjusted], 255)
+            
+            for j in range(i + 1, len(annotations)):
+                poly2_points = np.array([(p.x(), p.y()) for p in annotations[j].points], dtype=np.int32)
+                
+                # First check bounding box overlap for quick filtering
+                min_x1, min_y1, max_x1, max_y1 = annotations[i].cropped_bbox
+                min_x2, min_y2, max_x2, max_y2 = annotations[j].cropped_bbox
+                
+                has_overlap = False
+                
+                # Check if bounding boxes overlap
+                if not (max_x1 < min_x2 or max_x2 < min_x1 or max_y1 < min_y2 or max_y2 < min_y1):
+                    # Create a mask for the second polygon in the same coordinate system as the first
+                    poly2_adjusted = poly2_points.copy()
+                    poly2_adjusted[:, 0] -= p1_min_x - 10
+                    poly2_adjusted[:, 1] -= p1_min_y - 10
+                    
+                    mask2 = np.zeros_like(mask1)
+                    cv2.fillPoly(mask2, [poly2_adjusted], 255)
+                    
+                    # Check for intersection
+                    intersection = cv2.bitwise_and(mask1, mask2)
+                    if np.any(intersection):
+                        has_overlap = True
+                
+                # Fallback to point-in-polygon check if no overlap detected yet
+                if not has_overlap:
+                    # Check if any point of polygon i is inside polygon j
+                    for point in annotations[i].points:
+                        if annotations[j].contains_point(point):
+                            has_overlap = True
+                            break
+                            
+                    if not has_overlap:
+                        # Check if any point of polygon j is inside polygon i
+                        for point in annotations[j].points:
+                            if annotations[i].contains_point(point):
+                                has_overlap = True
+                                break
+                
+                # If overlap is found, add an edge between i and j in the graph
+                if has_overlap:
+                    overlap_graph[i].add(j)
+                    overlap_graph[j].add(i)
+        
+        # Check if all polygons form a connected component using BFS
+        visited = [False] * len(annotations)
+        queue = [0]  # Start from the first polygon
+        visited[0] = True
+        
+        while queue:
+            node = queue.pop(0)
+            for neighbor in overlap_graph[node]:
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    queue.append(neighbor)
+        
+        # If any polygon is not visited, the annotations don't form a connected component
+        if False in visited:
+            return None
+        
+        # Combine polygons by creating a binary mask of all polygons
+        # Determine the bounds of all polygons
+        min_x = min(anno.cropped_bbox[0] for anno in annotations)
+        min_y = min(anno.cropped_bbox[1] for anno in annotations)
+        max_x = max(anno.cropped_bbox[2] for anno in annotations)
+        max_y = max(anno.cropped_bbox[3] for anno in annotations)
+        
+        # Add padding
+        padding = 20
+        min_x -= padding
+        min_y -= padding
+        max_x += padding
+        max_y += padding
+        
+        # Create a mask for the combined shape
+        width = int(max_x - min_x)
+        height = int(max_y - min_y)
+        if width <= 0 or height <= 0:
+            width = max(1, width)
+            height = max(1, height)
+        
+        combined_mask = np.zeros((height, width), dtype=np.uint8)
+        
+        # Draw all polygons on the mask
+        for annotation in annotations:
+            polygon_points = np.array([(point.x() - min_x, point.y() - min_y) for point in annotation.points])
+            cv2.fillPoly(combined_mask, [polygon_points.astype(np.int32)], 255)
+        
+        # Find contours of the combined shape
+        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # Get the largest contour
+            largest_contour = max(contours, key=cv2.contourArea)
+            
+            # Simplify the contour slightly to reduce point count
+            epsilon = 0.0005 * cv2.arcLength(largest_contour, True)
+            approx_contour = cv2.approxPolyDP(largest_contour, epsilon, True)
+            
+            # Convert back to original coordinate system and to QPointF
+            hull_points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx_contour]
+        else:
+            # Fallback to all points if contour finding fails
+            all_points = []
+            for annotation in annotations:
+                all_points.extend(annotation.points)
+            hull_points = all_points
+        
         # Extract info from the first annotation
-        short_label_code = annotations[0].short_label_code
-        long_label_code = annotations[0].long_label_code
+        short_label_code = annotations[0].label.short_label_code
+        long_label_code = annotations[0].label.long_label_code
         color = annotations[0].label.color
         image_path = annotations[0].image_path
-        label_id = annotations[0].label_id
+        label_id = annotations[0].label.id
         
         # Create a new annotation with the combined points
         new_annotation = cls(
@@ -437,13 +560,138 @@ class PolygonAnnotation(Annotation):
             label_id=label_id
         )
         
-        # # If all input annotations have the same rasterio source, use it for the new one
-        # if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
-        #     if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
-        #         new_annotation.rasterio_src = annotations[0].rasterio_src
-        #         new_annotation.create_cropped_image(new_annotation.rasterio_src)
+        # All input annotations have the same rasterio source, use it for the new one
+        if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
+            if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
+                new_annotation.rasterio_src = annotations[0].rasterio_src
+                new_annotation.create_cropped_image(new_annotation.rasterio_src)
         
         return new_annotation
+    
+    @classmethod
+    def cut(cls, annotation, cutting_points: list):
+        """Cut a polygon annotation where it intersects with a cutting line.
+        
+        Args:
+            annotation: A PolygonAnnotation object.
+            cutting_points: List of QPointF objects defining a cutting line.
+            
+        Returns:
+            List of new PolygonAnnotation objects resulting from the cut.
+        """
+        if not annotation or not cutting_points or len(cutting_points) < 2:
+            return [annotation] if annotation else []
+        
+        # Extract polygon points as (x,y) tuples
+        polygon_points = [(point.x(), point.y()) for point in annotation.points]
+        if len(polygon_points) < 3:
+            return [annotation]  # Not a valid polygon
+        
+        # Create shapely polygon
+        polygon = Polygon(polygon_points)
+        
+        # Create cutting line
+        line_points = [(point.x(), point.y()) for point in cutting_points]
+        cutting_line = LineString(line_points)
+        
+        # Check if the line intersects with the polygon
+        if not polygon.intersects(cutting_line):
+            return [annotation]  # No intersection, return original
+        
+        # Extend the cutting line to ensure it fully cuts through the polygon
+        # This extends the cutting line by calculating its bearing and extending beyond the polygon bounds
+        def extend_line(line, distance=1000):
+            """Extend line in both directions by the given distance."""            
+            # Get the coordinates of the first and last points
+            coords = list(line.coords)
+            
+            # Calculate direction vectors for start and end
+            if len(coords) >= 2:
+                # For start point (extend backwards)
+                start_x, start_y = coords[0]
+                next_x, next_y = coords[1]
+                start_dx = start_x - next_x
+                start_dy = start_y - next_y
+                
+                # Normalize and scale the direction vector
+                start_length = (start_dx**2 + start_dy**2)**0.5
+                if start_length > 0:
+                    start_dx = start_dx / start_length * distance
+                    start_dy = start_dy / start_length * distance
+                
+                # For end point (extend forwards)
+                end_x, end_y = coords[-1]
+                prev_x, prev_y = coords[-2]
+                end_dx = end_x - prev_x
+                end_dy = end_y - prev_y
+                
+                # Normalize and scale the direction vector
+                end_length = (end_dx**2 + end_dy**2)**0.5
+                if end_length > 0:
+                    end_dx = end_dx / end_length * distance
+                    end_dy = end_dy / end_length * distance
+                
+                # Create new extended points
+                new_start = (start_x + start_dx, start_y + start_dy)
+                new_end = (end_x + end_dx, end_y + end_dy)
+                
+                # Create new extended line with all points
+                new_coords = [new_start] + coords + [new_end]
+                return LineString(new_coords)
+            
+            return line
+        
+        # Extend the cutting line
+        extended_line = extend_line(cutting_line)
+        
+        # Cut the polygon with the extended line
+        try:
+            # Split the polygon along the cutting line
+            from shapely.ops import split
+            split_polygons = split(polygon, extended_line)
+            
+            # Convert the split geometries back to polygons
+            result_annotations = []
+            min_area = 10  # Minimum area threshold
+            
+            for geom in split_polygons.geoms:
+                # Skip tiny fragments
+                if geom.area < min_area or not isinstance(geom, Polygon):
+                    continue
+                    
+                # Get the exterior coordinates of the polygon
+                coords = list(geom.exterior.coords)
+                
+                # Convert coordinates to QPointF objects
+                new_points = [QPointF(x, y) for x, y in coords[:-1]]  
+                
+                if len(new_points) < 3:  # Skip if we don't have enough points for a polygon
+                    continue
+                    
+                # Create a new polygon annotation
+                new_anno = cls(
+                    points=new_points,
+                    short_label_code=annotation.label.short_label_code,
+                    long_label_code=annotation.label.long_label_code,
+                    color=annotation.label.color,
+                    image_path=annotation.image_path,
+                    label_id=annotation.label.id
+                )
+                
+                # Transfer rasterio source if available
+                if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
+                    new_anno.rasterio_src = annotation.rasterio_src
+                    new_anno.create_cropped_image(new_anno.rasterio_src)
+                    
+                result_annotations.append(new_anno)
+            
+            # If no valid polygons were created, return the original
+            return result_annotations if result_annotations else [annotation]
+        
+        except Exception as e:
+            # Log the error and return the original polygon
+            print(f"Error during polygon cutting: {e}")
+            return [annotation]
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation for serialization."""
