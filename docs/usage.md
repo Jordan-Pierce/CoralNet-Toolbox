@@ -15,10 +15,10 @@ This guide provides instructions on how to use the application, including key fu
 - **Segmentation**: Segment objects in an image (Polygon).
 
 ## Thresholds for Computer Vision Tasks
-- Patch Size: Adjust the patch size in the status bar.
-- Uncertainty Threshold: Adjust the uncertainty threshold in the status bar.
-- IoU Threshold: Adjust the IoU threshold in the status bar.
-- Area Threshold: Adjust the min and max area threshold in the status bar.
+- **Patch Size**: Adjust the patch size in the status bar.
+- **Uncertaint** Threshold: Adjust the uncertainty threshold in the status bar.
+- **IoU Threshold**: Adjust the IoU threshold in the status bar.
+- **Area Threshold**: Adjust the min and max area threshold in the status bar.
 
 ## Main Window
 The main window consists of several components:
@@ -92,12 +92,29 @@ The main window consists of several components:
   - **Batch Inference**: Perform batch inferences.
 
 ## Tool Bar
-- **Select Tool**: Select multiple annotations; move and change the size of annotations.
-- **Patch Tool**: Add new PatchAnnotations.
-- **Polygon Tool**: Add new PolygonAnnotations.
-- **Rectangle Tool**: Add new RectangleAnnotations.
-- **SAM Tool**: Use `SAM` model for automatic segmentation (points, box).
-- **See Anything Tool**: Use See Anything (`YOLOE`) to provide references of object, and detect other similar appearing.
+- **Select Tool**:
+  -
+
+- **Patch Tool**:
+  - 
+
+- **Rectangle Tool**:
+  -
+
+- **Polygon Tool**:
+  -
+
+- **SAM Tool**: After a model is loaded
+  - **Space Bar**: Set working area; confirm prediction; finalize predictions and exit working area.
+  - **Left-Click**: Start a box; press again to end a box.
+  - **Ctrl + Left-Click**: Add positive point.
+  - **Ctrl + Right-Click**: Add negative point.
+  - **Backspace**: Discard unfinalized predictions.
+
+- **See Anything (YOLOE) Tool**: After a model is loaded
+  - **Space Bar**: Set working area; run prediction; finalize predictions and exit working area.
+  - **Left-Click**: Start a box; press again to end a box.
+  - **Backspace**: Discard unfinalized predictions.
 
 ## Status Bar
 - **Image Size**: Displays the image size.
@@ -112,17 +129,6 @@ The main window consists of several components:
 ## Annotation Window
 - **Zoom**: Use the mouse wheel to zoom in and out.
 - **Pan**: Hold Ctrl + Right-click the mouse button to pan the image.
-- **Add Annotation**: Click with the Left mouse button while using one of the annotation tools.
-- **Select Annotations**:
-  - Ctrl + Left-Click on multiple annotations while using the select tool.
-  - Ctrl + Left-Click and drag to select multiple annotations while using the select tool.
-  - Ctrl + Shift + < to select all annotations
-  - Ctrl + Shift + > to deselect all annotations
-    - **Move Annotation**: Drag a selected annotation.
-    - **Modify Annotation**: Hold Shift and drag the vertices of the selected annotation (Rectangle, Polygon).
-    - **Resize Annotation**: Hold Ctrl and Zoom in / out to increase / decrease a selected annotation's size.
-    - **Confirm Prediction**: Press Ctrl + Space bar to confirm selected annotations' machine learning prediction.
-    - **Delete Annotations**: Press Ctrl + Delete to delete the selected annotations.
 
 ## Label Window
 - **Move Label**: Right-click and drag to move labels.
@@ -149,9 +155,7 @@ The main window consists of several components:
   - **Prediction Selection**: Select a prediction from the list to change the label.
 
 ### Hotkeys
-- **Ctrl + Delete**: Delete the selected annotations.
 - **Ctrl + W/A/S/D**: Navigate through labels.
-- **Ctrl + Mouse Wheel**: Adjust annotation size.
 - **Ctrl + Left/Right**: Cycle through annotations.
 - **Ctrl + Up/Down**: Cycle through images.
 - **Ctrl + Shift + <**: Select all annotations.
@@ -164,15 +168,3 @@ The main window consists of several components:
   - **Ctrl + 3**: Make predictions using Instance Segmentation model.
   - **Ctrl + 4**: Make predictions using FastSAM model.
   - **Ctrl + 5**: Make predictions using AutoDistill model.
-
-- **SAM**: After a model is loaded
-  - **Space Bar**: Set working area; confirm prediction; finalize predictions.
-  - **Left-Click**: Start a box; press again to end a box.
-  - **Ctrl + Left-Click**: Add positive point.
-  - **Ctrl + Right-Click**: Add negative point.
-  - **Backspace**: Discard unfinalized predictions.
-
-- **See Anything (YOLOE)**: After a model is loaded
-  - **Space Bar**: Set working area; run prediction; finalize predictions.
-  - **Left-Click**: Start a box; press again to end a box.
-  - **Backspace**: Discard unfinalized predictions.
