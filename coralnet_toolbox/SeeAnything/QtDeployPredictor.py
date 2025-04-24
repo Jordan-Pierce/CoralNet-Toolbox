@@ -588,7 +588,7 @@ class DeployPredictorDialog(QDialog):
         finally:
             # Clear the cache
             gc.collect()
-            torch.cuda.empty_cache
+            empty_cache()
 
         return results
 
@@ -652,7 +652,7 @@ class DeployPredictorDialog(QDialog):
                 progress_bar.update_progress()
                 # Clear the cache
                 gc.collect()
-                torch.cuda.empty_cache()
+                empty_cache()
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()

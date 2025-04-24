@@ -156,7 +156,7 @@ class SAMTool(Tool):
         """
         view = self.annotation_window
         if not view.pixmap_image:
-            return 7  # fallback
+            return 5  # fallback
 
         # Get the current zoom scale from the view's transformation matrix
         # m11() is the horizontal scale factor (scene to view)
@@ -164,7 +164,7 @@ class SAMTool(Tool):
         if scale == 0:
             scale = 1  # avoid division by zero
 
-        desired_px = 7  # Desired thickness in screen pixels
+        desired_px = 5  # Desired thickness in screen pixels
 
         # To keep the line visually consistent, divide by the scale
         thickness = max(1, int(round(desired_px / scale)))
