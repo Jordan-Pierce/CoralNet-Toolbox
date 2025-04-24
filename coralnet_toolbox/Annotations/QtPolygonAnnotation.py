@@ -139,7 +139,7 @@ class PolygonAnnotation(Annotation):
             
         # Then round the coordinates if requested
         if reduce:
-            points = [QPointF(round(point.x(), 3), round(point.y(), 3)) for point in points]
+            points = [QPointF(round(point.x(), 6), round(point.y(), 6)) for point in points]
 
         self.points = points
 
