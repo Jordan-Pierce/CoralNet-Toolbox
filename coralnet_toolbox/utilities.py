@@ -422,7 +422,7 @@ def attempt_download_asset(app, asset_name, asset_url):
     progress_dialog.close()
 
 
-def simplify_polygon(self, points, tolerance=0.2):
+def simplify_polygon(points, tolerance=0.2):
     """
     Creates a polygon from points, identifies the largest component,
     simplifies it using the Ramer-Douglas-Peucker algorithm, ensures
@@ -505,6 +505,7 @@ def simplify_polygon(self, points, tolerance=0.2):
 
     except Exception:
         return []
+
 
 # TODO deal with optimized model types
 def check_model_architecture(weights_file):
