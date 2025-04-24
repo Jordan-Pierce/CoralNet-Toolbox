@@ -1,8 +1,9 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor, QPolygonF
-from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem, QMessageBox
+from PyQt5.QtCore import Qt, QPointF, QRectF, QLineF
+from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor, QPainterPath
+from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem, QMessageBox,
+                             QGraphicsLineItem, QGraphicsPathItem)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -28,6 +29,7 @@ class SelectTool(Tool):
         self.moving = False
         self.rectangle_selection = False
         self.cutting_mode = False
+        self.drawing_cut_line = False
         
         # Resize handle tracking
         self.resize_handle = None
@@ -43,8 +45,8 @@ class SelectTool(Tool):
         self.selection_start_pos = None
 
         # Cutting tool
-        self.cutting_points = []
-        self.cutting_polygon = None
+        self.cutting_path = None        # QGraphicsPathItem that displays the cutting path
+        self.cutting_points = []        # List of points in the cutting line
         
         # Connect signals
         self._connect_signals()
@@ -62,14 +64,20 @@ class SelectTool(Tool):
             self.annotation_window.set_annotation_size(delta=16 if delta > 0 else -16)
 
     def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press events to select annotations or add cutting points."""
+        """Handle mouse press events to select annotations or start/end cutting line."""
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
 
-        # If in cutting mode, add points to the cutting shape
+        # If in cutting mode, handle cutting line drawing
         if self.cutting_mode and event.button() == Qt.LeftButton:
             position = self.annotation_window.mapToScene(event.pos())
-            self.add_cutting_point(position)
+            
+            if not self.drawing_cut_line:
+                # Start drawing the cutting line
+                self.start_drawing_cut_line(position)
+            else:
+                # Finish drawing the cutting line
+                self.finish_drawing_cut_line()
             return
 
         if event.button() == Qt.LeftButton:
@@ -92,7 +100,7 @@ class SelectTool(Tool):
                 self.init_drag_or_resize(selected_annotation, position, event.modifiers())
                 
     def mouseMoveEvent(self, event: QMouseEvent):
-        """Handle mouse move events for resizing, moving, or drawing selection rectangle."""
+        """Handle mouse move events for resizing, moving, drawing selection rectangle, or cutting line."""
         current_pos = self.annotation_window.mapToScene(event.pos())
         
         if self.rectangle_selection:
@@ -101,8 +109,8 @@ class SelectTool(Tool):
             self.handle_resize(current_pos)
         elif self.moving:
             self._handle_annotation_move(current_pos)
-        # Don't need anything special for cutting mode mouse movement
-        # Points are only added on mouse press
+        elif self.drawing_cut_line:
+            self.update_cut_line(current_pos)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         """Handle mouse release events to stop moving, resizing, or finalize selection rectangle."""
@@ -135,11 +143,7 @@ class SelectTool(Tool):
             elif len(self.annotation_window.selected_annotations) == 1:
                 self.start_cutting_mode()
                 
-        # Handle Space to finalize cutting when in cutting mode
-        if event.key() == Qt.Key_Space and self.cutting_mode:
-            self.cut_selected_annotation()
-            
-        # Handle Escape to cancel cutting mode
+        # Handle Backspace to cancel cutting mode
         if event.key() == Qt.Key_Backspace and self.cutting_mode:
             self.cancel_cutting_mode()
 
@@ -148,9 +152,7 @@ class SelectTool(Tool):
         # Hide resize handles if either Ctrl or Shift is released
         if not (event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier):
             self.remove_resize_handles()
-    
-    # Selection and rectangle selection methods
-            
+                
     def update_with_top_machine_confidence(self):
         """Update the selected annotation(s) with their top machine confidence predictions."""
         if not self.annotation_window.selected_annotations:
@@ -525,81 +527,104 @@ class SelectTool(Tool):
             return
             
         self.cutting_mode = True
+        self.drawing_cut_line = False
         self.cutting_points = []
-        
-        # Create polygon graphics item for the cutting line/shape
-        self.cutting_polygon = QGraphicsPolygonItem()
-        line_thickness = self.get_selection_thickness()
-        self.cutting_polygon.setPen(QPen(Qt.red, line_thickness, Qt.DashLine))
-        self.annotation_window.scene.addItem(self.cutting_polygon)
         
         # Change cursor to indicate cutting mode
         self.annotation_window.viewport().setCursor(Qt.CrossCursor)
-        
-        # Show message to guide the user
-        QMessageBox.information(
-            self.annotation_window,
-            "Cutting Mode",
-            "Click to add points for cutting line/shape. Press SPACE to finalize or ESC to cancel."
-        )
 
-    def add_cutting_point(self, position):
-        """Add a point to the cutting line/shape."""
-        self.cutting_points.append(position)
+    def start_drawing_cut_line(self, position):
+        """Start drawing the cutting line from the given position."""
+        self.drawing_cut_line = True
+        self.cutting_points = [position]
         
-        # Update cutting shape visualization
-        if len(self.cutting_points) >= 2:
-            polygon = QPolygonF(self.cutting_points)
-            self.cutting_polygon.setPolygon(polygon)
+        # Create path graphics item for the cutting line
+        path = QPainterPath()
+        path.moveTo(position)
+        
+        self.cutting_path = QGraphicsPathItem(path)
+        line_thickness = self.get_selection_thickness()
+        self.cutting_path.setPen(QPen(Qt.red, line_thickness, Qt.DashLine))
+        self.annotation_window.scene.addItem(self.cutting_path)
 
-    def cut_selected_annotation(self):
-        """Finalize the cutting operation using the created cutting line/shape."""
-        if not self.cutting_mode or len(self.cutting_points) < 2:
+    def update_cut_line(self, position):
+        """Update the cutting line as the mouse moves, adding points to track the path."""
+        if not self.drawing_cut_line or not self.cutting_path:
+            return
+        
+        # Only add a new point if it's different enough from the last point to avoid excessive points
+        if not self.cutting_points or (position - self.cutting_points[-1]).manhattanLength() > 5:
+            self.cutting_points.append(position)
+            
+            # Update the path
+            path = QPainterPath()
+            path.moveTo(self.cutting_points[0])
+            
+            # Add each point as a line segment
+            for point in self.cutting_points[1:]:
+                path.lineTo(point)
+                
+            self.cutting_path.setPath(path)
+
+    def finish_drawing_cut_line(self):
+        """Finish drawing the cutting line and perform the cut."""
+        if not self.drawing_cut_line or len(self.cutting_points) < 2:
             self.cancel_cutting_mode()
             return
+        
+        # Perform the cut
+        self.cut_selected_annotation(self.cutting_points)
+        
+        # Exit the cutting mode
+        self.drawing_cut_line = False
+        self.cancel_cutting_mode()
+
+    def cut_selected_annotation(self, cutting_points):
+        """Finalize the cutting operation using the created cutting line."""
+        if not self.cutting_mode or len(cutting_points) < 2:
+            self.cancel_cutting_mode()
+            return  # Not enough points to cut
         
         annotation = self.annotation_window.selected_annotations[0]
         
         # Call the appropriate cut method based on annotation type
         if isinstance(annotation, RectangleAnnotation):
-            new_annotations = RectangleAnnotation.cut([annotation], self.cutting_points)
+            new_annotations = RectangleAnnotation.cut(annotation, cutting_points)
         elif isinstance(annotation, PolygonAnnotation):
-            new_annotations = PolygonAnnotation.cut([annotation], self.cutting_points)
+            new_annotations = PolygonAnnotation.cut(annotation, cutting_points)
         else:
             self.cancel_cutting_mode()
-            return
+            return  # Unsupported annotation type
             
         if not new_annotations:
-            QMessageBox.warning(
-                self.annotation_window,
-                "Cutting Failed",
-                "Failed to cut the annotation. Try a different cutting line."
-            )
-            self.cancel_cutting_mode()
+            self.cancel_cutting_mode()  # No new annotations created
             return
             
         # Remove the original annotation
-        self.annotation_window.delete_annotation(annotation)
+        self.annotation_window.delete_selected_annotations()
+        
+        # Unselect the annotations
+        self.annotation_window.unselect_annotations()
         
         # Add the new cut annotations
         for new_annotation in new_annotations:
             self.annotation_window.add_annotation_from_tool(new_annotation)
             
-        # Select the new annotations
-        self.annotation_window.unselect_annotations()
-        for new_annotation in new_annotations:
-            self.annotation_window.select_annotation(new_annotation, True)
-            
+        # Clear the cutting path
         self.cancel_cutting_mode()
-
+        
     def cancel_cutting_mode(self):
         """Cancel cutting mode and clean up."""
         self.cutting_mode = False
+        self.drawing_cut_line = False
         self.cutting_points = []
         
-        if self.cutting_polygon:
-            self.annotation_window.scene.removeItem(self.cutting_polygon)
-            self.cutting_polygon = None
+        if self.cutting_path:
+            self.annotation_window.scene.removeItem(self.cutting_path)
+            self.cutting_path = None
             
         # Reset cursor
         self.annotation_window.viewport().setCursor(self.cursor)
+        # Update the annotation window
+        self.annotation_window.scene.update()
+

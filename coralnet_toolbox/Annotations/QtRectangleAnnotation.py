@@ -315,112 +315,137 @@ class RectangleAnnotation(Annotation):
         return new_annotation
     
     @classmethod
-    def cut(cls, annotations: list, cutting_points: list):
-        """Cut rectangle annotations where they intersect with a cutting shape.
+    def cut(cls, annotation, cutting_points: list):
+        """Cut a rectangle annotation where it intersects with a cutting line.
         
         Args:
-            annotations: List of RectangleAnnotation objects to process.
-            cutting_points: List of QPointF objects defining a cutting line or polygon.
+            annotation: A RectangleAnnotation object to process.
+            cutting_points: List of QPointF objects defining a cutting line.
             
         Returns:
-            List of new RectangleAnnotation objects resulting from the cuts.
+            List of new RectangleAnnotation objects resulting from the cut.
+            If the line doesn't intersect the rectangle, returns a list with the original annotation.
         """
-        if not annotations or not cutting_points or len(cutting_points) < 2:
-            return annotations
+        if not annotation or len(cutting_points) < 2:
+            return [annotation] if annotation else []
+        
+        # Only use first and last point for rectangle cutting
+        p1 = cutting_points[0]
+        p2 = cutting_points[-1]
         
         result_annotations = []
         
-        # Create a polygon from the cutting points for intersection testing
-        cutting_polygon = QPolygonF(cutting_points)
+        # Get rectangle bounds
+        rect_polygon = annotation.get_polygon()
+        x1, y1 = annotation.top_left.x(), annotation.top_left.y()
+        x2, y2 = annotation.bottom_right.x(), annotation.bottom_right.y()
         
-        for annotation in annotations:
-            # Get the polygon representation of the rectangle
-            rect_polygon = annotation.get_polygon()
-            
-            # Check if the cutting shape intersects this rectangle
-            if not rect_polygon.intersects(cutting_polygon):
-                # If no intersection, keep the original annotation unchanged
-                result_annotations.append(annotation)
-                continue
+        # Create a scene for intersection testing
+        scene = QGraphicsScene()
+        rect_item = QGraphicsRectItem(x1, y1, x2 - x1, y2 - y1)
+        scene.addItem(rect_item)
+        
+        # Check if the line intersects the rectangle by checking if it intersects any edge
+        line_intersects = False
+        if rect_polygon.containsPoint(p1, Qt.OddEvenFill) or rect_polygon.containsPoint(p2, Qt.OddEvenFill):
+            line_intersects = True
+        else:
+            for i in range(4):
+                r_p1 = rect_polygon.at(i)
+                r_p2 = rect_polygon.at((i + 1) % 4)
                 
-            # Get rectangle bounds
-            x1, y1 = annotation.top_left.x(), annotation.top_left.y()
-            x2, y2 = annotation.bottom_right.x(), annotation.bottom_right.y()
-            
-            # Find center point of the rectangle
-            mid_x = (x1 + x2) / 2
-            mid_y = (y1 + y2) / 2
-            
-            # Create 4 sub-rectangles with their polygon representations
-            sub_rectangles = [
-                # Top-left quadrant
-                {
-                    'top_left': QPointF(x1, y1),
-                    'bottom_right': QPointF(mid_x, mid_y),
-                    'polygon': QPolygonF([
-                        QPointF(x1, y1),
-                        QPointF(mid_x, y1),
-                        QPointF(mid_x, mid_y),
-                        QPointF(x1, mid_y)
-                    ])
-                },
-                # Top-right quadrant
-                {
-                    'top_left': QPointF(mid_x, y1),
-                    'bottom_right': QPointF(x2, mid_y),
-                    'polygon': QPolygonF([
-                        QPointF(mid_x, y1),
-                        QPointF(x2, y1),
-                        QPointF(x2, mid_y),
-                        QPointF(mid_x, mid_y)
-                    ])
-                },
-                # Bottom-left quadrant
-                {
-                    'top_left': QPointF(x1, mid_y),
-                    'bottom_right': QPointF(mid_x, y2),
-                    'polygon': QPolygonF([
-                        QPointF(x1, mid_y),
-                        QPointF(mid_x, mid_y),
-                        QPointF(mid_x, y2),
-                        QPointF(x1, y2)
-                    ])
-                },
-                # Bottom-right quadrant
-                {
-                    'top_left': QPointF(mid_x, mid_y),
-                    'bottom_right': QPointF(x2, y2),
-                    'polygon': QPolygonF([
-                        QPointF(mid_x, mid_y),
-                        QPointF(x2, mid_y),
-                        QPointF(x2, y2),
-                        QPointF(mid_x, y2)
-                    ])
-                }
-            ]
-            
-            # Check each sub-rectangle for intersection with the cutting shape
-            for sub_rect in sub_rectangles:
-                # If no intersection with cutting shape, create a new annotation
-                if not sub_rect['polygon'].intersects(cutting_polygon):
-                    new_anno = cls(
-                        top_left=sub_rect['top_left'],
-                        bottom_right=sub_rect['bottom_right'],
-                        short_label_code=annotation.label.short_label_code,
-                        long_label_code=annotation.label.long_label_code,
-                        color=annotation.label.color,
-                        image_path=annotation.image_path,
-                        label_id=annotation.label.id
-                    )
+                # Check if the line segments intersect
+                # Simple line segment intersection check
+                def ccw(A, B, C):
+                    return (C.y() - A.y()) * (B.x() - A.x()) > (B.y() - A.y()) * (C.x() - A.x())
                     
-                    # Transfer rasterio source if available
-                    if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
-                        new_anno.rasterio_src = annotation.rasterio_src
-                        new_anno.create_cropped_image(new_anno.rasterio_src)
-                        
-                    result_annotations.append(new_anno)
+                if ccw(p1, r_p1, r_p2) != ccw(p2, r_p1, r_p2) and ccw(r_p1, p1, p2) != ccw(r_p2, p1, p2):
+                    line_intersects = True
+                    break
         
-        return result_annotations
+        if not line_intersects:
+            # If no intersection, return the original annotation
+            return [annotation]
+        
+        # Divide the rectangle into quadrants and check which side of the line they're on
+        mid_x = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        
+        # Create 4 sub-rectangles
+        sub_rectangles = [
+            # Top-left quadrant
+            {
+                'top_left': QPointF(x1, y1),
+                'bottom_right': QPointF(mid_x, mid_y)
+            },
+            # Top-right quadrant
+            {
+                'top_left': QPointF(mid_x, y1),
+                'bottom_right': QPointF(x2, mid_y)
+            },
+            # Bottom-left quadrant
+            {
+                'top_left': QPointF(x1, mid_y),
+                'bottom_right': QPointF(mid_x, y2)
+            },
+            # Bottom-right quadrant
+            {
+                'top_left': QPointF(mid_x, mid_y),
+                'bottom_right': QPointF(x2, y2)
+            }
+        ]
+        
+        # Function to determine which side of the line a point is on
+        def point_side(point):
+            # Line equation: (y2-y1)x + (x1-x2)y + (x2*y1-x1*y2) = 0
+            return (p2.y() - p1.y()) * point.x() + (p1.x() - p2.x()) * point.y() + (p2.x() * p1.y() - p1.x() * p2.y())
+        
+        # Group quadrants by which side of the line they're on
+        side_a = []
+        side_b = []
+        
+        for sub_rect in sub_rectangles:
+            center = QPointF(
+                (sub_rect['top_left'].x() + sub_rect['bottom_right'].x()) / 2,
+                (sub_rect['top_left'].y() + sub_rect['bottom_right'].y()) / 2
+            )
+            
+            if point_side(center) > 0:
+                side_a.append(sub_rect)
+            else:
+                side_b.append(sub_rect)
+        
+        # Create new annotations for each side if they contain quadrants
+        for side in [side_a, side_b]:
+            if side:
+                min_x = min(rect['top_left'].x() for rect in side)
+                min_y = min(rect['top_left'].y() for rect in side)
+                max_x = max(rect['bottom_right'].x() for rect in side)
+                max_y = max(rect['bottom_right'].y() for rect in side)
+                
+                # Avoid creating degenerate rectangles
+                if max_x - min_x < 1 or max_y - min_y < 1:
+                    continue
+                    
+                new_anno = cls(
+                    top_left=QPointF(min_x, min_y),
+                    bottom_right=QPointF(max_x, max_y),
+                    short_label_code=annotation.label.short_label_code,
+                    long_label_code=annotation.label.long_label_code,
+                    color=annotation.label.color,
+                    image_path=annotation.image_path,
+                    label_id=annotation.label.id
+                )
+                
+                # Transfer rasterio source if available
+                if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
+                    new_anno.rasterio_src = annotation.rasterio_src
+                    new_anno.create_cropped_image(new_anno.rasterio_src)
+                    
+                result_annotations.append(new_anno)
+        
+        # If cutting didn't produce any results, return the original annotation
+        return result_annotations if result_annotations else [annotation]
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation."""
