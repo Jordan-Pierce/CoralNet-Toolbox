@@ -1816,10 +1816,20 @@ class MainWindow(QMainWindow):
             
             if needs_update:
                 pip_command = "pip install -U coralnet-toolbox=={}".format(latest_version)
-                QMessageBox.information(self,
-                                        "Hey, there's an update available!",
-                                        f"A new version ({latest_version}) is available.\n\n"
-                                        f"To update, run the following command in your terminal:\n\n{pip_command}")
+                # Create a QMessageBox instance
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Information)
+                msg_box.setWindowTitle("Hey, there's an update available!")
+                # Set the main message text
+                msg_box.setText(f"A new version ({latest_version}) is available.\n\n"
+                                f"To update, run the following command in your terminal:")
+                # Set the command as informative text
+                msg_box.setInformativeText(pip_command)
+                # Enable text selection flags for the message box; this often makes the informative text selectable
+                msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+                msg_box.setStandardButtons(QMessageBox.Ok)
+                # Execute the dialog
+                msg_box.exec_()
             else:
                 if not on_open:
                     QMessageBox.information(self,
