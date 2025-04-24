@@ -569,22 +569,6 @@ class DeployPredictorDialog(QDialog):
 
             # Post-process the results with the best masks
             results = results_processor.from_sam(best_masks, best_scores, self.original_image, self.image_path)
-            
-            # masks, scores, _ = self.loaded_model.predict_torch(boxes=bbox_coords,
-            #                                         point_coords=point_coords,
-            #                                         point_labels=point_labels,
-            #                                         num_multimask_outputs=1)
-
-            # # Create a results processor
-            # results_processor = ResultsProcessor(self.main_window,
-            #                                      class_mapping=None,
-            #                                      uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-            #                                      iou_thresh=self.main_window.get_iou_thresh(),
-            #                                      min_area_thresh=self.main_window.get_area_thresh_min(),
-            #                                      max_area_thresh=self.main_window.get_area_thresh_max())
-
-            # # Post-process the results
-            # results = results_processor.from_sam(masks, scores, self.original_image, self.image_path)
 
         except Exception as e:
             QMessageBox.critical(self.annotation_window,
