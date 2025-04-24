@@ -101,11 +101,24 @@ class SeeAnythingTool(Tool):
         self.annotation_window.scene.update()  
 
     def get_workarea_thickness(self):
-        """Calculate appropriate line thickness based on current view dimensions."""
-        extent = self.annotation_window.viewportToScene()
-        view_width = round(extent.width())
-        view_height = round(extent.height())
-        return max(5, min(20, max(view_width, view_height) // 1000))
+        """
+        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
+        """
+        view = self.annotation_window
+        if not view.pixmap_image:
+            return 7  # fallback
+
+        # Get the current zoom scale from the view's transformation matrix
+        # m11() is the horizontal scale factor (scene to view)
+        scale = view.transform().m11()
+        if scale == 0:
+            scale = 1  # avoid division by zero
+
+        desired_px = 7  # Desired thickness in screen pixels
+
+        # To keep the line visually consistent, divide by the scale
+        thickness = max(1, int(round(desired_px / scale)))
+        return thickness
 
     def set_working_area(self):
         """
@@ -177,7 +190,27 @@ class SeeAnythingTool(Tool):
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         
-        self.annotation_window.scene.update()  
+        self.annotation_window.scene.update() 
+        
+    def get_rectangle_graphic_thickness(self):
+        """
+        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
+        """
+        view = self.annotation_window
+        if not view.pixmap_image:
+            return 2  # fallback
+
+        # Get the current zoom scale from the view's transformation matrix
+        # m11() is the horizontal scale factor (scene to view)
+        scale = view.transform().m11()
+        if scale == 0:
+            scale = 1  # avoid division by zero
+
+        desired_px = 2  # Desired thickness in screen pixels
+
+        # To keep the line visually consistent, divide by the scale
+        thickness = max(1, int(round(desired_px / scale)))
+        return thickness 
         
     def create_rectangle_graphics(self):
         """
@@ -206,7 +239,7 @@ class SeeAnythingTool(Tool):
 
             # Style the rectangle
             pen = QPen(QColor(color))
-            pen.setWidth(2)
+            pen.setWidth(self.get_rectangle_graphic_thickness())
             pen.setStyle(Qt.DashLine)
             self.current_rect_graphics.setPen(pen)
 
