@@ -2,6 +2,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from rasterio.windows import Window
+from shapely.ops import split
+from shapely.geometry import Polygon, LineString, box
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter
@@ -320,7 +322,7 @@ class RectangleAnnotation(Annotation):
         
         Args:
             annotation: A RectangleAnnotation object to process.
-            cutting_points: List of QPointF objects defining a cutting line.
+            cutting_points: List of QPointF objects defining a cutting line (potentially non-linear).
             
         Returns:
             List of new RectangleAnnotation objects resulting from the cut.
@@ -329,107 +331,73 @@ class RectangleAnnotation(Annotation):
         if not annotation or len(cutting_points) < 2:
             return [annotation] if annotation else []
         
-        # Only use first and last point for rectangle cutting
-        p1 = cutting_points[0]
-        p2 = cutting_points[-1]
-        
-        result_annotations = []
-        
         # Get rectangle bounds
-        rect_polygon = annotation.get_polygon()
         x1, y1 = annotation.top_left.x(), annotation.top_left.y()
         x2, y2 = annotation.bottom_right.x(), annotation.bottom_right.y()
         
-        # Create a scene for intersection testing
-        scene = QGraphicsScene()
-        rect_item = QGraphicsRectItem(x1, y1, x2 - x1, y2 - y1)
-        scene.addItem(rect_item)
+        # Create a shapely box from rectangle coordinates
+        rect_shapely = box(x1, y1, x2, y2)
         
-        # Check if the line intersects the rectangle by checking if it intersects any edge
-        line_intersects = False
-        if rect_polygon.containsPoint(p1, Qt.OddEvenFill) or rect_polygon.containsPoint(p2, Qt.OddEvenFill):
-            line_intersects = True
-        else:
-            for i in range(4):
-                r_p1 = rect_polygon.at(i)
-                r_p2 = rect_polygon.at((i + 1) % 4)
-                
-                # Check if the line segments intersect
-                # Simple line segment intersection check
-                def ccw(A, B, C):
-                    return (C.y() - A.y()) * (B.x() - A.x()) > (B.y() - A.y()) * (C.x() - A.x())
-                    
-                if ccw(p1, r_p1, r_p2) != ccw(p2, r_p1, r_p2) and ccw(r_p1, p1, p2) != ccw(r_p2, p1, p2):
-                    line_intersects = True
-                    break
+        # Create a line from the cutting points
+        line_points = [(point.x(), point.y()) for point in cutting_points]
+        cutting_line = LineString(line_points)
         
-        if not line_intersects:
-            # If no intersection, return the original annotation
-            return [annotation]
+        # Check if the line intersects the rectangle
+        if not rect_shapely.intersects(cutting_line):
+            return [annotation]  # No intersection, return original
         
-        # Divide the rectangle into quadrants and check which side of the line they're on
-        mid_x = (x1 + x2) / 2
-        mid_y = (y1 + y2) / 2
-        
-        # Create 4 sub-rectangles
-        sub_rectangles = [
-            # Top-left quadrant
-            {
-                'top_left': QPointF(x1, y1),
-                'bottom_right': QPointF(mid_x, mid_y)
-            },
-            # Top-right quadrant
-            {
-                'top_left': QPointF(mid_x, y1),
-                'bottom_right': QPointF(x2, mid_y)
-            },
-            # Bottom-left quadrant
-            {
-                'top_left': QPointF(x1, mid_y),
-                'bottom_right': QPointF(mid_x, y2)
-            },
-            # Bottom-right quadrant
-            {
-                'top_left': QPointF(mid_x, mid_y),
-                'bottom_right': QPointF(x2, y2)
-            }
-        ]
-        
-        # Function to determine which side of the line a point is on
-        def point_side(point):
-            # Line equation: (y2-y1)x + (x1-x2)y + (x2*y1-x1*y2) = 0
-            return (p2.y() - p1.y()) * point.x() + (p1.x() - p2.x()) * point.y() + (p2.x() * p1.y() - p1.x() * p2.y())
-        
-        # Group quadrants by which side of the line they're on
-        side_a = []
-        side_b = []
-        
-        for sub_rect in sub_rectangles:
-            center = QPointF(
-                (sub_rect['top_left'].x() + sub_rect['bottom_right'].x()) / 2,
-                (sub_rect['top_left'].y() + sub_rect['bottom_right'].y()) / 2
-            )
+        # Extend the cutting line to ensure it fully cuts through the rectangle
+        def extend_line(line, distance=1000):
+            """Extend line segments at both ends to ensure complete cutting."""
+            coords = list(line.coords)
+            if len(coords) < 2:
+                return line
             
-            if point_side(center) > 0:
-                side_a.append(sub_rect)
-            else:
-                side_b.append(sub_rect)
+            # Extend the first segment
+            first, second = coords[0], coords[1]
+            dx, dy = first[0] - second[0], first[1] - second[1]
+            length = (dx**2 + dy**2)**0.5
+            if length > 0:
+                dx, dy = dx / length * distance, dy / length * distance
+            extended_first = (first[0] + dx, first[1] + dy)
+            
+            # Extend the last segment
+            last, second_last = coords[-1], coords[-2]
+            dx, dy = last[0] - second_last[0], last[1] - second_last[1]
+            length = (dx**2 + dy**2)**0.5
+            if length > 0:
+                dx, dy = dx / length * distance, dy / length * distance
+            extended_last = (last[0] + dx, last[1] + dy)
+            
+            # Create new line with extended endpoints
+            return LineString([extended_first] + coords[1:-1] + [extended_last])
         
-        # Create new annotations for each side if they contain quadrants
-        for side in [side_a, side_b]:
-            if side:
-                min_x = min(rect['top_left'].x() for rect in side)
-                min_y = min(rect['top_left'].y() for rect in side)
-                max_x = max(rect['bottom_right'].x() for rect in side)
-                max_y = max(rect['bottom_right'].y() for rect in side)
+        # Extend the cutting line
+        extended_line = extend_line(cutting_line)
+        
+        try:
+            # Split the rectangle with the extended line
+            split_result = split(rect_shapely, extended_line)
+            
+            result_annotations = []
+            min_area = 10  # Minimum area threshold
+            
+            for geom in split_result.geoms:
+                # Skip tiny fragments
+                if geom.area < min_area:
+                    continue
+                
+                # Get the bounds of the split geometry
+                minx, miny, maxx, maxy = geom.bounds
                 
                 # Avoid creating degenerate rectangles
-                if max_x - min_x < 1 or max_y - min_y < 1:
+                if maxx - minx < 1 or maxy - miny < 1:
                     continue
                     
+                # Create a new rectangle annotation with the bounds
                 new_anno = cls(
-                    top_left=QPointF(min_x, min_y),
-                    bottom_right=QPointF(max_x, max_y),
+                    top_left=QPointF(minx, miny),
+                    bottom_right=QPointF(maxx, maxy),
                     short_label_code=annotation.label.short_label_code,
                     long_label_code=annotation.label.long_label_code,
                     color=annotation.label.color,
@@ -443,9 +411,14 @@ class RectangleAnnotation(Annotation):
                     new_anno.create_cropped_image(new_anno.rasterio_src)
                     
                 result_annotations.append(new_anno)
-        
-        # If cutting didn't produce any results, return the original annotation
-        return result_annotations if result_annotations else [annotation]
+            
+            # If cutting didn't produce any results, return the original annotation
+            return result_annotations if result_annotations else [annotation]
+            
+        except Exception as e:
+            # Log the error and return the original rectangle
+            print(f"Error during rectangle cutting: {e}")
+            return [annotation]
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation."""

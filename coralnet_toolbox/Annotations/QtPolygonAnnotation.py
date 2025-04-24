@@ -7,6 +7,8 @@ import math
 import numpy as np
 
 from rasterio.windows import Window
+from shapely.geometry import Point
+from shapely.geometry import Polygon, LineString
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter
@@ -561,107 +563,117 @@ class PolygonAnnotation(Annotation):
         """
         if not annotation or not cutting_points or len(cutting_points) < 2:
             return [annotation] if annotation else []
-            
-        result_annotations = []
         
-        # Get the polygon points
-        polygon_points = annotation.points
+        # Extract polygon points as (x,y) tuples
+        polygon_points = [(point.x(), point.y()) for point in annotation.points]
+        if len(polygon_points) < 3:
+            return [annotation]  # Not a valid polygon
         
-        # Convert annotation polygon and cutting line to numpy arrays
-        anno_points_np = np.array([(point.x(), point.y()) for point in polygon_points], dtype=np.int32)
-        cutting_points_np = np.array([(point.x(), point.y()) for point in cutting_points], dtype=np.int32)
+        # Create shapely polygon
+        polygon = Polygon(polygon_points)
         
-        # Create masks with padding
-        min_x = min(np.min(anno_points_np[:, 0]), np.min(cutting_points_np[:, 0])) - 10
-        min_y = min(np.min(anno_points_np[:, 1]), np.min(cutting_points_np[:, 1])) - 10
-        max_x = max(np.max(anno_points_np[:, 0]), np.max(cutting_points_np[:, 0])) + 10
-        max_y = max(np.max(anno_points_np[:, 1]), np.max(cutting_points_np[:, 1])) + 10
-        
-        width = int(max_x - min_x)
-        height = int(max_y - min_y)
-        
-        if width <= 0 or height <= 0:
-            width = max(1, width)
-            height = max(1, height)
-        
-        # Adjust coordinates to be relative to the mask origin
-        anno_points_adj = anno_points_np.copy()
-        anno_points_adj[:, 0] -= min_x
-        anno_points_adj[:, 1] -= min_y
-        
-        cutting_points_adj = cutting_points_np.copy()
-        cutting_points_adj[:, 0] -= min_x
-        cutting_points_adj[:, 1] -= min_y
-        
-        # Create mask for the polygon
-        poly_mask = np.zeros((height, width), dtype=np.uint8)
-        cv2.fillPoly(poly_mask, [anno_points_adj], 255)
-        
-        # Create a mask for the cutting line
-        line_mask = np.zeros((height, width), dtype=np.uint8)
-        # Draw a thick line to ensure it cuts through the polygon
-        line_thickness = 3
-        
-        # Draw all segments of the cutting path
-        for i in range(len(cutting_points_adj) - 1):
-            cv2.line(line_mask, 
-                     (int(cutting_points_adj[i][0]), 
-                      int(cutting_points_adj[i][1])),
-                     (int(cutting_points_adj[i + 1][0]), 
-                      int(cutting_points_adj[i + 1][1])),
-                     255, line_thickness)
+        # Create cutting line
+        line_points = [(point.x(), point.y()) for point in cutting_points]
+        cutting_line = LineString(line_points)
         
         # Check if the line intersects with the polygon
-        intersection = cv2.bitwise_and(poly_mask, line_mask)
-        if not np.any(intersection):
-            # No intersection, keep original annotation
+        if not polygon.intersects(cutting_line):
+            return [annotation]  # No intersection, return original
+        
+        # Extend the cutting line to ensure it fully cuts through the polygon
+        # This extends the cutting line by calculating its bearing and extending beyond the polygon bounds
+        def extend_line(line, distance=1000):
+            """Extend line in both directions by the given distance."""            
+            # Get the coordinates of the first and last points
+            coords = list(line.coords)
+            
+            # Calculate direction vectors for start and end
+            if len(coords) >= 2:
+                # For start point (extend backwards)
+                start_x, start_y = coords[0]
+                next_x, next_y = coords[1]
+                start_dx = start_x - next_x
+                start_dy = start_y - next_y
+                
+                # Normalize and scale the direction vector
+                start_length = (start_dx**2 + start_dy**2)**0.5
+                if start_length > 0:
+                    start_dx = start_dx / start_length * distance
+                    start_dy = start_dy / start_length * distance
+                
+                # For end point (extend forwards)
+                end_x, end_y = coords[-1]
+                prev_x, prev_y = coords[-2]
+                end_dx = end_x - prev_x
+                end_dy = end_y - prev_y
+                
+                # Normalize and scale the direction vector
+                end_length = (end_dx**2 + end_dy**2)**0.5
+                if end_length > 0:
+                    end_dx = end_dx / end_length * distance
+                    end_dy = end_dy / end_length * distance
+                
+                # Create new extended points
+                new_start = (start_x + start_dx, start_y + start_dy)
+                new_end = (end_x + end_dx, end_y + end_dy)
+                
+                # Create new extended line with all points
+                new_coords = [new_start] + coords + [new_end]
+                return LineString(new_coords)
+            
+            return line
+        
+        # Extend the cutting line
+        extended_line = extend_line(cutting_line)
+        
+        # Cut the polygon with the extended line
+        try:
+            # Split the polygon along the cutting line
+            from shapely.ops import split
+            split_polygons = split(polygon, extended_line)
+            
+            # Convert the split geometries back to polygons
+            result_annotations = []
+            min_area = 10  # Minimum area threshold
+            
+            for geom in split_polygons.geoms:
+                # Skip tiny fragments
+                if geom.area < min_area or not isinstance(geom, Polygon):
+                    continue
+                    
+                # Get the exterior coordinates of the polygon
+                coords = list(geom.exterior.coords)
+                
+                # Convert coordinates to QPointF objects
+                new_points = [QPointF(x, y) for x, y in coords[:-1]]  
+                
+                if len(new_points) < 3:  # Skip if we don't have enough points for a polygon
+                    continue
+                    
+                # Create a new polygon annotation
+                new_anno = cls(
+                    points=new_points,
+                    short_label_code=annotation.label.short_label_code,
+                    long_label_code=annotation.label.long_label_code,
+                    color=annotation.label.color,
+                    image_path=annotation.image_path,
+                    label_id=annotation.label.id
+                )
+                
+                # Transfer rasterio source if available
+                if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
+                    new_anno.rasterio_src = annotation.rasterio_src
+                    new_anno.create_cropped_image(new_anno.rasterio_src)
+                    
+                result_annotations.append(new_anno)
+            
+            # If no valid polygons were created, return the original
+            return result_annotations if result_annotations else [annotation]
+        
+        except Exception as e:
+            # Log the error and return the original polygon
+            print(f"Error during polygon cutting: {e}")
             return [annotation]
-        
-        # Cut the polygon by removing the line area
-        result_mask = cv2.subtract(poly_mask, line_mask)
-        
-        # Find contours in the result mask
-        contours, _ = cv2.findContours(result_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours:  # If no contours are found, keep the original
-            return [annotation]
-            
-        min_area = 10  # Minimum area threshold
-        for contour in contours:
-            # Only keep contours with sufficient area
-            area = cv2.contourArea(contour)
-            if area < min_area:  # Skip tiny fragments
-                continue
-                
-            # Simplify the contour
-            epsilon = 0.002 * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-            
-            # Convert back to original coordinate system and to QPointF
-            new_points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx]
-            
-            if len(new_points) < 3:  # Skip if we don't have enough points for a polygon
-                continue
-                
-            # Create a new polygon annotation
-            new_anno = cls(
-                points=new_points,
-                short_label_code=annotation.label.short_label_code,
-                long_label_code=annotation.label.long_label_code,
-                color=annotation.label.color,
-                image_path=annotation.image_path,
-                label_id=annotation.label.id
-            )
-            
-            # Transfer rasterio source if available
-            if hasattr(annotation, 'rasterio_src') and annotation.rasterio_src is not None:
-                new_anno.rasterio_src = annotation.rasterio_src
-                new_anno.create_cropped_image(new_anno.rasterio_src)
-                
-            result_annotations.append(new_anno)
-        
-        # If no valid contours were found after cutting, return the original
-        return result_annotations if result_annotations else [annotation]
 
     def to_dict(self):
         """Convert the annotation to a dictionary representation for serialization."""

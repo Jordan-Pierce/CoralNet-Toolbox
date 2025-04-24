@@ -56,6 +56,54 @@ class SelectTool(Tool):
         self.annotation_window.annotationSelected.connect(self.clear_resize_handles)
         self.annotation_window.annotationSizeChanged.connect(self.clear_resize_handles)
         self.annotation_window.annotationDeleted.connect(self.clear_resize_handles)
+        
+    def activate(self):
+        """Activate the selection tool and set appropriate cursor."""
+        super().activate()
+        # Reset all tool states to their defaults
+        self.resizing = False
+        self.moving = False
+        self.rectangle_selection = False
+        self.cutting_mode = False
+        self.drawing_cut_line = False
+        self.resize_handle = None
+        self.resize_start_pos = None
+        self.move_start_pos = None
+        
+        # Clean up any graphics items
+        self.remove_resize_handles()
+        
+        if self.selection_rectangle:
+            self.annotation_window.scene.removeItem(self.selection_rectangle)
+            self.selection_rectangle = None
+            
+        if self.cutting_path:
+            self.annotation_window.scene.removeItem(self.cutting_path)
+            self.cutting_path = None
+            
+        # Reset cursor
+        self.annotation_window.viewport().setCursor(self.cursor)
+
+    def deactivate(self):
+        """Deactivate the selection tool and clean up."""
+        self.cutting_mode = False
+        self.drawing_cut_line = False
+        self.resizing = False
+        self.moving = False
+        self.rectangle_selection = False
+        
+        # Clean up any graphics items
+        self.remove_resize_handles()
+        
+        if self.selection_rectangle:
+            self.annotation_window.scene.removeItem(self.selection_rectangle)
+            self.selection_rectangle = None
+        
+        if self.cutting_path:
+            self.annotation_window.scene.removeItem(self.cutting_path)
+            self.cutting_path = None
+            
+        super().deactivate()
     
     def wheelEvent(self, event: QMouseEvent):
         """Handle zoom using the mouse wheel."""
@@ -136,9 +184,12 @@ class SelectTool(Tool):
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Space:
             self.update_with_top_machine_confidence()
             
-        # Handle Ctrl+C to combine selected annotations or to enter cutting mode
+        # Handle Ctrl+C to combine selected annotations, enter cutting mode, or cancel cutting mode
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:
-            if len(self.annotation_window.selected_annotations) > 1:
+            if self.cutting_mode:
+                # Cancel cutting mode if already in it (pressing Ctrl+C again)
+                self.cancel_cutting_mode()
+            elif len(self.annotation_window.selected_annotations) > 1:
                 self.combine_selected_annotations()
             elif len(self.annotation_window.selected_annotations) == 1:
                 self.start_cutting_mode()
@@ -146,7 +197,7 @@ class SelectTool(Tool):
         # Handle Backspace to cancel cutting mode
         if event.key() == Qt.Key_Backspace and self.cutting_mode:
             self.cancel_cutting_mode()
-
+            
     def keyReleaseEvent(self, event):
         """Handle key release events to hide resize handles."""
         # Hide resize handles if either Ctrl or Shift is released
@@ -524,6 +575,15 @@ class SelectTool(Tool):
     def start_cutting_mode(self):
         """Start cutting mode for the currently selected annotation."""
         if len(self.annotation_window.selected_annotations) != 1:
+            return
+        
+        # Check if any annotations have machine confidence
+        if any(annotation.machine_confidence for annotation in self.annotation_window.selected_annotations):
+            QMessageBox.warning(
+                self.annotation_window,
+                "Cannot Cut",
+                "Cannot cut annotations with machine confidence. Confirm predictions (Ctrl+Space) first."
+            )
             return
             
         self.cutting_mode = True
