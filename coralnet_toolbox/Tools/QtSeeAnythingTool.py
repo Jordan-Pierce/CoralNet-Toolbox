@@ -504,9 +504,6 @@ class SeeAnythingTool(Tool):
                 # Use polygons from result.masks.data.xyn (list of polygons, each Nx2, normalized to crop)
                 polygon = result.masks.xyn[0]  # np.array of polygons, each as Nx2 array
 
-                # Grab the largest polygon (if multiple are found)
-                # polygon = max(polygon, key=lambda x: len(x))
-
                 # Scale normalized points to crop pixel coordinates
                 polygon[:, 0] *= self.image_view.shape[1]  # width
                 polygon[:, 1] *= self.image_view.shape[0]  # height
@@ -649,47 +646,48 @@ class SeeAnythingTool(Tool):
 
         # Get working area offset to adjust box coordinates
         working_area_top_left = self.working_area.rect().topLeft()
+        
+        # Get boxes (xyxyn normalized pixel coordinates relative to image_view)
+        boxes = results.boxes.xyxyn.detach().cpu().clone()
 
-        # Adjust box coordinates to be relative to the entire image
-        if hasattr(results, 'boxes') and hasattr(results.boxes, 'xyxy'):
-            # Get the current boxes and make a copy
-            boxes = results.boxes.xyxy.detach().cpu().clone()
-            
-            # Add working area offset to make coordinates relative to entire image
-            boxes[:, 0] += working_area_top_left.x()
-            boxes[:, 1] += working_area_top_left.y()
-            boxes[:, 2] += working_area_top_left.x()
-            boxes[:, 3] += working_area_top_left.y()
-            
-            # Add confidence and class columns if they exist
-            if hasattr(results.boxes, 'conf'):
-                conf = results.boxes.conf.detach().cpu().clone()
-                conf = conf.unsqueeze(1) if conf.dim() == 1 else conf
-                
-                if hasattr(results.boxes, 'cls'):
-                    cls = results.boxes.cls.detach().cpu().clone() 
-                else:
-                    cls = torch.zeros_like(conf)
-                    
-                # Ensure cls is a column vector
-                cls = cls.unsqueeze(1) if cls.dim() == 1 else cls
-                
-                # Create complete boxes tensor (x1, y1, x2, y2, conf, cls)
-                complete_boxes = torch.cat([boxes, conf, cls], dim=1)
-                
-                # Update boxes using the proper method
-                results.update(boxes=complete_boxes)
-            else:
-                # If no confidence values, just adjust the coordinates in the result directly
-                # This branch should rarely if ever be taken
-                print("Warning: No confidence values found in boxes, coordinate conversion might be incomplete")
+        # Scale the boxes (tesnor) using image_view dimensions
+        boxes_rel = boxes.clone()
+        boxes_rel[:, 0] *= self.image_view.shape[1]  # width
+        boxes_rel[:, 1] *= self.image_view.shape[0]  # height
+        boxes_rel[:, 2] *= self.image_view.shape[1]  # width
+        boxes_rel[:, 3] *= self.image_view.shape[0]  # height
 
-        # Replace the resized image with the original image
+        # Convert to whole image coordinates
+        boxes_abs = boxes_rel.clone()
+        boxes_abs[:, 0] += working_area_top_left.x()
+        boxes_abs[:, 1] += working_area_top_left.y()
+        boxes_abs[:, 2] += working_area_top_left.x()
+        boxes_abs[:, 3] += working_area_top_left.y()
+
+        # Update the confidence values if they exist
+        conf = results.boxes.conf.detach().cpu().clone()
+        if conf.dim() == 1:
+            conf = conf.unsqueeze(1)
+        
+        # Get the class values
+        cls = results.boxes.cls.detach().cpu().clone()
+        if cls.dim() == 1:
+            cls = cls.unsqueeze(1)
+        
+        # Create the updated boxes tensor 
+        updated_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
+                
+        # Update boxes using the proper method
+        results.update(boxes=updated_boxes)
+
+        # Replace the image view with the original image for SAM
         results.orig_img = self.original_image.copy()
         results.orig_shape = self.original_image.shape
         results.path = self.image_path
+        # Update the class mapping for the results
         results.names = {0: class_mapping[0].short_label_code}
 
+        # Process the results with the SAM predictor
         results = self.see_anything_dialog.sam_dialog.predict_from_results([results])
 
         # Process the results

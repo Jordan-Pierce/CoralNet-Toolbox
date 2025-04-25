@@ -301,7 +301,6 @@ class DeployPredictorDialog(QDialog):
         self.use_sam_dropdown = QComboBox()
         self.use_sam_dropdown.addItems(["False", "True"])
         self.use_sam_dropdown.currentIndexChanged.connect(self.is_sam_model_deployed)
-        # self.use_sam_dropdown.setEnabled(False)  # TODO
         layout.addRow("Use SAM Polygons:", self.use_sam_dropdown)
 
         group_box.setLayout(layout)
