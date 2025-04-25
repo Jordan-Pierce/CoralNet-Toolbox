@@ -24,6 +24,7 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import clean_polygon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -500,28 +501,24 @@ class SeeAnythingTool(Tool):
                 continue
 
             if self.see_anything_dialog.task == "segment":
-                # Get the mask from the result
-                mask = result.masks.data.detach().cpu().numpy().squeeze().astype(int)
-                # Convert to polygons
-                polygons = sv.detection.utils.mask_to_polygons(mask)
+                # Use polygons from result.masks.data.xyn (list of polygons, each Nx2, normalized to crop)
+                polygon = result.masks.xyn[0]  # np.array of polygons, each as Nx2 array
 
-                if not polygons:  # Handle cases where mask_to_polygons returns empty
-                    continue
-                
                 # Grab the largest polygon (if multiple are found)
-                polygon = max(polygons, key=lambda x: len(x)).astype(np.float32)
+                # polygon = max(polygon, key=lambda x: len(x))
 
-                # The following normalization/scaling is needed because mask_to_polygons returns
-                # points in normalized coordinates relative to the original image, not the crop.
-                normalized_points = polygon / np.array([result.orig_img.shape[1], result.orig_img.shape[0]])
-                points = normalized_points * np.array([self.image_view.shape[1], self.image_view.shape[0]])
-                
+                # Scale normalized points to crop pixel coordinates
+                polygon[:, 0] *= self.image_view.shape[1]  # width
+                polygon[:, 1] *= self.image_view.shape[0]  # height
+
                 # Convert to whole image coordinates
-                points[:, 0] += working_area_top_left.x()
-                points[:, 1] += working_area_top_left.y()
+                polygon[:, 0] += working_area_top_left.x()
+                polygon[:, 1] += working_area_top_left.y()
+                
+                polygon = clean_polygon(polygon)
 
                 # Create the polygon annotation and add it to self.annotations
-                self.create_polygon_annotation(points, confidence, transparency)
+                self.create_polygon_annotation(polygon, confidence, transparency)
             else:
                 # Create the rectangle annotation and add it to self.annotations
                 self.create_rectangle_annotation(box_abs, confidence, transparency)
@@ -529,7 +526,7 @@ class SeeAnythingTool(Tool):
         self.annotation_window.scene.update()  
         
         # Make cursor normal
-        QApplication.restoreOverrideCursor()
+        QApplication.restoreOverrideCursor() 
 
     def create_rectangle_annotation(self, box, confidence, transparency):
         """
@@ -539,26 +536,27 @@ class SeeAnythingTool(Tool):
             box (np.ndarray): The bounding box coordinates.
             transparency (int): The transparency level for the annotation.
         """
-        # Convert to QPointF
-        top_left = QPointF(box[0], box[1])
-        bottom_right = QPointF(box[2], box[3])
+        if len(box):
+            # Convert to QPointF
+            top_left = QPointF(box[0], box[1])
+            bottom_right = QPointF(box[2], box[3])
 
-        # Create the annotation
-        annotation = RectangleAnnotation(top_left,
-                                         bottom_right,
-                                         self.annotation_window.selected_label.short_label_code,
-                                         self.annotation_window.selected_label.long_label_code,
-                                         self.annotation_window.selected_label.color,
-                                         self.annotation_window.current_image_path,
-                                         self.annotation_window.selected_label.id,
-                                         transparency)
+            # Create the annotation
+            annotation = RectangleAnnotation(top_left,
+                                             bottom_right,
+                                             self.annotation_window.selected_label.short_label_code,
+                                             self.annotation_window.selected_label.long_label_code,
+                                             self.annotation_window.selected_label.color,
+                                             self.annotation_window.current_image_path,
+                                             self.annotation_window.selected_label.id,
+                                             transparency)
 
-        # Update the confidence score of annotation
-        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
+            # Update the confidence score of annotation
+            annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
-        # Ensure the annotation is added to the scene after creation (but not saved yet)
-        annotation.create_graphics_item(self.annotation_window.scene)
-        self.annotations.append(annotation)
+            # Ensure the annotation is added to the scene after creation (but not saved yet)
+            annotation.create_graphics_item(self.annotation_window.scene)
+            self.annotations.append(annotation)
 
     def create_polygon_annotation(self, points, confidence, transparency):
         """
@@ -569,23 +567,24 @@ class SeeAnythingTool(Tool):
             confidence (float): The confidence score for the annotation.
             transparency (int): The transparency level for the annotation.
         """
-        # Convert to QPointF
-        points = [QPointF(point[0], point[1]) for point in points]
-        # Create the annotation
-        annotation = PolygonAnnotation(points,
-                                       self.annotation_window.selected_label.short_label_code,
-                                       self.annotation_window.selected_label.long_label_code,
-                                       self.annotation_window.selected_label.color,
-                                       self.annotation_window.current_image_path,
-                                       self.annotation_window.selected_label.id,
-                                       transparency)
+        if len(points) <= 3:
+            # Convert to QPointF
+            points = [QPointF(point[0], point[1]) for point in points]
+            # Create the annotation
+            annotation = PolygonAnnotation(points,
+                                           self.annotation_window.selected_label.short_label_code,
+                                           self.annotation_window.selected_label.long_label_code,
+                                           self.annotation_window.selected_label.color,
+                                           self.annotation_window.current_image_path,
+                                           self.annotation_window.selected_label.id,
+                                           transparency)
 
-        # Update the confidence score of annotation
-        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
+            # Update the confidence score of annotation
+            annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
-        # Ensure the annotation is added to the scene after creation (but not saved yet)
-        annotation.create_graphics_item(self.annotation_window.scene)
-        self.annotations.append(annotation)
+            # Ensure the annotation is added to the scene after creation (but not saved yet)
+            annotation.create_graphics_item(self.annotation_window.scene)
+            self.annotations.append(annotation)
 
     def confirm_annotations(self):
         """
