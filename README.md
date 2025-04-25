@@ -164,6 +164,7 @@ Enhance your CoralNet experience with these tools:
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 
 ### TODO
+- 🤗 Model Zoo: Download `Ultralytics` models from `HuggingFace` for use in `toolbox`
 - 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
