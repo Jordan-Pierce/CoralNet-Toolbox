@@ -45,8 +45,8 @@ class SeeAnythingTool(Tool):
         self.cursor = Qt.CrossCursor
         self.annotation_graphics = None
 
-        self.image = None
-        self.rectangles = []  # Store rectangle coordinates for SeeAnything processing
+        self.image_view = None
+        self.rectangles = []       # Store rectangle coordinates for SeeAnything processing
         self.rectangle_items = []  # Store QGraphicsRectItem objects
 
         self.working_area = None
@@ -186,7 +186,7 @@ class SeeAnythingTool(Tool):
         self.annotation_window.scene.addItem(self.shadow_area)
 
         # Crop the image based on the working_rect
-        self.image = self.original_image[top:bottom, left:right]
+        self.image_view = self.original_image[top:bottom, left:right]
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         
@@ -374,7 +374,7 @@ class SeeAnythingTool(Tool):
             # If there is no working area, set it
             if not self.working_area:
                 self.set_working_area()
-                self.see_anything_dialog.set_image(self.image, self.image_path)
+                self.see_anything_dialog.set_image(self.image_view, self.image_path)
 
             # If there are user-drawn rectangles ready for processing, run the predictor
             elif len(self.rectangles) > 0 and not self.rectangles_processed:
@@ -461,7 +461,7 @@ class SeeAnythingTool(Tool):
         self.results = results_processor.apply_filters(results)
 
         # Calculate the area of the image
-        image_area = self.image.shape[0] * self.image.shape[1]
+        image_area = self.image_view.shape[0] * self.image_view.shape[1]
 
         # Clear previous annotations if any
         self.clear_annotations()
@@ -477,10 +477,10 @@ class SeeAnythingTool(Tool):
             box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
 
             # Convert from normalized to pixel coordinates relative to the cropped image
-            box_rel = box * np.array([self.image.shape[1],
-                                      self.image.shape[0],
-                                      self.image.shape[1],
-                                      self.image.shape[0]])
+            box_rel = box * np.array([self.image_view.shape[1],
+                                      self.image_view.shape[0],
+                                      self.image_view.shape[1],
+                                      self.image_view.shape[0]])
 
             # Convert to whole image coordinates
             box_abs = box_rel.copy()
@@ -489,7 +489,7 @@ class SeeAnythingTool(Tool):
             box_abs[2] += working_area_top_left.x()
             box_abs[3] += working_area_top_left.y()
 
-            # Check box area relative to image area
+            # Check box area relative to **image view** area
             box_area = (box_abs[2] - box_abs[0]) * (box_abs[3] - box_abs[1])
 
             # self.main_window.get_area_thresh_min()
@@ -502,26 +502,20 @@ class SeeAnythingTool(Tool):
             if self.see_anything_dialog.task == "segment":
                 # Get the mask from the result
                 mask = result.masks.data.detach().cpu().numpy().squeeze().astype(int)
-                # # Resize the mask to the resized image shape
-                mask = cv2.resize(mask, (result.orig_img.shape[1], result.orig_img.shape[0]))
                 # Convert to polygons
                 polygons = sv.detection.utils.mask_to_polygons(mask)
 
                 if not polygons:  # Handle cases where mask_to_polygons returns empty
                     continue
+                
+                # Grab the largest polygon (if multiple are found)
+                polygon = max(polygons, key=lambda x: len(x)).astype(np.float32)
 
-                if len(polygons) == 1:
-                    polygon = polygons[0]
-                else:
-                    # Grab the index of the largest polygon
-                    polygon = max(polygons, key=lambda x: len(x))
-
-                # Renormalize points by resized image dimensions
+                # The following normalization/scaling is needed because mask_to_polygons returns
+                # points in normalized coordinates relative to the original image, not the crop.
                 normalized_points = polygon / np.array([result.orig_img.shape[1], result.orig_img.shape[0]])
-
-                # Scale to working area dimensions
-                points = normalized_points * np.array([self.image.shape[1], self.image.shape[0]])
-
+                points = normalized_points * np.array([self.image_view.shape[1], self.image_view.shape[0]])
+                
                 # Convert to whole image coordinates
                 points[:, 0] += working_area_top_left.x()
                 points[:, 1] += working_area_top_left.y()
@@ -719,7 +713,7 @@ class SeeAnythingTool(Tool):
         for annotation in self.annotations:
             if annotation.graphics_item:
                 self.annotation_window.scene.removeItem(annotation.graphics_item)
-                annotation.graphics_item = None # Ensure graphics item is cleared
+                annotation.graphics_item = None  # Ensure graphics item is cleared
 
             # Optionally call a delete method if it exists and handles cleanup
             annotation.delete()
@@ -795,7 +789,7 @@ class SeeAnythingTool(Tool):
 
         self.image_path = None
         self.original_image = None
-        self.image = None
+        self.image_view = None
 
         # Clear all rectangles when canceling the working area
         self.clear_all_rectangles()
