@@ -13,7 +13,7 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
-from coralnet_toolbox.utilities import simplify_polygon
+from coralnet_toolbox.utilities import clean_polygon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -535,8 +535,8 @@ class SAMTool(Tool):
             QApplication.restoreOverrideCursor()
             return None
 
-        # Simplify the polygon using the Ramer-Douglas-Peucker algorithm
-        predictions = simplify_polygon(predictions, tolerance=0.2)
+        # Clean the polygon using the Ramer-Douglas-Peucker algorithm
+        predictions = clean_polygon(predictions)
 
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect().topLeft()

@@ -24,6 +24,7 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
+from coralnet_toolbox.utilities import clean_polygon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -45,8 +46,8 @@ class SeeAnythingTool(Tool):
         self.cursor = Qt.CrossCursor
         self.annotation_graphics = None
 
-        self.image = None
-        self.rectangles = []  # Store rectangle coordinates for SeeAnything processing
+        self.image_view = None
+        self.rectangles = []       # Store rectangle coordinates for SeeAnything processing
         self.rectangle_items = []  # Store QGraphicsRectItem objects
 
         self.working_area = None
@@ -186,7 +187,7 @@ class SeeAnythingTool(Tool):
         self.annotation_window.scene.addItem(self.shadow_area)
 
         # Crop the image based on the working_rect
-        self.image = self.original_image[top:bottom, left:right]
+        self.image_view = self.original_image[top:bottom, left:right]
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         
@@ -374,7 +375,7 @@ class SeeAnythingTool(Tool):
             # If there is no working area, set it
             if not self.working_area:
                 self.set_working_area()
-                self.see_anything_dialog.set_image(self.image, self.image_path)
+                self.see_anything_dialog.set_image(self.image_view, self.image_path)
 
             # If there are user-drawn rectangles ready for processing, run the predictor
             elif len(self.rectangles) > 0 and not self.rectangles_processed:
@@ -461,7 +462,7 @@ class SeeAnythingTool(Tool):
         self.results = results_processor.apply_filters(results)
 
         # Calculate the area of the image
-        image_area = self.image.shape[0] * self.image.shape[1]
+        image_area = self.image_view.shape[0] * self.image_view.shape[1]
 
         # Clear previous annotations if any
         self.clear_annotations()
@@ -477,10 +478,10 @@ class SeeAnythingTool(Tool):
             box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
 
             # Convert from normalized to pixel coordinates relative to the cropped image
-            box_rel = box * np.array([self.image.shape[1],
-                                      self.image.shape[0],
-                                      self.image.shape[1],
-                                      self.image.shape[0]])
+            box_rel = box * np.array([self.image_view.shape[1],
+                                      self.image_view.shape[0],
+                                      self.image_view.shape[1],
+                                      self.image_view.shape[0]])
 
             # Convert to whole image coordinates
             box_abs = box_rel.copy()
@@ -489,7 +490,7 @@ class SeeAnythingTool(Tool):
             box_abs[2] += working_area_top_left.x()
             box_abs[3] += working_area_top_left.y()
 
-            # Check box area relative to image area
+            # Check box area relative to **image view** area
             box_area = (box_abs[2] - box_abs[0]) * (box_abs[3] - box_abs[1])
 
             # self.main_window.get_area_thresh_min()
@@ -500,34 +501,21 @@ class SeeAnythingTool(Tool):
                 continue
 
             if self.see_anything_dialog.task == "segment":
-                # Get the mask from the result
-                mask = result.masks.data.detach().cpu().numpy().squeeze().astype(int)
-                # # Resize the mask to the resized image shape
-                mask = cv2.resize(mask, (result.orig_img.shape[1], result.orig_img.shape[0]))
-                # Convert to polygons
-                polygons = sv.detection.utils.mask_to_polygons(mask)
+                # Use polygons from result.masks.data.xyn (list of polygons, each Nx2, normalized to crop)
+                polygon = result.masks.xyn[0]  # np.array of polygons, each as Nx2 array
 
-                if not polygons:  # Handle cases where mask_to_polygons returns empty
-                    continue
-
-                if len(polygons) == 1:
-                    polygon = polygons[0]
-                else:
-                    # Grab the index of the largest polygon
-                    polygon = max(polygons, key=lambda x: len(x))
-
-                # Renormalize points by resized image dimensions
-                normalized_points = polygon / np.array([result.orig_img.shape[1], result.orig_img.shape[0]])
-
-                # Scale to working area dimensions
-                points = normalized_points * np.array([self.image.shape[1], self.image.shape[0]])
+                # Scale normalized points to crop pixel coordinates
+                polygon[:, 0] *= self.image_view.shape[1]  # width
+                polygon[:, 1] *= self.image_view.shape[0]  # height
 
                 # Convert to whole image coordinates
-                points[:, 0] += working_area_top_left.x()
-                points[:, 1] += working_area_top_left.y()
+                polygon[:, 0] += working_area_top_left.x()
+                polygon[:, 1] += working_area_top_left.y()
+                
+                polygon = clean_polygon(polygon)
 
                 # Create the polygon annotation and add it to self.annotations
-                self.create_polygon_annotation(points, confidence, transparency)
+                self.create_polygon_annotation(polygon, confidence, transparency)
             else:
                 # Create the rectangle annotation and add it to self.annotations
                 self.create_rectangle_annotation(box_abs, confidence, transparency)
@@ -535,7 +523,7 @@ class SeeAnythingTool(Tool):
         self.annotation_window.scene.update()  
         
         # Make cursor normal
-        QApplication.restoreOverrideCursor()
+        QApplication.restoreOverrideCursor() 
 
     def create_rectangle_annotation(self, box, confidence, transparency):
         """
@@ -545,26 +533,27 @@ class SeeAnythingTool(Tool):
             box (np.ndarray): The bounding box coordinates.
             transparency (int): The transparency level for the annotation.
         """
-        # Convert to QPointF
-        top_left = QPointF(box[0], box[1])
-        bottom_right = QPointF(box[2], box[3])
+        if len(box):
+            # Convert to QPointF
+            top_left = QPointF(box[0], box[1])
+            bottom_right = QPointF(box[2], box[3])
 
-        # Create the annotation
-        annotation = RectangleAnnotation(top_left,
-                                         bottom_right,
-                                         self.annotation_window.selected_label.short_label_code,
-                                         self.annotation_window.selected_label.long_label_code,
-                                         self.annotation_window.selected_label.color,
-                                         self.annotation_window.current_image_path,
-                                         self.annotation_window.selected_label.id,
-                                         transparency)
+            # Create the annotation
+            annotation = RectangleAnnotation(top_left,
+                                             bottom_right,
+                                             self.annotation_window.selected_label.short_label_code,
+                                             self.annotation_window.selected_label.long_label_code,
+                                             self.annotation_window.selected_label.color,
+                                             self.annotation_window.current_image_path,
+                                             self.annotation_window.selected_label.id,
+                                             transparency)
 
-        # Update the confidence score of annotation
-        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
+            # Update the confidence score of annotation
+            annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
-        # Ensure the annotation is added to the scene after creation (but not saved yet)
-        annotation.create_graphics_item(self.annotation_window.scene)
-        self.annotations.append(annotation)
+            # Ensure the annotation is added to the scene after creation (but not saved yet)
+            annotation.create_graphics_item(self.annotation_window.scene)
+            self.annotations.append(annotation)
 
     def create_polygon_annotation(self, points, confidence, transparency):
         """
@@ -575,23 +564,24 @@ class SeeAnythingTool(Tool):
             confidence (float): The confidence score for the annotation.
             transparency (int): The transparency level for the annotation.
         """
-        # Convert to QPointF
-        points = [QPointF(point[0], point[1]) for point in points]
-        # Create the annotation
-        annotation = PolygonAnnotation(points,
-                                       self.annotation_window.selected_label.short_label_code,
-                                       self.annotation_window.selected_label.long_label_code,
-                                       self.annotation_window.selected_label.color,
-                                       self.annotation_window.current_image_path,
-                                       self.annotation_window.selected_label.id,
-                                       transparency)
+        if len(points) <= 3:
+            # Convert to QPointF
+            points = [QPointF(point[0], point[1]) for point in points]
+            # Create the annotation
+            annotation = PolygonAnnotation(points,
+                                           self.annotation_window.selected_label.short_label_code,
+                                           self.annotation_window.selected_label.long_label_code,
+                                           self.annotation_window.selected_label.color,
+                                           self.annotation_window.current_image_path,
+                                           self.annotation_window.selected_label.id,
+                                           transparency)
 
-        # Update the confidence score of annotation
-        annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
+            # Update the confidence score of annotation
+            annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
 
-        # Ensure the annotation is added to the scene after creation (but not saved yet)
-        annotation.create_graphics_item(self.annotation_window.scene)
-        self.annotations.append(annotation)
+            # Ensure the annotation is added to the scene after creation (but not saved yet)
+            annotation.create_graphics_item(self.annotation_window.scene)
+            self.annotations.append(annotation)
 
     def confirm_annotations(self):
         """
@@ -656,47 +646,48 @@ class SeeAnythingTool(Tool):
 
         # Get working area offset to adjust box coordinates
         working_area_top_left = self.working_area.rect().topLeft()
+        
+        # Get boxes (xyxyn normalized pixel coordinates relative to image_view)
+        boxes = results.boxes.xyxyn.detach().cpu().clone()
 
-        # Adjust box coordinates to be relative to the entire image
-        if hasattr(results, 'boxes') and hasattr(results.boxes, 'xyxy'):
-            # Get the current boxes and make a copy
-            boxes = results.boxes.xyxy.detach().cpu().clone()
-            
-            # Add working area offset to make coordinates relative to entire image
-            boxes[:, 0] += working_area_top_left.x()
-            boxes[:, 1] += working_area_top_left.y()
-            boxes[:, 2] += working_area_top_left.x()
-            boxes[:, 3] += working_area_top_left.y()
-            
-            # Add confidence and class columns if they exist
-            if hasattr(results.boxes, 'conf'):
-                conf = results.boxes.conf.detach().cpu().clone()
-                conf = conf.unsqueeze(1) if conf.dim() == 1 else conf
-                
-                if hasattr(results.boxes, 'cls'):
-                    cls = results.boxes.cls.detach().cpu().clone() 
-                else:
-                    cls = torch.zeros_like(conf)
-                    
-                # Ensure cls is a column vector
-                cls = cls.unsqueeze(1) if cls.dim() == 1 else cls
-                
-                # Create complete boxes tensor (x1, y1, x2, y2, conf, cls)
-                complete_boxes = torch.cat([boxes, conf, cls], dim=1)
-                
-                # Update boxes using the proper method
-                results.update(boxes=complete_boxes)
-            else:
-                # If no confidence values, just adjust the coordinates in the result directly
-                # This branch should rarely if ever be taken
-                print("Warning: No confidence values found in boxes, coordinate conversion might be incomplete")
+        # Scale the boxes (tesnor) using image_view dimensions
+        boxes_rel = boxes.clone()
+        boxes_rel[:, 0] *= self.image_view.shape[1]  # width
+        boxes_rel[:, 1] *= self.image_view.shape[0]  # height
+        boxes_rel[:, 2] *= self.image_view.shape[1]  # width
+        boxes_rel[:, 3] *= self.image_view.shape[0]  # height
 
-        # Replace the resized image with the original image
+        # Convert to whole image coordinates
+        boxes_abs = boxes_rel.clone()
+        boxes_abs[:, 0] += working_area_top_left.x()
+        boxes_abs[:, 1] += working_area_top_left.y()
+        boxes_abs[:, 2] += working_area_top_left.x()
+        boxes_abs[:, 3] += working_area_top_left.y()
+
+        # Update the confidence values if they exist
+        conf = results.boxes.conf.detach().cpu().clone()
+        if conf.dim() == 1:
+            conf = conf.unsqueeze(1)
+        
+        # Get the class values
+        cls = results.boxes.cls.detach().cpu().clone()
+        if cls.dim() == 1:
+            cls = cls.unsqueeze(1)
+        
+        # Create the updated boxes tensor 
+        updated_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
+                
+        # Update boxes using the proper method
+        results.update(boxes=updated_boxes)
+
+        # Replace the image view with the original image for SAM
         results.orig_img = self.original_image.copy()
         results.orig_shape = self.original_image.shape
         results.path = self.image_path
+        # Update the class mapping for the results
         results.names = {0: class_mapping[0].short_label_code}
 
+        # Process the results with the SAM predictor
         results = self.see_anything_dialog.sam_dialog.predict_from_results([results])
 
         # Process the results
@@ -719,7 +710,7 @@ class SeeAnythingTool(Tool):
         for annotation in self.annotations:
             if annotation.graphics_item:
                 self.annotation_window.scene.removeItem(annotation.graphics_item)
-                annotation.graphics_item = None # Ensure graphics item is cleared
+                annotation.graphics_item = None  # Ensure graphics item is cleared
 
             # Optionally call a delete method if it exists and handles cleanup
             annotation.delete()
@@ -795,7 +786,7 @@ class SeeAnythingTool(Tool):
 
         self.image_path = None
         self.original_image = None
-        self.image = None
+        self.image_view = None
 
         # Clear all rectangles when canceling the working area
         self.clear_all_rectangles()
