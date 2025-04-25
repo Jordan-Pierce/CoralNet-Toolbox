@@ -153,6 +153,7 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
+- ✍️ Edit: Cut and Combine polygons and rectangles
 - 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
   - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
 - 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically

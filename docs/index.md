@@ -125,13 +125,19 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
     </tr>
     <tr>
       <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif" height="200"/>
+        <br>
+        <em>Cut</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif" height="200"/>
+        <br>
+        <em>Combine</em>
       </td>
       <td align="center">
         <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" height="200"/>
         <br>
         <em>See Anything (YOLOE)</em>
-      </td>
-      <td align="center">
       </td>
     </tr>
   </table>
@@ -147,6 +153,7 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
+- ✍️ Edit: Cut and Combine polygons and rectangles
 - 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
   - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
 - 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically
@@ -158,11 +165,12 @@ Enhance your CoralNet experience with these tools:
 - 🚀 Optimize: Productionize models for faster inferencing
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
-  - Export annotations as segmentation masks
+  - Export annotations as [GeoJSONs](https://datatracker.ietf.org/doc/html/rfc7946), segmentation masks
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 
 ### TODO
+- 🤗 Model Zoo: Download `Ultralytics` models from `HuggingFace` for use in `toolbox`
 - 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
