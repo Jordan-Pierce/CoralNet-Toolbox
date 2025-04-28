@@ -279,8 +279,7 @@ class Base(QDialog):
                                                          color,
                                                          image_path,
                                                          label_id,
-                                                         self.main_window.get_transparency_value(),
-                                                         show_msg=False)
+                                                         self.main_window.get_transparency_value())
 
                     else:
                         class_id, *points = map(float, line.split())
@@ -310,14 +309,13 @@ class Base(QDialog):
                                                        color,
                                                        image_path,
                                                        label_id,
-                                                       self.main_window.get_transparency_value(),
-                                                       show_msg=False)
+                                                       self.main_window.get_transparency_value())
 
                     # Add the annotation to the list for export
                     annotations.append(annotation)
 
                     # Add annotation to the dict
-                    self.annotation_window.annotations_dict.add_annotation_to_dict(new_annotation)
+                    self.annotation_window.annotations_dict.add_annotation_to_dict(annotation)
 
                     # Update the progress bar
                     progress_bar.update_progress()
