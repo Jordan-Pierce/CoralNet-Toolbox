@@ -130,7 +130,7 @@ class SAMTool(Tool):
         if not self.working_area:
             return
 
-        if self.working_area and self.start_point and self.end_point and self.drawing_rectangle:
+        if self.working_area and self.star_point and self.end_point and self.drawing_rectangle:
             working_area_top_left = self.working_area.rect().topLeft()
 
             # Ensure top_left and bottom_right are correctly calculated
@@ -319,6 +319,9 @@ class SAMTool(Tool):
         adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
                                scene_pos.y() - working_area_top_left.y())
 
+        # Clear any existing annotation preview
+        self.clear_cursor_annotation()
+
         if event.modifiers() == Qt.ControlModifier:
             if event.button() == Qt.LeftButton:
                 self.positive_points.append(adjusted_pos)
@@ -329,8 +332,14 @@ class SAMTool(Tool):
                 self.point_graphics.append(point)
                 # Set flag indicating we have active prompts
                 self.has_active_prompts = True
-                # Update the cursor annotation
-                self.update_cursor_annotation(scene_pos)
+                
+                # Create and display the annotation immediately
+                temp_annotation = self.create_annotation(scene_pos, False)
+                if temp_annotation:
+                    if self.hover_graphics:
+                        self.annotation_window.scene.removeItem(self.hover_graphics)
+                    self.hover_graphics = temp_annotation.create_graphics_item(self.annotation_window.scene)
+                    self.cursor_annotation = temp_annotation
 
             elif event.button() == Qt.RightButton:
                 self.negative_points.append(adjusted_pos)
@@ -341,8 +350,14 @@ class SAMTool(Tool):
                 self.point_graphics.append(point)
                 # Set flag indicating we have active prompts
                 self.has_active_prompts = True
-                # Update the cursor annotation
-                self.update_cursor_annotation(scene_pos)
+                
+                # Create and display the annotation immediately
+                temp_annotation = self.create_annotation(scene_pos, False)
+                if temp_annotation:
+                    if self.hover_graphics:
+                        self.annotation_window.scene.removeItem(self.hover_graphics)
+                    self.hover_graphics = temp_annotation.create_graphics_item(self.annotation_window.scene)
+                    self.cursor_annotation = temp_annotation
 
         elif event.modifiers() != Qt.ControlModifier:
             if event.button() == Qt.LeftButton and not self.drawing_rectangle:
@@ -364,8 +379,14 @@ class SAMTool(Tool):
                 self.drawing_rectangle = False
                 # Set flag indicating we have active prompts (rectangle is complete)
                 self.has_active_prompts = True
-                # Update the cursor annotation
-                self.update_cursor_annotation(scene_pos)
+                
+                # Create and display the annotation immediately
+                temp_annotation = self.create_annotation(scene_pos, False)
+                if temp_annotation:
+                    if self.hover_graphics:
+                        self.annotation_window.scene.removeItem(self.hover_graphics)
+                    self.hover_graphics = temp_annotation.create_graphics_item(self.annotation_window.scene)
+                    self.cursor_annotation = temp_annotation
 
         elif event.button() == Qt.RightButton and self.drawing_rectangle:
             # Panning the image while drawing
@@ -541,6 +562,10 @@ class SAMTool(Tool):
                                     
         # Update the confidence score of annotation
         annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
+
+        # Create cropped image
+        if hasattr(self.annotation_window, 'rasterio_image'):
+            annotation.create_cropped_image(self.annotation_window.rasterio_image)
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
