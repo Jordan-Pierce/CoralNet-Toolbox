@@ -252,10 +252,6 @@ class MainWindow(QMainWindow):
         self.annotation_window.mouseMoved.connect(self.update_mouse_position)
         self.annotation_window.viewChanged.connect(self.update_view_dimensions)
 
-        # Connect the hover_point signal from AnnotationWindow to the methods in SAMTool
-        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].start_hover_timer)
-        self.annotation_window.hover_point.connect(self.annotation_window.tools["sam"].stop_hover_timer)
-
         # Connect the toolChanged signal (to the AnnotationWindow)
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
         # Connect the toolChanged signal (to the Toolbar)
