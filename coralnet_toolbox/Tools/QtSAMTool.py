@@ -352,10 +352,10 @@ class SAMTool(Tool):
         
         # Calculate rectangle coordinates
         top_left = QPointF(min(self.start_point.x(), self.end_point.x()),
-                         min(self.start_point.y(), self.end_point.y()))
+                           min(self.start_point.y(), self.end_point.y()))
                          
         bottom_right = QPointF(max(self.start_point.x(), self.end_point.x()),
-                              max(self.start_point.y(), self.end_point.y()))
+                               max(self.start_point.y(), self.end_point.y()))
         
         # Adjust points relative to working area for SAM
         self.top_left = QPointF(top_left.x() - working_area_top_left.x(),
