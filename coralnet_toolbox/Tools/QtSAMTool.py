@@ -130,7 +130,7 @@ class SAMTool(Tool):
         if not self.working_area:
             return
 
-        if self.working_area and self.star_point and self.end_point and self.drawing_rectangle:
+        if self.working_area and self.start_point and self.end_point and self.drawing_rectangle:
             working_area_top_left = self.working_area.rect().topLeft()
 
             # Ensure top_left and bottom_right are correctly calculated
@@ -393,6 +393,7 @@ class SAMTool(Tool):
             pass
 
         self.annotation_window.scene.update()
+        QApplication.processEvents()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """
