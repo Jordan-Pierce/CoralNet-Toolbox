@@ -1,7 +1,4 @@
 import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer
@@ -10,10 +7,9 @@ from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
-from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import pixmap_to_numpy, clean_polygon
 
-from coralnet_toolbox.utilities import pixmap_to_numpy
-from coralnet_toolbox.utilities import clean_polygon
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -146,6 +142,21 @@ class SAMTool(Tool):
 
             self.bottom_right = QPointF(bottom_right.x() - working_area_top_left.x(),
                                         bottom_right.y() - working_area_top_left.y())
+
+            # Remove previous rectangle graphic if it exists
+            if self.rectangle_graphics:
+                self.annotation_window.scene.removeItem(self.rectangle_graphics)
+                self.rectangle_graphics = None
+
+            # Create new rectangle graphic
+            rect = QRectF(top_left, bottom_right)
+            pen = QPen(self.annotation_window.selected_label.color)
+            pen.setStyle(Qt.DashLine)
+            pen.setWidth(self.get_rectangle_graphic_thickness())
+            self.rectangle_graphics = QGraphicsRectItem(rect)
+            self.rectangle_graphics.setPen(pen)
+            self.rectangle_graphics.setBrush(QBrush(Qt.transparent))
+            self.annotation_window.scene.addItem(self.rectangle_graphics)
 
             # Update cursor annotation to show preview of segmentation
             self.update_cursor_annotation(self.end_point)
@@ -699,3 +710,4 @@ class SAMTool(Tool):
         
         # Clean up any remaining graphics
         self.cancel_annotation()
+        
