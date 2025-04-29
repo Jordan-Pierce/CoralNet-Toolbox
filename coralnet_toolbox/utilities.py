@@ -422,7 +422,7 @@ def attempt_download_asset(app, asset_name, asset_url):
     progress_dialog.close()
 
 
-def clean_polygon(polygon, tolerance=2, min_area=10):
+def clean_polygon(polygon, tolerance=0.1, min_area=10):
     """
     polygon: Nx2 numpy array of (x, y) points
     tolerance: simplification tolerance (in pixels)
@@ -430,7 +430,7 @@ def clean_polygon(polygon, tolerance=2, min_area=10):
     Returns: cleaned Nx2 numpy array
     """
     poly = Polygon(polygon)
-    # Step 1: Make valid if necessary
+    # Make valid if necessary
     if not poly.is_valid:
         try:
             from shapely.validation import make_valid
@@ -440,12 +440,12 @@ def clean_polygon(polygon, tolerance=2, min_area=10):
         if poly.is_empty:
             return np.empty((0, 2))
 
-    # Step 2: Simplify
+    # Simplify
     poly = poly.simplify(tolerance, preserve_topology=True)
     if poly.is_empty or not poly.is_valid:
         return np.empty((0, 2))
 
-    # Step 3: Handle GeometryCollection or MultiPolygon
+    # Handle GeometryCollection or MultiPolygon
     if isinstance(poly, (MultiPolygon, GeometryCollection)):
         # Extract all polygons from the collection
         polygons = [g for g in poly.geoms if isinstance(g, Polygon) and g.area >= min_area]
@@ -456,7 +456,7 @@ def clean_polygon(polygon, tolerance=2, min_area=10):
     elif not isinstance(poly, Polygon) or poly.area < min_area:
         return np.empty((0, 2))
 
-    # Step 4: Return exterior coordinates as Nx2 array
+    # Return exterior coordinates as Nx2 array
     coords = np.array(poly.exterior.coords)
     return coords
 

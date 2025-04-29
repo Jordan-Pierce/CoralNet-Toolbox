@@ -181,7 +181,7 @@ class Annotation(QObject):
         # Convert polygon to list of points
         points = [polygon.at(i) for i in range(polygon.count())]
         self.create_polygon_graphics_item(points, scene)
-
+        
     def create_center_graphics_item(self, center_xy, scene):
         """Create a graphical item representing the annotation's center point."""
         if self.center_graphics_item and self.center_graphics_item.scene():
