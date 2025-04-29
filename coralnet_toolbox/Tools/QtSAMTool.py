@@ -393,7 +393,6 @@ class SAMTool(Tool):
             pass
 
         self.annotation_window.scene.update()
-        QApplication.processEvents()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """
