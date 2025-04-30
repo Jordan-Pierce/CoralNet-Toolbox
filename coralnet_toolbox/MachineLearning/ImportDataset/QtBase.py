@@ -12,15 +12,16 @@ import shutil
 
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QVBoxLayout,
-                             QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QDialogButtonBox, QGroupBox,
-                             QButtonGroup, QRadioButton, QGridLayout)
+from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QVBoxLayout, QGroupBox,
+                             QLabel, QLineEdit, QDialog, QPushButton, QDialogButtonBox,
+                             QGridLayout)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -44,9 +45,9 @@ class Base(QDialog):
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Import Dataset")
         self.resize(500, 300)
-        
+
         self.layout = QVBoxLayout(self)
-        
+
         # Setup the info layout
         self.setup_info_layout()
         # Setup the YAML layout
@@ -55,24 +56,13 @@ class Base(QDialog):
         self.setup_output_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
-        group_box = QGroupBox("Information")
-        layout = QVBoxLayout()
-        
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Import a YOLO-formatted Detection or Segmentation dataset.")
-        
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-        
+        raise NotImplementedError("Subclasses must implement method.")
+
     def setup_yaml_layout(self):
         """
         Initialize the user interface for the ImportDatasetDialog using a form layout.
@@ -86,7 +76,7 @@ class Base(QDialog):
         self.yaml_path_label.setReadOnly(True)
         self.yaml_path_label.setPlaceholderText("Select data.yaml file...")
         layout.addWidget(self.yaml_path_label, 0, 1)
-        
+
         self.browse_yaml_button = QPushButton("Browse")
         self.browse_yaml_button.clicked.connect(self.browse_data_yaml)
         layout.addWidget(self.browse_yaml_button, 0, 2)
@@ -126,7 +116,7 @@ class Base(QDialog):
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
-    
+
     def browse_data_yaml(self):
         """
         Browse and select a data.yaml file.
@@ -248,7 +238,7 @@ class Base(QDialog):
             for image_path, label_path in image_label_paths.items():
 
                 # Read the label file
-                image_height, image_width = self.main_window.image_window.rasterio_open(image_path).shape
+                image_height, image_width = rasterio_open(image_path).shape
 
                 with open(label_path, 'r') as file:
                     lines = file.readlines()
@@ -289,8 +279,7 @@ class Base(QDialog):
                                                          color,
                                                          image_path,
                                                          label_id,
-                                                         self.main_window.get_transparency_value(),
-                                                         show_msg=False)
+                                                         self.main_window.get_transparency_value())
 
                     else:
                         class_id, *points = map(float, line.split())
@@ -320,14 +309,15 @@ class Base(QDialog):
                                                        color,
                                                        image_path,
                                                        label_id,
-                                                       self.main_window.get_transparency_value(),
-                                                       show_msg=False)
+                                                       self.main_window.get_transparency_value())
 
                     # Add the annotation to the list for export
                     annotations.append(annotation)
 
                     # Add annotation to the dict
-                    self.annotation_window.annotations_dict[annotation.id] = annotation
+                    self.annotation_window.annotations_dict.add_annotation_to_dict(annotation)
+
+                    # Update the progress bar
                     progress_bar.update_progress()
 
                 # Update the image window's image dict

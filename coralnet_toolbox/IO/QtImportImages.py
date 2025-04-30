@@ -28,30 +28,71 @@ class ImportImages:
                                                      "",
                                                      "Image Files (*.png *.jpg *.jpeg *.tif* *.bmp)")
         if file_names:
-            # Set the cursor to waiting (busy) cursor
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+            self._process_image_files(file_names)
 
-            progress_bar = ProgressBar(self.image_window, title="Importing Images")
-            progress_bar.show()
-            progress_bar.start_progress(len(file_names))
-            progress_bar.set_value(1)
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
 
-            for i, file_name in enumerate(file_names):
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
+
+        if file_names:
+            self._process_image_files(file_names)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        event.accept()
+    
+    def _process_image_files(self, file_names):
+        """Helper method to process a list of image files with progress tracking."""
+        # Make the cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        progress_bar = ProgressBar(self.image_window, title="Importing Images")
+        progress_bar.show()
+        progress_bar.start_progress(len(file_names))
+
+        try:
+            # Add images to the image window
+            for file_name in file_names:
                 if file_name not in set(self.image_window.image_paths):
-                    self.image_window.add_image(file_name)
-                progress_bar.update_progress()
+                    try:
+                        self.image_window.add_image(file_name)
+                    except Exception as e:
+                        print(f"Warning: Could not import image {file_name}. Error: {e}")
 
-            progress_bar.stop_progress()
-            progress_bar.close()
+                # Update the progress bar
+                progress_bar.update_progress()
 
             # Update filtered images
             self.image_window.filter_images()
+            
             # Show the last image
-            self.image_window.load_image_by_path(self.image_window.image_paths[-1])
+            if self.image_window.image_paths:
+                self.image_window.load_image_by_path(self.image_window.image_paths[-1])
 
+            self._show_success_message()
+        except Exception as e:
+            self._show_error_message(str(e))
+        finally:
             # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
-
-            QMessageBox.information(self.image_window,
-                                    "Image(s) Imported",
-                                    "Image(s) have been successfully imported.")
+            progress_bar.stop_progress()
+            progress_bar.close()
+    
+    def _show_success_message(self):
+        """Display a success message after importing images."""
+        QMessageBox.information(self.image_window,
+                                "Image(s) Imported",
+                                "Image(s) have been successfully imported.")
+    
+    def _show_error_message(self, error_msg):
+        """Display an error message when image import fails."""
+        QMessageBox.warning(self.image_window,
+                            "Error Importing Image(s)",
+                            f"An error occurred while importing image(s): {error_msg}")

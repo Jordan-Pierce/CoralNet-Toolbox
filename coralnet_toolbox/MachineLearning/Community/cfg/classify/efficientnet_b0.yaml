@@ -1,0 +1,19 @@
+# Metadata
+author: Y-T-G
+task: classify
+keywords: [cnn, efficientnet]
+description: EfficientNet-B0 pretrained backbone with Classify head.
+flops: 8.6
+parameters: 5649789
+min_version: 8.3.59
+discussion: https://github.com/Y-T-G/community/discussions/14
+
+# Model
+nc: 1
+strides: [32]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [1280, efficientnet_b0, DEFAULT, True, 2]]  # (1, 1280, 20, 20) - 0
+
+head:
+  - [-1, 1, Classify, [nc]]

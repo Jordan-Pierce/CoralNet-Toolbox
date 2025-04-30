@@ -1,5 +1,7 @@
 # coralnet_toolbox/MachineLearning/__init__.py
 
+from .Community.cfg import get_available_configs
+
 from .TrainModel.QtClassify import Classify as TrainClassify
 from .TrainModel.QtDetect import Detect as TrainDetect 
 from .TrainModel.QtSegment import Segment as TrainSegment
@@ -27,6 +29,7 @@ from .MergeDatasets.QtClassify import Classify as MergeClassify
 from .OptimizeModel.QtBase import Base as Optimize
 
 __all__ = [
+    'get_available_configs',
     'TrainClassify', 
     'TrainDetect', 
     'TrainSegment',
@@ -44,6 +47,8 @@ __all__ = [
     'EvalClassify', 
     'EvalDetect', 
     'EvalSegment',
+    'TileDetect',
+    'TileSegment',
     'MergeClassify', 
     'Optimize'
 ]

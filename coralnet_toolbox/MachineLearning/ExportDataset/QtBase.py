@@ -12,11 +12,14 @@ from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
-                             QGroupBox, QTableWidget, QTableWidgetItem)
+                             QGroupBox, QTableWidget, QTableWidgetItem, QButtonGroup, QRadioButton)
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -46,7 +49,7 @@ class Base(QDialog):
         self.selected_labels = []
         self.selected_annotations = []
         self.updating_summary_statistics = False
-        
+
         self.output_dir = None
         self.dataset_name = None
         self.train_ratio = 0.7
@@ -57,11 +60,19 @@ class Base(QDialog):
 
         # Setup the layout
         self.setup_info_layout()
+        # Setup the output layout
         self.setup_output_layout()
+        # Setup the ratio layout
         self.setup_ratio_layout()
+        # Setup the annotation layout
         self.setup_annotation_layout()
+        # Setup the options layout
+        self.setup_options_layout()
+        # Setup the table layout
         self.setup_table_layout()
+        # Setup the status layout
         self.setup_status_layout()
+        # Setup the button layout
         self.setup_button_layout()
 
     def showEvent(self, event):
@@ -76,52 +87,31 @@ class Base(QDialog):
         self.update_annotation_type_checkboxes()
         self.populate_class_filter_list()
         self.update_summary_statistics()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
-        group_box = QGroupBox("Information")
-        layout = QVBoxLayout()
-        
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Export Patches, Rectangles, and Polygons to create a YOLO-formatted \
-                             Classification, Detection or Segmentation dataset.")
-        
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
-
-    def setup_layout(self):
-        """
-        Set up the layout for the ExportDatasetDialog.
-        """
-        # Ready Status
-        self.ready_label = QLabel()
-        self.layout.addWidget(self.ready_label)
-
-        # Shuffle Button
-        self.shuffle_button = QPushButton("Shuffle")
-        self.shuffle_button.clicked.connect(self.update_summary_statistics)
-        self.layout.addWidget(self.shuffle_button)
+        raise NotImplementedError("Subclasses must implement this method.")
 
     def setup_output_layout(self):
         """Setup output directory layout."""
         group_box = QGroupBox("Output Parameters")
         layout = QFormLayout()
 
-        # Dataset Name and Output Directory
+        # Dataset Name
         self.dataset_name_edit = QLineEdit()
+        layout.addRow("Dataset Name:", self.dataset_name_edit)
+
+        # Output Directory with Browse button on same line
+        output_layout = QHBoxLayout()
         self.output_dir_edit = QLineEdit()
         self.output_dir_button = QPushButton("Browse...")
         self.output_dir_button.clicked.connect(self.browse_output_dir)
-
-        layout.addRow("Dataset Name:", self.dataset_name_edit)
-        layout.addRow("Output Directory:", self.output_dir_edit)
-        layout.addRow(self.output_dir_button)
+        output_layout.addWidget(self.output_dir_edit)
+        output_layout.addWidget(self.output_dir_button)
+        
+        layout.addRow("Output Directory:", output_layout)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -154,10 +144,6 @@ class Base(QDialog):
         layout.addWidget(QLabel("Test Ratio:"))
         layout.addWidget(self.test_ratio_spinbox)
 
-        self.train_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
-        self.val_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
-        self.test_ratio_spinbox.valueChanged.connect(self.update_summary_statistics)
-
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -170,14 +156,40 @@ class Base(QDialog):
         self.include_rectangles_checkbox = QCheckBox("Include Rectangle Annotations")
         self.include_polygons_checkbox = QCheckBox("Include Polygon Annotations")
 
-        # Connect checkbox signals
-        self.include_patches_checkbox.stateChanged.connect(self.update_summary_statistics)
-        self.include_rectangles_checkbox.stateChanged.connect(self.update_summary_statistics)
-        self.include_polygons_checkbox.stateChanged.connect(self.update_summary_statistics)
-
         layout.addWidget(self.include_patches_checkbox)
         layout.addWidget(self.include_rectangles_checkbox)
         layout.addWidget(self.include_polygons_checkbox)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_options_layout(self):
+        """Setup the image options layout."""
+        group_box = QGroupBox("Image Options")
+        layout = QHBoxLayout()  # Changed from QVBoxLayout to QHBoxLayout
+
+        # Create a button group for the image checkboxes
+        self.image_options_group = QButtonGroup(self)
+
+        self.all_images_radio = QRadioButton("All Images")
+        self.filtered_images_radio = QRadioButton("Filtered Images")
+
+        # Add the radio buttons to the button group
+        self.image_options_group.addButton(self.all_images_radio)
+        self.image_options_group.addButton(self.filtered_images_radio)
+
+        # Ensure only one radio button can be checked at a time
+        self.image_options_group.setExclusive(True)
+
+        # Set the default radio button
+        self.all_images_radio.setChecked(True)
+
+        # Connect radio button signals
+        self.all_images_radio.toggled.connect(self.update_image_selection)
+        self.filtered_images_radio.toggled.connect(self.update_image_selection)
+
+        layout.addWidget(self.all_images_radio)
+        layout.addWidget(self.filtered_images_radio)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -197,7 +209,6 @@ class Base(QDialog):
                                                            "Test",
                                                            "Images"])
         # Connect
-        self.label_counts_table.cellChanged.connect(self.update_summary_statistics)
         layout.addWidget(self.label_counts_table)
 
         group_box.setLayout(layout)
@@ -218,6 +229,11 @@ class Base(QDialog):
         """Setup the button layout."""
         button_layout = QHBoxLayout()
 
+        # Add Refresh button
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.update_summary_statistics)
+        button_layout.addWidget(self.refresh_button)
+        
         # Add Shuffle button
         self.shuffle_button = QPushButton("Shuffle")
         self.shuffle_button.clicked.connect(self.update_summary_statistics)
@@ -236,18 +252,6 @@ class Base(QDialog):
 
     def update_annotation_type_checkboxes(self):
         raise NotImplementedError("Method must be implemented in the subclass.")
-
-    def on_include_checkbox_state_changed(self, state):
-        """
-        Handle the state change event of the include checkboxes.
-
-        Args:
-            state: The new state of the checkbox.
-        """
-        if state == Qt.Checked:
-            self.update_summary_statistics()
-        elif state == Qt.Unchecked:
-            self.update_summary_statistics()
 
     def set_cell_color(self, row, column, color):
         """
@@ -280,7 +284,7 @@ class Base(QDialog):
         """
         # Get the label objects for the selected labels
         class_mapping = {}
-        
+
         for label in self.main_window.label_window.labels:
             if label.short_label_code in self.selected_labels:
                 class_mapping[label.short_label_code] = label.to_dict()
@@ -340,20 +344,17 @@ class Base(QDialog):
 
         # Filter annotations based on the selected labels
         annotations = [a for a in filtered_annotations if a.label.short_label_code in self.selected_labels]
-        
+
+        # Filter annotations based on the selected image option
+        if self.filtered_images_radio.isChecked():
+            annotations = [a for a in annotations if a.image_path in self.image_window.filtered_image_paths]
+
         return annotations
 
     def populate_class_filter_list(self):
         """
         Populate the class filter list with labels and their counts.
         """
-        try:
-            # Temporarily disconnect the cellChanged signal
-            self.label_counts_table.cellChanged.disconnect()
-        except TypeError:
-            # Ignore the error if the signal was not connected
-            pass
-
         # Set the row count to 0
         self.label_counts_table.setRowCount(0)
 
@@ -390,7 +391,6 @@ class Base(QDialog):
         for label, count in sorted_label_counts:
             include_checkbox = QCheckBox()
             include_checkbox.setChecked(True)
-            include_checkbox.stateChanged.connect(self.on_include_checkbox_state_changed)
             label_item = QTableWidgetItem(label)
             anno_count = QTableWidgetItem(str(count))
             train_item = QTableWidgetItem("0")
@@ -408,10 +408,6 @@ class Base(QDialog):
             self.label_counts_table.setItem(row, 6, images_item)
 
             row += 1
-
-        # Reconnect the cellChanged signal
-        self.label_counts_table.cellChanged.connect(
-            self.update_summary_statistics)
 
     def split_data(self):
         """
@@ -505,12 +501,25 @@ class Base(QDialog):
 
         return True
 
+    def update_image_selection(self):
+        """
+        Update the table based on the selected image option.
+        """
+        self.selected_annotations = self.filter_annotations()
+        self.update_summary_statistics()
+
     def update_summary_statistics(self):
         """
         Update the summary statistics for the dataset creation.
         """
         if self.updating_summary_statistics:
             return
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, "Updating Summary Statistics")
+        progress_bar.show()
+        progress_bar.start_progress(100)
 
         self.updating_summary_statistics = True
 
@@ -569,6 +578,12 @@ class Base(QDialog):
 
         self.updating_summary_statistics = False
         
+        # Restore the cursor to the default cursor
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.close()
+        progress_bar = None
+
     def is_ready(self):
         """Check if the dataset is ready to be created."""
         # Extract the input values, store them in the class variables
@@ -596,9 +611,9 @@ class Base(QDialog):
                                 "Input Error",
                                 "Train, Validation, and Test ratios must sum to 1.0")
             return False
-        
+
         return True
-    
+
     def accept(self):
         """
         Handle the OK button click event to create the dataset.
@@ -608,7 +623,7 @@ class Base(QDialog):
 
         # Create the output folder
         output_dir_path = os.path.join(self.output_dir, self.dataset_name)
-        
+
         # Check if the output directory exists
         if os.path.exists(output_dir_path):
             reply = QMessageBox.question(self,
@@ -636,19 +651,16 @@ class Base(QDialog):
             class_mapping = self.get_class_mapping()
             self.save_class_mapping_json(class_mapping, output_dir_path)
 
-        # Set the cursor to waiting (busy) cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Create the dataset
         self.create_dataset(output_dir_path)
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
 
         QMessageBox.information(self,
                                 "Dataset Created",
                                 "Dataset has been successfully created.")
         super().accept()
-        
-    def create_dataset(self):
+
+    def create_dataset(self, output_dir_path):
         raise NotImplementedError("Method must be implemented in the subclass.")
-    
-    def process_annotations(self):
+
+    def process_annotations(self, annotations, split_dir, split):
         raise NotImplementedError("Method must be implemented in the subclass.")

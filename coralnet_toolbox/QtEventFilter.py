@@ -18,22 +18,22 @@ class GlobalEventFilter(QObject):
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
-        
+
         self.classify_deploy_model_dialog = main_window.classify_deploy_model_dialog
         self.detect_deploy_model_dialog = main_window.detect_deploy_model_dialog
         self.segment_deploy_model_dialog = main_window.segment_deploy_model_dialog
         self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
         self.auto_distill_deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
-
+        
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
-            if event.modifiers() & Qt.ControlModifier:
+            if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
                 # Handle WASD keys for selecting Label
                 if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
                     self.label_window.handle_wasd_key(event.key())
                     return True
-
+                
                 # Handle hotkey for image classification prediction
                 if event.key() == Qt.Key_1:
                     self.classify_deploy_model_dialog.predict()
@@ -48,7 +48,7 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_3:
                     self.segment_deploy_model_dialog.predict()
                     return True
-                
+
                 # Handle hotkey for segment everything prediction
                 if event.key() == Qt.Key_4:
                     self.sam_deploy_generator_dialog.predict()
@@ -74,15 +74,43 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Down:
                     self.image_window.cycle_next_image()
                     return True
+                
+                # Delete (backspace or delete key) selected annotations when select tool is active
+                if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                    if self.main_window.select_tool_action.isChecked():
+                        if self.annotation_window.selected_annotations:
+                            self.annotation_window.delete_selected_annotations()
+                    return True
 
-            # Unselect annotation on End key press
-            if event.key() == Qt.Key_End:
-                self.annotation_window.unselect_annotations()
+            # Handle Ctrl + Shift + S for saving project
+            if event.key() == Qt.Key_S and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
+                self.main_window.save_project_as()
                 return True
 
-            # Untoggle all tools on Home key press
-            if event.key() == Qt.Key_Home:
-                self.main_window.untoggle_all_tools()
+            # Select all annotations on < key press with Shift+Ctrl
+            if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
+                if not self.main_window.select_tool_action.isChecked():
+                    # Untoggle all tools first (clear buttons)
+                    self.main_window.untoggle_all_tools()
+                    # Switch to select tool in main window (sets button)
+                    self.main_window.handle_tool_changed("select")
+                    # Set the select tool in the annotation window (sets tool)
+                    self.annotation_window.set_selected_tool("select")
+                
+                self.annotation_window.select_annotations()
+                return True
+
+            # Unselect all annotations on > key press with Shift+Ctrl
+            if event.key() == Qt.Key_Greater and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
+                if not self.main_window.select_tool_action.isChecked():
+                    # Untoggle all tools first (clear buttons)
+                    self.main_window.untoggle_all_tools()
+                    # Switch to select tool in main window (sets button)
+                    self.main_window.handle_tool_changed("select")
+                    # Set the select tool in the annotation window (sets tool)
+                    self.annotation_window.set_selected_tool("select")
+                
+                self.annotation_window.unselect_annotations()
                 return True
 
             # Handle Escape key for exiting program

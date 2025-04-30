@@ -1,6 +1,6 @@
 [project]
 name = "coralnet-toolbox"
-version = "0.0.14"
+version = "0.0.47"
 dynamic = [
     "dependencies",
 ]
@@ -29,11 +29,6 @@ all = [
     "coralnet-toolbox[extra]",
 ]
 
-extra = [
-    "pandas",
-]
-
-
 [tool]
 [tool.setuptools.packages.find]
 include = ["coralnet_toolbox*"]
@@ -48,7 +43,11 @@ universal = true
 
 
 [tool.bumpversion]
+<<<<<<< HEAD
 current_version = "0.0.14"
+=======
+current_version = "0.0.47"
+>>>>>>> bae0bb95e88dc5f04cd918b9f591e1d0162706c7
 commit = true
 tag = true
 

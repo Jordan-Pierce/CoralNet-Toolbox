@@ -1,6 +1,6 @@
 import warnings
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QMouseEvent
 
 from coralnet_toolbox.Tools.QtTool import Tool
@@ -34,9 +34,42 @@ class PanTool(Tool):
             self.annotation_window.setCursor(Qt.ArrowCursor)
 
     def pan(self, pos):
+        """Pan the view with boundary constraints to keep image in view"""
+        if not self.annotation_window.active_image:
+            return
+            
+        # Calculate the delta movement
         delta = pos - self.annotation_window.pan_start
         self.annotation_window.pan_start = pos
-        x_value = self.annotation_window.horizontalScrollBar().value() - delta.x()
-        y_value = self.annotation_window.verticalScrollBar().value() - delta.y()
-        self.annotation_window.horizontalScrollBar().setValue(x_value)
-        self.annotation_window.verticalScrollBar().setValue(y_value)
+        
+        # Get current scrollbar values
+        h_scroll = self.annotation_window.horizontalScrollBar()
+        v_scroll = self.annotation_window.verticalScrollBar()
+        
+        # Calculate new positions with delta applied
+        new_x = h_scroll.value() - delta.x()
+        new_y = v_scroll.value() - delta.y()
+        
+        # Apply the new scroll positions
+        h_scroll.setValue(new_x)
+        v_scroll.setValue(new_y)
+    
+    def ensure_image_in_view(self):
+        """Ensure the image stays within view boundaries and centered appropriately"""
+        if not self.annotation_window.scene or not self.annotation_window.active_image:
+            return
+            
+        # Get current visible area in scene coordinates
+        visible_rect = self.annotation_window.viewportToScene()
+        
+        # Get scene rect (image boundaries)
+        scene_rect = self.annotation_window.scene.sceneRect()
+        
+        # Check if the visible area is larger than the scene, which means 
+        # the image is smaller than the viewport and needs centering
+        if visible_rect.width() > scene_rect.width() or visible_rect.height() > scene_rect.height():
+            # Center the image in the view
+            self.annotation_window.centerOn(scene_rect.center())
+            
+        # Update the view dimensions in the status bar
+        self.annotation_window.viewChanged.emit(*self.annotation_window.get_image_dimensions())

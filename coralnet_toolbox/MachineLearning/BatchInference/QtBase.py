@@ -16,9 +16,9 @@ from coralnet_toolbox.Icons import get_icon
 
 class Base(QDialog):
     """
-    Base class for performing batch inference on images for image classification, object detection, 
+    Base class for performing batch inference on images for image classification, object detection,
     and instance segmentation.
-    
+
     :param main_window: MainWindow object
     :param parent: Parent widget
     """
@@ -27,7 +27,7 @@ class Base(QDialog):
         self.main_window = main_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
-        
+
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Batch Inference")
         self.resize(400, 100)
@@ -48,21 +48,22 @@ class Base(QDialog):
         self.setup_task_specific_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Perform batch inferencing on the selected images.")
-        
+        info_label = QLabel("Perform batch inferencing on the selected images. It is highly "
+                            "recommended to save the current project before proceeding.")
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -77,10 +78,10 @@ class Base(QDialog):
         # Create a button group for the image checkboxes
         image_options_group = QButtonGroup(self)
 
-        self.apply_filtered_checkbox = QCheckBox("Apply to filtered images")
-        self.apply_prev_checkbox = QCheckBox("Apply to previous images")
-        self.apply_next_checkbox = QCheckBox("Apply to next images")
-        self.apply_all_checkbox = QCheckBox("Apply to all images")
+        self.apply_filtered_checkbox = QCheckBox("▼ Apply to filtered images")
+        self.apply_prev_checkbox = QCheckBox("↑ Apply to previous images")
+        self.apply_next_checkbox = QCheckBox("↓ Apply to next images")
+        self.apply_all_checkbox = QCheckBox("↕ Apply to all images")
 
         # Add the checkboxes to the button group
         image_options_group.addButton(self.apply_filtered_checkbox)
@@ -101,7 +102,7 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_task_specific_layout(self):
         """
 
@@ -118,7 +119,7 @@ class Base(QDialog):
         button_box.rejected.connect(self.reject)
 
         self.layout.addWidget(button_box)
-    
+
     def update_uncertainty_label(self):
         """
         Update the uncertainty threshold label based on the slider value.
@@ -130,16 +131,16 @@ class Base(QDialog):
     def on_uncertainty_changed(self, value):
         """
         Update the slider and label when the shared data changes.
-        
+
         :param value: New uncertainty threshold value
         """
         self.uncertainty_threshold_slider.setValue(int(value * 100))
         self.uncertainty_threshold_label.setText(f"{value:.2f}")
-        
+
     def get_selected_image_paths(self):
         """
         Get the selected image paths based on the options.
-        
+
         :return: List of selected image paths
         """
         if self.apply_filtered_checkbox.isChecked():
@@ -170,7 +171,7 @@ class Base(QDialog):
         finally:
             # Resume the cursor
             QApplication.restoreOverrideCursor()
-        
+
         self.accept()
 
     def batch_inference(self):

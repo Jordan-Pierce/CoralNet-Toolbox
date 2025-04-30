@@ -7,8 +7,12 @@ import os
 import yaml
 import shutil
 
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication)
+
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.Icons import get_icon
 
 
@@ -16,12 +20,29 @@ from coralnet_toolbox.Icons import get_icon
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class Segment(Base):
     def __init__(self, parent=None):
         super(Segment, self).__init__(parent)
         self.setWindowTitle("Export Segmentation Dataset")
         self.setWindowIcon(get_icon("coral"))
-        
+
+    def setup_info_layout(self):
+        """Setup the info layout"""
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+
+        # Create a QLabel with explanatory text and hyperlink
+        info_text = "Export Polygons to create a YOLO-formatted Segmentation dataset."
+        info_label = QLabel(info_text)
+
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
     def update_annotation_type_checkboxes(self):
         """
         Update the state of annotation type checkboxes based on the selected dataset type.
@@ -50,13 +71,18 @@ class Segment(Base):
         names = self.selected_labels
         num_classes = len(self.selected_labels)
 
-        # Define the data as a dictionary
+        # Create dictionary of class names with numeric keys
+        names_dict = {i: name for i, name in enumerate(names)}
+
+        # Define the data as a dictionary with absolute paths
         data = {
-            'train': '../train/images',
-            'val': '../valid/images',
-            'test': '../test/images',
-            'nc': num_classes,  
-            'names': names  
+            'path': output_dir_path,
+            'train': train_dir,
+            'val': val_dir,
+            'test': test_dir,
+            'nc': num_classes,
+            'names': list(range(num_classes)),  # List of numeric indices
+            'names': names_dict  # Dictionary mapping from indices to class names
         }
 
         # Write the data to the YAML file
@@ -89,13 +115,15 @@ class Segment(Base):
         if not image_paths:
             return
 
-        progress_bar = ProgressBar(self, title=f"Creating {split} Dataset")
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title=f"Creating {split} Dataset")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
         for image_path in image_paths:
             yolo_annotations = []
-            image_height, image_width = self.image_window.rasterio_open(image_path).shape
+            image_height, image_width = rasterio_open(image_path).shape
             image_annotations = [a for a in annotations if a.image_path == image_path]
 
             for image_annotation in image_annotations:
@@ -118,5 +146,7 @@ class Segment(Base):
 
             progress_bar.update_progress()
 
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
         progress_bar.stop_progress()
         progress_bar.close()

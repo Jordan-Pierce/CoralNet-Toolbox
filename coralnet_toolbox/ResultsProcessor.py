@@ -1,9 +1,12 @@
-import numpy as np
-import torch
-
 from PyQt5.QtCore import QPointF
 
+import numpy as np
+
+import torch
 from torchvision.ops import nms
+
+import supervision as sv
+
 from ultralytics.engine.results import Results
 from ultralytics.models.sam.amg import batched_mask_to_box
 from ultralytics.utils import ops
@@ -22,16 +25,29 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 class ResultsProcessor:
     def __init__(self, 
                  main_window, 
-                 class_mapping, 
-                 uncertainty_thresh=0.3, 
-                 iou_thresh=0.2, 
-                 min_area_thresh=0.00, 
-                 max_area_thresh=0.40):
+                 class_mapping={}, 
+                 uncertainty_thresh=None, 
+                 iou_thresh=None, 
+                 min_area_thresh=None, 
+                 max_area_thresh=None):
+        # Initialize the ResultsProcessor with the main window
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
 
         self.class_mapping = class_mapping
+        
+        if uncertainty_thresh is None:
+            uncertainty_thresh = self.main_window.get_uncertainty_thresh()
+            
+        if iou_thresh is None:
+            iou_thresh = main_window.get_iou_thresh()
+            
+        if min_area_thresh is None:
+            min_area_thresh = main_window.get_area_thresh_min()
+            
+        if max_area_thresh is None:
+            max_area_thresh = main_window.get_area_thresh_max()
         
         self.uncertainty_thresh = uncertainty_thresh
         self.iou_thresh = iou_thresh
@@ -178,9 +194,18 @@ class ResultsProcessor:
         for results in results_generator:
             # Apply filtering to the results
             results = self.apply_filters(results)
+            # Start the progress bar
+            progress_bar.start_progress(len(results))
+            # Loop through the results
             for result in results:
-                if result:
-                    self.process_single_detection_result(result)
+                try:
+                    if result.boxes:
+                        # Process a single detection result
+                        self.process_single_detection_result(result)
+                except Exception as e:
+                    print(f"Warning: Failed to process detection result\n{e}")
+                    
+                # Update the progress bar
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()
@@ -198,7 +223,19 @@ class ResultsProcessor:
         cls = int(result.boxes.cls.cpu().numpy()[0])
         cls_name = result.names[cls]
         conf = float(result.boxes.conf.cpu().numpy()[0])
-        points = result.masks.cpu().xy[0].astype(float)
+        
+        # Get the mask and convert to polygon points
+        mask = result.masks.cpu().data.numpy().squeeze().astype(bool)
+        
+        # Convert to biggest polygon
+        polygons = sv.detection.utils.mask_to_polygons(mask)
+        
+        if len(polygons) == 1:
+            points = polygons[0]
+        else:
+            # Grab the index of the largest polygon
+            points = max(polygons, key=lambda x: len(x))
+
         return image_path, cls, cls_name, conf, points
 
     def process_single_segmentation_result(self, result):
@@ -228,9 +265,18 @@ class ResultsProcessor:
         for results in results_generator:
             # Apply filtering to the results
             results = self.apply_filters(results)
+            # Start the progress bar
+            progress_bar.start_progress(len(results))
+            # Loop through the results
             for result in results:
-                if result:
-                    self.process_single_segmentation_result(result)
+                try:
+                    if result.boxes:
+                        # Process a single segmentation result
+                        self.process_single_segmentation_result(result)
+                except Exception as e:
+                    print(f"Warning: Failed to process segmentation result\n{e}")
+                    
+                # Update the progress bar
                 progress_bar.update_progress()
 
         progress_bar.stop_progress()
@@ -310,7 +356,7 @@ class ResultsProcessor:
         :param predictions: Dictionary containing class predictions
         """
         # Add the annotation to the annotation window
-        self.annotation_window.annotations_dict[annotation.id] = annotation
+        self.annotation_window.add_annotation_to_dict(annotation)
 
         # Connect signals
         annotation.selected.connect(self.annotation_window.select_annotation)
@@ -326,7 +372,7 @@ class ResultsProcessor:
         # If the confidence is below the threshold, set the label to review
         if conf < self.uncertainty_thresh:
             review_label = self.label_window.get_label_by_id('-1')
-            annotation.update_label(review_label)
+            annotation.update_label(review_label, set_review=True)
 
         # If the image is currently displayed in the annotation window, update the graphics item
         if image_path == self.annotation_window.current_image_path:
@@ -401,66 +447,161 @@ class ResultsProcessor:
         
         return results
     
-    def from_supervision(self, detections, image, image_path, names):
+    def from_supervision(self, detections, images, image_paths=None, names=None):
         """
-        Convert Supervision Detections to Ultralytics Results format with proper mask handling.
+        Convert Supervision Detections to Ultralytics Results format.
+        Handles both single detection/image and lists of detections/images.
 
         Args:
-            detections (Detections): Supervision detection object
-            image (np.ndarray): Original image array
-            image_path (str, optional): Path to the image file
-            names (dict, optional): Dictionary mapping class ids to class names
+            detections: Single Detections object or list of Detections objects
+            images: Single image array or list of image arrays
+            image_paths: Single image path or list of image paths (optional)
+            names: Dictionary mapping class ids to class names (optional)
 
         Returns:
-            results_generator (generator): A generator that yields Ultralytics Results.
+            generator: Yields Ultralytics Results objects
         """
-        # Ensure original image is numpy array
-        if torch.is_tensor(image):
-            image = image.cpu().numpy()
+        # Convert single inputs to lists
+        if not isinstance(detections, list):
+            detections = [detections]
+        if not isinstance(images, list):
+            images = [images]
+        if image_paths and not isinstance(image_paths, list):
+            image_paths = [image_paths]
+        
+        # Ensure image_paths exists
+        if not image_paths:
+            image_paths = [None] * len(images)
 
-        # Create default names if not provided
-        if names is None:
-            names = {i: str(i) for i in range(len(detections))} if len(detections) > 0 else {}
+        for detection, image, path in zip(detections, images, image_paths):
+            # Ensure image is numpy array
+            if torch.is_tensor(image):
+                image = image.cpu().numpy()
 
-        if len(detections) == 0:
-            return Results(orig_img=image, path=image_path, names=names)
+            # Create default names if not provided
+            if names is None:
+                names = {i: str(i) for i in range(len(detection))} if len(detection) > 0 else {}
 
-        # Handle masks if present
-        if hasattr(detections, 'mask') and detections.mask is not None:
-            # Convert masks to torch tensor if needed
-            masks = torch.as_tensor(detections.mask, dtype=torch.float32)
+            if len(detection) == 0:
+                yield Results(orig_img=image, path=path, names=names)
+                continue
 
-            # Ensure masks have shape (N, 1, H, W)
-            if masks.ndim == 3:
-                masks = masks.unsqueeze(1)
+            # Handle masks if present
+            if hasattr(detection, 'mask') and detection.mask is not None:
+                masks = torch.as_tensor(detection.mask, dtype=torch.float32)
+                if masks.ndim == 3:
+                    masks = masks.unsqueeze(1)
+                scaled_masks = scale_masks(masks, image.shape[:2], padding=False)
+                scaled_masks = scaled_masks > 0.5
+                if scaled_masks.ndim == 4:
+                    scaled_masks = scaled_masks.squeeze(1)
+            else:
+                scaled_masks = None
 
-            # Scale masks to match original image size
-            scaled_masks = scale_masks(masks, image.shape[:2], padding=False)
-            scaled_masks = scaled_masks > 0.5  # Apply threshold
+            # Convert boxes and scores
+            scaled_boxes = torch.as_tensor(detection.xyxy, dtype=torch.float32)
+            scores = torch.as_tensor(detection.confidence, dtype=torch.float32).view(-1, 1)
+            cls = torch.as_tensor(detection.class_id, dtype=torch.int32).view(-1, 1)
 
-            # Ensure scaled_masks is 3D (N, H, W)
-            if scaled_masks.ndim == 4:
-                scaled_masks = scaled_masks.squeeze(1)
-        else:
-            scaled_masks = None
+            # Combine boxes, scores, and class IDs
+            if scaled_boxes.ndim == 1:
+                scaled_boxes = scaled_boxes.unsqueeze(0)
+            scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
 
-        # Convert boxes and scores to torch tensors
-        scaled_boxes = torch.as_tensor(detections.xyxy, dtype=torch.float32)
-        scores = torch.as_tensor(detections.confidence, dtype=torch.float32).view(-1, 1)
-
-        # Convert class IDs to torch tensor
-        cls = torch.as_tensor(detections.class_id, dtype=torch.int32).view(-1, 1)
-
-        # Combine boxes, scores, and class IDs
-        if scaled_boxes.ndim == 1:
-            scaled_boxes = scaled_boxes.unsqueeze(0)
-        scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
-
-        # Create Results object
-        results = Results(image,
-                          path=image_path,
+            # Create and yield Results object
+            yield Results(image,
+                          path=path,
                           names=names,
                           boxes=scaled_boxes, 
                           masks=scaled_masks)
-
-        yield results
+            
+    def combine_results(self, results: list):
+        """
+        Combine multiple Results objects for the same image into a single Results object.
+        
+        This function combines detections from multiple Results objects that correspond to the same image,
+        merging their boxes, masks, probs, keypoints, and/or OBB (Oriented Bounding Box) objects.
+        
+        Args:
+            results (list): List of Results objects to combine. All Results should be for the same image.
+            
+        Returns:
+            Results: A single combined Results object containing combined detections.
+            
+        Note:
+            - If the input Results objects contain different types of data (e.g., some have boxes, some have masks),
+              the combined Results object will contain all available data.
+            - For classification results (probs), only the highest confidence classification is kept.
+        """
+        if not results:
+            return None
+        
+        if any(r is None for r in results):
+            raise ValueError("Cannot combine None results. Please provide valid Results objects.")
+        
+        if len(results) == 1:
+            return results[0]
+            
+        # Ensure all results are for the same image
+        first_path = results[0].path
+        if not all(r.path == first_path for r in results):
+            print("Warning: Attempting to combine Results from different images. Using the first image.")
+        
+        # Get the first result's data for base attributes
+        combined_result = results[0].new()
+        
+        # combine boxes if any exist
+        all_boxes = [r.boxes.data for r in results if r.boxes is not None]
+        if all_boxes:
+            # Concatenate all boxes
+            if isinstance(all_boxes[0], torch.Tensor):
+                combined_boxes = torch.cat(all_boxes, dim=0)
+            else:
+                combined_boxes = np.concatenate(all_boxes, axis=0)
+            combined_result.update(boxes=combined_boxes)
+        
+        # combine masks if any exist
+        all_masks = [r.masks.data for r in results if r.masks is not None]
+        if all_masks:
+            # Concatenate all masks
+            if isinstance(all_masks[0], torch.Tensor):
+                combined_masks = torch.cat(all_masks, dim=0)
+            else:
+                combined_masks = np.concatenate(all_masks, axis=0)
+            combined_result.update(masks=combined_masks)
+        
+        # For classification results (probs), keep the one with highest confidence
+        all_probs = [(r.probs, r.probs.top1conf) for r in results if r.probs is not None]
+        if all_probs:
+            # Get the probs object with highest top1 confidence
+            best_probs = max(all_probs, key=lambda x: x[1])[0]
+            combined_result.update(probs=best_probs.data)
+        
+        # combine keypoints if any exist
+        all_keypoints = [r.keypoints.data for r in results if r.keypoints is not None]
+        if all_keypoints:
+            # Concatenate all keypoints
+            if isinstance(all_keypoints[0], torch.Tensor):
+                combined_keypoints = torch.cat(all_keypoints, dim=0)
+            else:
+                combined_keypoints = np.concatenate(all_keypoints, axis=0)
+            combined_result.update(keypoints=combined_keypoints)
+        
+        # combine OBB (Oriented Bounding Boxes) if any exist
+        all_obbs = [r.obb.data for r in results if r.obb is not None]
+        if all_obbs:
+            # Concatenate all OBBs
+            if isinstance(all_obbs[0], torch.Tensor):
+                combined_obbs = torch.cat(all_obbs, dim=0)
+            else:
+                combined_obbs = np.concatenate(all_obbs, axis=0)
+            combined_result.update(obb=combined_obbs)
+        
+        # combine names dictionaries from all results
+        combined_names = {}
+        for r in results:
+            if r.names:
+                combined_names.update(r.names)
+        combined_result.names = combined_names
+        
+        return combined_result

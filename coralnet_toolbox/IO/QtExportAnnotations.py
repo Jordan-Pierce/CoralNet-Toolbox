@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -34,14 +35,15 @@ class ExportAnnotations:
                                                    "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+            total_annotations = len(list(self.annotation_window.annotations_dict.values()))
+            progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
+            progress_bar.show()
+            progress_bar.start_progress(total_annotations)
+
             try:
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-
-                total_annotations = len(list(self.annotation_window.annotations_dict.values()))
-                progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(total_annotations)
-
                 export_dict = {}
                 for annotation in self.annotation_window.annotations_dict.values():
                     image_path = annotation.image_path
@@ -74,9 +76,6 @@ class ExportAnnotations:
                     json.dump(export_dict, file, indent=4)
                     file.flush()
 
-                progress_bar.stop_progress()
-                progress_bar.close()
-
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Exported",
                                         "Annotations have been successfully exported.")
@@ -86,4 +85,8 @@ class ExportAnnotations:
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")
 
-            QApplication.restoreOverrideCursor()
+            finally:
+                # Restore the cursor
+                QApplication.restoreOverrideCursor()
+                progress_bar.stop_progress()
+                progress_bar.close()

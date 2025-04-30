@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox, QCheckBox, QVBoxLayout, 
 
 class BatchInferenceDialog(QDialog):
     """Dialog for performing batch inference on images using AutoDistill."""
-    
+
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
@@ -22,34 +22,34 @@ class BatchInferenceDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.deploy_model_dialog = main_window.auto_distill_deploy_model_dialog
         self.loaded_models = self.deploy_model_dialog.loaded_model
-        
+
         self.setWindowTitle("Batch Inference")
         self.resize(300, 200)  # Width, height
-        
+
         # Create the layout
         self.layout = QVBoxLayout(self)
-        
+
         # Setup the info layout
         self.setup_info_layout()
         # Setup the options layout
         self.setup_options_layout()
         # Setup buttons layout
         self.setup_buttons_layout()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Perform batch inferencing on the selected images.")
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -59,15 +59,15 @@ class BatchInferenceDialog(QDialog):
         """
         group_box = QGroupBox("Image Options")
         layout = QVBoxLayout()
-        
+
         # Create button group for image selection
         self.image_options_group = QButtonGroup(self)
-        
+
         # Create image selection options
-        self.apply_filtered = QCheckBox("Apply to filtered images")
-        self.apply_prev = QCheckBox("Apply to previous images")
-        self.apply_next = QCheckBox("Apply to next images") 
-        self.apply_all = QCheckBox("Apply to all images")
+        self.apply_filtered = QCheckBox("▼ Apply to filtered images")
+        self.apply_prev = QCheckBox("↑ Apply to previous images")
+        self.apply_next = QCheckBox("↓ Apply to next images")
+        self.apply_all = QCheckBox("↕ Apply to all images")
         # Add options to button group
         self.image_options_group.addButton(self.apply_filtered)
         self.image_options_group.addButton(self.apply_prev)
@@ -83,7 +83,7 @@ class BatchInferenceDialog(QDialog):
         layout.addWidget(self.apply_prev)
         layout.addWidget(self.apply_next)
         layout.addWidget(self.apply_all)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -96,17 +96,17 @@ class BatchInferenceDialog(QDialog):
         button_box = QDialogButtonBox(okay_button | cancel_button)
         button_box.accepted.connect(self.apply)
         button_box.rejected.connect(self.reject)
-        
+
         # Add buttons to layout
         self.layout.addWidget(button_box)
-        
+
     def get_selected_image_paths(self):
         """
         Get list of image paths based on selection.
         """
         current_path = self.annotation_window.current_image_path
         current_index = self.image_window.image_paths.index(current_path)
-        
+
         if self.apply_filtered.isChecked():
             return self.image_window.filtered_image_paths
         elif self.apply_prev.isChecked():
@@ -115,7 +115,7 @@ class BatchInferenceDialog(QDialog):
             return self.image_window.image_paths[current_index:]
         else:
             return self.image_window.image_paths
-        
+
     def apply(self):
         """
         Apply batch inference.

@@ -1,4 +1,4 @@
-# CoralNet-Toolbox
+# CoralNet-Toolbox 🪸🧰
 
 <div align="center">
   <p>
@@ -31,15 +31,16 @@ pip install coralnet-toolbox
 coralnet-toolbox
 ```
 
-For further instructions please see the following:
+For further instructions please see the following guides:
 - [Installation](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
 - [Usage](https://jordan-pierce.github.io/CoralNet-Toolbox/usage)
+- [Patch-based Image Classifier](https://jordan-pierce.github.io/CoralNet-Toolbox/classify)
 
 <details open>
   <summary><h2><b>Watch the Video Demos</b></h2></summary>
   <p align="center">
     <a href="https://youtube.com/playlist?list=PLG5z9IbwhS5NQT3B2jrg3hxQgilDeZak9&feature=shared">
-      <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="75%">
+      <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="90%">
     </a>
   </p>
 </details>
@@ -60,34 +61,119 @@ The `toolbox` also uses the following to create rectangle and polygon annotation
 - [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM)
 - [`CoralSCOP`](https://github.com/zhengziqiang/CoralSCOP)
 - [`SAM`](https://github.com/facebookresearch/segment-anything)
+- [`YOLOE`](https://github.com/THU-MIG/yoloe)
 - [`AutoDistill`](https://github.com/autodistill)
-  - [`GroundingDino`](https://github.com/IDEA-Research/GroundingDINO)
+  - [`Grounding Dino`](https://huggingface.co/docs/transformers/en/model_doc/grounding-dino)
+  - [`OWLViT`](https://huggingface.co/docs/transformers/en/model_doc/owlvit)
+  - [`OmDetTurbo`](https://huggingface.co/docs/transformers/en/model_doc/omdet-turbo)
 
 
 ## Tools
 
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" height="200"/>
+        <br>
+        <em>Patch Annotation Tool</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" height="200"/>
+        <br>
+        <em>Rectangle Annotation Tool</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" height="200"/>
+        <br>
+        <em>Polygon Annotation Tool</em>
+      </td>
+    </tr>
+    <tr>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" height="200"/>
+        <br>
+        <em>Patch-based Image Classification</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" height="200"/>
+        <br>
+        <em>Object Detection</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" height="200"/>
+        <br>
+        <em>Instance Segmentation</em>
+      </td>
+    </tr>
+    <tr>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" height="200"/>
+        <br>
+        <em>Segment Anything Model (SAM)</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" height="200"/>
+        <br>
+        <em>Polygon Classification</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" height="200"/>
+        <br>
+        <em>Patch-based LAI Classification</em>
+      </td>
+    </tr>
+    <tr>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif" height="200"/>
+        <br>
+        <em>Cut</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif" height="200"/>
+        <br>
+        <em>Combine</em>
+      </td>
+      <td align="center">
+        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" height="200"/>
+        <br>
+        <em>See Anything (YOLOE)</em>
+      </td>
+    </tr>
+  </table>
+</div>
+
+
 Enhance your CoralNet experience with these tools:
+- 📥 [Download](https://www.youtube.com/watch?v=Ds9JZATmCmw): Retrieve Source data (images and annotations) from CoralNet
+- 🎬 Rasters: Import images, or extract frames directly from video files
 - ✏️ Annotate: Create annotations freely
 - 👁️ Visualize: See CoralNet and CPCe annotations superimposed on images
 - 🔬 Sample: Sample patches using various methods (Uniform, Random, Stratified)
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
+- ✍️ Edit: Cut and Combine polygons and rectangles
 - 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
-- 🧪 AutoDistill: Use `AutoDistill` to access `GroundingDINO` for creating rectangles
+  - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
+- 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically
+- 🧪 AutoDistill: Use `AutoDistill` to access the following for creating rectangles and polygons:
+  - Uses `Grounding DINO`, `OWLViT`, `OmDetTurbo`
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
 - 🚀 Optimize: Productionize models for faster inferencing
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
+  - Export annotations as [GeoJSONs](https://datatracker.ietf.org/doc/html/rfc7946), segmentation masks
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
+- 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
+  - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 
 ### TODO
-- 🔍 API: Get predictions from any CoralNet source model
-- 📥 Download: Retrieve source data from CoralNet
-- 📤 Upload: Add images and annotations to CoralNet
-- 📦 Toolshed: Access tools from the old repository
+- 🤗 Model Zoo: Download `Ultralytics` models from `HuggingFace` for use in `toolbox`
+- 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
+- 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
 
 ## **How to Install**
@@ -105,7 +191,20 @@ conda activate coralnet10
 
 ### Install
 
-Once this has finished, install the `toolbox`:
+Once this has finished, install the `toolbox` using `uv`: 
+
+```bash
+# cmd
+
+# Install uv first
+pip install uv
+
+# Install with uv
+uv pip install coralnet-toolbox
+```
+
+Although fast, `uv` is still relatively new; if this fails, simply fall back to using `pip`:
+
 ```bash
 # cmd
 
@@ -126,7 +225,7 @@ conda install nvidia/label/cuda-11.8.0::cuda-nvcc -y
 conda install nvidia/label/cuda-11.8.0::cuda-toolkit -y
 
 # Example for torch w/ CUDA 11.8
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --upgrade
 ```
 
 If `CUDA` is installed on your computer, and `torch` was built with it properly, you should see a `🐇` icon in the
@@ -140,7 +239,9 @@ See here for more details on versions for the following:
 
 
 ### Run
+
 Finally, you can run the `toolbox` from the command line:
+
 ```bash
 # cmd
 
@@ -149,6 +250,7 @@ coralnet-toolbox
 ```
 
 ## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
+
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing,
 and other factors. CoralNet is a platform designed to aid researchers and scientists in studying
@@ -163,6 +265,7 @@ use CoralNet and Coral Point Count (CPCe).
 
 
 ## **Conclusion**
+
 In summary, this repository provides a range of tools that can assist with interacting with
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be
 useful for researchers and scientists working with coral reefs, as well as for students and

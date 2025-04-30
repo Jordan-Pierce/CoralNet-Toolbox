@@ -2,6 +2,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
+from PyQt5.QtWidgets import QMessageBox
+
 from coralnet_toolbox.MachineLearning.BatchInference.QtBase import Base
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -32,12 +34,15 @@ class Detect(Base):
         self.loaded_model = self.deploy_model_dialog.loaded_model
         
         # Make predictions on each image's annotations
-        progress_bar = ProgressBar(self, title="Batch Inference")
+        progress_bar = ProgressBar(self.annotation_window, title="Batch Inference")
         progress_bar.show()
         progress_bar.start_progress(len(self.image_paths))
 
         if self.loaded_model is not None:
-            self.deploy_model_dialog.predict(inputs=self.image_paths)
-
+            try:
+                self.deploy_model_dialog.predict(self.image_paths)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+                
         progress_bar.stop_progress()
         progress_bar.close()

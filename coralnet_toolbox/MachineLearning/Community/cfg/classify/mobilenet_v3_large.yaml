@@ -1,0 +1,19 @@
+# Metadata
+author: Y-T-G
+task: classify
+keywords: [cnn, mobilenet]
+description: MobileNetV3-Large pretrained backbone with Classify head.
+flops: 6.0
+parameters: 4204593
+min_version: 8.3.59
+discussion: https://github.com/Y-T-G/community/discussions/15
+
+# Model
+nc: 1
+strides: [32]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, TorchVision, [960, mobilenet_v3_large, DEFAULT, True, 2]]  # (1, 960, 20, 20) - 0
+
+head:
+  - [-1, 1, Classify, [nc]]

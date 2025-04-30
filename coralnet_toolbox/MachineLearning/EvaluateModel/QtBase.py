@@ -115,22 +115,8 @@ class Base(QDialog):
         self.setup_buttons_layout()
         
     def setup_info_layout(self):
-        """
-        Set up the layout and widgets for the info layout.
-        """
-        group_box = QGroupBox("Information")
-        layout = QVBoxLayout()
-        
-        # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Evaluate a Classification, Detection, or Segmentation model. \
-                            Choose the model, dataset, and split you want to evaluate on.")
-        
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        """Setup the info layout"""
+        raise NotImplementedError("Subclasses must implement this method.")
         
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
@@ -188,7 +174,7 @@ class Base(QDialog):
     def browse_dataset_yaml(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select YAML File", "", "YAML Files (*.yaml)")
         if file_path:
-            self.yaml_edit.setText(file_path)
+            self.dataset_edit.setText(file_path)
 
     def browse_save_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
@@ -207,8 +193,7 @@ class Base(QDialog):
         }
         params['task'] = self.task
         params['model'] = self.model_edit.text()
-        params['data'] = self.data_edit.text()
-        params['task'] = self.task
+        params['data'] = self.dataset_edit.text()
         params['save_dir'] = self.save_dir_edit.text()
         params['name'] = self.name_edit.text()
         params['split'] = self.split_combo.currentText()
