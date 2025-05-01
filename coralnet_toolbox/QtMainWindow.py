@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self.edit_icon = get_icon("edit.png")
         self.lock_icon = get_icon("lock.png")
         self.unlock_icon = get_icon("unlock.png")
+        self.home_icon = get_icon("home.png")
 
         # Set the version
         self.version = __version__

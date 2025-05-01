@@ -13,10 +13,12 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBox
                              QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
                              QGroupBox, QPushButton, QStyle, QFormLayout, QFrame)
 
-from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -142,6 +144,18 @@ class ImageWindow(QWidget):
         # Create a horizontal layout for the labels
         self.info_layout = QHBoxLayout()
         info_table_layout.addLayout(self.info_layout)
+        
+        # Add Home button to the info_layout
+        self.home_button = QPushButton("", self)
+        self.home_button.setToolTip("Center table on current image")
+        self.home_button.setIcon(get_icon("home.png"))  
+        self.home_button.setFixedSize(24, 24)             
+        self.home_button.setFlat(True)    
+        self.home_button.clicked.connect(self.center_table_on_current_image)
+        self.info_layout.addWidget(self.home_button)
+
+        # Optionally add spacing after the button
+        self.info_layout.addSpacing(10)
 
         # Add a label to display the index of the currently selected image
         self.current_image_index_label = QLabel("Current Image: None", self)
@@ -282,6 +296,24 @@ class ImageWindow(QWidget):
                         self.show_image_preview()
                     
         return super().eventFilter(source, event)
+    
+    def center_table_on_current_image(self):
+        """Scroll the table so the currently selected image row is in view and ensure it's highlighted."""
+        if self.selected_image_path in self.filtered_image_paths:
+            row = self.filtered_image_paths.index(self.selected_image_path)
+            
+            # Scroll to the item to center it in the view
+            self.tableWidget.scrollToItem(
+                self.tableWidget.item(row, 1),
+                QAbstractItemView.PositionAtCenter
+            )
+            
+            # Make sure the row is selected (highlighted)
+            self.tableWidget.blockSignals(True)  # Prevent triggering load_image again
+            self.tableWidget.clearSelection()
+            self.tableWidget.selectRow(row)
+            self.tableWidget.setFocus()  # Ensure selection is visually highlighted
+            self.tableWidget.blockSignals(False)
         
     def show_image_preview(self):
         """Show image preview tooltip for the current hover row"""
@@ -403,7 +435,7 @@ class ImageWindow(QWidget):
             
             # Ensure the selected row is visible in the viewport
             self.tableWidget.scrollToItem(
-                self.tableWidget.item(row, 0),
+                self.tableWidget.item(row, 1),
                 QAbstractItemView.PositionAtCenter
             )
             
