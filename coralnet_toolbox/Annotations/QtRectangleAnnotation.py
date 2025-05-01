@@ -450,6 +450,10 @@ class RectangleAnnotation(Annotation):
                 machine_confidence[label] = confidence
 
         annotation.update_machine_confidence(machine_confidence)
+        
+        # Override the verified attribute if it exists in the data
+        if 'verified' in data:
+            annotation.update_verified(data['verified'])
 
         return annotation
 

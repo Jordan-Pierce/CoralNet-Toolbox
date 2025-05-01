@@ -16,7 +16,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
-# TODO export points to TagLab annotations
+# Note: Field names are case-sensitive and should match the CoralNet export exactly.
+
 
 class ExportTagLabAnnotations:
     def __init__(self, main_window):

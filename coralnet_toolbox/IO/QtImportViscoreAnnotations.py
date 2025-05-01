@@ -23,6 +23,7 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+# Note: Field names are case-sensitive and should match the CoralNet export exactly.
 
 
 class ImportViscoreAnnotations(QDialog):

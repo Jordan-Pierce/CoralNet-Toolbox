@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+# Note: Field names are case-sensitive and should match the CoralNet export exactly.
 
 
 class ImportTagLabLabels:

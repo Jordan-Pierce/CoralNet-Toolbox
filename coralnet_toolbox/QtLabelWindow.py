@@ -242,12 +242,14 @@ class LabelWindow(QWidget):
         # Add label count display
         self.label_count_display = QLineEdit("")
         self.label_count_display.setReadOnly(True)  # Make it uneditable
+        self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
         self.label_count_display.setFixedWidth(100)  # Set a reasonable fixed width
         self.top_bar.addWidget(self.label_count_display)
         
         # Add annotation count display
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)  # Make it uneditable
+        self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
         self.annotation_count_display.setFixedWidth(150)
         self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
         self.top_bar.addWidget(self.annotation_count_display)
@@ -320,8 +322,13 @@ class LabelWindow(QWidget):
         """Update the annotation count display based on the current selection."""
         if self.annotation_window.selected_tool == "select":
             self.annotation_count_display.setReadOnly(False)  # Make it editable
+            self.annotation_count_display.setStyleSheet("background-color: white;")
         else:
             self.annotation_count_display.setReadOnly(True)  # Make it uneditable
+            self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
+            
+        # Update the annotation count display after a tool is switched
+        self.update_annotation_count()
     
     def update_annotation_count(self):
         """Update the annotation count display with current selection and total count."""

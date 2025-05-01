@@ -12,6 +12,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+# Note: Field names are case-sensitive and should match the CoralNet export exactly.
 
 
 class ExportTagLabLabels:
