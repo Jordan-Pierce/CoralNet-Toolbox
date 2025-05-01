@@ -533,7 +533,7 @@ class SelectTool(Tool):
             return
         
         # Check if any annotations have machine confidence
-        if any(annotation.machine_confidence for annotation in selected_annotations):
+        if any(not annotation.verified for annotation in selected_annotations):
             QMessageBox.warning(
                 self.annotation_window,
                 "Cannot Combine",
@@ -578,7 +578,7 @@ class SelectTool(Tool):
             return
         
         # Check if any annotations have machine confidence
-        if any(annotation.machine_confidence for annotation in self.annotation_window.selected_annotations):
+        if any(not annotation.verified for annotation in self.annotation_window.selected_annotations):
             QMessageBox.warning(
                 self.annotation_window,
                 "Cannot Cut",
