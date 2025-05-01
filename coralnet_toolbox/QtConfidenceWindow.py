@@ -3,7 +3,9 @@ import warnings
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
 from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QWidget, QVBoxLayout,
-                             QLabel, QHBoxLayout, QFrame, QGroupBox)
+                             QLabel, QHBoxLayout, QFrame, QGroupBox, QPushButton)
+
+from coralnet_toolbox.Icons import get_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -106,15 +108,39 @@ class ConfidenceWindow(QWidget):
         self.machine_confidence = None
         self.cropped_image = None
         self.chart_dict = None
+        self.confidence_bars = []
+        
+        # Get and store the icons
+        self.user_icon = get_icon("user.png")
+        self.machine_icon = get_icon("machine.png")
+        
+        self.top_k_icons = {
+            "1": get_icon("1.png").pixmap(12, 12),
+            "2": get_icon("2.png").pixmap(12, 12),
+            "3": get_icon("3.png").pixmap(12, 12),
+            "4": get_icon("4.png").pixmap(12, 12),
+            "5": get_icon("5.png").pixmap(12, 12)
+        }
 
-        # Add QLabel for dimensions
+        # Create a label for the dimensions and a toggle button
         self.dimensions_label = QLabel(self)
         self.dimensions_label.setAlignment(Qt.AlignCenter)
-        self.groupBoxLayout.addWidget(self.dimensions_label)
+
+        self.toggle_button = QPushButton(self)
+        self.toggle_button.setFixedSize(24, 24)
+        self.toggle_state = False  # False = user, True = machine
+        self.toggle_button.setIcon(get_icon("user.png"))
+        self.toggle_button.clicked.connect(self.toggle_user_machine_confidence_icon)
+        self.set_user_icon(False)  # Set to disabled user mode by default
+
+        dim_layout = QHBoxLayout()
+        dim_layout.addWidget(self.dimensions_label)
+        dim_layout.addWidget(self.toggle_button)
+        self.groupBoxLayout.addLayout(dim_layout)
 
         # Add the groupbox to the main layout
         self.layout.addWidget(self.groupBox)
-
+        
     def resizeEvent(self, event):
         """Handle resize events for the widget."""
         super().resizeEvent(event)
@@ -136,6 +162,34 @@ class ConfidenceWindow(QWidget):
         self.bar_chart_layout.setContentsMargins(0, 0, 0, 0)
         self.bar_chart_layout.setSpacing(2)  # Set spacing to make bars closer
         self.groupBoxLayout.addWidget(self.bar_chart_widget, 1)  # 1 for stretch factor
+        
+    def toggle_user_machine_confidence_icon(self):
+        """Toggle the button icon and switch between user/machine confidences."""
+        if not (self.user_confidence and self.machine_confidence):
+            return  # Nothing to toggle
+
+        self.toggle_state = not self.toggle_state
+        if self.toggle_state:
+            self.chart_dict = self.machine_confidence
+            self.set_machine_icon(enabled=True)
+        else:
+            self.chart_dict = self.user_confidence
+            self.set_user_icon(enabled=True)
+        self.create_bar_chart()
+            
+    def set_user_icon(self, enabled=True):
+        """Set the button icon to user mode."""
+        self.toggle_button.setIcon(self.user_icon)
+        self.toggle_button.setToolTip("Viewing User Confidences")
+        self.toggle_button.setEnabled(enabled)
+        self.toggle_state = False
+        
+    def set_machine_icon(self, enabled=True):
+        """Set the button icon to machine mode."""
+        self.toggle_button.setIcon(self.machine_icon)
+        self.toggle_button.setToolTip("Viewing Machine Confidences")
+        self.toggle_button.setEnabled(enabled)
+        self.toggle_state = True
 
     def update_blank_pixmap(self):
         """Update the graphics view with a blank transparent pixmap."""
@@ -253,6 +307,18 @@ class ConfidenceWindow(QWidget):
 
         self.bar_chart_layout.addWidget(bar_widget)
 
+    def handle_bar_click(self, label):
+        """Handle clicks on a confidence bar to update the annotation."""
+        # Update the confidences to whichever bar was selected
+        self.annotation.update_user_confidence(label)
+        # Update the label to whichever bar was selected
+        self.annotation.update_label(label)
+        # Update the search bars
+        self.main_window.image_window.update_search_bars()
+        # Update everything else (essentially)
+        self.main_window.annotation_window.unselect_annotation(self.annotation)
+        self.main_window.annotation_window.select_annotation(self.annotation)
+
     def clear_layout(self, layout):
         """Remove all widgets from the specified layout."""
         for i in reversed(range(layout.count())):
@@ -270,15 +336,3 @@ class ConfidenceWindow(QWidget):
         self.graphics_view.setStyleSheet("")
         # Clear the dimensions label
         self.dimensions_label.setText("")
-
-    def handle_bar_click(self, label):
-        """Handle clicks on a confidence bar to update the annotation."""
-        # Update the confidences to whichever bar was selected
-        self.annotation.update_user_confidence(label)
-        # Update the label to whichever bar was selected
-        self.annotation.update_label(label)
-        # Update the search bars
-        self.main_window.image_window.update_search_bars()
-        # Update everything else (essentially)
-        self.main_window.annotation_window.unselect_annotation(self.annotation)
-        self.main_window.annotation_window.select_annotation(self.annotation)
