@@ -443,6 +443,8 @@ class ImageWindow(QWidget):
             self.image_dict[image_path]['labels'] = labels
             # Update the table row
             self.update_table_row(image_path)
+            # Update the label window annotation count
+            self.main_window.label_window.update_annotation_count()
             
     def update_current_image_annotations(self):
         """Update annotations for the currently selected image."""

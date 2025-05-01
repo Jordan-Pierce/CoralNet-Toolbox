@@ -218,22 +218,7 @@ class LabelWindow(QWidget):
         self.edit_label_button.setFixedSize(self.label_width, self.label_height)
         self.edit_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.edit_label_button)
-
-        self.top_bar.addStretch()  # Add stretch to the right side
         
-        # Add label count display
-        self.label_count_display = QLineEdit("")
-        self.label_count_display.setReadOnly(True)  # Make it uneditable
-        self.label_count_display.setFixedWidth(100)  # Set a reasonable fixed width
-        self.top_bar.addWidget(self.label_count_display)
-    
-        # Filter bar for labels
-        self.filter_bar = QLineEdit()
-        self.filter_bar.setPlaceholderText("Filter Labels")
-        self.filter_bar.textChanged.connect(self.filter_labels)
-        self.filter_bar.setFixedWidth(150)
-        self.top_bar.addWidget(self.filter_bar)
-
         # Lock button
         self.label_lock_button = QPushButton()
         self.label_lock_button.setIcon(self.main_window.unlock_icon)
@@ -242,6 +227,27 @@ class LabelWindow(QWidget):
         self.label_lock_button.toggled.connect(self.toggle_label_lock)
         self.label_lock_button.setFixedSize(self.label_height, self.label_height)
         self.top_bar.addWidget(self.label_lock_button)
+        
+        # Filter bar for labels
+        self.filter_bar = QLineEdit()
+        self.filter_bar.setPlaceholderText("Filter Labels")
+        self.filter_bar.textChanged.connect(self.filter_labels)
+        self.filter_bar.setFixedWidth(150)
+        self.top_bar.addWidget(self.filter_bar)
+
+        self.top_bar.addStretch()  # Add stretch to the right side
+        
+        # Add label count display
+        self.label_count_display = QLineEdit("")
+        self.label_count_display.setReadOnly(True)  # Make it uneditable
+        self.label_count_display.setFixedWidth(100)  # Set a reasonable fixed width
+        self.top_bar.addWidget(self.label_count_display)
+        
+        # Add annotation count display
+        self.annotation_count_display = QLineEdit("Annotations: 0")
+        self.annotation_count_display.setReadOnly(True)  # Make it uneditable
+        self.annotation_count_display.setFixedWidth(150)
+        self.top_bar.addWidget(self.annotation_count_display)
 
         # Scroll area for labels
         self.scroll_area = QScrollArea()
@@ -306,6 +312,25 @@ class LabelWindow(QWidget):
         row = pos.y() // self.label_width
         col = pos.x() // self.label_width
         return row * self.labels_per_row + col
+    
+    def update_annotation_count(self):
+        """Update the annotation count display with current selection and total count."""
+        annotations = self.annotation_window.get_image_annotations()
+        selected_count = len(self.annotation_window.selected_annotations)
+
+        if selected_count == 0:
+            text = f"Annotations: {len(annotations)}"
+        elif selected_count > 1:
+            text = f"Annotations: {selected_count}"
+        else:
+            try:
+                selected_annotation = self.annotation_window.selected_annotations[0]
+                current_idx = annotations.index(selected_annotation) + 1
+                text = f"Annotation: {current_idx}/{len(annotations)}"
+            except ValueError:
+                text = "Annotations: ???"
+
+        self.annotation_count_display.setText(text)
 
     def update_label_count(self):
         """Update the label count display."""

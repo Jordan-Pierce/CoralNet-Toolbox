@@ -258,6 +258,8 @@ class MainWindow(QMainWindow):
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
+        # Connect the annotationSelected to the LabelWindow's update_annotation_count
+        self.annotation_window.annotationSelected.connect(self.label_window.update_annotation_count)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
