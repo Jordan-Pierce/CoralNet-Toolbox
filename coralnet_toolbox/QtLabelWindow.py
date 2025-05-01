@@ -1,6 +1,8 @@
-import random
-import uuid
 import warnings
+
+import re
+import uuid
+import random
 
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QFontMetrics, QDrag
@@ -8,9 +10,9 @@ from PyQt5.QtWidgets import (QGridLayout, QScrollArea, QMessageBox, QCheckBox, Q
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QApplication, QGroupBox, QLabel)
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -247,6 +249,7 @@ class LabelWindow(QWidget):
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)  # Make it uneditable
         self.annotation_count_display.setFixedWidth(150)
+        self.annotation_count_display.returnPressed.connect(self.update_annotation_count_index)
         self.top_bar.addWidget(self.annotation_count_display)
 
         # Scroll area for labels
@@ -313,6 +316,13 @@ class LabelWindow(QWidget):
         col = pos.x() // self.label_width
         return row * self.labels_per_row + col
     
+    def update_annotation_count_state(self):
+        """Update the annotation count display based on the current selection."""
+        if self.annotation_window.selected_tool == "select":
+            self.annotation_count_display.setReadOnly(False)  # Make it editable
+        else:
+            self.annotation_count_display.setReadOnly(True)  # Make it uneditable
+    
     def update_annotation_count(self):
         """Update the annotation count display with current selection and total count."""
         annotations = self.annotation_window.get_image_annotations()
@@ -331,6 +341,42 @@ class LabelWindow(QWidget):
                 text = "Annotations: ???"
 
         self.annotation_count_display.setText(text)
+        
+    def update_annotation_count_index(self):
+        """Allow the user to manually update the annotation count index
+        by directly editing the annotation_count_display field."""
+        user_input = self.annotation_count_display.text().strip()
+        
+        # Try to extract a number from the user input
+        number_match = re.search(r"(\d+)", user_input)
+        if number_match:
+            try:
+                new_index = int(number_match.group(1))
+                
+                # Get all annotations to check range
+                annotations = self.annotation_window.get_image_annotations()
+                total_count = len(annotations)
+                
+                # Validate the index is within range
+                if 1 <= new_index <= total_count:
+                    # Convert to zero-based index
+                    zero_based_index = new_index - 1
+                    
+                    # First unselect any currently selected annotations
+                    self.annotation_window.unselect_annotations()
+                    
+                    # Select the annotation at the specified index
+                    self.annotation_window.select_annotation(annotations[zero_based_index])
+                    
+                    # Center on the selected annotation
+                    self.annotation_window.center_on_annotation(annotations[zero_based_index])
+            except (ValueError, IndexError):
+                # In case of parsing error or index out of range
+                pass
+        
+        # Update the display to show the current state (after changes)
+        self.update_annotation_count()
+        self.annotation_count_display.clearFocus()
 
     def update_label_count(self):
         """Update the label count display."""

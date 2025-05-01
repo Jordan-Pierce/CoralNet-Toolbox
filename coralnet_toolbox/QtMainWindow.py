@@ -255,6 +255,8 @@ class MainWindow(QMainWindow):
 
         # Connect the toolChanged signal (to the AnnotationWindow)
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
+        # Connect the toolChanged signal to the LabelWindow update_label_count_state method
+        self.toolChanged.connect(self.label_window.update_annotation_count_state)
         # Connect the toolChanged signal (to the Toolbar)
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
