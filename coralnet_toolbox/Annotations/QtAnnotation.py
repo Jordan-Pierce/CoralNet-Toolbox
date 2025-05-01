@@ -41,6 +41,7 @@ class Annotation(QObject):
         self.transparency = transparency
         self.user_confidence = {self.label: 1.0}
         self.machine_confidence = {}
+        self.verified = True
         self.data = {}
         self.rasterio_src = None
         self.cropped_image = None
@@ -368,8 +369,8 @@ class Annotation(QObject):
         
     def update_user_confidence(self, new_label: 'Label'):
         """Update annotation with user-defined label and confidence."""
-        # Set machine confidence to None
-        self.machine_confidence = {}
+        # Mark as verified, keep machine confidence
+        self.verified = True
         # Update user confidence
         self.user_confidence = {new_label: 1.0}
         # Pass the label with the largest confidence as the label
@@ -394,6 +395,8 @@ class Annotation(QObject):
         self.machine_confidence = prediction
         # Pass the label with the largest confidence as the label
         self.label = max(prediction, key=prediction.get)
+        # Mark as not verified
+        self.verified = False
 
         # Create the graphic
         self.update_graphics_item()

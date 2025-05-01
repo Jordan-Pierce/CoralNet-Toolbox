@@ -108,7 +108,7 @@ class ConfidenceWindow(QWidget):
         self.machine_confidence = None
         self.cropped_image = None
         self.chart_dict = None
-        self.confidence_bars = []
+        self.confidence_bar_labels = []
         
         # Get and store the icons
         self.user_icon = get_icon("user.png")
@@ -146,6 +146,17 @@ class ConfidenceWindow(QWidget):
         super().resizeEvent(event)
         self.update_blank_pixmap()
         self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
+        
+    def keyPressEvent(self, event):
+        """Handle key press events for 1-5 to select a confidence bar."""
+        key = event.key()
+        if Qt.Key_1 <= key <= Qt.Key_5:
+            idx = (key - Qt.Key_1)  # 0-based index
+            if hasattr(self, "confidence_bar_labels") and idx < len(self.confidence_bar_labels):
+                label = self.confidence_bar_labels[idx]
+                self.handle_bar_click(label)
+        else:
+            super().keyPressEvent(event)
 
     def init_graphics_view(self):
         """Initialize the graphics view for displaying the cropped image."""
@@ -206,7 +217,24 @@ class ConfidenceWindow(QWidget):
             self.user_confidence = annotation.user_confidence
             self.machine_confidence = annotation.machine_confidence
             self.cropped_image = annotation.cropped_image.copy()
-            self.chart_dict = self.machine_confidence if self.machine_confidence else self.user_confidence
+            
+            # Annotation is verified and contains machine confidences
+            if annotation.verified and self.machine_confidence:
+                self.chart_dict = self.user_confidence
+                self.set_user_icon(annotation.verified)         # enabled user icon
+            
+            # Annotation is not verified and contains machine confidences
+            elif not annotation.verified and self.machine_confidence:
+                self.chart_dict = self.machine_confidence
+                self.set_machine_icon(annotation.verified)      # disabled machine icon
+                
+            # Annotation is verified and does not contain machine confidences
+            elif annotation.verified and not self.machine_confidence:
+                self.chart_dict = self.user_confidence
+                self.set_user_icon(not annotation.verified)     # disabled user icon
+        
+        else:
+            self.set_user_icon(False)  # Disable user icon if no annotation is provided
             
     def scale_pixmap(self, pixmap):
         """Scale pixmap and graphic if they exceed max dimension while preserving aspect ratio"""
@@ -272,15 +300,17 @@ class ConfidenceWindow(QWidget):
     def create_bar_chart(self):
         """Create and populate the confidence bar chart."""
         self.clear_layout(self.bar_chart_layout)
+        self.confidence_bar_labels = []
 
         labels, confidences = self.get_chart_data()
         max_color = labels[confidences.index(max(confidences))].color
         self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
 
-        for label, confidence in zip(labels, confidences):
+        for idx, (label, confidence) in enumerate(zip(labels, confidences)):
             bar_widget = ConfidenceBar(self, label, confidence, self.bar_chart_widget)
             bar_widget.barClicked.connect(self.handle_bar_click)  # Connect the signal to the slot
-            self.add_bar_to_layout(bar_widget, label, confidence)
+            self.add_bar_to_layout(bar_widget, label, confidence, idx + 1)
+            self.confidence_bar_labels.append(label)
 
     def get_chart_data(self):
         """Retrieve the top 5 labels and confidences from the current chart dictionary."""
@@ -290,10 +320,16 @@ class ConfidenceWindow(QWidget):
             [conf_value * 100 for conf_value in self.chart_dict.values()][:5]
         )
 
-    def add_bar_to_layout(self, bar_widget, label, confidence):
+    def add_bar_to_layout(self, bar_widget, label, confidence, top_k):
         """Add a single confidence bar widget to the bar chart layout."""
         bar_layout = QHBoxLayout(bar_widget)
         bar_layout.setContentsMargins(5, 2, 5, 2)
+        
+        # Create a top-k icon for the label
+        icon_label = QLabel(bar_widget)
+        icon_label.setPixmap(self.top_k_icons[str(top_k)])
+        icon_label.setFixedSize(14, 14)
+        bar_layout.addWidget(icon_label)
 
         # Create and style the class label
         class_label = QLabel(label.short_label_code, bar_widget)
