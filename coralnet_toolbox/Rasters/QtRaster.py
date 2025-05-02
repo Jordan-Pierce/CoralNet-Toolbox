@@ -28,7 +28,7 @@ class Raster(QObject):
         
         # Basic file information
         self.image_path = image_path
-        self.filename = os.path.basename(image_path)
+        self.basename = os.path.basename(image_path)
         self.extension = os.path.splitext(image_path)[1].lower()
         
         # Initialize properties
@@ -42,7 +42,7 @@ class Raster(QObject):
         self.is_selected = False
         self.is_filtered = True
         self.is_visible = True
-        self.display_name = self.filename  # Can be truncated for display
+        self.display_name = self.basename  # Can be truncated for display
         
         # Annotation state
         self.has_annotations = False
@@ -190,10 +190,10 @@ class Raster(QObject):
         Args:
             max_length (int): Maximum length for display name before truncation
         """
-        if len(self.filename) > max_length:
-            self.display_name = self.filename[:max_length-3] + "..."
+        if len(self.basename) > max_length:
+            self.display_name = self.basename[:max_length - 3] + "..."
         else:
-            self.display_name = self.filename
+            self.display_name = self.basename
     
     def matches_filter(self, 
                        search_text="", 
@@ -215,7 +215,7 @@ class Raster(QObject):
             bool: True if this raster matches all filter criteria
         """
         # Check filename search
-        if search_text and search_text not in self.filename:
+        if search_text and search_text not in self.basename:
             return False
             
         # Check label search

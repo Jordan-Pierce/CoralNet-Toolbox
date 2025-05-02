@@ -393,7 +393,7 @@ class ImageWindow(QWidget):
             
             # Update raster's table information
             raster.row_in_table = row
-            raster.set_display_name(max_length=25)  # Truncate long filenames
+            raster.set_display_name(max_length=25)  # Truncate long basenames
             
             # Set the raster as selected if it's the current selection
             raster.set_selected(path == self.selected_image_path)
@@ -405,7 +405,7 @@ class ImageWindow(QWidget):
             self.tableWidget.setCellWidget(row, 0, checkbox)
             checkbox.stateChanged.connect(lambda state, p=path: self.update_checkbox_state(p, bool(state)))
 
-            # Update filename using display_name
+            # Update basename using display_name
             item = QTableWidgetItem(raster.display_name)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setToolTip(path)
@@ -889,7 +889,7 @@ class ImageWindow(QWidget):
             return None
         
         raster = self.rasters[path]
-        filename = raster.filename
+        basename = raster.basename
         
         # Use properties directly from the raster object
         has_annotations_val = raster.has_annotations
@@ -898,7 +898,7 @@ class ImageWindow(QWidget):
         labels_codes = [label.short_label_code for label in labels if hasattr(label, 'short_label_code')]
         
         # Filter images based on search text and checkboxes
-        if search_text_images and search_text_images not in filename:
+        if search_text_images and search_text_images not in basename:
             return None
         # Filter images based on search text and checkboxes
         if search_text_labels and not any(search_text_labels in code for code in labels_codes):
@@ -932,7 +932,7 @@ class ImageWindow(QWidget):
         self.search_bar_labels.clear()
 
         try:
-            image_names = set([self.rasters[path].filename for path in self.image_paths])
+            image_names = set([self.rasters[path].basename for path in self.image_paths])
             label_names = set([label.short_label_code for label in self.main_window.label_window.labels])
         except Exception as e:
             return
