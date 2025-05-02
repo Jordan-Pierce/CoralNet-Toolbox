@@ -354,22 +354,37 @@ class PatchSamplingDialog(QDialog):
         self.apply_to_next = self.apply_next_checkbox.isChecked()
         self.apply_to_all = self.apply_all_checkbox.isChecked()
 
-        # Sets the LabelWindow and AnnotationWindow to Review
+        # Gets the label from LabelWindow
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
+        if not sample_label:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Error", "Selected label not found")
+            return
 
         # Current image path showing
         current_image_path = self.annotation_window.current_image_path
+        if not current_image_path:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Error", "No image is currently selected")
+            return
 
+        # Determine which images to apply annotations to
         if self.apply_to_filtered:
-            image_paths = self.image_window.filtered_image_paths
+            image_paths = self.image_window.table_model.filtered_paths
         elif self.apply_to_prev:
-            current_image_index = self.image_window.image_paths.index(current_image_path)
-            image_paths = self.image_window.image_paths[:current_image_index + 1]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                image_paths = self.image_window.table_model.filtered_paths[:current_index + 1]
+            else:
+                image_paths = [current_image_path]
         elif self.apply_to_next:
-            current_image_index = self.image_window.image_paths.index(current_image_path)
-            image_paths = self.image_window.image_paths[current_image_index:]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                image_paths = self.image_window.table_model.filtered_paths[current_index:]
+            else:
+                image_paths = [current_image_path]
         elif self.apply_to_all:
-            image_paths = self.image_window.image_paths
+            image_paths = self.image_window.raster_manager.image_paths
         else:
             # Only apply to the current image
             image_paths = [current_image_path]
@@ -379,60 +394,64 @@ class PatchSamplingDialog(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(image_paths) * num_annotations)
 
-        for image_path in image_paths:
-            sampled_annotations = []
+        try:
+            for image_path in image_paths:
+                sampled_annotations = []
 
-            # Get image dimensions using Rasterio
-            width = self.image_window.rasterio_images[image_path].width
-            height = self.image_window.rasterio_images[image_path].height
+                # Get the raster from the manager
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if not raster:
+                    print(f"Warning: Could not get raster for {image_path}")
+                    continue
 
-            # Validate margins for each image
-            try:
+                # Get image dimensions from the raster
+                width = raster.width
+                height = raster.height
+
+                # Validate margins for each image
                 margins = self.margin_input.get_margins(width, height)
-            except ValueError as e:
-                QApplication.restoreOverrideCursor()
-                QMessageBox.warning(self,
-                                    "Invalid Margins",
-                                    f"For image {image_path}: {str(e)}")
-                return
+                
+                # Sample the annotations given params
+                annotations_coords = self.sample_annotations(method,
+                                                             num_annotations,
+                                                             annotation_size,
+                                                             margins,
+                                                             width,
+                                                             height)
 
-            # Sample the annotation, given params
-            annotations = self.sample_annotations(method,
-                                                  num_annotations,
-                                                  annotation_size,
-                                                  margins,
-                                                  width,
-                                                  height)
+                for x, y, size in annotations_coords:
+                    # Create the annotation with center point
+                    new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
+                                                     size,
+                                                     sample_label.short_label_code,
+                                                     sample_label.long_label_code,
+                                                     sample_label.color,
+                                                     image_path,
+                                                     sample_label.id,
+                                                     transparency=self.annotation_window.transparency)
 
-            for annotation in annotations:
-                x, y, size = annotation
-                new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
-                                                 size,
-                                                 sample_label.short_label_code,
-                                                 sample_label.long_label_code,
-                                                 sample_label.color,
-                                                 image_path,
-                                                 sample_label.id,
-                                                 transparency=self.annotation_window.transparency)
+                    # Add annotation to the annotation window
+                    self.annotation_window.add_annotation_to_dict(new_annotation)
+                    sampled_annotations.append(new_annotation)
+                    progress_bar.update_progress()
 
-                # Add annotation to the dict
-                self.annotation_window.add_annotation_to_dict(new_annotation)
+                # Update the raster's annotation info
+                self.image_window.update_image_annotations(image_path)
+                
+            # Load the annotations for current image
+            self.annotation_window.load_annotations(image_path=image_path, annotations=sampled_annotations)
 
-                sampled_annotations.append(new_annotation)
-                progress_bar.update_progress()
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Error", f"Error adding sampled annotations: {str(e)}")
+            raise e
+        finally:
+            # Stop the progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
 
-            # Update the image window's image dict
-            self.image_window.update_image_annotations(image_path)
-
-        # Load the annotations for current image
-        self.annotation_window.load_annotations(image_path=image_path, annotations=sampled_annotations)
-
-        # Stop the progress bar
-        progress_bar.stop_progress()
-        progress_bar.close()
-
-        # Restore the cursor to the default cursor
-        QApplication.restoreOverrideCursor()
+            # Restore the cursor to the default cursor
+            QApplication.restoreOverrideCursor()
 
         # Close the dialog
         self.accept()

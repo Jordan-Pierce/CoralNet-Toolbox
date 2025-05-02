@@ -644,7 +644,7 @@ class ImageWindow(QWidget):
             return
             
         # Get the thumbnail
-        pixmap = self.raster_manager.get_thumbnail(path, longest_edge=64)
+        pixmap = self.raster_manager.get_thumbnail(path, longest_edge=256)
         if not pixmap:
             return
             

@@ -115,7 +115,7 @@ class Raster(QObject):
                 
         return self._q_image
     
-    def get_thumbnail(self, longest_edge: int = 64) -> Optional[QImage]:
+    def get_thumbnail(self, longest_edge: int = 256) -> Optional[QImage]:
         """
         Get or create a thumbnail of the specified size.
         
