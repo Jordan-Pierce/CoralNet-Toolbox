@@ -128,16 +128,31 @@ class BatchInferenceDialog(QDialog):
 
         :return: List of selected image paths
         """
+        # Current image path showing
+        current_image_path = self.annotation_window.current_image_path
+        if not current_image_path:
+            return []
+
+        # Determine which images to export annotations for
         if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.filtered_image_paths
+            return self.image_window.table_model.filtered_paths
         elif self.apply_prev_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[:current_image_index + 1]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                return self.image_window.table_model.filtered_paths[:current_index + 1]
+            else:
+                return [current_image_path]
         elif self.apply_next_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[current_image_index:]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                return self.image_window.table_model.filtered_paths[current_index:]
+            else:
+                return [current_image_path]
+        elif self.apply_all_checkbox.isChecked():
+            return self.image_window.raster_manager.image_paths
         else:
-            return self.image_window.image_paths
+            # Only apply to the current image
+            return [current_image_path]
 
     def apply(self):
         """

@@ -431,8 +431,7 @@ class ImageWindow(QWidget):
                 self.table_model.dataChanged.emit(
                     self.table_model.index(0, 0),
                     self.table_model.index(len(self.table_model.filtered_paths) - 1, 
-                                          self.table_model.columnCount() - 1)
-                )
+                                           self.table_model.columnCount() - 1))
             else:
                 # Filters are active, so run filtering again
                 self.filter_images()
@@ -1037,23 +1036,24 @@ class ImagePreviewTooltip(QFrame):
             
     def show_at(self, global_pos):
         """
-        Position and show the tooltip at the specified global position.
+        Position and show the tooltip at the specified global position,
+        always placing it to the bottom-right of the cursor.
         
         Args:
             global_pos (QPoint): Position to show the tooltip
         """
-        # Position slightly offset from cursor with increased x offset
-        x, y = global_pos.x() + 50, global_pos.y() + 15  # Increased x offset (bottom-right)
+        # Always position to bottom-right of cursor with fixed offset
+        x, y = global_pos.x() + 25, global_pos.y() + 25
         
         # Ensure tooltip stays within screen boundaries
         screen_rect = self.screen().geometry()
         tooltip_size = self.sizeHint()
         
-        # Adjust position if needed
+        # Adjust position if needed to stay on screen
         if x + tooltip_size.width() > screen_rect.right():
-            x = global_pos.x() - tooltip_size.width() - 5
+            x = screen_rect.right() - tooltip_size.width() - 10
         if y + tooltip_size.height() > screen_rect.bottom():
-            y = global_pos.y() - tooltip_size.height() - 5
+            y = screen_rect.bottom() - tooltip_size.height() - 10
             
         # Set position and show
         self.move(x, y)

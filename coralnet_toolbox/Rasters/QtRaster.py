@@ -4,8 +4,6 @@ import os
 import gc
 from typing import Optional, Dict, Any, Set, Union, List
 
-import numpy as np
-
 import rasterio
 
 from PyQt5.QtGui import QImage, QPixmap

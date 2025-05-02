@@ -330,28 +330,42 @@ class BatchInferenceDialog(QDialog):
         """
         Get the selected image paths based on the options.
         Excludes the source image path if present.
-
+    
         :return: List of selected image paths
         """
         # Get the source image path to exclude
         source_image_path = self.source_image_combo_box.currentData()
-
-        # Get selected paths based on checkbox selection
+        
+        # Current image path showing
+        current_image_path = self.annotation_window.current_image_path
+        if not current_image_path:
+            return []
+    
+        # Determine which images to export annotations for
         if self.apply_filtered_checkbox.isChecked():
-            selected_paths = self.image_window.filtered_image_paths.copy()
+            selected_paths = self.image_window.table_model.filtered_paths.copy()
         elif self.apply_prev_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            selected_paths = self.image_window.image_paths[:current_image_index + 1].copy()
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                selected_paths = self.image_window.table_model.filtered_paths[:current_index + 1].copy()
+            else:
+                selected_paths = [current_image_path]
         elif self.apply_next_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            selected_paths = self.image_window.image_paths[current_image_index:].copy()
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                selected_paths = self.image_window.table_model.filtered_paths[current_index:].copy()
+            else:
+                selected_paths = [current_image_path]
+        elif self.apply_all_checkbox.isChecked():
+            selected_paths = self.image_window.raster_manager.image_paths.copy()
         else:
-            selected_paths = self.image_window.image_paths.copy()
-
+            # Only apply to the current image
+            selected_paths = [current_image_path]
+    
         # Remove the source image path if it's in the selected paths
         if source_image_path and source_image_path in selected_paths:
             selected_paths.remove(source_image_path)
-
+    
         return selected_paths
 
     def apply(self):
