@@ -1,9 +1,19 @@
+import warnings
+
 from typing import Any, Dict, List, Optional
 
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant
 from PyQt5.QtGui import QFont
 
 from coralnet_toolbox.Rasters import RasterManager
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
 
 class RasterTableModel(QAbstractTableModel):
     """

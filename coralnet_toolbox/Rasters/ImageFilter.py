@@ -1,9 +1,19 @@
+import warnings
+
 from typing import Dict, List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Rasters import RasterManager
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
 
 class ImageFilter(QObject):
     """
@@ -26,14 +36,14 @@ class ImageFilter(QObject):
         self._is_filtering = False
         
     def filter_images(self, 
-                    search_text: str = "",
-                    search_label: str = "",
-                    require_annotations: bool = False,
-                    require_no_annotations: bool = False,
-                    require_predictions: bool = False,
-                    selected_paths: List[str] = None,
-                    use_threading: bool = True,
-                    callback: Callable = None) -> List[str]:
+                      search_text: str = "",
+                      search_label: str = "",
+                      require_annotations: bool = False,
+                      require_no_annotations: bool = False,
+                      require_predictions: bool = False,
+                      selected_paths: List[str] = None,
+                      use_threading: bool = True,
+                      callback: Callable = None) -> List[str]:
         """
         Filter images based on various criteria.
         
@@ -73,13 +83,13 @@ class ImageFilter(QObject):
             )
     
     def _filter_images_sync(self, 
-                          search_text: str,
-                          search_label: str,
-                          require_annotations: bool,
-                          require_no_annotations: bool,
-                          require_predictions: bool,
-                          selected_paths: List[str],
-                          callback: Callable = None) -> List[str]:
+                            search_text: str,
+                            search_label: str,
+                            require_annotations: bool,
+                            require_no_annotations: bool,
+                            require_predictions: bool,
+                            selected_paths: List[str],
+                            callback: Callable = None) -> List[str]:
         """
         Filter images synchronously.
         
@@ -113,13 +123,13 @@ class ImageFilter(QObject):
         return filtered_paths
     
     def _filter_with_threading(self, 
-                             search_text: str,
-                             search_label: str,
-                             require_annotations: bool,
-                             require_no_annotations: bool,
-                             require_predictions: bool,
-                             selected_paths: List[str],
-                             callback: Callable = None) -> List[str]:
+                               search_text: str,
+                               search_label: str,
+                               require_annotations: bool,
+                               require_no_annotations: bool,
+                               require_predictions: bool,
+                               selected_paths: List[str],
+                               callback: Callable = None) -> List[str]:
         """
         Filter images using multiple threads.
         

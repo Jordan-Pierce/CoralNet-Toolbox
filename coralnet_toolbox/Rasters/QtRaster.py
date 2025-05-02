@@ -1,13 +1,25 @@
+import warnings
+
 import os
 import gc
 from typing import Optional, Dict, Any, Set, Union, List
 
 import numpy as np
+
 import rasterio
+
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject
 
 from coralnet_toolbox.utilities import rasterio_open, rasterio_to_qimage
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class Raster(QObject):

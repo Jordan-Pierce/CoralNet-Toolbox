@@ -240,16 +240,31 @@ class ExportGeoJSONAnnotations(QDialog):
 
         :return: List of selected image paths
         """
+        # Current image path showing
+        current_image_path = self.annotation_window.current_image_path
+        if not current_image_path:
+            return []
+
+        # Determine which images to export annotations for
         if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.filtered_image_paths
+            return self.image_window.table_model.filtered_paths
         elif self.apply_prev_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[:current_image_index + 1]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                return self.image_window.table_model.filtered_paths[:current_index + 1]
+            else:
+                return [current_image_path]
         elif self.apply_next_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[current_image_index:]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                return self.image_window.table_model.filtered_paths[current_index:]
+            else:
+                return [current_image_path]
+        elif self.apply_all_checkbox.isChecked():
+            return self.image_window.raster_manager.image_paths
         else:
-            return self.image_window.image_paths
+            # Only apply to the current image
+            return [current_image_path]
 
     def get_annotations_for_image(self, image_path):
         """Get annotations for a specific image."""
@@ -444,15 +459,25 @@ class ExportGeoJSONAnnotations(QDialog):
                                     "Non-TIF images included. Select only TIF images.")
                 return False
 
-            if image_path in self.image_window.rasterio_images:
-                rasterio_src = self.image_window.rasterio_images[image_path]
-            else:
-                rasterio_src = rasterio_open(image_path)
-
+            # Get the raster from the raster manager
+            raster = self.image_window.raster_manager.get_raster(image_path)
+            if not raster or not raster.rasterio_src:
+                QMessageBox.warning(self,
+                                    "Invalid Image",
+                                    f"Could not open {os.path.basename(image_path)}.")
+                return False
+                
             try:
-                # Get the image transform
-                transform = rasterio_src.transform
-                crs = rasterio_src.crs.to_string()
+                # Get the image transform from the rasterio source
+                transform = raster.rasterio_src.transform
+                crs = raster.rasterio_src.crs
+                
+                # Check if CRS exists
+                if not crs:
+                    QMessageBox.warning(self,
+                                        "Missing CRS Information",
+                                        f"No coordinate reference system found for {os.path.basename(image_path)}.")
+                    return False
 
                 # Check the transform
                 if not isinstance(transform, Affine):
@@ -464,7 +489,7 @@ class ExportGeoJSONAnnotations(QDialog):
             except Exception as e:
                 QMessageBox.warning(self,
                                     "Missing CRS Information",
-                                    f"Could not get CRS information for {os.path.basename(image_path)}.")
+                                    f"Could not get CRS information for {os.path.basename(image_path)}: {str(e)}")
                 return False
 
         return True
@@ -541,7 +566,6 @@ class ExportGeoJSONAnnotations(QDialog):
         try:
             # Iterate through the images
             for image_path in images:
-
                 # Check if the image is a .tif or .tiff
                 if not image_path.lower().endswith(('.tif', '.tiff')):
                     print(f"Warning: Non-TIFF image {os.path.basename(image_path)} included; skipping.")
@@ -550,15 +574,16 @@ class ExportGeoJSONAnnotations(QDialog):
                 # Get the annotations for this image
                 annotations = self.get_annotations_for_image(image_path)
 
-                if image_path in self.image_window.rasterio_images:
-                    rasterio_src = self.image_window.rasterio_images[image_path]
-                else:
-                    rasterio_src = rasterio_open(image_path)
+                # Get the raster from the raster manager
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if not raster or not raster.rasterio_src:
+                    print(f"Error: Could not get raster for {os.path.basename(image_path)}; skipping.")
+                    continue
 
                 try:
-                    # Get the image transform
-                    transform = rasterio_src.transform
-                    crs = rasterio_src.crs.to_string()
+                    # Get the image transform from the rasterio source
+                    transform = raster.rasterio_src.transform
+                    crs = raster.rasterio_src.crs.to_string()
 
                     # Check the transform
                     if not isinstance(transform, Affine):
@@ -566,7 +591,7 @@ class ExportGeoJSONAnnotations(QDialog):
                         continue
 
                 except Exception as e:
-                    print(f"Error: Could not get crs for {os.path.basename(image_path)}; skipping.")
+                    print(f"Error: Could not get CRS for {os.path.basename(image_path)}; skipping: {str(e)}")
                     continue
 
                 # Create GeoJSON features for each annotation

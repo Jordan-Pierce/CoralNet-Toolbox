@@ -265,9 +265,9 @@ class ExportMaskAnnotations(QDialog):
         self.preserve_georef_checkbox.setEnabled(is_tif)
         if not is_tif:
             self.preserve_georef_checkbox.setChecked(False)
-            self.georef_note.setVisible(True)
+            self.georef_note.setStyleSheet("color: red; font-style: italic;")
         else:
-            self.georef_note.setVisible(False)
+            self.georef_note.setStyleSheet("color: #666; font-style: italic;")
 
     def get_selected_image_paths(self):
         """
@@ -275,16 +275,31 @@ class ExportMaskAnnotations(QDialog):
 
         :return: List of selected image paths
         """
+        # Current image path showing
+        current_image_path = self.annotation_window.current_image_path
+        if not current_image_path:
+            return []
+
+        # Determine which images to export annotations for
         if self.apply_filtered_checkbox.isChecked():
-            return self.image_window.filtered_image_paths
+            return self.image_window.table_model.filtered_paths
         elif self.apply_prev_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[:current_image_index + 1]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                return self.image_window.table_model.filtered_paths[:current_index + 1]
+            else:
+                return [current_image_path]
         elif self.apply_next_checkbox.isChecked():
-            current_image_index = self.image_window.image_paths.index(self.annotation_window.current_image_path)
-            return self.image_window.image_paths[current_image_index:]
+            if current_image_path in self.image_window.table_model.filtered_paths:
+                current_index = self.image_window.table_model.get_row_for_path(current_image_path)
+                return self.image_window.table_model.filtered_paths[current_index:]
+            else:
+                return [current_image_path]
+        elif self.apply_all_checkbox.isChecked():
+            return self.image_window.raster_manager.image_paths
         else:
-            return self.image_window.image_paths
+            # Only apply to the current image
+            return [current_image_path]
 
     def export_class_mapping(self, output_path):
         """Export the class mapping to a JSON file."""
@@ -439,32 +454,42 @@ class ExportMaskAnnotations(QDialog):
         transform = None
         crs = None
         has_georef = False
-
         height = None
         width = None
 
+        # Get the raster from the raster manager
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        
         # Only check for georeferencing if using TIF format and checkbox is checked
         can_preserve_georef = self.preserve_georef_checkbox.isChecked() and file_format.lower() == '.tif'
 
-        if can_preserve_georef:
+        if raster and raster.rasterio_src:
+            # Get dimensions from the raster
+            width = raster.width
+            height = raster.height
+            
+            # Check for georeferencing if needed
+            if can_preserve_georef and hasattr(raster.rasterio_src, 'transform'):
+                transform = raster.rasterio_src.transform
+                if transform and not transform.is_identity:
+                    crs = raster.rasterio_src.crs
+                    has_georef = True
+        else:
+            # Fallback to direct file access if raster is not available
             try:
-                with rasterio.open(image_path) as src:
-                    if src.transform and not src.transform.is_identity:
-                        transform = src.transform
-                        crs = src.crs
-                        has_georef = True
-                    width, height = src.width, src.height
+                if can_preserve_georef:
+                    with rasterio.open(image_path) as src:
+                        if src.transform and not src.transform.is_identity:
+                            transform = src.transform
+                            crs = src.crs
+                            has_georef = True
+                        width, height = src.width, src.height
+                else:
+                    # Use PIL for non-georeferenced images
+                    image = Image.open(image_path)
+                    width, height = image.size
             except Exception as e:
-                print(f"Could not read georeferencing: {e}")
-                has_georef = False
-
-        # If no georeferencing or failed to read, use PIL as fallback
-        if not has_georef:
-            try:
-                image = Image.open(image_path)
-                width, height = image.size
-            except Exception as e:
-                print(f"Error loading image: {e}")
+                print(f"Error loading image {image_path}: {str(e)}")
 
         return height, width, has_georef, transform, crs
 

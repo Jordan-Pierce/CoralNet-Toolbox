@@ -1,4 +1,5 @@
 import warnings
+
 import os
 import gc
 from contextlib import contextmanager
@@ -8,9 +9,9 @@ import rasterio
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                            QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
-                            QMenu, QButtonGroup, QAbstractItemView, QGroupBox, QPushButton, 
-                            QStyle, QFormLayout, QFrame)
+                             QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
+                             QMenu, QButtonGroup, QAbstractItemView, QGroupBox, QPushButton, 
+                             QStyle, QFormLayout, QFrame)
 
 from coralnet_toolbox.utilities import rasterio_open, rasterio_to_qimage
 from coralnet_toolbox.QtProgressBar import ProgressBar

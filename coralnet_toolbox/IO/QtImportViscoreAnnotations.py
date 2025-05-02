@@ -251,7 +251,7 @@ class ImportViscoreAnnotations(QDialog):
         """Process and import the annotations."""
         try:
             # Map image names to paths
-            image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
+            image_path_map = {os.path.basename(path): path for path in self.image_window.raster_manager.image_paths}
 
             # Pre-create required labels
             progress_bar.setWindowTitle("Creating Labels")

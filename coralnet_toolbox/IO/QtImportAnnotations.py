@@ -83,7 +83,7 @@ class ImportAnnotations:
         keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
         
         # Reformat the data
-        filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.image_paths}
+        filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.raster_manager.image_paths}
         total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
 
         # Make cursor busy

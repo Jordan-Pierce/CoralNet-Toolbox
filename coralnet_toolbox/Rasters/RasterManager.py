@@ -1,3 +1,5 @@
+import warnings
+
 import os
 import gc
 from typing import Dict, List, Optional, Set
@@ -6,6 +8,12 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Rasters import Raster
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
+
 
 class RasterManager(QObject):
     """
@@ -114,12 +122,12 @@ class RasterManager(QObject):
         return True
     
     def get_filtered_paths(self, 
-                         search_text: str = "",
-                         search_label: str = "",
-                         require_annotations: bool = False,
-                         require_no_annotations: bool = False,
-                         require_predictions: bool = False,
-                         selected_paths: List[str] = None) -> List[str]:
+                           search_text: str = "",
+                           search_label: str = "",
+                           require_annotations: bool = False,
+                           require_no_annotations: bool = False,
+                           require_predictions: bool = False,
+                           selected_paths: List[str] = None) -> List[str]:
         """
         Get a filtered list of image paths based on criteria.
         
