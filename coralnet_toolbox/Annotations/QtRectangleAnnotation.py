@@ -49,45 +49,25 @@ class RectangleAnnotation(Annotation):
         self.top_left = top_left
         self.bottom_right = bottom_right
         
+    def set_centroid(self):
+        """Set the centroid of the rectangle."""
+        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
+                                 (self.top_left.y() + self.bottom_right.y()) / 2)
+
     def set_cropped_bbox(self):
         """Set the cropped bounding box for the annotation."""
         self.cropped_bbox = (self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y())
         self.annotation_size = int(max(self.bottom_right.x() - self.top_left.x(),
                                        self.bottom_right.y() - self.top_left.y()))
 
-    def set_centroid(self):
-        """Set the centroid of the rectangle."""
-        self.center_xy = QPointF((self.top_left.x() + self.bottom_right.x()) / 2,
-                                 (self.top_left.y() + self.bottom_right.y()) / 2)
-
     def contains_point(self, point: QPointF) -> bool:
         """Check if the given point is within the rectangle."""
         return (self.top_left.x() <= point.x() <= self.bottom_right.x() and
                 self.top_left.y() <= point.y() <= self.bottom_right.y())
         
-    def create_cropped_image(self, rasterio_src):
-        """Create a cropped image from the rasterio source."""
-        # Set the rasterio source for the annotation
-        self.rasterio_src = rasterio_src
-        # Set the cropped bounding box for the annotation
-        self.set_cropped_bbox()
-        # Get the bounding box of the rectangle
-        min_x, min_y, max_x, max_y = self.cropped_bbox
-
-        # Calculate the window for rasterio
-        window = Window(
-            col_off=max(0, int(min_x)),
-            row_off=max(0, int(min_y)),
-            width=min(rasterio_src.width - int(min_x), int(max_x - min_x)),
-            height=min(rasterio_src.height - int(min_y), int(max_y - min_y))
-        )
-
-        # Convert rasterio to QImage
-        q_image = rasterio_to_cropped_image(self.rasterio_src, window)
-        # Convert QImage to QPixmap
-        self.cropped_image = QPixmap.fromImage(q_image)
-
-        self.annotationUpdated.emit(self)  # Notify update
+    def get_centroid(self):
+        """Get the centroid of the annotation."""
+        return (float(self.center_xy.x()), float(self.center_xy.y()))
         
     def get_area(self):
         """Calculate the area of the rectangle."""
@@ -177,6 +157,30 @@ class RectangleAnnotation(Annotation):
         painter.end()
 
         return cropped_image_graphic
+    
+    def create_cropped_image(self, rasterio_src):
+        """Create a cropped image from the rasterio source."""
+        # Set the rasterio source for the annotation
+        self.rasterio_src = rasterio_src
+        # Set the cropped bounding box for the annotation
+        self.set_cropped_bbox()
+        # Get the bounding box of the rectangle
+        min_x, min_y, max_x, max_y = self.cropped_bbox
+
+        # Calculate the window for rasterio
+        window = Window(
+            col_off=max(0, int(min_x)),
+            row_off=max(0, int(min_y)),
+            width=min(rasterio_src.width - int(min_x), int(max_x - min_x)),
+            height=min(rasterio_src.height - int(min_y), int(max_y - min_y))
+        )
+
+        # Convert rasterio to QImage
+        q_image = rasterio_to_cropped_image(self.rasterio_src, window)
+        # Convert QImage to QPixmap
+        self.cropped_image = QPixmap.fromImage(q_image)
+
+        self.annotationUpdated.emit(self)  # Notify update
 
     def update_graphics_item(self, crop_image=True):
         """Update the graphical representation of the annotation using base class method."""

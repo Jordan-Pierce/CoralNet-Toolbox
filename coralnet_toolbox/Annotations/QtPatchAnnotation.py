@@ -46,6 +46,10 @@ class PatchAnnotation(Annotation):
         else:
             self.center_xy = center_xy
 
+    def set_centroid(self):
+        """Calculate the centroid of the annotation (for patch, this is the center_xy)."""
+        self.center_xy = self.center_xy
+        
     def set_cropped_bbox(self):
         """Set the cropped bounding box coordinates based on center and size."""
         half_size = self.annotation_size / 2
@@ -54,19 +58,7 @@ class PatchAnnotation(Annotation):
         max_x = self.center_xy.x() + half_size
         max_y = self.center_xy.y() + half_size
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
-
-    def set_centroid(self):
-        """Calculate the centroid of the annotation (for patch, this is the center_xy)."""
-        self.center_xy = self.center_xy
-
-    def get_area(self):
-        """Calculate the area of the square patch."""
-        return self.annotation_size * self.annotation_size
-
-    def get_perimeter(self):
-        """Calculate the perimeter of the square patch."""
-        return 4 * self.annotation_size
-
+        
     def contains_point(self, point: QPointF):
         """Check if the point is within the annotation's bounding box."""
         half_size = self.annotation_size / 2
@@ -76,6 +68,18 @@ class PatchAnnotation(Annotation):
                       self.annotation_size)
         return rect.contains(point)
     
+    def get_centroid(self):
+        """Get the centroid of the annotation."""
+        return (float(self.center_xy.x()), float(self.center_xy.y()))
+
+    def get_area(self):
+        """Calculate the area of the square patch."""
+        return self.annotation_size * self.annotation_size
+
+    def get_perimeter(self):
+        """Calculate the perimeter of the square patch."""
+        return 4 * self.annotation_size
+
     def get_polygon(self):
         """Get the polygon representation of this patch (a square)."""
         half_size = self.annotation_size / 2
