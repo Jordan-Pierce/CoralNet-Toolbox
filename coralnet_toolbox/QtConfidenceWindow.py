@@ -106,7 +106,6 @@ class ConfidenceWindow(QWidget):
         self.annotation = None
         self.user_confidence = None
         self.machine_confidence = None
-        self.cropped_image = None
         self.chart_dict = None
         self.confidence_bar_labels = []
         
@@ -216,7 +215,6 @@ class ConfidenceWindow(QWidget):
             self.annotation = annotation
             self.user_confidence = annotation.user_confidence
             self.machine_confidence = annotation.machine_confidence
-            self.cropped_image = annotation.cropped_image.copy()
             
             # Annotation is verified and contains machine confidences
             if annotation.verified and self.machine_confidence:
@@ -263,17 +261,13 @@ class ConfidenceWindow(QWidget):
         try:
             self.clear_display()
             self.update_annotation(annotation)
-            if self.cropped_image:
-                # Scale items if needed
-                cropped_image = self.scale_pixmap(annotation.get_cropped_image())
+            if self.annotation.cropped_image:
+                # Get the cropped image graphic
                 cropped_image_graphic = self.scale_pixmap(annotation.get_cropped_image_graphic())
-                                
-                # Add the scaled image
-                self.scene.addPixmap(cropped_image)
                 # Add the scaled annotation graphic (as pixmap)
                 self.scene.addPixmap(cropped_image_graphic)
                 # Add the border color with increased width
-                self.scene.setSceneRect(QRectF(cropped_image.rect()))
+                self.scene.setSceneRect(QRectF(cropped_image_graphic.rect()))
                 self.graphics_view.setStyleSheet("QGraphicsView { border: 3px solid transparent; }")
                 # Fit the view to the scene
                 self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
@@ -284,8 +278,8 @@ class ConfidenceWindow(QWidget):
                 # Update dimensions label with original and scaled dimensions
                 orig_height = annotation.get_cropped_image().height()
                 orig_width = annotation.get_cropped_image().width()
-                scaled_height = cropped_image.height()
-                scaled_width = cropped_image.width()
+                scaled_height = cropped_image_graphic.height()
+                scaled_width = cropped_image_graphic.width()
                 
                 if orig_height != scaled_height:
                     text = f"Original: {orig_height} x {orig_width} → Scaled: {scaled_height} x {scaled_width}"
