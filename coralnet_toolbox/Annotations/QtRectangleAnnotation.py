@@ -6,8 +6,9 @@ from shapely.ops import split
 from shapely.geometry import Polygon, LineString, box
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
+from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter,
+                         QImage, QRegion)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 
@@ -100,17 +101,14 @@ class RectangleAnnotation(Annotation):
         if self.cropped_image is None:
             return None
 
-        # Create a QImage with alpha channel for masking
-        masked_image = QPixmap(self.cropped_image.size()).toImage()
-        masked_image.fill(Qt.transparent)
-
-        # Create a QPainter to draw the mask
+        # Create a QImage with transparent background for the mask
+        masked_image = QImage(self.cropped_image.size(), QImage.Format_ARGB32)
+        masked_image.fill(Qt.transparent)  # Transparent background
+        
+        # Create a QPainter to draw the polygon onto the mask
         painter = QPainter(masked_image)
         painter.setRenderHint(QPainter.Antialiasing)
-
-        # Create a black brush
-        brush = QBrush(QColor(0, 0, 0))  # Black color
-        painter.setBrush(brush)
+        painter.setBrush(QBrush(Qt.white))  # White fill for the mask area
         painter.setPen(Qt.NoPen)
 
         # Define the rectangle points based on top_left and bottom_right
@@ -127,35 +125,43 @@ class RectangleAnnotation(Annotation):
 
         # Create a polygon from the cropped points
         polygon = QPolygonF(cropped_points)
-
-        # Fill the polygon with white color (the area we want to keep)
-        painter.setBrush(QBrush(Qt.white))
+        
+        # Draw the polygon onto the mask
         painter.drawPolygon(polygon)
-
         painter.end()
-
-        # Convert the QImage back to a QPixmap
+        
+        # Convert the mask QImage to QPixmap and create a bitmap mask
+        # We want the inside of the polygon to show the image, so we DON'T use MaskInColor
         mask_pixmap = QPixmap.fromImage(masked_image)
-
-        # Apply the mask to a copy of the cropped image
-        cropped_image_graphic = self.cropped_image.copy()
-        cropped_image_graphic.setMask(mask_pixmap.mask())
-
-        # Now draw the dotted line outline on top of the masked image
-        painter = QPainter(cropped_image_graphic)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # Create a dotted pen
+        mask_bitmap = mask_pixmap.createMaskFromColor(Qt.white, Qt.MaskOutColor)
+        
+        # Convert bitmap to region for clipping
+        mask_region = QRegion(mask_bitmap)
+        
+        # Create the result image
+        cropped_image_graphic = QPixmap(self.cropped_image.size())
+        
+        # First draw the entire original image at 50% opacity (for area outside polygon)
+        result_painter = QPainter(cropped_image_graphic)
+        result_painter.setRenderHint(QPainter.Antialiasing)
+        result_painter.setOpacity(0.5)  # 50% opacity for outside the polygon
+        result_painter.drawPixmap(0, 0, self.cropped_image)
+        
+        # Then draw the full opacity image only in the masked area (inside the polygon)
+        result_painter.setOpacity(1.0)  # Reset to full opacity
+        result_painter.setClipRegion(mask_region)
+        result_painter.drawPixmap(0, 0, self.cropped_image)
+        
+        # Draw the dotted line outline on top
         pen = QPen(self.label.color)
         pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
         pen.setWidth(2)  # Line width
-        painter.setPen(pen)
-
-        # Draw the rectangle outline with the dotted pen
-        painter.drawPolygon(polygon)
-
-        painter.end()
-
+        result_painter.setPen(pen)
+        result_painter.setClipping(False)  # Disable clipping for the outline
+        result_painter.drawPolygon(polygon)
+        
+        result_painter.end()
+        
         return cropped_image_graphic
     
     def create_cropped_image(self, rasterio_src):
