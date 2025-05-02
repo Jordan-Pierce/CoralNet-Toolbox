@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBox
 
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
+from coralnet_toolbox.Rasters import Raster
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -227,22 +228,19 @@ class ImageWindow(QWidget):
         self.layout.addWidget(self.info_table_group)
 
         self.image_paths = []  # Store all image paths
-        self.image_dict = {}  # Dictionary to store all image information
         self.filtered_image_paths = []  # List to store filtered image paths
         self.selected_image_path = None
         self.right_clicked_row = None  # Attribute to store the right-clicked row
 
-        self.q_images = {}  # Dictionary to store image paths and their QImage representation
-        self.rasterio_images = {}  # Dictionary to store image paths and their Rasterio representation
+        # Replace multiple dictionaries with a single dictionary of Raster objects
+        self.rasters = {}  # Dictionary to store Raster objects (key: image_path)
 
         self.show_confirmation_dialog = True
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.filter_images)
-
-        self.checkbox_states = {}  # Store checkbox states for each image path
-
+        
         # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
@@ -322,12 +320,12 @@ class ImageWindow(QWidget):
         
         # Get the path of the image to preview
         image_path = self.filtered_image_paths[self.hover_row]
-        # Use the already loaded rasterio image
-        rasterio_src = self.rasterio_images[image_path]
+        raster = self.rasters[image_path]
         
-        # Open with rasterio, convert to QImage; display thumbnail as a pixmap
-        thumbnail = rasterio_to_qimage(rasterio_src, longest_edge=64)
-        pixmap = QPixmap.fromImage(thumbnail)
+        # Get thumbnail as a pixmap
+        pixmap = raster.get_pixmap(longest_edge=64)
+        if pixmap is None:
+            return
 
         # Set image and show tooltip
         self.preview_tooltip.set_image(pixmap)
@@ -348,29 +346,27 @@ class ImageWindow(QWidget):
         """Add an image to the image paths list and update the table widget"""
         # Check if the image path is already in the list
         if image_path not in self.image_paths:
-            # Add the image path to the list
-            self.image_paths.append(image_path)
-            # Add the image to the image dictionary
-            filename = os.path.basename(image_path)
-            self.image_dict[image_path] = {
-                'filename': filename,
-                'has_annotations': False,
-                'has_predictions': False,
-                'labels': set(),  # Initialize an empty set for labels
-                'annotation_count': 0  # Initialize annotation count
-            }
-            # Load the rasterio representation (now available for use anywhere!)
-            rasterio_src = rasterio_open(image_path)
-            if rasterio_src is None:
-                raise ValueError("Rasterio failed to open the image")
-            # Store the rasterio image in the dictionary
-            self.rasterio_images[image_path] = rasterio_src
-            
-            # Update the table
-            self.update_table_widget()
-            self.update_image_count_label()
-            self.update_search_bars()
-            QApplication.processEvents()
+            try:
+                # Create a Raster object
+                raster = Raster(image_path)
+                if raster.rasterio_src is None:
+                    raise ValueError("Rasterio failed to open the image")
+                
+                # Add the image path to the list
+                self.image_paths.append(image_path)
+                
+                # Store the Raster object
+                self.rasters[image_path] = raster
+                
+                # Update the table
+                self.update_table_widget()
+                self.update_image_count_label()
+                self.update_search_bars()
+                QApplication.processEvents()
+            except Exception as e:
+                QMessageBox.warning(self, 
+                                    "Image Loading Error",
+                                    f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
 
     def update_table_widget(self):
         """Update the table widget with filtered image paths."""
@@ -393,30 +389,39 @@ class ImageWindow(QWidget):
         """Update a specific row in the table widget."""
         if path in self.filtered_image_paths:
             row = self.filtered_image_paths.index(path)
+            raster = self.rasters[path]
+            
+            # Update raster's table information
+            raster.row_in_table = row
+            raster.set_display_name(max_length=25)  # Truncate long filenames
+            
+            # Set the raster as selected if it's the current selection
+            raster.set_selected(path == self.selected_image_path)
 
             # Update checkbox
             checkbox = QCheckBox()
             checkbox.setStyleSheet("margin-left:10px;")
-            if path in self.checkbox_states:
-                checkbox.setChecked(self.checkbox_states[path])
+            checkbox.setChecked(raster.checkbox_state)
             self.tableWidget.setCellWidget(row, 0, checkbox)
-            checkbox.stateChanged.connect(lambda state, p=path: self.checkbox_states.update({p: bool(state)}))
+            checkbox.stateChanged.connect(lambda state, p=path: self.update_checkbox_state(p, bool(state)))
 
-            # Update filename
-            item_text = f"{self.image_dict[path]['filename']}"
-            item_text = item_text[:23] + "..." if len(item_text) > 25 else item_text
-            item = QTableWidgetItem(item_text)
+            # Update filename using display_name
+            item = QTableWidgetItem(raster.display_name)
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setToolTip(path)
             item.setTextAlignment(Qt.AlignCenter)
             self.tableWidget.setItem(row, 1, item)
 
             # Update annotation count
-            annotation_count = self.image_dict[path]['annotation_count']
-            annotation_item = QTableWidgetItem(str(annotation_count))
+            annotation_item = QTableWidgetItem(str(raster.annotation_count))
             annotation_item.setFlags(annotation_item.flags() & ~Qt.ItemIsEditable)
             annotation_item.setTextAlignment(Qt.AlignCenter)
             self.tableWidget.setItem(row, 2, annotation_item)
+            
+    def update_checkbox_state(self, path, state):
+        """Update the checkbox state for a specific image."""
+        if path in self.rasters:
+            self.rasters[path].checkbox_state = state
 
     def update_table_selection(self):
         """Update the selection in the table widget based on the selected image path."""
@@ -462,17 +467,11 @@ class ImageWindow(QWidget):
 
     def update_image_annotations(self, image_path):
         """Update annotation-related information for a specific image."""
-        if image_path in self.image_dict:
-            # Check for any annotations
+        if image_path in self.rasters:
+            # Get annotations
             annotations = self.annotation_window.get_image_annotations(image_path)
-            self.image_dict[image_path]['has_annotations'] = bool(annotations)
-            self.image_dict[image_path]['annotation_count'] = len(annotations)
-            # Check for any predictions
-            predictions = [a.machine_confidence for a in annotations if a.machine_confidence != {}]
-            self.image_dict[image_path]['has_predictions'] = len(predictions)
-            # Check for any labels
-            labels = {annotation.label for annotation in annotations}
-            self.image_dict[image_path]['labels'] = labels
+            # Update the raster with annotation information
+            self.rasters[image_path].update_annotation_info(annotations)
             # Update the table row
             self.update_table_row(image_path)
             # Update the label window annotation count
@@ -514,6 +513,7 @@ class ImageWindow(QWidget):
         # Check if the image path is valid
         if image_path not in self.image_paths:
             return
+        
         # Check if the image is already selected
         if image_path == self.selected_image_path and update is False:
             return
@@ -527,26 +527,17 @@ class ImageWindow(QWidget):
             self.update_table_selection()
             self.update_current_image_index_label()
 
-            # Get the rasterio image from the dictionary
-            if image_path in self.rasterio_images:
-                rasterio_src = self.rasterio_images[image_path]
-            else:
-                # This should not happen, but just in case
-                print("Warning: Rasterio image not found in dictionary.")
-                rasterio_src = rasterio_open(image_path)
-                self.rasterio_images[image_path] = rasterio_src
-                
+            # Get the raster object
+            raster = self.rasters[image_path]
+            
             # Load and display scaled-down version for immediate preview
-            low_res_q_image = rasterio_to_qimage(rasterio_src, longest_edge=256)
+            low_res_q_image = raster.get_thumbnail(longest_edge=256)
             self.annotation_window.display_image(low_res_q_image)
             
-            # Now Load the full resolution image using QImage directly (faster)
-            q_image = QImage(image_path)
-            if q_image.isNull():
-                raise ValueError("QImage failed to load the image")
-            
-            # Update the image dictionaries
-            self.q_images[image_path] = q_image
+            # Load the full resolution image
+            q_image = raster.get_qimage()
+            if q_image is None or q_image.isNull():
+                raise ValueError("Failed to load the full resolution image")
             
             # Update the display with the full-resolution image
             self.annotation_window.set_image(image_path)
@@ -690,8 +681,7 @@ class ImageWindow(QWidget):
                 current_idx = self.filtered_image_paths.index(self.selected_image_path)
                 
                 # Find the next viable image to load (prioritize images before current)
-                viable_images = [img for img in remaining_images 
-                                if self.filtered_image_paths.index(img) <= current_idx]
+                viable_images = [img for img in remaining_images if self.filtered_image_paths.index(img) <= current_idx]
                 
                 # Prioritize images at or before the current index
                 next_image_to_load = viable_images[0] if viable_images else remaining_images[0]
@@ -750,27 +740,14 @@ class ImageWindow(QWidget):
             if image_path in self.filtered_image_paths:
                 self.filtered_image_paths.remove(image_path)
                 
-            # Close and remove rasterio resources
-            if image_path in self.rasterio_images:
-                self.rasterio_images[image_path] = None
-                del self.rasterio_images[image_path]
-
-            # Remove from QImage dictionary
-            if image_path in self.q_images:
-                self.q_images[image_path] = None
-                del self.q_images[image_path]
+            # Clean up and remove raster resources
+            if image_path in self.rasters:
+                self.rasters[image_path].cleanup()
+                del self.rasters[image_path]
                 
             # Remove from main image collections
             self.image_paths.remove(image_path)
             
-            # Remove from checkbox states
-            if image_path in self.checkbox_states:
-                del self.checkbox_states[image_path]
-                
-            # Remove from image dictionary
-            if image_path in self.image_dict:
-                del self.image_dict[image_path]
-                
             # Force garbage collection to clean up resources
             gc.collect()
             
@@ -911,29 +888,29 @@ class ImageWindow(QWidget):
         if selected_paths is not None and path not in selected_paths:
             return None
         
-        filename = os.path.basename(path)
-        # Check for annotations for the provided path
-        annotations = self.annotation_window.get_image_annotations(path)
-        # Check for predictions for the provided path
-        predictions = self.image_dict[path]['has_predictions']
-        # Check the labels for the provided path
-        labels = self.image_dict[path]['labels']
-        labels = [label.short_label_code for label in labels]
+        raster = self.rasters[path]
+        filename = raster.filename
+        
+        # Use properties directly from the raster object
+        has_annotations_val = raster.has_annotations
+        has_predictions_val = raster.has_predictions
+        labels = raster.labels
+        labels_codes = [label.short_label_code for label in labels if hasattr(label, 'short_label_code')]
         
         # Filter images based on search text and checkboxes
         if search_text_images and search_text_images not in filename:
             return None
         # Filter images based on search text and checkboxes
-        if search_text_labels and search_text_labels not in labels:
+        if search_text_labels and not any(search_text_labels in code for code in labels_codes):
             return None
         # Filter images based on checkboxes, and if the image has annotations
-        if no_annotations and annotations:
+        if no_annotations and has_annotations_val:
             return None
         # Filter images based on checkboxes, and if the image has no annotations
-        if has_annotations and not annotations:
+        if has_annotations and not has_annotations_val:
             return None
         # Filter images based on checkboxes, and if the image has predictions
-        if has_predictions and not predictions:
+        if has_predictions and not has_predictions_val:
             return None
 
         return path
@@ -955,7 +932,7 @@ class ImageWindow(QWidget):
         self.search_bar_labels.clear()
 
         try:
-            image_names = set([self.image_dict[path]['filename'] for path in self.image_paths])
+            image_names = set([self.rasters[path].filename for path in self.image_paths])
             label_names = set([label.short_label_code for label in self.main_window.label_window.labels])
         except Exception as e:
             return
