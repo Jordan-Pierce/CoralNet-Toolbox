@@ -18,6 +18,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+# Note: Field names are case-sensitive and should match the CoralNet export exactly.
 
 
 class ImportCoralNetAnnotations:
@@ -191,7 +192,12 @@ class ImportCoralNetAnnotations:
 
                     # Update the machine confidence
                     annotation.update_machine_confidence(machine_confidence)
-
+                    
+                    if 'Verified' in row:
+                        # If the verified status is True, update the annotation's verified status
+                        verified = str(row['Verified']).lower() == 'true' or row['Verified'] == 1 
+                        annotation.update_verified(verified)
+                            
                     # Add annotation to the dict
                     self.annotation_window.add_annotation_to_dict(annotation)
                 

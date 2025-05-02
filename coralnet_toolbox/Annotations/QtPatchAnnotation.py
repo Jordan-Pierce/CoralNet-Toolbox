@@ -5,8 +5,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QPixmap, QColor, QPen, QBrush, QPainter, QPolygonF
-from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsRectItem)
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
+from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPainter, 
+                         QPolygonF, QImage, QRegion)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 
@@ -46,6 +47,10 @@ class PatchAnnotation(Annotation):
         else:
             self.center_xy = center_xy
 
+    def set_centroid(self):
+        """Calculate the centroid of the annotation (for patch, this is the center_xy)."""
+        self.center_xy = self.center_xy
+        
     def set_cropped_bbox(self):
         """Set the cropped bounding box coordinates based on center and size."""
         half_size = self.annotation_size / 2
@@ -54,19 +59,7 @@ class PatchAnnotation(Annotation):
         max_x = self.center_xy.x() + half_size
         max_y = self.center_xy.y() + half_size
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
-
-    def set_centroid(self):
-        """Calculate the centroid of the annotation (for patch, this is the center_xy)."""
-        self.center_xy = self.center_xy
-
-    def get_area(self):
-        """Calculate the area of the square patch."""
-        return self.annotation_size * self.annotation_size
-
-    def get_perimeter(self):
-        """Calculate the perimeter of the square patch."""
-        return 4 * self.annotation_size
-
+        
     def contains_point(self, point: QPointF):
         """Check if the point is within the annotation's bounding box."""
         half_size = self.annotation_size / 2
@@ -76,6 +69,18 @@ class PatchAnnotation(Annotation):
                       self.annotation_size)
         return rect.contains(point)
     
+    def get_centroid(self):
+        """Get the centroid of the annotation."""
+        return (float(self.center_xy.x()), float(self.center_xy.y()))
+
+    def get_area(self):
+        """Calculate the area of the square patch."""
+        return self.annotation_size * self.annotation_size
+
+    def get_perimeter(self):
+        """Calculate the perimeter of the square patch."""
+        return 4 * self.annotation_size
+
     def get_polygon(self):
         """Get the polygon representation of this patch (a square)."""
         half_size = self.annotation_size / 2
@@ -98,18 +103,18 @@ class PatchAnnotation(Annotation):
         return QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size)
 
     def get_cropped_image_graphic(self):
-        """Get the cropped image with a dotted outline."""
+        """Get the cropped image with a dotted outline and black background."""
         if self.cropped_image is None:
             return None
 
-        # Create a QImage with alpha channel for masking
-        masked_image = QPixmap(self.cropped_image.size()).toImage()
-        masked_image.fill(Qt.transparent)
-
-        # Create a QPainter to draw the polygon onto the image
+        # Create a QImage with transparent background for the mask
+        masked_image = QImage(self.cropped_image.size(), QImage.Format_ARGB32)
+        masked_image.fill(Qt.transparent)  # Transparent background
+        
+        # Create a QPainter to draw the polygon onto the mask
         painter = QPainter(masked_image)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(QBrush(QColor(0, 0, 0, 255)))  # Opaque black
+        painter.setBrush(QBrush(Qt.white))  # White fill for the mask area
         painter.setPen(Qt.NoPen)
 
         # Define the square's corners as a polygon
@@ -120,33 +125,45 @@ class PatchAnnotation(Annotation):
             QPointF(0, self.cropped_image.height())
         ]
 
-        # Draw the polygon onto the image
+        # Create a polygon from the cropped points
         polygon = QPolygonF(cropped_points)
+        
+        # Draw the polygon onto the mask
         painter.drawPolygon(polygon)
         painter.end()
 
-        # Convert the QImage back to a QPixmap
+        # Convert the mask QImage to QPixmap and create a bitmap mask
+        # We want the inside of the polygon to show the image, so we DON'T use MaskInColor
         mask_pixmap = QPixmap.fromImage(masked_image)
-
-        # Apply the mask to a copy of the cropped image
-        cropped_image_graphic = self.cropped_image.copy()
-        cropped_image_graphic.setMask(mask_pixmap.mask())
-
-        # Now draw the dotted line outline on top of the masked image
-        painter = QPainter(cropped_image_graphic)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # Create a dotted pen
+        mask_bitmap = mask_pixmap.createMaskFromColor(Qt.white, Qt.MaskOutColor)
+        
+        # Convert bitmap to region for clipping
+        mask_region = QRegion(mask_bitmap)
+        
+        # Create the result image
+        cropped_image_graphic = QPixmap(self.cropped_image.size())
+        
+        # First draw the entire original image at 50% opacity (for area outside polygon)
+        result_painter = QPainter(cropped_image_graphic)
+        result_painter.setRenderHint(QPainter.Antialiasing)
+        result_painter.setOpacity(0.5)  # 50% opacity for outside the polygon
+        result_painter.drawPixmap(0, 0, self.cropped_image)
+        
+        # Then draw the full opacity image only in the masked area (inside the polygon)
+        result_painter.setOpacity(1.0)  # Reset to full opacity
+        result_painter.setClipRegion(mask_region)
+        result_painter.drawPixmap(0, 0, self.cropped_image)
+        
+        # Draw the dotted line outline on top
         pen = QPen(self.label.color)
         pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
         pen.setWidth(2)  # Line width
-        painter.setPen(pen)
-
-        # Draw the square outline with the dotted pen
-        painter.drawPolygon(polygon)
-
-        painter.end()
-
+        result_painter.setPen(pen)
+        result_painter.setClipping(False)  # Disable clipping for the outline
+        result_painter.drawPolygon(polygon)
+        
+        result_painter.end()
+        
         return cropped_image_graphic
 
     def create_cropped_image(self, rasterio_src):
@@ -247,6 +264,10 @@ class PatchAnnotation(Annotation):
                 machine_confidence[label] = confidence
 
         annotation.update_machine_confidence(machine_confidence)
+        
+        # Override the verified attribute if it exists in the data
+        if 'verified' in data:
+            annotation.update_verified(data['verified'])
 
         return annotation
 

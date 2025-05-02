@@ -41,6 +41,7 @@ class Annotation(QObject):
         self.transparency = transparency
         self.user_confidence = {self.label: 1.0}
         self.machine_confidence = {}
+        self.verified = True
         self.data = {}
         self.rasterio_src = None
         self.cropped_image = None
@@ -368,8 +369,8 @@ class Annotation(QObject):
         
     def update_user_confidence(self, new_label: 'Label'):
         """Update annotation with user-defined label and confidence."""
-        # Set machine confidence to None
-        self.machine_confidence = {}
+        # Mark as verified, keep machine confidence
+        self.verified = True
         # Update user confidence
         self.user_confidence = {new_label: 1.0}
         # Pass the label with the largest confidence as the label
@@ -394,10 +395,39 @@ class Annotation(QObject):
         self.machine_confidence = prediction
         # Pass the label with the largest confidence as the label
         self.label = max(prediction, key=prediction.get)
+        # Mark as not verified
+        self.verified = False
 
         # Create the graphic
         self.update_graphics_item()
         self.show_message = True
+        
+    def update_verified(self, verified: bool):
+        """Update the verified status of the annotation, and update user confidence if necessary."""
+        # If the verified status is the same as the current one, do nothing
+        if verified == self.verified:
+            return
+
+        if verified:
+            # If the annotation is being verified and there are machine confidence scores,
+            # update the user confidence to the maximum machine confidence
+            if self.machine_confidence:
+                self.update_user_confidence(max(self.machine_confidence, key=self.machine_confidence.get))
+            else:
+                # If there are no machine confidence scores, just mark it as verified
+                # and keep the current label
+                self.verified = True
+                self.user_confidence = {self.label: 1.0}
+                self.update_graphics_item()
+        else:
+            # If the annotation is being unverified, set verified to false and clear user confidence
+            self.verified = False
+            self.user_confidence = {}
+            # Keep machine confidence as the source of truth when unverified
+            if self.machine_confidence:
+                self.label = max(self.machine_confidence, key=self.machine_confidence.get)
+            self.update_graphics_item()
+            self.show_message = True
 
     def to_coralnet(self):
         """Convert annotation to CoralNet format for export."""
@@ -415,9 +445,10 @@ class Annotation(QObject):
             'Name': os.path.basename(self.image_path),
             'Row': int(self.center_xy.y()),
             'Column': int(self.center_xy.x()),
+            'Patch Size': self.annotation_size,
             'Label': self.label.short_label_code,
             'Long Label': self.label.long_label_code,
-            'Patch Size': self.annotation_size,
+            'Verified': self.verified,
             'Machine confidence 1': confidences[0],
             'Machine suggestion 1': suggestions[0],
             'Machine confidence 2': confidences[1],
@@ -447,8 +478,9 @@ class Annotation(QObject):
             'label_id': self.label.id,
             'data': self.data,
             'machine_confidence': machine_confidence,
+            'verified': self.verified,  
             'area': self.get_area(),
-            'perimeter': self.get_perimeter()
+            'perimeter': self.get_perimeter(),
         }
 
         return result

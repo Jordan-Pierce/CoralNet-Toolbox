@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self.edit_icon = get_icon("edit.png")
         self.lock_icon = get_icon("lock.png")
         self.unlock_icon = get_icon("unlock.png")
+        self.home_icon = get_icon("home.png")
 
         # Set the version
         self.version = __version__
@@ -254,10 +255,14 @@ class MainWindow(QMainWindow):
 
         # Connect the toolChanged signal (to the AnnotationWindow)
         self.toolChanged.connect(self.annotation_window.set_selected_tool)
+        # Connect the toolChanged signal to the LabelWindow update_label_count_state method
+        self.toolChanged.connect(self.label_window.update_annotation_count_state)
         # Connect the toolChanged signal (to the Toolbar)
         self.annotation_window.toolChanged.connect(self.handle_tool_changed)
         # Connect the selectedLabel signal to the LabelWindow's set_selected_label method
         self.annotation_window.labelSelected.connect(self.label_window.set_selected_label)
+        # Connect the annotationSelected to the LabelWindow's update_annotation_count
+        self.annotation_window.annotationSelected.connect(self.label_window.update_annotation_count)
         # Connect the labelSelected signal from LabelWindow to update the selected label in AnnotationWindow
         self.label_window.labelSelected.connect(self.annotation_window.set_selected_label)
         # Connect the labelSelected signal from LabelWindow to update the transparency slider
