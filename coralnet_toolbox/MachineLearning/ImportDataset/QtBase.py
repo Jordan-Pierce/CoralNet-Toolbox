@@ -41,6 +41,7 @@ class Base(QDialog):
         super(Base, self).__init__(parent)
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
+        self.image_window = main_window.image_window
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Import Dataset")
@@ -198,6 +199,7 @@ class Base(QDialog):
 
         # Check that each label file has a corresponding image file
         image_label_paths = {}
+        added_paths = []
 
         for label_path in label_paths:
             # Create the image path from the label path
@@ -211,24 +213,26 @@ class Base(QDialog):
                 image_path = image_path.replace("\\", "/")
                 # Add to the dict, and add the image to the image window
                 image_label_paths[image_path] = label_path
-                self.main_window.image_window.add_image(image_path)
+                if self.image_window.add_image(image_path):
+                    added_paths.append(image_path)
 
         # Update filtered images
-        self.main_window.image_window.filter_images()
-        # Set the last image as the current image
-        current_image = self.main_window.image_window.image_paths[-1]
-        self.main_window.image_window.load_image_by_path(current_image)
+        self.image_window.filter_images()
+        
+        # Set the last added image as the current image if we have any
+        if added_paths:
+            self.image_window.load_image_by_path(added_paths[-1])
 
         # Determine the annotation type based on selected radio button
-        if self.object_detection_radio.isChecked():
+        if self.__class__.__name__ == "Detect":
             annotation_type = 'RectangleAnnotation'
-        elif self.instance_segmentation_radio.isChecked():
+        elif self.__class__.__name__ == "Segment":
             annotation_type = 'PolygonAnnotation'
         else:
             raise ValueError("No annotation type selected")
 
         # Process the annotations based on the selected type
-        progress_bar = ProgressBar(self, title=f"Importing YOLO Dataset")
+        progress_bar = ProgressBar(self, title="Importing YOLO Dataset")
         progress_bar.show()
         progress_bar.start_progress(len(image_label_paths))
 
@@ -315,13 +319,13 @@ class Base(QDialog):
                     annotations.append(annotation)
 
                     # Add annotation to the dict
-                    self.annotation_window.annotations_dict.add_annotation_to_dict(annotation)
+                    self.annotation_window.add_annotation_to_dict(annotation)
 
                     # Update the progress bar
                     progress_bar.update_progress()
 
-                # Update the image window's image dict
-                self.main_window.image_window.update_image_annotations(image_path)
+                # Update the image window's image annotations
+                self.image_window.update_image_annotations(image_path)
 
             # Load the annotations for current image
             self.annotation_window.load_annotations()
