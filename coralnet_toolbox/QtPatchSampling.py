@@ -4,7 +4,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import random
 import numpy as np
-from PIL import Image
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor
@@ -180,18 +179,32 @@ class PatchSamplingDialog(QDialog):
 
     def showEvent(self, event):
         """Handle dialog show event."""
+        self.update_checkboxes()
         self.update_label_combo()
         self.update_annotation_graphics()
 
     def closeEvent(self, event):
         """Handle dialog close event."""
+        self.update_checkboxes()
         self.clear_annotation_graphics()
         event.accept()
 
     def reject(self):
         """Handle dialog rejection."""
+        self.update_checkboxes()
         self.clear_annotation_graphics()
         super().reject()
+        
+    def update_checkboxes(self):
+        """Clear the checkboxes states."""
+        # Temporarily disable exclusivity to allow unchecking all checkboxes
+        self.apply_group.setExclusive(False)
+        self.apply_filtered_checkbox.setChecked(False)
+        self.apply_prev_checkbox.setChecked(False)
+        self.apply_next_checkbox.setChecked(False)
+        self.apply_all_checkbox.setChecked(False)
+        # Restore exclusivity
+        self.apply_group.setExclusive(True)
 
     def update_label_combo(self):
         """Update the label combo box with the current labels."""
@@ -369,9 +382,9 @@ class PatchSamplingDialog(QDialog):
         for image_path in image_paths:
             sampled_annotations = []
 
-            # Get image dimensions using PIL
-            with Image.open(image_path) as img:
-                width, height = img.size
+            # Get image dimensions using Rasterio
+            width = self.image_window.rasterio_images[image_path].width
+            height = self.image_window.rasterio_images[image_path].height
 
             # Validate margins for each image
             try:
