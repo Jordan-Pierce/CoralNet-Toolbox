@@ -1,39 +1,35 @@
 import warnings
-
-import gc
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import gc
+from contextlib import contextmanager
 
 import rasterio
 
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
-                             QLabel, QComboBox, QHBoxLayout, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QApplication, QMenu, QButtonGroup, QAbstractItemView,
-                             QGroupBox, QPushButton, QStyle, QFormLayout, QFrame)
+                            QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
+                            QMenu, QButtonGroup, QAbstractItemView, QGroupBox, QPushButton, 
+                            QStyle, QFormLayout, QFrame)
 
-from coralnet_toolbox.utilities import rasterio_open
-from coralnet_toolbox.utilities import rasterio_to_qimage
-from coralnet_toolbox.Rasters import Raster
-
+from coralnet_toolbox.utilities import rasterio_open, rasterio_to_qimage
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.Icons import get_icon
+
+from coralnet_toolbox.Rasters import Raster, RasterManager, ImageFilter, RasterTableModel
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# Classes
-# ----------------------------------------------------------------------------------------------------------------------
-
-# TODO add a home button in the top-left corner to center the row on the current image
-
 class ImageWindow(QWidget):
-    imageSelected = pyqtSignal(str)
-    imageChanged = pyqtSignal()  # New signal for image change
+    # Signals
+    imageSelected = pyqtSignal(str)  # Path of selected image
+    imageChanged = pyqtSignal()  # When image changes
+    imageLoaded = pyqtSignal(str)  # When image is fully loaded
+    filterChanged = pyqtSignal(int)  # Number of filtered images
+    rasterAdded = pyqtSignal(str)  # Path of added raster
+    rasterRemoved = pyqtSignal(str)  # Path of removed raster
 
     def __init__(self, main_window):
         """Initialize the ImageWindow widget."""
@@ -41,10 +37,47 @@ class ImageWindow(QWidget):
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
 
+        # Initialize managers and supporting objects
+        self.raster_manager = RasterManager()
+        self.image_filter = ImageFilter(self.raster_manager)
+        self.selected_image_path = None
+        self.hover_row = -1
+        
+        # Connect manager signals
+        self.raster_manager.rasterAdded.connect(self.on_raster_added)
+        self.raster_manager.rasterRemoved.connect(self.on_raster_removed)
+        self.raster_manager.rasterUpdated.connect(self.on_raster_updated)
+        
+        # Connect filter signals
+        self.image_filter.filteringStarted.connect(self.on_filtering_started)
+        self.image_filter.filteringFinished.connect(self.on_filtering_finished)
+        
+        # Setup UI components
+        self.setup_ui()
+        
+        # Connect signals
+        self.setup_signals()
+        
+        # Initialize timer and dialog flags
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.filter_images)
+        self.show_confirmation_dialog = True
+        
+    def setup_ui(self):
+        """Set up the user interface."""
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-
-        # -------------------------------------------
+        
+        # Create UI sections
+        self.setup_filter_section()
+        self.setup_image_section()
+        
+        # Create the tooltip for previews
+        self.preview_tooltip = ImagePreviewTooltip()
+        
+    def setup_filter_section(self):
+        """Set up the filter section of the UI."""
         # Create a QGroupBox for search and filters
         self.filter_group = QGroupBox("Search and Filters")
         self.filter_layout = QVBoxLayout()
@@ -66,23 +99,23 @@ class ImageWindow(QWidget):
 
         # Top row: Selected and Has Predictions
         self.selected_checkbox = QCheckBox("Selected", self) 
-        self.selected_checkbox.stateChanged.connect(self.filter_images)
+        self.selected_checkbox.stateChanged.connect(self.schedule_filter)
         self.checkbox_row1.addWidget(self.selected_checkbox)
         self.checkbox_group.addButton(self.selected_checkbox)
 
         self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
-        self.has_predictions_checkbox.stateChanged.connect(self.filter_images)
+        self.has_predictions_checkbox.stateChanged.connect(self.schedule_filter)
         self.checkbox_row1.addWidget(self.has_predictions_checkbox)
         self.checkbox_group.addButton(self.has_predictions_checkbox)
 
         # Bottom row: No Annotations and Has Annotations
         self.no_annotations_checkbox = QCheckBox("No Annotations", self)
-        self.no_annotations_checkbox.stateChanged.connect(self.filter_images)
+        self.no_annotations_checkbox.stateChanged.connect(self.schedule_filter)
         self.checkbox_row2.addWidget(self.no_annotations_checkbox)
         self.checkbox_group.addButton(self.no_annotations_checkbox)
 
         self.has_annotations_checkbox = QCheckBox("Has Annotations", self)
-        self.has_annotations_checkbox.stateChanged.connect(self.filter_images)
+        self.has_annotations_checkbox.stateChanged.connect(self.schedule_filter)
         self.checkbox_row2.addWidget(self.has_annotations_checkbox)
         self.checkbox_group.addButton(self.has_annotations_checkbox)
 
@@ -108,6 +141,7 @@ class ImageWindow(QWidget):
         self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_bar_images.setFixedWidth(fixed_width)
+        self.search_bar_images.editTextChanged.connect(self.schedule_filter)
         self.image_search_layout.addWidget(self.search_bar_images)
 
         self.image_search_button = QPushButton(self)
@@ -122,6 +156,7 @@ class ImageWindow(QWidget):
         self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
         self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_bar_labels.setFixedWidth(fixed_width)
+        self.search_bar_labels.editTextChanged.connect(self.schedule_filter)
         self.label_search_layout.addWidget(self.search_bar_labels)
 
         self.label_search_button = QPushButton(self)
@@ -135,8 +170,9 @@ class ImageWindow(QWidget):
 
         # Add the group box to the main layout  
         self.layout.addWidget(self.filter_group)
-
-        # -------------------------------------------
+        
+    def setup_image_section(self):
+        """Set up the image list section of the UI."""
         # Create a QGroupBox for Image Window
         self.info_table_group = QGroupBox("Image Window", self)
         info_table_layout = QVBoxLayout()
@@ -172,43 +208,40 @@ class ImageWindow(QWidget):
         self.image_count_label.setFixedHeight(24)
         self.info_layout.addWidget(self.image_count_label)
 
-        # Create and setup table widget
-        self.tableWidget = QTableWidget(self)
-        self.tableWidget.setColumnCount(3)
-        self.tableWidget.setHorizontalHeaderLabels(["✓", "Image Name", "Annotations"])
+        # Create and setup table view
+        self.tableView = QTableView(self)
+        self.tableView.setSelectionBehavior(QTableView.SelectRows)
+        self.tableView.setSelectionMode(QTableView.SingleSelection)
+        self.tableView.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tableView.customContextMenuRequested.connect(self.show_context_menu)
+        self.tableView.setMouseTracking(True)
+        self.tableView.viewport().installEventFilter(self)
         
-        # Change this line to False since we don't want the last column to stretch
-        self.tableWidget.horizontalHeader().setStretchLastSection(False)
+        # Set the model for the table view
+        self.table_model = RasterTableModel(self.raster_manager, self)
+        self.tableView.setModel(self.table_model)
         
-        self.tableWidget.verticalHeader().setVisible(False)
-        self.tableWidget.setSelectionBehavior(QTableWidget.SelectRows)
-        self.tableWidget.setSelectionMode(QTableWidget.SingleSelection)
-        self.tableWidget.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tableWidget.customContextMenuRequested.connect(self.show_context_menu)
-        self.tableWidget.cellClicked.connect(self.load_image)
-        self.tableWidget.keyPressEvent = self.tableWidget_keyPressEvent
-
-        self.tableWidget.horizontalHeader().setStyleSheet("""
+        # Set column widths
+        self.tableView.setColumnWidth(0, 50)
+        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.tableView.setColumnWidth(2, 120)
+        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        
+        # Style the header
+        self.tableView.horizontalHeader().setStyleSheet("""
             QHeaderView::section {
             background-color: #E0E0E0;
             padding: 4px;
             border: 1px solid #D0D0D0;
             }
         """)
-
-        # Set width for checkboxes column (column 0)
-        self.tableWidget.setColumnWidth(0, 50)
-        self.tableWidget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         
-        # Set width for Annotations column (column 2)
-        self.tableWidget.setColumnWidth(2, 120)  # Adjust this width as needed
-        self.tableWidget.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        # Connect signals
+        self.tableView.clicked.connect(self.on_table_clicked)
         
-        # Make the Image Name column (column 1) stretch to fill remaining space
-        self.tableWidget.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-
-        # Add table widget to the info table group layout
-        info_table_layout.addWidget(self.tableWidget)
+        # Add table view to the layout
+        info_table_layout.addWidget(self.tableView)
 
         # Add a new horizontal layout below the table widget to hold the buttons
         self.button_layout = QHBoxLayout()
@@ -226,32 +259,71 @@ class ImageWindow(QWidget):
 
         # Add the group box to the main layout
         self.layout.addWidget(self.info_table_group)
-
-        self.image_paths = []  # Store all image paths
-        self.filtered_image_paths = []  # List to store filtered image paths
-        self.selected_image_path = None
-        self.right_clicked_row = None  # Attribute to store the right-clicked row
-
-        # Replace multiple dictionaries with a single dictionary of Raster objects
-        self.rasters = {}  # Dictionary to store Raster objects (key: image_path)
-
-        self.show_confirmation_dialog = True
-
-        self.search_timer = QTimer(self)
-        self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(self.filter_images)
         
-        # Connect annotationCreated, annotationDeleted signals to update annotation count in real time
+    def setup_signals(self):
+        """Set up signal connections."""
+        # Connect annotation signals
         self.annotation_window.annotationCreated.connect(self.update_annotation_count)
         self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
         
-        # Preview tooltip attributes
-        self.preview_tooltip = ImagePreviewTooltip()
-        self.hover_row = -1
+        # Connect our own signals
+        self.imageLoaded.connect(self.on_image_loaded)
+        self.filterChanged.connect(self.update_image_count_label)
         
-        # Connect table events for hover tracking
-        self.tableWidget.setMouseTracking(True)
-        self.tableWidget.viewport().installEventFilter(self)
+    def schedule_filter(self):
+        """Schedule filtering after a short delay to avoid excessive updates."""
+        self.search_timer.stop()
+        self.search_timer.start(300)  # 300ms delay
+        
+    @contextmanager
+    def busy_cursor(self):
+        """Context manager for setting busy cursor."""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            yield
+        finally:
+            QApplication.restoreOverrideCursor()
+            
+    def show_error(self, title, message):
+        """Show an error message dialog."""
+        QMessageBox.warning(self, title, message)
+            
+    #
+    # Event handlers and overrides
+    #
+    
+    def eventFilter(self, source, event):
+        """Event filter to track mouse movement over table rows."""
+        if source is self.tableView.viewport():
+            if event.type() == event.Enter:
+                # Mouse entered the table viewport
+                pass
+            elif event.type() == event.Leave:
+                # Mouse left the table viewport
+                self.hide_image_preview()
+                self.hover_row = -1
+            elif event.type() == event.MouseMove:
+                # Mouse moved within the table viewport
+                pos = event.pos()
+                index = self.tableView.indexAt(pos)
+                row = index.row()
+                
+                if row != self.hover_row:
+                    # Mouse moved to a different row
+                    self.hide_image_preview()
+                    self.hover_row = row
+                    
+                    if row >= 0 and row < len(self.table_model.filtered_paths):
+                        # Show preview immediately
+                        self.show_image_preview()
+                    
+        return super().eventFilter(source, event)
+        
+    def closeEvent(self, event):
+        """Handle the window close event."""
+        self.hide_image_preview()
+        QApplication.restoreOverrideCursor()
+        super().closeEvent(event)
         
     def dragEnterEvent(self, event):
         """Ignore drag enter events."""
@@ -269,660 +341,329 @@ class ImageWindow(QWidget):
         """Ignore drag leave events."""
         event.ignore()
         
-    def eventFilter(self, source, event):
-        """Event filter to track mouse movement over table rows"""
-        if source is self.tableWidget.viewport():
-            if event.type() == event.Enter:
-                # Mouse entered the table viewport
-                pass
-            elif event.type() == event.Leave:
-                # Mouse left the table viewport
-                self.hide_image_preview()
-                self.hover_row = -1
-            elif event.type() == event.MouseMove:
-                # Mouse moved within the table viewport
-                pos = event.pos()
-                row = self.tableWidget.rowAt(pos.y())
-                
-                if row != self.hover_row:
-                    # Mouse moved to a different row
-                    self.hide_image_preview()
-                    self.hover_row = row
-                    
-                    if row >= 0 and row < len(self.filtered_image_paths):
-                        # Show preview immediately
-                        self.show_image_preview()
-                    
-        return super().eventFilter(source, event)
+    #
+    # Signal handlers
+    #
     
-    def center_table_on_current_image(self):
-        """Scroll the table so the currently selected image row is in view and ensure it's highlighted."""
-        if self.selected_image_path in self.filtered_image_paths:
-            row = self.filtered_image_paths.index(self.selected_image_path)
-            
-            # Scroll to the item to center it in the view
-            self.tableWidget.scrollToItem(
-                self.tableWidget.item(row, 1),
-                QAbstractItemView.PositionAtCenter
-            )
-            
-            # Make sure the row is selected (highlighted)
-            self.tableWidget.blockSignals(True)  # Prevent triggering load_image again
-            self.tableWidget.clearSelection()
-            self.tableWidget.selectRow(row)
-            self.tableWidget.setFocus()  # Ensure selection is visually highlighted
-            self.tableWidget.blockSignals(False)
-        
-    def show_image_preview(self):
-        """Show image preview tooltip for the current hover row"""
-        if self.hover_row < 0 or self.hover_row >= len(self.filtered_image_paths):
+    def on_table_clicked(self, index):
+        """Handle click on table view."""
+        if not index.isValid():
             return
+            
+        # Get the path at the clicked row
+        path = self.table_model.get_path_at_row(index.row())
+        if path:
+            self.load_image_by_path(path)
+            
+    def on_raster_added(self, path):
+        """Handler for when a raster is added."""
+        self.rasterAdded.emit(path)
+        self.update_search_bars()
+        self.filter_images()
         
-        # Get the path of the image to preview
-        image_path = self.filtered_image_paths[self.hover_row]
-        raster = self.rasters[image_path]
+    def on_raster_removed(self, path):
+        """Handler for when a raster is removed."""
+        self.rasterRemoved.emit(path)
+        self.update_search_bars()
+        self.filter_images()
         
-        # Get thumbnail as a pixmap
-        pixmap = raster.get_pixmap(longest_edge=64)
-        if pixmap is None:
-            return
-
-        # Set image and show tooltip
-        self.preview_tooltip.set_image(pixmap)
+    def on_raster_updated(self, path):
+        """Handler for when a raster is updated."""
+        self.update_current_image_index_label()
         
-        # Position tooltip near the row
-        pos = self.tableWidget.viewport().mapToGlobal(QPoint(
-            self.tableWidget.columnWidth(0) + self.tableWidget.columnWidth(1) // 2,
-            self.tableWidget.rowViewportPosition(self.hover_row) + 
-            self.tableWidget.rowHeight(self.hover_row) // 2
-        ))
-        self.preview_tooltip.show_at(pos)
+    def on_filtering_started(self):
+        """Handler for when filtering starts."""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         
-    def hide_image_preview(self):
-        """Hide the image preview tooltip"""
-        self.preview_tooltip.hide()
-
+    def on_filtering_finished(self, filtered_paths):
+        """Handler for when filtering finishes."""
+        # Update the table model with filtered paths
+        self.table_model.set_filtered_paths(filtered_paths)
+        
+        # Update labels
+        self.update_current_image_index_label()
+        self.filterChanged.emit(len(filtered_paths))
+        
+        # Restore selection if possible
+        if self.selected_image_path in filtered_paths:
+            self.table_model.set_selected_path(self.selected_image_path)
+            self.select_row_for_path(self.selected_image_path)
+        elif filtered_paths and not self.selected_image_path:
+            # Load the first image if none is selected
+            self.load_first_filtered_image()
+            
+        QApplication.restoreOverrideCursor()
+        
+    def on_image_loaded(self, path):
+        """Handler for when an image is loaded."""
+        self.selected_image_path = path
+        
+    #
+    # Public methods
+    #
+    
     def add_image(self, image_path):
-        """Add an image to the image paths list and update the table widget"""
-        # Check if the image path is already in the list
-        if image_path not in self.image_paths:
-            try:
-                # Create a Raster object
-                raster = Raster(image_path)
-                if raster.rasterio_src is None:
-                    raise ValueError("Rasterio failed to open the image")
-                
-                # Add the image path to the list
-                self.image_paths.append(image_path)
-                
-                # Store the Raster object
-                self.rasters[image_path] = raster
-                
-                # Update the table
-                self.update_table_widget()
-                self.update_image_count_label()
-                self.update_search_bars()
-                QApplication.processEvents()
-            except Exception as e:
-                QMessageBox.warning(self, 
-                                    "Image Loading Error",
-                                    f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
-
-    def update_table_widget(self):
-        """Update the table widget with filtered image paths."""
-        self.tableWidget.setRowCount(0)  # Clear the table
-
-        # Center align the column headers
-        self.tableWidget.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
-
-        # First create all rows
-        for _ in self.filtered_image_paths:
-            self.tableWidget.insertRow(self.tableWidget.rowCount())
-
-        # Then update each row using update_table_row
-        for path in self.filtered_image_paths:
-            self.update_table_row(path)
-
-        self.update_table_selection()
+        """
+        Add an image to the window.
         
-    def update_table_row(self, path):
-        """Update a specific row in the table widget."""
-        if path in self.filtered_image_paths:
-            row = self.filtered_image_paths.index(path)
-            raster = self.rasters[path]
+        Args:
+            image_path (str): Path to the image
             
-            # Update raster's table information
-            raster.row_in_table = row
-            raster.set_display_name(max_length=25)  # Truncate long basenames
+        Returns:
+            bool: True if the image was added successfully, False otherwise
+        """
+        # Check if image is already loaded
+        if image_path in self.raster_manager.image_paths:
+            return True
             
-            # Set the raster as selected if it's the current selection
-            raster.set_selected(path == self.selected_image_path)
-
-            # Update checkbox
-            checkbox = QCheckBox()
-            checkbox.setStyleSheet("margin-left:10px;")
-            checkbox.setChecked(raster.checkbox_state)
-            self.tableWidget.setCellWidget(row, 0, checkbox)
-            checkbox.stateChanged.connect(lambda state, p=path: self.update_checkbox_state(p, bool(state)))
-
-            # Update basename using display_name
-            item = QTableWidgetItem(raster.display_name)
-            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            item.setToolTip(path)
-            item.setTextAlignment(Qt.AlignCenter)
-            self.tableWidget.setItem(row, 1, item)
-
-            # Update annotation count
-            annotation_item = QTableWidgetItem(str(raster.annotation_count))
-            annotation_item.setFlags(annotation_item.flags() & ~Qt.ItemIsEditable)
-            annotation_item.setTextAlignment(Qt.AlignCenter)
-            self.tableWidget.setItem(row, 2, annotation_item)
-            
-    def update_checkbox_state(self, path, state):
-        """Update the checkbox state for a specific image."""
-        if path in self.rasters:
-            self.rasters[path].checkbox_state = state
-
-    def update_table_selection(self):
-        """Update the selection in the table widget based on the selected image path."""
-        if self.selected_image_path in self.filtered_image_paths:
-            # Get the row index of the selected image
-            row = self.filtered_image_paths.index(self.selected_image_path)
-            
-            # Block signals temporarily to prevent recursive calls
-            self.tableWidget.blockSignals(True)
-            
-            # Clear previous selection
-            self.tableWidget.clearSelection()
-            
-            # Select the entire row
-            self.tableWidget.selectRow(row)
-            
-            # Ensure the selected row is visible in the viewport
-            self.tableWidget.scrollToItem(
-                self.tableWidget.item(row, 1),
-                QAbstractItemView.PositionAtCenter
-            )
-            
-            # Set focus to maintain highlight
-            self.tableWidget.setFocus()
-            
-            # Restore signals
-            self.tableWidget.blockSignals(False)
-        else:
-            self.tableWidget.clearSelection()
-
-    def update_image_count_label(self):
-        """Update the label displaying the total number of images."""
-        total_images = len(set(self.filtered_image_paths))
-        self.image_count_label.setText(f"Total Images: {total_images}")
-
-    def update_current_image_index_label(self):
-        """Update the label displaying the index of the currently selected image."""
-        if self.selected_image_path and self.selected_image_path in self.filtered_image_paths:
-            index = self.filtered_image_paths.index(self.selected_image_path) + 1
-            self.current_image_index_label.setText(f"Current Image: {index}")
-        else:
-            self.current_image_index_label.setText("Current Image: None")
-
-    def update_image_annotations(self, image_path):
-        """Update annotation-related information for a specific image."""
-        if image_path in self.rasters:
-            # Get annotations
-            annotations = self.annotation_window.get_image_annotations(image_path)
-            # Update the raster with annotation information
-            self.rasters[image_path].update_annotation_info(annotations)
-            # Update the table row
-            self.update_table_row(image_path)
-            # Update the label window annotation count
-            self.main_window.label_window.update_annotation_count()
-            
-    def update_current_image_annotations(self):
-        """Update annotations for the currently selected image."""
+        try:
+            # Add the raster to the manager
+            result = self.raster_manager.add_raster(image_path)
+            if not result:
+                raise ValueError("Failed to load the image")
+                
+            # Immediately update filtered paths to include the new image
+            # This ensures the image will be visible in the table right away
+            if self.table_model.filtered_paths == self.raster_manager.image_paths[:-1]:
+                # No filters are active, so just add the new path
+                self.table_model.filtered_paths.append(image_path)
+                self.table_model.dataChanged.emit(
+                    self.table_model.index(0, 0),
+                    self.table_model.index(len(self.table_model.filtered_paths) - 1, 
+                                          self.table_model.columnCount() - 1)
+                )
+            else:
+                # Filters are active, so run filtering again
+                self.filter_images()
+                
+            return True
+                
+        except Exception as e:
+            self.show_error("Image Loading Error", 
+                          f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
+            return False
+                
+    @property
+    def current_raster(self):
+        """Get the currently selected Raster object."""
         if self.selected_image_path:
-            self.update_image_annotations(self.selected_image_path)
-
+            return self.raster_manager.get_raster(self.selected_image_path)
+        return None
+        
+    @property
+    def filtered_count(self):
+        """Get the count of filtered images."""
+        return len(self.table_model.filtered_paths)
+        
     def update_annotation_count(self, annotation_id):
-        """Update the annotation count for an image when an annotation is created or deleted."""
+        """
+        Update annotation count when an annotation is created or deleted.
+        
+        Args:
+            annotation_id: ID of the annotation
+        """
+        # Get the image path for the annotation
         if annotation_id in self.annotation_window.annotations_dict:
-            # Get the image path associated with the annotation
+            # Get the image path from the annotation
             image_path = self.annotation_window.annotations_dict[annotation_id].image_path
         else:
             # It's already been deleted, so get the current image path
             image_path = self.annotation_window.current_image_path
-        # Update the image annotation count in table widget
+            
+        # Update the annotations for the raster
         self.update_image_annotations(image_path)
-
-    def load_image(self, row, column):
-        """Load the image associated with the clicked row in the table widget"""
-        # Add safety checks
-        if not self.filtered_image_paths:
-            return
-
-        if row < 0 or row >= len(self.filtered_image_paths):
-            return
-
-        # Get the image path associated with the selected row  
-        image_path = self.filtered_image_paths[row]
         
-        # Load the image without clearing selections
-        self.load_image_by_path(image_path)
-
+    def update_image_annotations(self, image_path):
+        """
+        Update annotation information for a specific image.
+        
+        Args:
+            image_path (str): Path to the image
+        """
+        # Get the annotations for the image
+        annotations = self.annotation_window.get_image_annotations(image_path)
+        
+        # Update the raster
+        self.raster_manager.update_annotation_info(image_path, annotations)
+        
+        # Update label counts
+        self.main_window.label_window.update_annotation_count()
+        
+    def update_current_image_annotations(self):
+        """Update annotations for the currently selected image."""
+        if self.selected_image_path:
+            self.update_image_annotations(self.selected_image_path)
+        
     def load_image_by_path(self, image_path, update=False):
-        """Load an image by it's path, add to dictionaries, and update the table widget"""
-        # Check if the image path is valid
-        if image_path not in self.image_paths:
-            return
-        
-        # Check if the image is already selected
-        if image_path == self.selected_image_path and update is False:
-            return
-
-        try:
-            # Set the cursor to the wait cursor
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            
-            # Update the selected image path
-            self.selected_image_path = image_path
-            self.update_table_selection()
-            self.update_current_image_index_label()
-
-            # Get the raster object
-            raster = self.rasters[image_path]
-            
-            # Load and display scaled-down version for immediate preview
-            low_res_q_image = raster.get_thumbnail(longest_edge=256)
-            self.annotation_window.display_image(low_res_q_image)
-            
-            # Load the full resolution image
-            q_image = raster.get_qimage()
-            if q_image is None or q_image.isNull():
-                raise ValueError("Failed to load the full resolution image")
-            
-            # Update the display with the full-resolution image
-            self.annotation_window.set_image(image_path)
-            self.imageSelected.emit(image_path)
-            
-            # Emit the signal when a new image is chosen
-            self.imageChanged.emit()
-            # Update the search bars
-            self.update_search_bars()
-
-        except Exception as e:
-            QMessageBox.warning(self, 
-                                "Image Loading Error",
-                                f"Error loading full resolution image {os.path.basename(image_path)}:\n{str(e)}")
-            
-        finally:
-            QApplication.restoreOverrideCursor()
-
-    def closeEvent(self, event):
-        """Handle the window close event."""
-        # Hide tooltip when window is closed
-        self.hide_image_preview()
-        QApplication.restoreOverrideCursor()
-        super().closeEvent(event)
-
-    def show_context_menu(self, position):
-        """Show the context menu for the table widget."""
-        # Get selected checkboxes
-        selected_paths = self._get_selected_image_paths()
-
-        if not selected_paths:
-            return
-
-        context_menu = QMenu(self)
-        delete_all_images_action = context_menu.addAction(f"Delete {len(selected_paths)} Images")
-        delete_all_images_action.triggered.connect(lambda: self.delete_selected_images())
-
-        delete_all_annotations_action = context_menu.addAction(f"Delete Annotations for {len(selected_paths)} Images")
-        delete_all_annotations_action.triggered.connect(lambda: self.delete_selected_images_annotations())
-
-        context_menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
-        
-    def _get_selected_image_paths(self):
         """
-        Returns list of image paths for rows with checked checkboxes
+        Load an image by its path.
+        
+        Args:
+            image_path (str): Path to the image
+            update (bool): Whether to update the image even if it's already selected
         """
-        selected_paths = []
-        for row in range(self.tableWidget.rowCount()):
-            checkbox = self.tableWidget.cellWidget(row, 0)
-            if checkbox and checkbox.isChecked():
-                selected_paths.append(self.filtered_image_paths[row])
-        return selected_paths
-
-    def delete_selected_images(self):
-        """Delete images corresponding to the checked rows."""
-        selected_paths = self._get_selected_image_paths()
-        
-        if not selected_paths:
+        # Validate path
+        if image_path not in self.raster_manager.image_paths:
             return
-
-        reply = QMessageBox.question(self, 
-                                     "Confirm Multiple Image Deletions",
-                                     f"Are you sure you want to delete {len(selected_paths)} images?\n"
-                                     "This will delete all associated annotations.",
-                                     QMessageBox.Yes | QMessageBox.No)
-        
-        if reply == QMessageBox.Yes:
-            # Delete images and handle loading a new image if necessary
-            self.delete_images(selected_paths)
-                
-    def delete_selected_images_annotations(self):
-        """Delete annotations for images corresponding to the checked rows."""
-        selected_paths = self._get_selected_image_paths()
-        
-        if not selected_paths:
-            return
-
-        reply = QMessageBox.question(self, 
-                                     "Confirm Multiple Annotation Deletions",
-                                     f"Are you sure you want to delete annotations for {len(selected_paths)} images?",
-                                     QMessageBox.Yes | QMessageBox.No)
-        
-        if reply == QMessageBox.Yes:
             
-            # Disconnect signals temporarily
-            self.annotation_window.annotationCreated.disconnect(self.update_annotation_count)
-            self.annotation_window.annotationDeleted.disconnect(self.update_annotation_count)
-
+        # Check if already selected
+        if image_path == self.selected_image_path and not update:
+            return
+            
+        with self.busy_cursor():
             try:
-                # Make cursor busy
-                QApplication.setOverrideCursor(Qt.WaitCursor)
-                progress_bar = ProgressBar(self, title="Deleting Annotations")
-                progress_bar.show()
-                progress_bar.start_progress(len(selected_paths))
+                # Get the raster
+                raster = self.raster_manager.get_raster(image_path)
                 
-                # Delete annotations for selected images
-                for path in selected_paths:
-                    # Delete the annotations for the image
-                    self.annotation_window.delete_image_annotations(path)
-                    # Update the image annotation count in the table widget
-                    self.update_image_annotations(path)
-                    progress_bar.update_progress()
+                # Update selection
+                self.selected_image_path = image_path
+                self.table_model.set_selected_path(image_path)
+                self.select_row_for_path(image_path)
+                
+                # Update index label
+                self.update_current_image_index_label()
+                
+                # Load and display a preview immediately
+                low_res_image = raster.get_thumbnail(longest_edge=256)
+                self.annotation_window.display_image(low_res_image)
+                
+                # Load the full resolution image
+                q_image = raster.get_qimage()
+                if q_image is None or q_image.isNull():
+                    raise ValueError("Failed to load the full resolution image")
                     
-                # Close the progress bar
-                QApplication.restoreOverrideCursor()
-                progress_bar.stop_progress()
-                progress_bar.close()
+                # Set the image in the annotation window
+                self.annotation_window.set_image(image_path)
                 
-            finally:
-                # Reconnect signals
-                self.annotation_window.annotationCreated.connect(self.update_annotation_count)
-                self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
-                       
-            # Update the table widget
-            self.update_table_widget()
-
-    def delete_images(self, image_paths):
+                # Emit signals
+                self.imageSelected.emit(image_path)
+                self.imageChanged.emit()
+                self.imageLoaded.emit(image_path)
+                
+                # Prefetch adjacent images
+                self.prefetch_adjacent_images()
+                
+            except Exception as e:
+                self.show_error("Image Loading Error",
+                              f"Error loading image {os.path.basename(image_path)}:\n{str(e)}")
+                
+    def select_row_for_path(self, path):
         """
-        Delete multiple images and their associated annotations.
+        Select the row for a given path.
         
         Args:
-            image_paths (list): List of image paths to delete
+            path (str): Path to select
         """
-        # Validate input and create a copy to avoid mutation during iteration
-        image_paths = [path for path in image_paths if path in self.image_paths]
-        
-        if not image_paths:
+        row = self.table_model.get_row_for_path(path)
+        if row >= 0:
+            self.tableView.selectRow(row)
+            
+    def center_table_on_current_image(self):
+        """Center the table view on the current image."""
+        if not self.selected_image_path:
             return
-
-        # Check if current image is being deleted
-        current_image_in_deletion = self.selected_image_path in image_paths
-
-        # Determine the next image to load if current image is deleted
-        next_image_to_load = None
-        if current_image_in_deletion and self.filtered_image_paths:
-            # Find remaining images in the filtered list
-            remaining_images = [path for path in self.filtered_image_paths if path not in image_paths]
             
-            if remaining_images:
-                # If possible, maintain the relative position in the list
-                current_idx = self.filtered_image_paths.index(self.selected_image_path)
-                
-                # Find the next viable image to load (prioritize images before current)
-                viable_images = [img for img in remaining_images if self.filtered_image_paths.index(img) <= current_idx]
-                
-                # Prioritize images at or before the current index
-                next_image_to_load = viable_images[0] if viable_images else remaining_images[0]
-
-        try:
-            # Make cursor busy and show progress
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            progress_bar = ProgressBar(self, title="Deleting Images")
-            progress_bar.show()
-            progress_bar.start_progress(len(image_paths))
+        # Get the row index
+        row = self.table_model.get_row_for_path(self.selected_image_path)
+        if row >= 0:
+            # Get the model index
+            index = self.table_model.index(row, 0)
             
-            # Delete each image
-            for image_path in image_paths:
-                self.cleanup_image(image_path)
-                progress_bar.update_progress()
+            # Scroll to the index
+            self.tableView.scrollTo(index, QTableView.PositionAtCenter)
             
-            # Update UI components
-            self.update_table_widget()
-            self.update_image_count_label()
-
-            # Load next image or clear scene
-            if next_image_to_load:
-                self.load_image_by_path(next_image_to_load)
-            elif not self.filtered_image_paths:
-                self.selected_image_path = None
-                self.annotation_window.clear_scene()
-
-            # Update current image index label
-            self.update_current_image_index_label()
-        
-        finally:
-            # Ensure cursor is restored even if an exception occurs
-            if progress_bar:
-                progress_bar.stop_progress()
-                progress_bar.close()
-            QApplication.restoreOverrideCursor()
-            
-    def cleanup_image(self, image_path):
-        """
-        Completely remove an image from all data structures and release all resources.
-        
-        Args:
-            image_path (str): Path to the image to be removed
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if image_path not in self.image_paths:
-            return False
-            
-        try:
-            # Remove from annotation window
-            self.annotation_window.delete_image(image_path)
-            
-            # Remove from filtered image paths
-            if image_path in self.filtered_image_paths:
-                self.filtered_image_paths.remove(image_path)
-                
-            # Clean up and remove raster resources
-            if image_path in self.rasters:
-                self.rasters[image_path].cleanup()
-                del self.rasters[image_path]
-                
-            # Remove from main image collections
-            self.image_paths.remove(image_path)
-            
-            # Force garbage collection to clean up resources
-            gc.collect()
-            
-            return True
-        except Exception as e:
-            print(f"Error cleaning up image {image_path}: {str(e)}")
-            return False
-
-    def tableWidget_keyPressEvent(self, event):
-        """Handle key press events in the table widget, ignoring up/down arrows."""
-        if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
-            # Ignore up and down arrow keys
-            return
-        else:
-            # Call the base class method for other keys
-            super(QTableWidget, self.tableWidget).keyPressEvent(event)
-
-    def cycle_previous_image(self):
-        """Load the previous image in the filtered list."""
-        if not self.filtered_image_paths:
-            return
-
-        current_index = self.filtered_image_paths.index(self.selected_image_path)
-        new_index = (current_index - 1) % len(self.filtered_image_paths)
-        self.load_image_by_path(self.filtered_image_paths[new_index])
-
-    def cycle_next_image(self):
-        """Load the next image in the filtered list."""
-        if not self.filtered_image_paths:
-            return
-
-        current_index = self.filtered_image_paths.index(self.selected_image_path)
-        new_index = (current_index + 1) % len(self.filtered_image_paths)
-        self.load_image_by_path(self.filtered_image_paths[new_index])
-
     def filter_images(self):
-        """Filter the images based on the current search and filter criteria."""
-        # Store the currently selected image path before filtering
-        current_selected_path = self.selected_image_path
-
-        # Search bars
-        search_text_images = self.search_bar_images.currentText()
-        search_text_labels = self.search_bar_labels.currentText()
-        # Filter checkboxes
+        """Filter images based on current criteria."""
+        # Get filter criteria
+        search_text = self.search_bar_images.currentText()
+        search_label = self.search_bar_labels.currentText()
         no_annotations = self.no_annotations_checkbox.isChecked()
         has_annotations = self.has_annotations_checkbox.isChecked()
         has_predictions = self.has_predictions_checkbox.isChecked()
         selected_only = self.selected_checkbox.isChecked()
-
-        # Return early if none of the filters are active
-        if (not (search_text_images or search_text_labels) and
-            not (no_annotations or has_annotations or has_predictions or selected_only)):
-            self.filtered_image_paths = self.image_paths.copy()
-            self.update_table_widget()
-            self.update_current_image_index_label()
-            self.update_image_count_label()
-            return
         
-        # Get list of selected image paths if needed
+        # Get selected checkboxes if needed
         selected_paths = self._get_selected_image_paths() if selected_only else None
-
-        # Initialize filtered image paths
-        self.filtered_image_paths = []
-
-        # Initialize the progress bar
-        progress_dialog = ProgressBar(title="Filtering Images")
-        progress_dialog.start_progress(len(self.image_paths))
-
-        # Use a ThreadPoolExecutor to filter images in parallel
-        with ThreadPoolExecutor() as executor:
-            futures = []
-            for path in self.image_paths:
-                future = executor.submit(
-                    self.filter_image,
-                    path,
-                    search_text_images,
-                    search_text_labels,
-                    no_annotations,
-                    has_annotations,
-                    has_predictions,
-                    selected_paths
-                )
-                futures.append(future)
-
-            for future in as_completed(futures):
-                if future.result():
-                    self.filtered_image_paths.append(future.result())
-                progress_dialog.update_progress()
-
-        # Sort the filtered image paths to be displaying in ImageWindow
-        self.filtered_image_paths.sort()
-
-        # Update the table widget
-        self.update_table_widget()
-
-        # After filtering, either restore the previously selected image if it's still in the filtered list,
-        # or load the first image if nothing was selected or the previous selection is no longer visible
-        if self.filtered_image_paths:
-            if current_selected_path and current_selected_path in self.filtered_image_paths:
-                self.load_image_by_path(current_selected_path)
-            else:
-                self.load_first_filtered_image()
-        else:
-            self.selected_image_path = None
-            self.annotation_window.clear_scene()
-
-        # Update the current image index label and image count label
-        self.update_current_image_index_label()
-        self.update_image_count_label()
-
-        # Stop the progress bar
-        progress_dialog.stop_progress()
-
-    def filter_image(self,
-                     path,
-                     search_text_images,
-                     search_text_labels,
-                     no_annotations,
-                     has_annotations,
-                     has_predictions,
-                     selected_paths=None):
+        
+        # Run the filter
+        self.image_filter.filter_images(
+            search_text=search_text,
+            search_label=search_label,
+            require_annotations=has_annotations,
+            require_no_annotations=no_annotations,
+            require_predictions=has_predictions,
+            selected_paths=selected_paths,
+            use_threading=True
+        )
+        
+    def _get_selected_image_paths(self):
+        """Get paths for all images with checked checkboxes."""
+        selected_paths = []
+        
+        # Iterate through paths and check checkbox state
+        for path in self.raster_manager.image_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster and raster.checkbox_state:
+                selected_paths.append(path)
+                
+        return selected_paths
+        
+    def update_current_image_index_label(self):
+        """Update the label showing current image index."""
+        if self.selected_image_path:
+            # Get the index in filtered paths
+            row = self.table_model.get_row_for_path(self.selected_image_path)
+            if row >= 0:
+                # Show 1-based index
+                self.current_image_index_label.setText(f"Current Image: {row + 1}")
+                return
+                
+        # No valid selection
+        self.current_image_index_label.setText("Current Image: None")
+        
+    def update_image_count_label(self, count=None):
         """
-        Filter images based on search text and checkboxes
-
+        Update the label showing total image count.
+        
         Args:
-            path (str): Path to the image
-            search_text_images (str): Search text for image names
-            search_text_labels (str): Search text for labels
-            no_annotations (bool): Filter images with no annotations
-            has_annotations (bool): Filter images with annotations
-            has_predictions (bool): Filter images with predictions
-            selected_paths (list): List of selected image paths
-
-            Returns:
-                str: Path to the image if it passes the filters, None otherwise
+            count (int): Count to display (optional)
         """
-        # Check selected filter first
-        if selected_paths is not None and path not in selected_paths:
-            return None
-        
-        raster = self.rasters[path]
-        basename = raster.basename
-        
-        # Use properties directly from the raster object
-        has_annotations_val = raster.has_annotations
-        has_predictions_val = raster.has_predictions
-        labels = raster.labels
-        labels_codes = [label.short_label_code for label in labels if hasattr(label, 'short_label_code')]
-        
-        # Filter images based on search text and checkboxes
-        if search_text_images and search_text_images not in basename:
-            return None
-        # Filter images based on search text and checkboxes
-        if search_text_labels and not any(search_text_labels in code for code in labels_codes):
-            return None
-        # Filter images based on checkboxes, and if the image has annotations
-        if no_annotations and has_annotations_val:
-            return None
-        # Filter images based on checkboxes, and if the image has no annotations
-        if has_annotations and not has_annotations_val:
-            return None
-        # Filter images based on checkboxes, and if the image has predictions
-        if has_predictions and not has_predictions_val:
-            return None
-
-        return path
-
-    def load_first_filtered_image(self):
-        """Load the first image in the currently filtered list."""
-        if self.filtered_image_paths:
-            self.annotation_window.clear_scene()
-            self.load_image_by_path(self.filtered_image_paths[0])
+        if count is None:
+            count = len(self.table_model.filtered_paths)
             
+        self.image_count_label.setText(f"Total Images: {count}")
+        
+    def show_image_preview(self):
+        """Show image preview tooltip for the current hover row."""
+        if self.hover_row < 0 or self.hover_row >= len(self.table_model.filtered_paths):
+            return
+            
+        # Get the path and raster
+        path = self.table_model.get_path_at_row(self.hover_row)
+        if not path:
+            return
+            
+        # Get the thumbnail
+        pixmap = self.raster_manager.get_thumbnail(path, longest_edge=64)
+        if not pixmap:
+            return
+            
+        # Set image and show tooltip
+        self.preview_tooltip.set_image(pixmap)
+        
+        # Position tooltip near the row
+        visual_rect = self.tableView.visualRect(self.table_model.index(self.hover_row, 1))
+        pos = self.tableView.viewport().mapToGlobal(
+            QPoint(visual_rect.right(), visual_rect.center().y())
+        )
+        self.preview_tooltip.show_at(pos)
+        
+    def hide_image_preview(self):
+        """Hide the image preview tooltip."""
+        self.preview_tooltip.hide()
+        
     def update_search_bars(self):
-        """Update the items in the image and label search bars."""
+        """Update items in the search bars."""
         # Store current search texts
         current_image_search = self.search_bar_images.currentText()
         current_label_search = self.search_bar_labels.currentText()
@@ -932,18 +673,36 @@ class ImageWindow(QWidget):
         self.search_bar_labels.clear()
 
         try:
-            image_names = set([self.rasters[path].basename for path in self.image_paths])
-            label_names = set([label.short_label_code for label in self.main_window.label_window.labels])
+            # Get image names
+            image_names = set()
+            for path in self.raster_manager.image_paths:
+                raster = self.raster_manager.get_raster(path)
+                if raster:
+                    image_names.add(raster.basename)
+                    
+            # Get label names
+            label_names = set()
+            # Check if label_window exists in main_window
+            if hasattr(self.main_window, 'label_window') and self.main_window.label_window is not None:
+                for label in self.main_window.label_window.labels:
+                    if hasattr(label, 'short_label_code'):
+                        label_names.add(label.short_label_code)
+            # Alternative location for labels might be in annotation_window
+            elif hasattr(self.annotation_window, 'labels'):
+                for label in self.annotation_window.labels:
+                    if hasattr(label, 'short_label_code'):
+                        label_names.add(label.short_label_code)
         except Exception as e:
+            print(f"Error updating search bars: {str(e)}")
             return
 
-        # Only add items if there are any to add
+        # Only add items if there are any
         if image_names:
             self.search_bar_images.addItems(sorted(image_names))
         if label_names:
             self.search_bar_labels.addItems(sorted(label_names))
 
-        # Restore search texts only if they're not empty
+        # Restore search texts
         if current_image_search:
             self.search_bar_images.setEditText(current_image_search)
         else:
@@ -952,22 +711,276 @@ class ImageWindow(QWidget):
             self.search_bar_labels.setEditText(current_label_search)
         else:
             self.search_bar_labels.setPlaceholderText("Type to search labels")
-
+            
+    def load_first_filtered_image(self):
+        """Load the first image in the filtered list."""
+        if not self.table_model.filtered_paths:
+            return
+            
+        # Clear the scene first
+        self.annotation_window.clear_scene()
+        
+        # Load the first image
+        self.load_image_by_path(self.table_model.filtered_paths[0])
+        
+    def prefetch_adjacent_images(self):
+        """
+        Prefetch adjacent images for smoother navigation.
+        Creates thumbnails in a background thread.
+        """
+        if not self.selected_image_path or not self.table_model.filtered_paths:
+            return
+            
+        current_index = self.table_model.get_row_for_path(self.selected_image_path)
+        if current_index < 0:
+            return
+            
+        # Get next and previous indices
+        next_index = (current_index + 1) % len(self.table_model.filtered_paths)
+        prev_index = (current_index - 1) % len(self.table_model.filtered_paths)
+        
+        # Get paths
+        paths = []
+        if next_index != current_index:
+            paths.append(self.table_model.get_path_at_row(next_index))
+        if prev_index != current_index:
+            paths.append(self.table_model.get_path_at_row(prev_index))
+            
+        # Start background thread to preload thumbnails
+        if paths:
+            QThreadPool.globalInstance().start(lambda: self._preload_thumbnails(paths))
+            
+    def _preload_thumbnails(self, paths):
+        """
+        Preload thumbnails for the given paths.
+        
+        Args:
+            paths (list): List of paths to preload
+        """
+        for path in paths:
+            if path in self.raster_manager.image_paths:
+                raster = self.raster_manager.get_raster(path)
+                if raster:
+                    # Just access the thumbnail to trigger creation
+                    raster.get_thumbnail(longest_edge=256)
+                    
+    def cycle_previous_image(self):
+        """Load the previous image in the filtered list."""
+        if not self.selected_image_path or not self.table_model.filtered_paths:
+            return
+            
+        # Get current index
+        current_index = self.table_model.get_row_for_path(self.selected_image_path)
+        if current_index < 0:
+            return
+            
+        # Get previous index
+        prev_index = (current_index - 1) % len(self.table_model.filtered_paths)
+        
+        # Load the previous image
+        self.load_image_by_path(self.table_model.get_path_at_row(prev_index))
+        
+    def cycle_next_image(self):
+        """Load the next image in the filtered list."""
+        if not self.selected_image_path or not self.table_model.filtered_paths:
+            return
+            
+        # Get current index
+        current_index = self.table_model.get_row_for_path(self.selected_image_path)
+        if current_index < 0:
+            return
+            
+        # Get next index
+        next_index = (current_index + 1) % len(self.table_model.filtered_paths)
+        
+        # Load the next image
+        self.load_image_by_path(self.table_model.get_path_at_row(next_index))
+        
+    def show_context_menu(self, position):
+        """
+        Show the context menu for the table.
+        
+        Args:
+            position (QPoint): Position to show the menu
+        """
+        # Get selected checkboxes
+        selected_paths = self._get_selected_image_paths()
+        if not selected_paths:
+            return
+            
+        # Create menu
+        context_menu = QMenu(self)
+        
+        # Add actions
+        delete_images_action = context_menu.addAction(f"Delete {len(selected_paths)} Images")
+        delete_images_action.triggered.connect(lambda: self.delete_selected_images())
+        
+        delete_annotations_action = context_menu.addAction(
+            f"Delete Annotations for {len(selected_paths)} Images"
+        )
+        delete_annotations_action.triggered.connect(
+            lambda: self.delete_selected_images_annotations()
+        )
+        
+        # Show the menu
+        context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
+        
+    def delete_selected_images(self):
+        """Delete the selected images."""
+        selected_paths = self._get_selected_image_paths()
+        if not selected_paths:
+            return
+            
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self,
+            "Confirm Multiple Image Deletions",
+            f"Are you sure you want to delete {len(selected_paths)} images?\n"
+            "This will delete all associated annotations.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.delete_images(selected_paths)
+            
+    def delete_selected_images_annotations(self):
+        """Delete annotations for the selected images."""
+        selected_paths = self._get_selected_image_paths()
+        if not selected_paths:
+            return
+            
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self,
+            "Confirm Multiple Annotation Deletions",
+            f"Are you sure you want to delete annotations for {len(selected_paths)} images?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Temporarily disconnect annotation signals
+            self.annotation_window.annotationCreated.disconnect(self.update_annotation_count)
+            self.annotation_window.annotationDeleted.disconnect(self.update_annotation_count)
+            
+            try:
+                # Show progress
+                progress_bar = ProgressBar(self, title="Deleting Annotations")
+                progress_bar.show()
+                progress_bar.start_progress(len(selected_paths))
+                
+                # Delete annotations
+                for path in selected_paths:
+                    # Delete the annotations
+                    self.annotation_window.delete_image_annotations(path)
+                    
+                    # Update the raster
+                    self.update_image_annotations(path)
+                    
+                    # Update progress
+                    progress_bar.update_progress()
+                    
+            finally:
+                # Restore signals
+                self.annotation_window.annotationCreated.connect(self.update_annotation_count)
+                self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
+                
+                # Close progress bar
+                if progress_bar:
+                    progress_bar.stop_progress()
+                    progress_bar.close()
+                    
+            # Reapply filters
+            self.filter_images()
+                
+    def delete_images(self, image_paths):
+        """
+        Delete multiple images and their annotations.
+        
+        Args:
+            image_paths (list): List of paths to delete
+        """
+        # Make sure paths are valid
+        image_paths = [path for path in image_paths if path in self.raster_manager.image_paths]
+        if not image_paths:
+            return
+            
+        # Check if current image is being deleted
+        is_current_deleted = self.selected_image_path in image_paths
+        
+        # Determine next image to select
+        next_image = None
+        if is_current_deleted and self.table_model.filtered_paths:
+            # Find remaining images
+            remaining = [p for p in self.table_model.filtered_paths if p not in image_paths]
+            
+            if remaining:
+                # Get index of current image
+                current_index = self.table_model.get_row_for_path(self.selected_image_path)
+                
+                # Find images before the current one
+                before_current = [p for p in remaining if self.table_model.get_row_for_path(p) <= current_index]
+                
+                # Prefer images before current, otherwise use any remaining
+                next_image = before_current[0] if before_current else remaining[0]
+                
+        # Show progress
+        with self.busy_cursor():
+            progress_bar = ProgressBar(self, title="Deleting Images")
+            progress_bar.show()
+            progress_bar.start_progress(len(image_paths))
+            
+            try:
+                # Delete each image
+                for path in image_paths:
+                    # Remove from annotation window
+                    self.annotation_window.delete_image(path)
+                    
+                    # Remove from raster manager
+                    self.raster_manager.remove_raster(path)
+                    
+                    # Update progress
+                    progress_bar.update_progress()
+                    
+                # Update UI
+                if next_image:
+                    self.load_image_by_path(next_image)
+                elif not self.raster_manager.image_paths:
+                    self.selected_image_path = None
+                    self.annotation_window.clear_scene()
+                    
+            finally:
+                # Close progress bar
+                progress_bar.stop_progress()
+                progress_bar.close()
+                
+            # Update UI
+            self.filter_images()
+            
     def select_all_checkboxes(self):
-        """Check all checkboxes in the table widget."""
-        for row in range(self.tableWidget.rowCount()):
-            checkbox = self.tableWidget.cellWidget(row, 0)
-            if checkbox:
-                checkbox.setChecked(True)
-
+        """Select all checkboxes in the current view."""
+        # Update all rasters in the current view
+        for path in self.table_model.filtered_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster:
+                raster.checkbox_state = True
+                
+        # Notify the model that data has changed
+        self.table_model.beginResetModel()
+        self.table_model.endResetModel()
+        
     def deselect_all_checkboxes(self):
-        """Uncheck all checkboxes in the table widget."""
-        for row in range(self.tableWidget.rowCount()):
-            checkbox = self.tableWidget.cellWidget(row, 0)
-            if checkbox:
-                checkbox.setChecked(False)
+        """Deselect all checkboxes in the current view."""
+        # Update all rasters in the current view
+        for path in self.table_model.filtered_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster:
+                raster.checkbox_state = False
                 
-                
+        # Notify the model that data has changed
+        self.table_model.beginResetModel()
+        self.table_model.endResetModel()
+
+
 class ImagePreviewTooltip(QFrame):
     """
     A custom tooltip widget that displays an image preview and information text.
@@ -1002,7 +1015,12 @@ class ImagePreviewTooltip(QFrame):
         self.hide()
         
     def set_image(self, pixmap):
-        """Set the preview image"""
+        """
+        Set the preview image.
+        
+        Args:
+            pixmap (QPixmap): Image to display
+        """
         if pixmap and not pixmap.isNull():
             self.image_label.setPixmap(pixmap)
             
@@ -1017,7 +1035,12 @@ class ImagePreviewTooltip(QFrame):
             self.hide()
             
     def show_at(self, global_pos):
-        """Position and show the tooltip at the specified global position"""
+        """
+        Position and show the tooltip at the specified global position.
+        
+        Args:
+            global_pos (QPoint): Position to show the tooltip
+        """
         # Position slightly offset from cursor with increased x offset
         x, y = global_pos.x() + 50, global_pos.y() + 15  # Increased x offset (bottom-right)
         

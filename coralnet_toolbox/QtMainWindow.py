@@ -1320,7 +1320,7 @@ class MainWindow(QMainWindow):
             
     def open_import_viscore_annotations_dialog(self):
         """Open the Import Viscore Annotations dialog to import annotations"""
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
@@ -1335,7 +1335,7 @@ class MainWindow(QMainWindow):
     def open_export_viscore_annotations_dialog(self):
         """Open the Export Viscore Annotations dialog to export annotations"""
         # Check if there are any images in the project
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
@@ -1357,7 +1357,7 @@ class MainWindow(QMainWindow):
     def open_export_geojson_annotations_dialog(self):
         """Open the Export GeoJSON dialog to export annotations as GeoJSON files"""
         # Check if there are any images in the project
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
@@ -1379,7 +1379,7 @@ class MainWindow(QMainWindow):
     def open_export_mask_annotations_dialog(self):
         """Open the Export Mask Annotations dialog to export segmentation masks"""
         # Check if there are any images in the project
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
@@ -1400,7 +1400,7 @@ class MainWindow(QMainWindow):
 
     def open_patch_annotation_sampling_dialog(self):
         # Check if there are any images in the project
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
@@ -1443,7 +1443,7 @@ class MainWindow(QMainWindow):
 
     def open_classify_export_dataset_dialog(self):
         # Check if there are loaded images
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Export Dataset",
                                 "No images are present in the project.")
@@ -1464,7 +1464,7 @@ class MainWindow(QMainWindow):
 
     def open_detect_export_dataset_dialog(self):
         # Check if there are loaded images
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Export Dataset",
                                 "No images are present in the project.")
@@ -1485,7 +1485,7 @@ class MainWindow(QMainWindow):
 
     def open_segment_export_dataset_dialog(self):
         # Check if there are loaded images
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Export Dataset",
                                 "No images are present in the project.")
@@ -1582,7 +1582,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_deploy_model_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Classify Deploy Model",
                                 "No images are present in the project.")
@@ -1595,7 +1595,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_deploy_model_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Detect Deploy Model",
                                 "No images are present in the project.")
@@ -1608,7 +1608,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_deploy_model_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Segment Deploy Model",
                                 "No images are present in the project.")
@@ -1621,7 +1621,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Batch Inference",
                                 "No images are present in the project.")
@@ -1646,7 +1646,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Batch Inference",
                                 "No images are present in the project.")
@@ -1665,7 +1665,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Batch Inference",
                                 "No images are present in the project.")
@@ -1684,7 +1684,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_deploy_predictor_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Predictor",
                                 "No images are present in the project.")
@@ -1697,7 +1697,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_deploy_generator_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Generator",
                                 "No images are present in the project.")
@@ -1710,7 +1710,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "SAM Batch Inference",
                                 "No images are present in the project.")
@@ -1736,7 +1736,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_see_anything_deploy_predictor_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE)",
                                 "No images are present in the project.")
@@ -1749,7 +1749,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_see_anything_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE) Batch Inference",
                                 "No images are present in the project.")
@@ -1769,7 +1769,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_auto_distill_deploy_model_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "AutoDistill Deploy Model",
                                 "No images are present in the project.")
@@ -1782,7 +1782,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_auto_distill_batch_inference_dialog(self):
-        if not self.image_window.image_paths:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "AutoDistill Batch Inference",
                                 "No images are present in the project.")
@@ -1870,7 +1870,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-
+    
 class CollapsibleSection(QWidget):
     def __init__(self, title, parent=None):
         super().__init__(parent)
