@@ -92,6 +92,8 @@ class GlobalEventFilter(QObject):
                 if not self.main_window.select_tool_action.isChecked():
                     # Untoggle all tools first (clear buttons)
                     self.main_window.untoggle_all_tools()
+                    # Trigger the select tool action in the main window to set the button
+                    self.main_window.select_tool_action.trigger()
                     # Switch to select tool in main window (sets button)
                     self.main_window.handle_tool_changed("select")
                     # Set the select tool in the annotation window (sets tool)
@@ -105,6 +107,8 @@ class GlobalEventFilter(QObject):
                 if not self.main_window.select_tool_action.isChecked():
                     # Untoggle all tools first (clear buttons)
                     self.main_window.untoggle_all_tools()
+                    # Trigger the select tool action in the main window to set the button
+                    self.main_window.select_tool_action.trigger()
                     # Switch to select tool in main window (sets button)
                     self.main_window.handle_tool_changed("select")
                     # Set the select tool in the annotation window (sets tool)
