@@ -24,7 +24,10 @@ from coralnet_toolbox.Tools import (
     WorkAreaTool
 )
 
+from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
+
 from coralnet_toolbox.utilities import rasterio_open
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -43,7 +46,6 @@ class AnnotationWindow(QGraphicsView):
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
     annotationCreated = pyqtSignal(str)  # Signal to emit when annotation is created
-    hover_point = pyqtSignal(QPointF)  # Signal to emit when mouse hovers over a point
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -81,6 +83,10 @@ class AnnotationWindow(QGraphicsView):
         self.active_image = False
         self.current_image_path = None
 
+        # Initialize the graphics utility class for standardized visual elements
+        self.graphics_utility = GraphicsUtility()
+
+        # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
 
         self.tools = {
@@ -139,7 +145,6 @@ class AnnotationWindow(QGraphicsView):
 
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
-        self.hover_point.emit(scene_pos)
 
         if not self.cursorInWindow(event.pos()):
             self.toggle_cursor_annotation()

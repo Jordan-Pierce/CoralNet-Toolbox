@@ -15,7 +15,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.QtCommon import MarginInput
+from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.Icons import get_icon
 

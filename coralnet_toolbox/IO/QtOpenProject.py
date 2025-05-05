@@ -16,7 +16,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
-from coralnet_toolbox.QtCommon import QtUpdateImagePaths
+from coralnet_toolbox.Common.QtUpdateImagePaths import UpdateImagePaths
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 

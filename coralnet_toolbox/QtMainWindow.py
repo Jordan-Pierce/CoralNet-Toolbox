@@ -652,6 +652,8 @@ class MainWindow(QMainWindow):
         self.work_area_tool_action.setCheckable(True)
         self.work_area_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.work_area_tool_action)
+        
+        self.toolbar.addSeparator()
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()

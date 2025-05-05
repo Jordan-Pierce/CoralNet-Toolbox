@@ -14,6 +14,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class Tool:
     def __init__(self, annotation_window):
         self.annotation_window = annotation_window
+        self.graphics_utility = self.annotation_window.graphics_utility
+
         self.active = False
         self.cursor = Qt.ArrowCursor
         self.default_cursor = Qt.ArrowCursor

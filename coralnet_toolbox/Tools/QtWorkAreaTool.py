@@ -3,7 +3,7 @@ import warnings
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor
 from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsSimpleTextItem, QMessageBox, 
-                             QGraphicsPixmapItem)
+                             QGraphicsPixmapItem, QGraphicsItemGroup, QGraphicsLineItem)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.QtWorkArea import WorkArea
@@ -104,24 +104,28 @@ class WorkAreaTool(Tool):
         
     def keyPressEvent(self, event):
         """Handle key press events including creating work area of current view with spacebar."""
-        # Ctrl key state for showing remove buttons and changing cursor
+        # Check Ctrl+Backspace combination (clear all work areas)
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Backspace:
+            print("Ctrl+Backspace detected - clearing all work areas")  # Debug print
+            self.clear_work_areas()
+            return
+        
+        # Handle Ctrl key press separately
         if event.key() == Qt.Key_Control:
             self.ctrl_pressed = True
             self.update_remove_buttons_visibility(True)
-            # Change cursor to pointer when Ctrl is pressed
             self.annotation_window.viewport().setCursor(Qt.PointingHandCursor)
-            
-        # Space bar creates a work area from the current view
+            return
+        
+        # Handle Space key
         if event.key() == Qt.Key_Space and self.annotation_window.active_image:
             self.create_work_area_from_current_view()
-            
-        # Backspace cancels current drawing (changed from Escape)
-        elif event.key() == Qt.Key_Backspace and self.drawing:
-            self.cancel_drawing()
+            return
         
-        # Delete key removes all work areas if Ctrl is also pressed
-        elif event.key() == Qt.Key_Backspace and event.modifiers() & Qt.ControlModifier:
-            self.clear_work_areas()
+        # Handle Backspace when drawing
+        if event.key() == Qt.Key_Backspace and self.drawing:
+            self.cancel_drawing()
+            return
     
     def keyReleaseEvent(self, event):
         """Handle key release events."""
@@ -139,8 +143,13 @@ class WorkAreaTool(Tool):
         
         # Create an initial rectangle item for visual feedback - no brush
         self.current_rect = QGraphicsRectItem(QRectF(pos.x(), pos.y(), 0, 0))
+        
+        # Get the width
+        width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
+        
+        # Set the pen properties
+        self.work_area_pen.setWidth(width)
         self.current_rect.setPen(self.work_area_pen)
-        # No brush - transparent interior
         self.annotation_window.scene.addItem(self.current_rect)
         
     def update_drawing(self, pos):
@@ -255,37 +264,83 @@ class WorkAreaTool(Tool):
         # Store the work area in the raster
         self.save_work_area(work_area)
         
+    def constrain_rect_to_image_bounds(self, rect):
+        """Constrain a rectangle to stay within the image boundaries."""
+        # Get image boundaries
+        if self.annotation_window.pixmap_image:
+            image_rect = QGraphicsPixmapItem(self.annotation_window.pixmap_image).boundingRect()
+            
+            # Create a copy of the input rect to avoid modifying the original
+            constrained_rect = QRectF(rect)
+            
+            # If rect is completely outside image, return a minimal valid rect at image edge
+            if (rect.right() < 0 or rect.bottom() < 0 or 
+                rect.left() > image_rect.width() or rect.top() > image_rect.height()):
+                # Return a small rect at the closest corner
+                x = max(0, min(rect.x(), image_rect.width() - 10))
+                y = max(0, min(rect.y(), image_rect.height() - 10))
+                return QRectF(x, y, 10, 10)
+            
+            # Constrain top-left corner
+            if constrained_rect.left() < 0:
+                constrained_rect.setLeft(0)
+            if constrained_rect.top() < 0:
+                constrained_rect.setTop(0)
+                
+            # Constrain bottom-right corner
+            if constrained_rect.right() > image_rect.width():
+                constrained_rect.setRight(image_rect.width())
+            if constrained_rect.bottom() > image_rect.height():
+                constrained_rect.setBottom(image_rect.height())
+                
+            return constrained_rect
+        
+        return rect
+        
     def add_remove_button(self, work_area):
-        """Add a remove button to the work area (initially hidden)."""
+        """Add a remove button (X) to the work area (initially hidden)."""
         # Get the rectangle dimensions
         rect = work_area.rect
         
-        # Create an 'X' button in the top-right corner
-        text_item = QGraphicsSimpleTextItem("✕", work_area.graphics_item)
-        text_item.setBrush(QBrush(Qt.red))
-        text_item.setPos(rect.right() - 15, rect.top())
+        # Create a group item to hold the X shape
+        button_size = self.graphics_utility.get_handle_size(self.annotation_window)
+        button_group = QGraphicsItemGroup(work_area.graphics_item)
+        
+        # Create two diagonal lines to form an X
+        line1 = QGraphicsLineItem(0, 0, button_size, button_size, button_group)
+        line2 = QGraphicsLineItem(0, button_size, button_size, 0, button_group)
+        
+        # Set the pen properties - thicker red lines
+        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        red_pen = QPen(QColor(255, 0, 0), 2)
+        red_pen.setWidth(thickness)
+        line1.setPen(red_pen)
+        line2.setPen(red_pen)
+        
+        # Position in the top-right corner
+        button_group.setPos(rect.right() - button_size - 10, rect.top() + 10)
         
         # Store data to identify this button and its work area
-        text_item.setData(0, "remove_button")
-        text_item.setData(1, work_area)  # Store reference to the work area
+        button_group.setData(0, "remove_button")
+        button_group.setData(1, work_area)  # Store reference to the work area
         
-        # Make the text item clickable
-        text_item.setAcceptedMouseButtons(Qt.LeftButton)
+        # Make the group item clickable
+        button_group.setAcceptedMouseButtons(Qt.LeftButton)
         
         # Store reference to the work area and button in the graphics item
         work_area.graphics_item.setData(0, "work_area")
         work_area.graphics_item.setData(1, work_area)  # Store reference to the work area
-        work_area.graphics_item.setData(2, text_item)  # Store reference to the remove button
+        work_area.graphics_item.setData(2, button_group)  # Store reference to the remove button
         
         # Initially hide the remove button
-        text_item.setVisible(self.ctrl_pressed)
+        button_group.setVisible(self.ctrl_pressed)
         
         # When the remove button is clicked, remove the work area
         def on_press(event):
             work_area.remove()
             
-        # Override mousePressEvent for the text item
-        text_item.mousePressEvent = on_press
+        # Override mousePressEvent for the button item
+        button_group.mousePressEvent = on_press
         
     def update_remove_buttons_visibility(self, visible):
         """Update the visibility of all remove buttons based on Ctrl key state."""
@@ -393,39 +448,6 @@ class WorkAreaTool(Tool):
             if work_area.graphics_item and work_area.graphics_item.scene():
                 self.annotation_window.scene.removeItem(work_area.graphics_item)
                 work_area.graphics_item = None
-                
-    def constrain_rect_to_image_bounds(self, rect):
-        """Constrain a rectangle to stay within the image boundaries."""
-        # Get image boundaries
-        if self.annotation_window.pixmap_image:
-            image_rect = QGraphicsPixmapItem(self.annotation_window.pixmap_image).boundingRect()
-            
-            # Create a copy of the input rect to avoid modifying the original
-            constrained_rect = QRectF(rect)
-            
-            # If rect is completely outside image, return a minimal valid rect at image edge
-            if (rect.right() < 0 or rect.bottom() < 0 or 
-                rect.left() > image_rect.width() or rect.top() > image_rect.height()):
-                # Return a small rect at the closest corner
-                x = max(0, min(rect.x(), image_rect.width() - 10))
-                y = max(0, min(rect.y(), image_rect.height() - 10))
-                return QRectF(x, y, 10, 10)
-            
-            # Constrain top-left corner
-            if constrained_rect.left() < 0:
-                constrained_rect.setLeft(0)
-            if constrained_rect.top() < 0:
-                constrained_rect.setTop(0)
-                
-            # Constrain bottom-right corner
-            if constrained_rect.right() > image_rect.width():
-                constrained_rect.setRight(image_rect.width())
-            if constrained_rect.bottom() > image_rect.height():
-                constrained_rect.setBottom(image_rect.height())
-                
-            return constrained_rect
-        
-        return rect
         
     def update_cursor_annotation(self, scene_pos=None):
         """Method required by tool interface but not used for work area tool."""
@@ -434,4 +456,3 @@ class WorkAreaTool(Tool):
     def clear_cursor_annotation(self):
         """Method required by tool interface but not used for work area tool."""
         pass
-
