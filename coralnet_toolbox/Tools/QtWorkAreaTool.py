@@ -393,7 +393,7 @@ class WorkAreaTool(Tool):
             return
             
         # Get work areas from the raster's work_areas list, not just metadata
-        stored_work_areas = raster.get_work_areas()
+        stored_work_areas = raster.get_custom_work_areas()
         image_path = self.get_current_image_name()
         
         # Create work area objects for each stored rectangle

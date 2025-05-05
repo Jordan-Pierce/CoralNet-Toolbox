@@ -45,6 +45,7 @@ class DeployGeneratorDialog(QDialog):
         super().__init__(parent)
         self.main_window = main_window
         self.label_window = main_window.label_window
+        self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 
@@ -460,7 +461,7 @@ class DeployGeneratorDialog(QDialog):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+        
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
@@ -475,8 +476,7 @@ class DeployGeneratorDialog(QDialog):
 
                 results = self._apply_model(inputs)
                 results = self._apply_sam(results, image_path)
-                results = self._update_results(results, image_path)
-                self._process_results(results_processor, results)
+                self._process_results(results_processor, results, image_path)
         except Exception as e:
             print("An error occurred during prediction:", e)
         finally:
@@ -490,7 +490,7 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        return image_path
+        return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
@@ -499,14 +499,18 @@ class DeployGeneratorDialog(QDialog):
         self.loaded_model.iou = self.main_window.get_iou_thresh()
         self.loaded_model.max_det = self.get_max_detections()
 
-        # Make predictions
-        with torch.no_grad():
-            results = self.loaded_model(inputs)
-            gc.collect()
-            empty_cache()
-
-        # Return the results
-        yield results
+        # Process each input separately
+        for i, input_image in enumerate(inputs):
+            # Make predictions on single image
+            with torch.no_grad():
+                result = self.loaded_model(input_image)
+                
+                # Clean up GPU memory after each prediction
+                gc.collect()
+                empty_cache()
+                
+            # Yield result for each input to allow for processing one at a time
+            yield result
 
     def _apply_sam(self, results, image_path):
         """Apply SAM to the results if needed."""
@@ -519,26 +523,28 @@ class DeployGeneratorDialog(QDialog):
 
         return results
 
-    def _update_results(self, results_generator, image_path):
-        """Update the results with the image path and class mapping."""
-        # Update the results with the image path and class mapping.
-        updated_results = []
+    def _process_results(self, results_processor, results_generator, image_path):
+        """Process the results using the result processor."""
+        # Get the raster object
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        work_areas = raster.get_work_areas()
+
+        # Executes the model predictions
         for results in results_generator:
-            for result in results:
+            # Each result in the Results object
+            for idx, result in enumerate(results):
                 if result:
+                    # Update path and names
                     result.path = image_path
                     result.names = {0: self.class_mapping[0].short_label_code}
-                    updated_results.append(result)
-
-        return updated_results
-
-    def _process_results(self, results_processor, results):
-        """Process the results using the result processor."""
-        # Process the segmentations
-        if self.task == 'segment':
-            results_processor.process_segmentation_results(results)
-        else:
-            results_processor.process_detection_results(results)
+                    # Map results from work area to the full image
+                    result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
+                    
+                    # Process the segmentations
+                    if self.task == 'segment':
+                        results_processor.process_segmentation_results(results)
+                    else:
+                        results_processor.process_detection_results(results)
 
     def deactivate_model(self):
         """
