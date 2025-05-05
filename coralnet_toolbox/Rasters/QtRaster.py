@@ -5,6 +5,7 @@ import gc
 from typing import Optional, Dict, Any, Set, Union, List
 
 import rasterio
+import numpy as np
 
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject
@@ -60,6 +61,9 @@ class Raster(QObject):
         self.labels: Set = set()
         self.annotation_count = 0
         self.annotations: List = []  # Store the actual annotations
+        
+        # Work Area state
+        self.work_areas: List = []  # Store work area information
         
         # Image dimensions and properties (populated when rasterio_src is loaded)
         self.width = 0
@@ -188,23 +192,7 @@ class Raster(QObject):
         
         # Update labels
         self.labels = {annotation.label for annotation in annotations if annotation.label}
-    
-    def set_selected(self, is_selected: bool):
-        """Mark this raster as selected in the UI"""
-        self.is_selected = is_selected
-    
-    def set_display_name(self, max_length=25):
-        """
-        Set a display name (truncated if necessary) for showing in table
         
-        Args:
-            max_length (int): Maximum length for display name before truncation
-        """
-        if len(self.basename) > max_length:
-            self.display_name = self.basename[:max_length - 3] + "..."
-        else:
-            self.display_name = self.basename
-    
     def matches_filter(self, 
                        search_text="", 
                        search_label="", 
@@ -246,6 +234,220 @@ class Raster(QObject):
             return False
             
         return True
+    
+    def add_work_area(self, work_area):
+        """
+        Add a work area to the raster.
+        
+        Args:
+            work_area: Work area object to add
+        """
+        if work_area not in self.work_areas:
+            self.work_areas.append(work_area)
+            
+    def remove_work_area(self, work_area):
+        """
+        Remove a work area from the raster.
+        
+        Args:
+            work_area: Work area object to remove
+        """
+        if work_area in self.work_areas:
+            self.work_areas.remove(work_area)
+            
+    def get_work_areas(self):
+        """
+        Get all work areas for this raster.
+        
+        Returns:
+            list: List of work area objects
+        """
+        return self.work_areas
+        
+    def clear_work_areas(self):
+        """Clear all work areas for this raster."""
+        self.work_areas.clear()
+        
+    def has_work_areas(self):
+        """
+        Check if this raster has any work areas.
+        
+        Returns:
+            bool: True if the raster has work areas, False otherwise
+        """
+        return len(self.work_areas) > 0
+    
+    def set_selected(self, is_selected: bool):
+        """Mark this raster as selected in the UI"""
+        self.is_selected = is_selected
+    
+    def set_display_name(self, max_length=25):
+        """
+        Set a display name (truncated if necessary) for showing in table
+        
+        Args:
+            max_length (int): Maximum length for display name before truncation
+        """
+        if len(self.basename) > max_length:
+            self.display_name = self.basename[:max_length - 3] + "..."
+        else:
+            self.display_name = self.basename
+    
+    def get_work_area_data(self, work_area, as_numpy=True):
+        """
+        Extract image data from a work area as a QImage or numpy array.
+        
+        Args:
+            work_area: WorkArea object or QRectF
+            as_numpy (bool): If True, returns numpy array, otherwise returns QImage
+            
+        Returns:
+            numpy.ndarray or QImage: Image data from the work area
+        """
+        if not self._rasterio_src:
+            return None
+            
+        # If we got a WorkArea object, use its rect
+        if hasattr(work_area, 'rect'):
+            rect = work_area.rect
+        else:
+            rect = work_area
+            
+        # Create a rasterio window from the rect
+        window = rasterio.windows.Window(
+            col_off=int(rect.x()),
+            row_off=int(rect.y()),
+            width=int(rect.width()),
+            height=int(rect.height())
+        )
+        
+        # Check if window is within image bounds
+        if (window.col_off < 0 or window.row_off < 0 or
+            window.col_off + window.width > self._rasterio_src.width or
+            window.row_off + window.height > self._rasterio_src.height):
+            # Clip window to image bounds
+            window = window.intersection(
+                rasterio.windows.Window(0, 0, self._rasterio_src.width, self._rasterio_src.height)
+            )
+            
+        # Get the cropped image as QImage
+        from coralnet_toolbox.utilities import rasterio_to_cropped_image
+        q_image = rasterio_to_cropped_image(self._rasterio_src, window)
+        
+        if not as_numpy:
+            return q_image
+            
+        # Convert QImage to numpy array
+        width = q_image.width()
+        height = q_image.height()
+        
+        if q_image.format() == QImage.Format_RGB888:
+            # RGB image
+            ptr = q_image.bits()
+            ptr.setsize(height * width * 3)
+            arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 3))
+        elif q_image.format() == QImage.Format_Grayscale8:
+            # Grayscale image
+            ptr = q_image.bits()
+            ptr.setsize(height * width)
+            arr = np.frombuffer(ptr, np.uint8).reshape((height, width))
+        else:
+            # Unsupported format, convert to RGB888 first
+            q_image = q_image.convertToFormat(QImage.Format_RGB888)
+            ptr = q_image.bits()
+            ptr.setsize(height * width * 3)
+            arr = np.frombuffer(ptr, np.uint8).reshape((height, width, 3))
+            
+        return arr
+
+    def map_coords_from_work_area(self, work_area, coords, is_normalized=True):
+        """
+        Map coordinates from a work area's coordinate system to the full image coordinate system.
+        
+        Args:
+            work_area: WorkArea object or QRectF
+            coords: Numpy array of coordinates in the form [[x1, y1], [x2, y2], ...] or
+                    for bounding boxes in form [x1, y1, x2, y2] (can be multiple boxes as first dimension)
+            is_normalized: Whether the coordinates are normalized (0-1) within the work area
+            
+        Returns:
+            numpy.ndarray: Coordinates mapped to the full image coordinate system
+        """
+        # Get the work area rectangle
+        if hasattr(work_area, 'rect'):
+            rect = work_area.rect
+        else:
+            rect = work_area
+            
+        # Make a copy to avoid modifying the original
+        coords = np.array(coords, dtype=float).copy()
+        
+        # Check if coords is a bounding box format [x1, y1, x2, y2]
+        is_bbox = (coords.ndim == 1 and coords.size == 4) or (coords.ndim == 2 and coords.shape[1] == 4)
+        
+        # Convert to a common format for processing
+        if is_bbox:
+            if coords.ndim == 1:
+                # Single bbox
+                bbox = coords.reshape(1, 4)
+            else:
+                # Multiple bboxes
+                bbox = coords
+                
+            # Convert to polygon format for uniform processing
+            # Each bbox becomes [[x1,y1], [x2,y1], [x2,y2], [x1,y2]]
+            polygons = []
+            for box in bbox:
+                x1, y1, x2, y2 = box
+                polygons.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
+            coords = np.array(polygons)
+        
+        # Normalize if not already normalized
+        if not is_normalized:
+            if coords.ndim == 2:
+                # Single polygon
+                coords[:, 0] /= rect.width()
+                coords[:, 1] /= rect.height()
+            else:
+                # Multiple polygons
+                for polygon in coords:
+                    polygon[:, 0] /= rect.width()
+                    polygon[:, 1] /= rect.height()
+        
+        # Map normalized coordinates to the work area space
+        if coords.ndim == 2:
+            # Single polygon
+            coords[:, 0] = coords[:, 0] * rect.width() + rect.x()
+            coords[:, 1] = coords[:, 1] * rect.height() + rect.y()
+        else:
+            # Multiple polygons
+            for polygon in coords:
+                polygon[:, 0] = polygon[:, 0] * rect.width() + rect.x()
+                polygon[:, 1] = polygon[:, 1] * rect.height() + rect.y()
+        
+        # Convert back to bbox format if original was bbox
+        if is_bbox:
+            result = []
+            for polygon in coords:
+                # Extract bbox coordinates from the polygon
+                x_min = polygon[:, 0].min()
+                y_min = polygon[:, 1].min()
+                x_max = polygon[:, 0].max() 
+                y_max = polygon[:, 1].max()
+                result.append([x_min, y_min, x_max, y_max])
+            
+            # Return in same format as input
+            if len(result) == 1 and coords.ndim == 1:
+                return np.array(result[0])
+            else:
+                return np.array(result)
+        
+        # Return polygons
+        if coords.shape[0] == 1 and coords.ndim > 2:
+            # If there was only one polygon but in 3D array, return as 2D
+            return coords[0]
+        else:
+            return coords
         
     def cleanup(self):
         """Release all resources associated with this raster."""
@@ -261,8 +463,9 @@ class Raster(QObject):
         self._q_image = None
         self._thumbnail = None
         
-        # Clear annotations
+        # Clear annotations and work areas
         self.annotations = []
+        self.work_areas = []
         
         # Force garbage collection
         gc.collect()

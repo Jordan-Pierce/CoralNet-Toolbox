@@ -13,14 +13,20 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBox
                              QMenu, QButtonGroup, QAbstractItemView, QGroupBox, QPushButton, 
                              QStyle, QFormLayout, QFrame)
 
-from coralnet_toolbox.utilities import rasterio_open, rasterio_to_qimage
+from coralnet_toolbox.Rasters import Raster, RasterManager, ImageFilter, RasterTableModel
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
 from coralnet_toolbox.Icons import get_icon
 
-from coralnet_toolbox.Rasters import Raster, RasterManager, ImageFilter, RasterTableModel
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Classes
+# ----------------------------------------------------------------------------------------------------------------------
 
 
 class ImageWindow(QWidget):

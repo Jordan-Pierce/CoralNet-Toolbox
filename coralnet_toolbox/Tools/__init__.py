@@ -8,6 +8,7 @@ from .QtSAMTool import SAMTool
 from .QtSeeAnythingTool import SeeAnythingTool
 from .QtSelectTool import SelectTool 
 from .QtZoomTool import ZoomTool
+from .QtWorkAreaTool import WorkAreaTool
 
 __all__ = [
     'PanTool',
@@ -17,5 +18,6 @@ __all__ = [
     'SAMTool',
     'SeeAnythingTool',
     'SelectTool',
-    'ZoomTool'
+    'ZoomTool',
+    'WorkAreaTool'
 ]

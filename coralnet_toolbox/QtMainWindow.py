@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self.sam_icon = get_icon("wizard.png")
         self.see_anything_icon = get_icon("eye.png")
         self.tile_icon = get_icon("tile.png")
+        self.workarea_icon = get_icon("workarea.png")
         self.turtle_icon = get_icon("turtle.png")
         self.rabbit_icon = get_icon("rabbit.png")
         self.rocket_icon = get_icon("rocket.png")
@@ -646,6 +647,11 @@ class MainWindow(QMainWindow):
         self.toolbar.addAction(self.see_anything_tool_action)
 
         self.toolbar.addSeparator()
+        
+        self.work_area_tool_action = QAction(self.workarea_icon, "Work Area", self)
+        self.work_area_tool_action.setCheckable(True)
+        self.work_area_tool_action.triggered.connect(self.toggle_tool)
+        self.toolbar.addAction(self.work_area_tool_action)
 
         # Add a spacer to push the device label to the bottom
         spacer = QWidget()
@@ -933,6 +939,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("select")
             else:
@@ -945,6 +952,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("patch")
             else:
@@ -957,6 +965,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("rectangle")
             else:
@@ -969,6 +978,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("polygon")
             else:
@@ -987,6 +997,7 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
         
                 self.toolChanged.emit("sam")
             else:
@@ -1005,8 +1016,22 @@ class MainWindow(QMainWindow):
                 self.rectangle_tool_action.setChecked(False)
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
+                self.work_area_tool_action.setChecked(False)
                 
                 self.toolChanged.emit("see_anything")
+            else:
+                self.toolChanged.emit(None)
+        
+        elif action == self.work_area_tool_action:
+            if state:
+                self.select_tool_action.setChecked(False)
+                self.patch_tool_action.setChecked(False)
+                self.rectangle_tool_action.setChecked(False)
+                self.polygon_tool_action.setChecked(False)
+                self.sam_tool_action.setChecked(False)
+                self.see_anything_tool_action.setChecked(False)
+                
+                self.toolChanged.emit("work_area")
             else:
                 self.toolChanged.emit(None)
 
@@ -1021,6 +1046,7 @@ class MainWindow(QMainWindow):
         self.polygon_tool_action.setChecked(False)
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
+        self.work_area_tool_action.setChecked(False)
         
         # Emit to reset the tool
         self.toolChanged.emit(None)
@@ -1036,6 +1062,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
             
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
@@ -1044,6 +1071,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
             
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
@@ -1052,6 +1080,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
             
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
@@ -1060,6 +1089,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(True)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
             
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
@@ -1068,6 +1098,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
             
         elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
@@ -1076,6 +1107,16 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
+            self.work_area_tool_action.setChecked(False)
+            
+        elif tool == "work_area":
+            self.select_tool_action.setChecked(False)
+            self.patch_tool_action.setChecked(False)
+            self.rectangle_tool_action.setChecked(False)
+            self.polygon_tool_action.setChecked(False)
+            self.sam_tool_action.setChecked(False)
+            self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(True)
 
         else:
             self.select_tool_action.setChecked(False)
@@ -1084,6 +1125,7 @@ class MainWindow(QMainWindow):
             self.polygon_tool_action.setChecked(False)
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
+            self.work_area_tool_action.setChecked(False)
             
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)

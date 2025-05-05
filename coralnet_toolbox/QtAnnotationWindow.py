@@ -20,7 +20,8 @@ from coralnet_toolbox.Tools import (
     SAMTool,
     SeeAnythingTool,
     SelectTool,
-    ZoomTool
+    ZoomTool,
+    WorkAreaTool
 )
 
 from coralnet_toolbox.utilities import rasterio_open
@@ -90,7 +91,8 @@ class AnnotationWindow(QGraphicsView):
             "rectangle": RectangleTool(self),
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
-            "see_anything": SeeAnythingTool(self)
+            "see_anything": SeeAnythingTool(self),
+            "work_area": WorkAreaTool(self)
         }
 
     def dragEnterEvent(self, event):
