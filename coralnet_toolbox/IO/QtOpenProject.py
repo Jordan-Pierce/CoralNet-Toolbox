@@ -170,21 +170,18 @@ class OpenProject(QDialog):
         progress_bar.start_progress(total_images)
 
         try:
-            # Add images to the image window
-            for i, image_path in enumerate(image_paths):
-                if image_path not in set(self.image_window.image_paths):
-                    try:
-                        self.image_window.add_image(image_path)
-                    except Exception as e:
-                        print(f"Warning: Could not import image {image_path}. Error: {e}")
-
+            # Add images to the image window's raster manager one by one
+            for path in image_paths:
+                # Use the improved add_image method which handles both
+                # adding to raster_manager and updating filtered_paths
+                self.image_window.add_image(path)
+                
                 # Update the progress bar
                 progress_bar.update_progress()
-
-            # Update filtered images
-            self.image_window.filter_images()
-            # Show the last image
-            self.image_window.load_image_by_path(self.image_window.image_paths[-1])
+            
+            # Show the last image if any were imported
+            if self.image_window.raster_manager.image_paths:
+                self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
 
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
@@ -249,7 +246,7 @@ class OpenProject(QDialog):
                 # Checking if the image path is updated (moved)
                 updated_path = False
                 
-                if image_path not in set(self.image_window.image_paths):
+                if image_path not in self.image_window.raster_manager.image_paths:
                     # Check if the path was updated
                     if image_path in self.updated_paths:
                         image_path = self.updated_paths[image_path]
@@ -285,7 +282,7 @@ class OpenProject(QDialog):
                     # Update the progress bar
                     progress_bar.update_progress()
                     
-                # Update the image window's image dict
+                # Update the image window's image annotations
                 self.image_window.update_image_annotations(image_path)
 
             # Load the annotations for current image

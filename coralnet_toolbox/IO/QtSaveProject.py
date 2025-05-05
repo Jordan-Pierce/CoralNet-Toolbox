@@ -121,7 +121,7 @@ class SaveProject(QDialog):
 
     def get_images(self):
         # Start the progress bar
-        total_images = len(self.image_window.image_paths)
+        total_images = len(self.image_window.raster_manager.image_paths)
         progress_bar = ProgressBar(self.label_window, "Exporting Images")
         progress_bar.show()
         progress_bar.start_progress(total_images)
@@ -130,7 +130,7 @@ class SaveProject(QDialog):
             export_images = []
             
             # Loop through all of the image paths
-            for image_path in self.image_window.image_paths:
+            for image_path in self.image_window.raster_manager.image_paths:
                 export_images.append(image_path)
                 progress_bar.update_progress()
 

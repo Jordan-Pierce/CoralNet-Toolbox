@@ -347,7 +347,8 @@ class Base(QDialog):
 
         # Filter annotations based on the selected image option
         if self.filtered_images_radio.isChecked():
-            annotations = [a for a in annotations if a.image_path in self.image_window.filtered_image_paths]
+            # Use the table_model's filtered_paths instead of filtered_image_paths
+            annotations = [a for a in annotations if a.image_path in self.image_window.table_model.filtered_paths]
 
         return annotations
 
@@ -417,7 +418,12 @@ class Base(QDialog):
         self.val_ratio = self.val_ratio_spinbox.value()
         self.test_ratio = self.test_ratio_spinbox.value()
 
-        images = self.image_window.image_paths
+        # Get images, either filtered or all depending on radio button selection
+        if self.filtered_images_radio.isChecked():
+            images = self.image_window.table_model.filtered_paths
+        else:
+            images = self.image_window.raster_manager.image_paths
+
         random.shuffle(images)
 
         train_split = int(len(images) * self.train_ratio)

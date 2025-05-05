@@ -687,39 +687,39 @@ class ImportFrames(QDialog):
             progress_bar.close()
 
     def import_images(self):
-        """Import the saved frames to the image window."""
-        # Make the cursor busy
+        """Import the extracted frames into the application."""
+        if not self.frame_paths:
+            return
+            
+        # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.image_window, title="Importing Images")
-        progress_bar.show()
-        progress_bar.start_progress(len(self.frame_paths))
-
+        
         try:
-            # Add images to the image window
-            for idx, frame_path in enumerate(self.frame_paths):
-                if frame_path not in set(self.image_window.image_paths):
-                    try:
-                        self.image_window.add_image(frame_path)
-                    except Exception as e:
-                        print(f"Warning: Could not import image {frame_path}. Error: {e}")
-
+            progress_bar = ProgressBar(self.annotation_window, title="Importing Frames")
+            progress_bar.show()
+            progress_bar.start_progress(len(self.frame_paths))
+            
+            # Import each frame
+            for frame_path in self.frame_paths:
+                # Add the image to the window
+                self.image_window.add_image(frame_path)
+                
                 # Update the progress bar
                 progress_bar.update_progress()
-
-            # Update filtered images
-            self.image_window.filter_images()
-            # Show the last image
-            self.image_window.load_image_by_path(self.image_window.image_paths[-1])
-
-            QMessageBox.information(self.image_window,
-                                    "Frame(s) Imported",
-                                    "Frame(s) have been successfully imported.")
+                
+            # Load the first image
+            if self.frame_paths:
+                # The add_image call already triggers a refresh of the image display
+                # so we don't need any additional logic here to select an image
+                pass
+                
         except Exception as e:
-            QMessageBox.warning(self.image_window,
-                                "Error Importing Frame(s)",
-                                f"An error occurred while importing frame(s): {str(e)}")
+            QMessageBox.warning(self.annotation_window,
+                                "Error Importing Frames",
+                                f"An error occurred while importing frames: {str(e)}")
+                                
         finally:
-            # Restore the cursor to the default cursor
+            # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()

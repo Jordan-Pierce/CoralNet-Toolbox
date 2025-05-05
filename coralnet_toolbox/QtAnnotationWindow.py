@@ -341,13 +341,21 @@ class AnnotationWindow(QGraphicsView):
         self.clear_scene()
 
         # Check that the image path is valid
-        if image_path not in self.main_window.image_window.q_images:
+        if image_path not in self.main_window.image_window.raster_manager.image_paths:
             return
 
         # Set the image representations in the annotation window
-        self.rasterio_image = self.main_window.image_window.rasterio_images[image_path]
-        # Convert from the already created QImage to QPixmap to display
-        self.pixmap_image = QPixmap.fromImage(self.main_window.image_window.q_images[image_path])
+        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+        if not raster:
+            return
+            
+        self.rasterio_image = raster.rasterio_src
+        # Get QImage and convert to QPixmap for display
+        q_image = raster.get_qimage()
+        if q_image is None or q_image.isNull():
+            return
+            
+        self.pixmap_image = QPixmap.fromImage(q_image)
 
         self.current_image_path = image_path
         self.active_image = True
@@ -365,7 +373,7 @@ class AnnotationWindow(QGraphicsView):
 
         # Load all associated annotations
         self.load_annotations()
-        # Update the image window's image dict
+        # Update the image window's image annotations
         self.main_window.image_window.update_image_annotations(image_path)
         # Clear the confidence window
         self.main_window.confidence_window.clear_display()
@@ -411,7 +419,7 @@ class AnnotationWindow(QGraphicsView):
             return
 
         if self.selected_tool == "select" and self.active_image:
-
+            # If label is locked, only cycle through annotations with that label
             if self.main_window.label_window.label_locked:
                 locked_label = self.main_window.label_window.locked_label
                 indices = [i for i, a in enumerate(annotations) if a.label.id == locked_label.id]
@@ -422,7 +430,7 @@ class AnnotationWindow(QGraphicsView):
                 if self.selected_annotations:
                     current_index = annotations.index(self.selected_annotations[0])
                 else:
-                    current_index = indices[0]
+                    current_index = indices[0] if indices else 0
 
                 if current_index in indices:
                     # Find position in indices list and cycle within that
@@ -442,10 +450,9 @@ class AnnotationWindow(QGraphicsView):
                 # Cycle through all the annotations
                 current_index = annotations.index(self.selected_annotations[0])
                 new_index = (current_index + direction) % len(annotations)
-
             else:
-                # Select the first annotation
-                new_index = 0
+                # Select the first annotation if direction is positive, last if negative
+                new_index = 0 if direction > 0 else len(annotations) - 1
 
             if 0 <= new_index < len(annotations):
                 # Select the new annotation

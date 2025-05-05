@@ -58,23 +58,32 @@ class ImportImages:
         progress_bar.start_progress(len(file_names))
 
         try:
-            # Add images to the image window
+            # Keep track of successfully imported images
+            imported_paths = []
+            
+            # Add images to the image window's raster manager
             for file_name in file_names:
-                if file_name not in set(self.image_window.image_paths):
+                # Check if the image is already in the raster manager
+                if file_name not in self.image_window.raster_manager.image_paths:
                     try:
-                        self.image_window.add_image(file_name)
+                        # Use the image window's add_image method which handles the raster manager
+                        if self.image_window.add_image(file_name):
+                            imported_paths.append(file_name)
                     except Exception as e:
                         print(f"Warning: Could not import image {file_name}. Error: {e}")
+                else:
+                    # Image already exists
+                    imported_paths.append(file_name)
 
                 # Update the progress bar
                 progress_bar.update_progress()
 
-            # Update filtered images
+            # Apply filtering to update the view
             self.image_window.filter_images()
             
-            # Show the last image
-            if self.image_window.image_paths:
-                self.image_window.load_image_by_path(self.image_window.image_paths[-1])
+            # Show the last imported image if any were imported
+            if imported_paths:
+                self.image_window.load_image_by_path(imported_paths[-1])
 
             self._show_success_message()
         except Exception as e:

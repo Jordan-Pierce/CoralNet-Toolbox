@@ -146,8 +146,9 @@ class Classify(Base):
             self.image_paths = self.get_selected_image_paths()
             self.preprocess_annotations()
             self.infer_button.setEnabled(True)
-            QMessageBox.information(self, "Preprocessing Complete", 
-                                  f"Successfully preprocessed {len(self.prepared_patches)} annotations.")
+            QMessageBox.information(self, 
+                                    "Preprocessing Complete", 
+                                    f"Successfully preprocessed {len(self.prepared_patches)} annotations.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to preprocess annotations: {str(e)}")
         finally:
@@ -158,14 +159,17 @@ class Classify(Base):
         Perform only the inference step.
         """
         if not self.prepared_patches:
-            QMessageBox.warning(self, "Warning", "No preprocessed annotations found. Please run preprocessing first.")
+            QMessageBox.warning(self, 
+                                "Warning", 
+                                "No preprocessed annotations found. Please run preprocessing first.")
             return
             
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.batch_inference()
-            QMessageBox.information(self, "Inference Complete", 
-                                  "Batch inference completed successfully.")
+            QMessageBox.information(self, 
+                                    "Inference Complete", 
+                                   "Batch inference completed successfully.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to perform inference: {str(e)}")
         finally:

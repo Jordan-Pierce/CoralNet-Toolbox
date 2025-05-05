@@ -80,7 +80,7 @@ class ImportCoralNetAnnotations:
                 raise Exception(f"The selected CSV file(s) are missing necessary columns: {missing_columns}")
 
             # Filter out rows with missing values
-            image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
+            image_path_map = {os.path.basename(path): path for path in self.image_window.raster_manager.image_paths}
             df['Name'] = df['Name'].apply(lambda x: os.path.basename(x))
             df = df[df['Name'].isin(image_path_map.keys())]
             df = df.dropna(how='any', subset=['Row', 'Column', 'Label'])

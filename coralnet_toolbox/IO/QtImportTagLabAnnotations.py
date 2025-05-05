@@ -121,7 +121,7 @@ class ImportTagLabAnnotations:
             merged_data["images"] = self.standardize_data(merged_data["images"])
 
             # Map image names to image paths
-            image_path_map = {os.path.basename(path): path for path in self.image_window.image_paths}
+            image_path_map = {os.path.basename(path): path for path in self.image_window.raster_manager.image_paths}
 
             num_regions = sum(len(image_data['annotations']['regions']) for image_data in merged_data['images'])
             num_points = sum(len(image_data['annotations']['points']) for image_data in merged_data['images'])

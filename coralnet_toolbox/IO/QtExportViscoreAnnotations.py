@@ -255,6 +255,10 @@ class ExportViscoreAnnotations(QDialog):
 
             for annotation in self.annotation_window.annotations_dict.values():
                 if isinstance(annotation, PatchAnnotation):
+                    # Skip annotations for images not in the raster manager
+                    if annotation.image_path not in self.image_window.raster_manager.image_paths:
+                        continue
+                        
                     if 'Dot' in annotation.data:
                         # Get the annotation data
                         data = annotation.to_coralnet()
@@ -412,6 +416,10 @@ class ExportViscoreAnnotations(QDialog):
 
             for annotation in self.annotation_window.annotations_dict.values():
                 if isinstance(annotation, PatchAnnotation):
+                    # Skip annotations for images not in the raster manager
+                    if annotation.image_path not in self.image_window.raster_manager.image_paths:
+                        continue
+                        
                     if 'Dot' in annotation.data:
                         # Get the annotation data
                         data = annotation.to_coralnet()
