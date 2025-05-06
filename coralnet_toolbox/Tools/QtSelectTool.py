@@ -237,7 +237,7 @@ class SelectTool(Tool):
         width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
         
         # Style the selection rectangle
-        pen = QPen(QColor(0, 255, 0), 2, Qt.DashLine)
+        pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
         pen.setWidth(width)
         self.selection_rectangle.setPen(pen)
         

@@ -103,27 +103,32 @@ class WorkAreaTool(Tool):
         pass
         
     def keyPressEvent(self, event):
-        """Handle key press events including creating work area of current view with spacebar."""
-        # Check Ctrl+Backspace combination (clear all work areas)
-        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Backspace:
-            print("Ctrl+Backspace detected - clearing all work areas")  # Debug print
+        """Handle key press events for work area tool operations."""
+        modifiers = event.modifiers()
+        key = event.key()
+        
+        # Check for modifier combinations
+        is_shift_ctrl = (modifiers & Qt.ShiftModifier) and (modifiers & Qt.ControlModifier)
+        
+        # Clear all work areas
+        if is_shift_ctrl and key == Qt.Key_Backspace:
             self.clear_work_areas()
             return
         
-        # Handle Ctrl key press separately
-        if event.key() == Qt.Key_Control:
+        # Show remove buttons and change cursor
+        if is_shift_ctrl:
             self.ctrl_pressed = True
             self.update_remove_buttons_visibility(True)
             self.annotation_window.viewport().setCursor(Qt.PointingHandCursor)
             return
         
-        # Handle Space key
-        if event.key() == Qt.Key_Space and self.annotation_window.active_image:
+        # Create work area from current view
+        if key == Qt.Key_Space and self.annotation_window.active_image:
             self.create_work_area_from_current_view()
             return
         
-        # Handle Backspace when drawing
-        if event.key() == Qt.Key_Backspace and self.drawing:
+        # Cancel current drawing
+        if key == Qt.Key_Backspace and self.drawing:
             self.cancel_drawing()
             return
     

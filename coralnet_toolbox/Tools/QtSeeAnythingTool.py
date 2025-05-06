@@ -440,7 +440,8 @@ class SeeAnythingTool(Tool):
 
             if confidence < self.main_window.get_uncertainty_thresh():
                 continue
-
+            
+            # TODO?
             box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
 
             # Convert from normalized to pixel coordinates relative to the cropped image

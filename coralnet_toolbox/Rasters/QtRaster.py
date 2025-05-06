@@ -73,6 +73,7 @@ class Raster(QObject):
         self.width = 0
         self.height = 0
         self.channels = 0
+        self.shape = (0, 0, 0)  # Shape of the image (height, width, channels)
         
         # Metadata
         self.metadata = {}  # Can store any additional metadata
@@ -138,6 +139,7 @@ class Raster(QObject):
             self.width = self._rasterio_src.width
             self.height = self._rasterio_src.height
             self.channels = self._rasterio_src.count
+            self.shape = (self.height, self.width, self.channels)
             
             # Update metadata
             self.metadata['dimensions'] = f"{self.width}x{self.height}"
@@ -436,7 +438,7 @@ class Raster(QObject):
             if data is not None:
                 work_area_data.append(data)
                 
-        return np.array(work_area_data)
+        return work_area_data
         
     def remove_work_area(self, work_area):
         """

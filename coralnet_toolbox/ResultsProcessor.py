@@ -634,68 +634,53 @@ class ResultsProcessor:
             return results  # Return original results if raster not found
         
         # Create a new Results object to avoid modifying the original
-        mapped_results = results.new()
+        mapped_results = copy.deepcopy(results)
+        
+        # Copy other relevant attributes
+        mapped_results.names = results.names
+        mapped_results.path = results.path
+        # mapped_results.orig_img = raster.get_numpy()
+        mapped_results.orig_shape = raster.shape
         
         # Get work area coordinates
         wa_x, wa_y = int(work_area.rect.x()), int(work_area.rect.y())
         wa_w, wa_h = int(work_area.rect.width()), int(work_area.rect.height())
-        
-        # Log work area info for debugging
-        print(f"Work Area: x={wa_x}, y={wa_y}, w={wa_w}, h={wa_h}")
+        working_area_top_left = work_area.rect.topLeft()
         
         # Map bounding boxes if they exist
         if results.boxes is not None and len(results.boxes) > 0:
-            # Get xyxy format (absolute pixel coordinates in the cropped image)
-            # Using xyxy instead of normalized coordinates to avoid normalization issues
-            boxes_xyxy = results.boxes.xyxy.cpu().clone()
+            # Get xyxyn format (normalized pixel coordinates in the cropped image)
+            boxes_xyxyn = results.boxes.xyxyn.detach().cpu().clone()
             
-            # Map coordinates to full image coordinates
-            new_boxes = []
-            for i in range(len(boxes_xyxy)):
-                box = boxes_xyxy[i].clone()
-                
-                # Log original box
-                print(f"Original box {i}: x1={box[0]}, y1={box[1]}, x2={box[2]}, y2={box[3]}")
-                
-                # Calculate original image size from results.orig_shape
-                original_h, original_w = results.orig_shape[:2]
-                
-                # Calculate scaling factors to match image in work area
-                scale_x = wa_w / original_w
-                scale_y = wa_h / original_h
-                
-                # Scale box to work area size
-                box_scaled = box.clone()
-                box_scaled[0] *= scale_x  # x1
-                box_scaled[1] *= scale_y  # y1
-                box_scaled[2] *= scale_x  # x2
-                box_scaled[3] *= scale_y  # y2
-                
-                # Offset to full image coordinates
-                box_abs = box_scaled.clone()
-                box_abs[0] += wa_x  # x1
-                box_abs[1] += wa_y  # y1
-                box_abs[2] += wa_x  # x2
-                box_abs[3] += wa_y  # y2
-                
-                # Log mapped box
-                print(f"Mapped box {i}: x1={box_abs[0]}, y1={box_abs[1]}, x2={box_abs[2]}, y2={box_abs[3]}")
-                
-                # Extract original confidence and class values
-                conf = float(results.boxes.conf[i].cpu().item())
-                cls = int(results.boxes.cls[i].cpu().item())
-                
-                # Create new box with mapped coordinates and original confidence and class
-                new_box = torch.tensor([
-                    box_abs[0], box_abs[1], box_abs[2], box_abs[3], conf, cls
-                ], device=results.boxes.data.device, dtype=results.boxes.data.dtype)
-                new_boxes.append(new_box)
+            # Scale box to work area size
+            boxes_rel = boxes_xyxyn.clone()
+            boxes_rel[:, 0] *= wa_w
+            boxes_rel[:, 1] *= wa_h
+            boxes_rel[:, 2] *= wa_w
+            boxes_rel[:, 3] *= wa_h
+            
+            # Offset to full image coordinates
+            boxes_abs = boxes_rel.clone()
+            boxes_abs[:, 0] += working_area_top_left.x()
+            boxes_abs[:, 1] += working_area_top_left.y()
+            boxes_abs[:, 2] += working_area_top_left.x()
+            boxes_abs[:, 3] += working_area_top_left.y()
+            
+            # Update the confidence values if they exist
+            conf = results.boxes.conf.detach().cpu().clone()
+            if conf.dim() == 1:
+                conf = conf.unsqueeze(1)
+            
+            # Get the class values
+            cls = results.boxes.cls.detach().cpu().clone()
+            if cls.dim() == 1:
+                cls = cls.unsqueeze(1)
+            
+            # Create the updated boxes tensor 
+            mapped_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
                     
-            if new_boxes:
-                # Stack into a single tensor of shape (N, 6)
-                boxes_tensor = torch.stack(new_boxes)
-                # Update the mapped results with the new boxes
-                mapped_results.update(boxes=boxes_tensor)
+            # Update boxes using the proper method
+            mapped_results.update(boxes=mapped_boxes)
         
         # Map masks if they exist
         if results.masks is not None and len(results.masks) > 0:
@@ -719,8 +704,8 @@ class ResultsProcessor:
                 else:
                     mask_resized = mask_np
                     
-                # Place the mask in its correct position in the full image
                 try:
+                    # Place the mask in its correct position in the full image
                     full_mask[wa_y: wa_y + wa_h, wa_x: wa_x + wa_w] = mask_resized
                 except ValueError as e:
                     # Handle potential shape mismatch errors
@@ -736,10 +721,6 @@ class ResultsProcessor:
                 masks_tensor = torch.stack(full_masks)
                 # Update the mapped results with the new masks
                 mapped_results.update(masks=masks_tensor)
-        
-        # Copy other relevant attributes
-        mapped_results.names = results.names
-        mapped_results.path = results.path
         
         # If there are probs (classification results), copy them directly
         if hasattr(results, 'probs') and results.probs is not None:

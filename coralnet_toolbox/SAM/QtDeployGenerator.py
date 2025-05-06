@@ -151,7 +151,6 @@ class DeployGeneratorDialog(QDialog):
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["detect", "segment"])
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
-        self.use_task_dropdown.currentIndexChanged.connect(self.deactivate_model)
         layout.addRow("Task:", self.use_task_dropdown)
 
         # Max detections spinbox
@@ -307,8 +306,14 @@ class DeployGeneratorDialog(QDialog):
         self.class_mapping = {0: label}
 
     def update_task(self):
-        """Update the task based on the dropdown selection."""
+        """Update the task based on the dropdown selection and handle UI/model effects."""
         self.task = self.use_task_dropdown.currentText()
+        
+        # Update UI elements based on task
+        if self.task == "segment":            
+            # Deactivate model if one is loaded and we're switching to segment task
+            if self.loaded_model:
+                self.deactivate_model()
 
     def initialize_uncertainty_threshold(self):
         """Initialize the uncertainty threshold slider with the current value"""
@@ -463,7 +468,7 @@ class DeployGeneratorDialog(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar = ProgressBar(self.annotation_window, title="Prediction Workflow")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
@@ -477,6 +482,10 @@ class DeployGeneratorDialog(QDialog):
                 results = self._apply_model(inputs)
                 results = self._apply_sam(results, image_path)
                 self._process_results(results_processor, results, image_path)
+                
+                # Update the progress bar
+                progress_bar.update_progress()
+                
         except Exception as e:
             print("An error occurred during prediction:", e)
         finally:
@@ -490,6 +499,7 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
+        print("Getting Work Areas Data")
         return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
 
     def _apply_model(self, inputs):
@@ -518,8 +528,6 @@ class DeployGeneratorDialog(QDialog):
         if self.use_sam_dropdown.currentText() == "True":
             self.task = 'segment'
             results = self.sam_dialog.predict_from_results(results, image_path)
-        else:
-            self.task = 'detect'
 
         return results
 
@@ -528,23 +536,48 @@ class DeployGeneratorDialog(QDialog):
         # Get the raster object
         raster = self.image_window.raster_manager.get_raster(image_path)
         work_areas = raster.get_work_areas()
+        total = raster.count_work_items()
+        
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
+        progress_bar.show()
+        progress_bar.start_progress(total)
+        
+        idx = 0
+        updated_results = []
 
         # Executes the model predictions
         for results in results_generator:
             # Each result in the Results object
-            for idx, result in enumerate(results):
+            for result in results:
                 if result:
                     # Update path and names
                     result.path = image_path
                     result.names = {0: self.class_mapping[0].short_label_code}
                     # Map results from work area to the full image
                     result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
+                    # Append the result to the updated results list
+                    updated_results.append(result)
                     
-                    # Process the segmentations
-                    if self.task == 'segment':
-                        results_processor.process_segmentation_results(results)
-                    else:
-                        results_processor.process_detection_results(results)
+                # Update the index for the next work area
+                idx += 1
+                progress_bar.update_progress()
+        
+        # Convert the list to a generator function
+        def results_gen():
+            for result in updated_results:
+                yield result
+                
+        # Process the segmentations
+        if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
+            results_processor.process_segmentation_results(results_gen())
+        else:
+            results_processor.process_detection_results(results_gen())
+            
+        # Close the progress bar
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
 
     def deactivate_model(self):
         """
