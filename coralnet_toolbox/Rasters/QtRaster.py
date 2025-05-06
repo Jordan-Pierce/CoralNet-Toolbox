@@ -384,7 +384,7 @@ class Raster(QObject):
         else:
             return 1
     
-    def get_work_area_data(self, work_area, longest_edge=1024):
+    def get_work_area_data(self, work_area):
         """
         Extract image data from a work area as a numpy array, with efficient downsampling.
         
@@ -396,7 +396,7 @@ class Raster(QObject):
         Returns:
             numpy.ndarray: Image data from the work area
         """
-        return work_area_to_numpy(self._rasterio_src, work_area, longest_edge)
+        return work_area_to_numpy(self._rasterio_src, work_area)
     
     def get_work_areas_data(self):
         """

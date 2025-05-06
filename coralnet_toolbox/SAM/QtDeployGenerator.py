@@ -499,7 +499,12 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
+        from time import time
+        start_time = time()
+        work_areas_data = self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
+        end_time = time()
+        print(f"Get work areas time: {end_time - start_time:.2f} seconds")
+        return work_areas_data
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
@@ -507,19 +512,36 @@ class DeployGeneratorDialog(QDialog):
         self.loaded_model.conf = self.main_window.get_uncertainty_thresh()
         self.loaded_model.iou = self.main_window.get_iou_thresh()
         self.loaded_model.max_det = self.get_max_detections()
+        
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(inputs))
+        
+        from time import time
+        results = []
 
         # Process each input separately
         for i, input_image in enumerate(inputs):
             # Make predictions on single image
             with torch.no_grad():
+                start_time = time()
                 result = self.loaded_model(input_image)
-                
+                results.append(result)
+                end_time = time()
+                print(f"Prediction time for image {i}: {end_time - start_time:.2f} seconds")
+                # Update the progress bar
+                progress_bar.update_progress()
                 # Clean up GPU memory after each prediction
                 gc.collect()
                 empty_cache()
                 
-            # Yield result for each input to allow for processing one at a time
-            yield result
+        # Close the progress bar
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
+                
+        return results
 
     def _apply_sam(self, results, image_path):
         """Apply SAM to the results if needed."""
@@ -543,7 +565,7 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.start_progress(total)
         
         idx = 0
-        updated_results = []
+        mapped_results = []
 
         # Executes the model predictions
         for results in results_generator:
@@ -554,24 +576,24 @@ class DeployGeneratorDialog(QDialog):
                     result.path = image_path
                     result.names = {0: self.class_mapping[0].short_label_code}
                     # Map results from work area to the full image
-                    result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
+                    mapped_result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
                     # Append the result to the updated results list
-                    updated_results.append(result)
+                    mapped_results.append(mapped_result)
                     
                 # Update the index for the next work area
                 idx += 1
                 progress_bar.update_progress()
         
-        # Convert the list to a generator function
-        def results_gen():
-            for result in updated_results:
-                yield result
-                
+        from time import time
+        start_time = time()
         # Process the segmentations
         if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(results_gen())
+            results_processor.process_segmentation_results(mapped_results)
         else:
-            results_processor.process_detection_results(results_gen())
+            results_processor.process_detection_results(mapped_results)
+            
+        end_time = time()
+        print(f"Processing time: {end_time - start_time:.2f} seconds")
             
         # Close the progress bar
         progress_bar.finish_progress()

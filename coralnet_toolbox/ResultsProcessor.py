@@ -633,6 +633,9 @@ class ResultsProcessor:
         if raster is None:
             return results  # Return original results if raster not found
         
+        from time import time
+        start_time = time()
+        
         # Create a new Results object to avoid modifying the original
         mapped_results = copy.deepcopy(results)
         
@@ -681,48 +684,51 @@ class ResultsProcessor:
             # Update boxes using the proper method
             mapped_results.update(boxes=mapped_boxes)
         
-        # Map masks if they exist
-        if results.masks is not None and len(results.masks) > 0:
-            # For masks, we need to transform the mask data to match the full image dimensions
-            orig_h, orig_w = raster.height, raster.width
+        # # Map masks if they exist
+        # if results.masks is not None and len(results.masks) > 0:
+        #     # For masks, we need to transform the mask data to match the full image dimensions
+        #     orig_h, orig_w = raster.height, raster.width
             
-            # Create empty masks for the full image
-            full_masks = []
+        #     # Create empty masks for the full image
+        #     full_masks = []
             
-            for i, mask in enumerate(results.masks.data):
-                # Convert mask to numpy for processing
-                mask_np = mask.cpu().numpy()
+        #     for i, mask in enumerate(results.masks.data):
+        #         # Convert mask to numpy for processing
+        #         mask_np = mask.cpu().numpy()
                 
-                # Create an empty mask for the full image
-                full_mask = np.zeros((orig_h, orig_w), dtype=bool)
+        #         # Create an empty mask for the full image
+        #         full_mask = np.zeros((orig_h, orig_w), dtype=bool)
                 
-                # Resize mask to match work area dimensions if needed
-                if mask_np.shape[0] != wa_h or mask_np.shape[1] != wa_w:
-                    mask_resized = cv2.resize(mask_np.astype(np.uint8), (wa_w, wa_h), 
-                                              interpolation=cv2.INTER_NEAREST).astype(bool)
-                else:
-                    mask_resized = mask_np
+        #         # Resize mask to match work area dimensions if needed
+        #         if mask_np.shape[0] != wa_h or mask_np.shape[1] != wa_w:
+        #             mask_resized = cv2.resize(mask_np.astype(np.uint8), (wa_w, wa_h), 
+        #                                       interpolation=cv2.INTER_NEAREST).astype(bool)
+        #         else:
+        #             mask_resized = mask_np
                     
-                try:
-                    # Place the mask in its correct position in the full image
-                    full_mask[wa_y: wa_y + wa_h, wa_x: wa_x + wa_w] = mask_resized
-                except ValueError as e:
-                    # Handle potential shape mismatch errors
-                    print(f"Error placing mask: {e}")
-                    continue
+        #         try:
+        #             # Place the mask in its correct position in the full image
+        #             full_mask[wa_y: wa_y + wa_h, wa_x: wa_x + wa_w] = mask_resized
+        #         except ValueError as e:
+        #             # Handle potential shape mismatch errors
+        #             print(f"Error placing mask: {e}")
+        #             continue
                     
-                full_masks.append(torch.tensor(full_mask, 
-                                               device=results.masks.data.device,
-                                               dtype=results.masks.data.dtype))
+        #         full_masks.append(torch.tensor(full_mask, 
+        #                                        device=results.masks.data.device,
+        #                                        dtype=results.masks.data.dtype))
             
-            if full_masks:
-                # Stack masks into a tensor of shape (N, H, W)
-                masks_tensor = torch.stack(full_masks)
-                # Update the mapped results with the new masks
-                mapped_results.update(masks=masks_tensor)
+        #     if full_masks:
+        #         # Stack masks into a tensor of shape (N, H, W)
+        #         masks_tensor = torch.stack(full_masks)
+        #         # Update the mapped results with the new masks
+        #         mapped_results.update(masks=masks_tensor)
         
         # If there are probs (classification results), copy them directly
         if hasattr(results, 'probs') and results.probs is not None:
             mapped_results.update(probs=results.probs.data)
+            
+        end_time = time()
+        print(f"Mapping results took {end_time - start_time:.2f} seconds")
         
         return mapped_results
