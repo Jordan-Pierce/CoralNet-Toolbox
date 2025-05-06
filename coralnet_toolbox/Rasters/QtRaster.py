@@ -68,7 +68,6 @@ class Raster(QObject):
         
         # Work Area state
         self.work_areas: List = []  # Store work area information
-        self._has_default_work_area = False  # Track if we have the default work area
         
         # Image dimensions and properties (populated when rasterio_src is loaded)
         self.width = 0
@@ -81,31 +80,6 @@ class Raster(QObject):
         
         # Load rasterio source
         self.load_rasterio()
-        
-        # Add default work area covering the entire image
-        self._add_default_work_area()
-        
-    def _add_default_work_area(self):
-        """Add a default work area covering the entire image."""
-        if self.width > 0 and self.height > 0:
-            # Import here to avoid circular imports
-            from coralnet_toolbox.QtWorkArea import WorkArea
-            from PyQt5.QtCore import QRectF
-            
-            # Create a work area covering the entire image
-            default_work_area = WorkArea(
-                x=0, y=0, 
-                width=self.width, 
-                height=self.height,
-                image_path=self.image_path
-            )
-            
-            # Add a flag to identify this as the default work area
-            default_work_area.is_default = True
-            
-            # Add to work areas list
-            self.work_areas = [default_work_area]
-        self._has_default_work_area = True
         
     def set_selected(self, is_selected: bool):
         """Mark this raster as selected in the UI"""
@@ -307,13 +281,6 @@ class Raster(QObject):
             work_area: Work area object to add
         """
         if work_area not in self.work_areas:
-            # If this is the first custom work area, remove the default work area
-            if self._has_default_work_area and len(self.work_areas) == 1:
-                # Check if the first one is the default work area
-                if hasattr(self.work_areas[0], 'is_default') and self.work_areas[0].is_default:
-                    self.work_areas.clear()
-                    self._has_default_work_area = False
-            
             # Add the new work area
             self.work_areas.append(work_area)
             
@@ -325,19 +292,6 @@ class Raster(QObject):
             list: List of work area objects
         """
         return self.work_areas
-    
-    def get_custom_work_areas(self):
-        """
-        Get all custom work areas for this raster (excluding the default work area).
-        
-        Returns:
-            list: List of custom work area objects
-        """
-        if not self.work_areas:
-            return []
-            
-        # Filter out the default work area
-        return [wa for wa in self.work_areas if not (hasattr(wa, 'is_default') and wa.is_default)]
         
     def has_work_areas(self):
         """
@@ -348,28 +302,6 @@ class Raster(QObject):
         """
         return len(self.work_areas) > 0
     
-    def has_custom_work_areas(self):
-        """
-        Check if this raster has any custom work areas (not the default one).
-        
-        Returns:
-            bool: True if the raster has custom work areas, False otherwise
-        """
-        if not self.work_areas:
-            return False
-            
-        # If we have more than one work area, we definitely have custom ones
-        if len(self.work_areas) > 1:
-            return True
-            
-        # If we have exactly one work area, check if it's the default one
-        if len(self.work_areas) == 1:
-            work_area = self.work_areas[0]
-            if hasattr(work_area, 'is_default') and work_area.is_default:
-                return False
-        
-        return True
-    
     def count_work_items(self):
         """
         Count the number of work items for this raster.
@@ -379,10 +311,10 @@ class Raster(QObject):
         Returns:
             int: Number of work items
         """
-        if self.has_custom_work_areas():
+        if self.has_work_areas():
             return len(self.work_areas)
         else:
-            return 1
+            return 1  # The entire image counts as one work item
     
     def get_work_area_data(self, work_area):
         """
@@ -412,6 +344,9 @@ class Raster(QObject):
             if data is not None:
                 work_area_data.append(data)
                 
+        if len(work_area_data) == 0:
+            work_area_data = [self.image_path]  # Fallback to the full image path
+            
         return work_area_data
         
     def remove_work_area(self, work_area):
@@ -423,20 +358,10 @@ class Raster(QObject):
         """
         if work_area in self.work_areas:
             self.work_areas.remove(work_area)
-            
-            # If this was the default work area, update the flag
-            if hasattr(work_area, 'is_default') and work_area.is_default:
-                self._has_default_work_area = False
-            
-            # If no work areas left, add back the default one
-            if len(self.work_areas) == 0:
-                self._add_default_work_area()
                 
     def clear_work_areas(self):
-        """Clear all work areas and restore the default work area."""
+        """Clear all work areas."""
         self.work_areas.clear()
-        self._has_default_work_area = False
-        self._add_default_work_area()
         
     def cleanup(self):
         """Release all resources associated with this raster."""

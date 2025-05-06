@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, QHBo
                              QLabel, QMessageBox, QPushButton, QSlider, QSpinBox,
                              QVBoxLayout, QGroupBox)
 
-
+from coralnet_toolbox.QtWorkArea import WorkArea
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -499,11 +499,7 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        from time import time
-        start_time = time()
         work_areas_data = self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
-        end_time = time()
-        print(f"Get work areas time: {end_time - start_time:.2f} seconds")
         return work_areas_data
 
     def _apply_model(self, inputs):
@@ -518,18 +514,14 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(inputs))
         
-        from time import time
         results = []
 
         # Process each input separately
         for i, input_image in enumerate(inputs):
             # Make predictions on single image
             with torch.no_grad():
-                start_time = time()
                 result = self.loaded_model(input_image)
                 results.append(result)
-                end_time = time()
-                print(f"Prediction time for image {i}: {end_time - start_time:.2f} seconds")
                 # Update the progress bar
                 progress_bar.update_progress()
                 # Clean up GPU memory after each prediction
@@ -575,25 +567,24 @@ class DeployGeneratorDialog(QDialog):
                     # Update path and names
                     result.path = image_path
                     result.names = {0: self.class_mapping[0].short_label_code}
-                    # Map results from work area to the full image
-                    mapped_result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
+                    
+                    # Check if the work area is valid, or the image path is being used
+                    if work_areas:
+                        # Map results from work area to the full image
+                        result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
+                        
                     # Append the result to the updated results list
-                    mapped_results.append(mapped_result)
+                    mapped_results.append(result)
                     
                 # Update the index for the next work area
                 idx += 1
                 progress_bar.update_progress()
         
-        from time import time
-        start_time = time()
         # Process the segmentations
         if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
             results_processor.process_segmentation_results(mapped_results)
         else:
             results_processor.process_detection_results(mapped_results)
-            
-        end_time = time()
-        print(f"Processing time: {end_time - start_time:.2f} seconds")
             
         # Close the progress bar
         progress_bar.finish_progress()

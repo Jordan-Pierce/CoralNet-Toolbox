@@ -164,11 +164,6 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
             image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Normalize data to 0-255 range if it's not already
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
-
         # Convert the numpy array to QImage
         qimage = QImage(image.data.tobytes(),
                         scaled_width,
@@ -243,11 +238,6 @@ def rasterio_to_cropped_image(rasterio_src, window):
         if image.dtype != np.uint8:
             image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
-
-        # Normalize data to 0-255 range if it's not already
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
         
         # Convert the numpy array to QImage
         qimage = QImage(image.data.tobytes(),
@@ -352,11 +342,6 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
             image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Normalize data to 0-255 range if it's not already
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
-
         return image
 
     except Exception as e:
@@ -378,65 +363,31 @@ def work_area_to_numpy(rasterio_src, work_area):
     Returns:
         numpy.ndarray: Image data from the work area as numpy array (h, w, 3) for RGB, (h, w) for grayscale
     """
-    from time import time
-    start_time_total = time()
-    
     if not rasterio_src:
         return None
     
     # If we got a WorkArea object, use its rect
-    start_time = time()
     if hasattr(work_area, 'rect'):
         rect = work_area.rect
     else:
         rect = work_area
-    end_time = time()
-    print(f"Rect extraction took {end_time - start_time:.4f} seconds")
         
     # Create a rasterio window from the rect
-    start_time = time()
     window = Window(
         col_off=int(rect.x()),
         row_off=int(rect.y()),
         width=int(rect.width()),
         height=int(rect.height())
     )
-    end_time = time()
-    print(f"Window creation took {end_time - start_time:.4f} seconds")
-    
-    # Check if window is within image bounds
-    start_time = time()
-    if (window.col_off < 0 or window.row_off < 0 or
-        window.col_off + window.width > rasterio_src.width or
-        window.row_off + window.height > rasterio_src.height):
-        # Clip window to image bounds
-        window = window.intersection(
-            Window(0, 0, rasterio_src.width, rasterio_src.height)
-        )
-    end_time = time()
-    print(f"Window bounds checking took {end_time - start_time:.4f} seconds")
     
     try:
-        # Check for single-band image with colormap
-        start_time = time()
         if rasterio_src.count == 1 and rasterio_src.colormap(1):
-            end_time = time()
-            print(f"Colormap detection took {end_time - start_time:.4f} seconds")
-            
             # Read the single band
-            start_time = time()
             image = rasterio_src.read(1, window=window)
-            end_time = time()
-            print(f"Single band read with colormap took {end_time - start_time:.4f} seconds")
-            
             # Get the colormap
-            start_time = time()
             colormap = rasterio_src.colormap(1)
-            end_time = time()
-            print(f"Colormap retrieval took {end_time - start_time:.4f} seconds")
             
             # Create a lookup table for the colormap
-            start_time = time()
             max_idx = max(colormap.keys()) + 1
             lut = np.zeros((max_idx, 3), dtype=np.uint8)
             
@@ -454,59 +405,30 @@ def work_area_to_numpy(rasterio_src, work_area):
             
             # Use the colorized RGB version of the image
             image = rgb_image
-            end_time = time()
-            print(f"Efficient colormap application took {end_time - start_time:.4f} seconds")
             
         elif rasterio_src.count < 3:
-            end_time = time()
-            print(f"Grayscale detection took {end_time - start_time:.4f} seconds")
-            
             # Grayscale image without colormap
-            start_time = time()
             image = rasterio_src.read(1, window=window)
-            end_time = time()
-            print(f"Grayscale image read took {end_time - start_time:.4f} seconds")
+            
+            # Convert to 3-channel grayscale image
+            image = np.stack([image] * 3, axis=-1)
                 
         else:
-            end_time = time()
-            print(f"RGB detection took {end_time - start_time:.4f} seconds")
-            
-            # RGB image
-            start_time = time()
+            # Read RGB bands
             image = rasterio_src.read([1, 2, 3], window=window)
-            end_time = time()
-            print(f"RGB bands read took {end_time - start_time:.4f} seconds")
             
             # Transpose to height, width, channels format
-            start_time = time()
             image = np.transpose(image, (1, 2, 0))
-            end_time = time()
-            print(f"Transpose to HWC took {end_time - start_time:.4f} seconds")
         
         # Convert to uint8 if not already
-        start_time = time()
         if image.dtype != np.uint8:
             if image.max() > 0:  # Avoid division by zero
                 image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
-        end_time = time()
-        print(f"Data type conversion took {end_time - start_time:.4f} seconds")
 
-        # Normalize data to 0-255 range if needed
-        start_time = time()
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):  # Avoid division by zero
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
-        end_time = time()
-        print(f"Normalization took {end_time - start_time:.4f} seconds")
-        
-        end_time_total = time()
-        print(f"Total work area extraction took {end_time_total - start_time_total:.4f} seconds\n")
         return image
         
     except Exception as e:
-        end_time_total = time()
-        print(f"Error after {end_time_total - start_time_total:.4f} seconds: {str(e)}")
         traceback.print_exc()
         return None
     
