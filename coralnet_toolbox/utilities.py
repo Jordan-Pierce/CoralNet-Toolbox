@@ -362,6 +362,9 @@ def work_area_to_numpy(rasterio_src, work_area, longest_edge=1024):
     """
     if not rasterio_src:
         return None
+    
+    from time import time
+    start_time = time()
         
     # If we got a WorkArea object, use its rect
     if hasattr(work_area, 'rect'):
@@ -477,6 +480,8 @@ def work_area_to_numpy(rasterio_src, work_area, longest_edge=1024):
             if not (image.max() - image.min() == 0):  # Avoid division by zero
                 image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
         
+        end_time = time()
+        print(f"Work area extraction took {end_time - start_time:.2f} seconds")
         return image
         
     except Exception as e:
