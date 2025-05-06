@@ -13,6 +13,7 @@ from PyQt5.QtCore import QObject
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.utilities import rasterio_to_qimage
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
+from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import pixmap_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -383,46 +384,19 @@ class Raster(QObject):
         else:
             return 1
     
-    def get_work_area_data(self, work_area):
+    def get_work_area_data(self, work_area, longest_edge=1024):
         """
-        Extract image data from a work area as a QImage or numpy array.
+        Extract image data from a work area as a numpy array, with efficient downsampling.
         
         Args:
             work_area: WorkArea object or QRectF
-            
+            longest_edge (int, optional): If provided, limits the longest edge to this size
+                while maintaining aspect ratio
+                
         Returns:
-            numpy.ndarray or QImage: Image data from the work area
+            numpy.ndarray: Image data from the work area
         """
-        if not self._rasterio_src:
-            return None
-            
-        # If we got a WorkArea object, use its rect
-        if hasattr(work_area, 'rect'):
-            rect = work_area.rect
-        else:
-            rect = work_area
-            
-        # Create a rasterio window from the rect
-        window = rasterio.windows.Window(
-            col_off=int(rect.x()),
-            row_off=int(rect.y()),
-            width=int(rect.width()),
-            height=int(rect.height())
-        )
-        
-        # Check if window is within image bounds
-        if (window.col_off < 0 or window.row_off < 0 or
-            window.col_off + window.width > self._rasterio_src.width or
-            window.row_off + window.height > self._rasterio_src.height):
-            # Clip window to image bounds
-            window = window.intersection(
-                rasterio.windows.Window(0, 0, self._rasterio_src.width, self._rasterio_src.height)
-            )
-            
-        # Get the cropped image as QImage, Pixmap, then Numpy
-        q_image = rasterio_to_cropped_image(self._rasterio_src, window)
-        
-        return pixmap_to_numpy(QPixmap.fromImage(q_image))
+        return work_area_to_numpy(self._rasterio_src, work_area, longest_edge)
     
     def get_work_areas_data(self):
         """

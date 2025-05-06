@@ -344,6 +344,145 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         traceback.print_exc()
         # Return a small empty array
         return np.zeros((100, 100, 3), dtype=np.uint8)
+
+
+def work_area_to_numpy(rasterio_src, work_area, longest_edge=1024):
+    """
+    Extract image data from a work area as a numpy array, with efficient downsampling.
+    Properly handles colormaps and different band types.
+    
+    Args:
+        rasterio_src: rasterio DatasetReader object
+        work_area: WorkArea object or QRectF
+        longest_edge (int, optional): If provided, limits the longest edge to this size
+            while maintaining aspect ratio
+            
+    Returns:
+        numpy.ndarray: Image data from the work area as numpy array (h, w, 3) for RGB, (h, w) for grayscale
+    """
+    if not rasterio_src:
+        return None
+        
+    # If we got a WorkArea object, use its rect
+    if hasattr(work_area, 'rect'):
+        rect = work_area.rect
+    else:
+        rect = work_area
+        
+    # Create a rasterio window from the rect
+    window = Window(
+        col_off=int(rect.x()),
+        row_off=int(rect.y()),
+        width=int(rect.width()),
+        height=int(rect.height())
+    )
+    
+    # Check if window is within image bounds
+    if (window.col_off < 0 or window.row_off < 0 or
+        window.col_off + window.width > rasterio_src.width or
+        window.row_off + window.height > rasterio_src.height):
+        # Clip window to image bounds
+        window = window.intersection(
+            Window(0, 0, rasterio_src.width, rasterio_src.height)
+        )
+    
+    try:
+        # Determine target size for downsampling
+        out_shape = None
+        if longest_edge is not None:
+            current_width = window.width
+            current_height = window.height
+            current_longest = max(current_width, current_height)
+            
+            if current_longest > longest_edge:
+                # Calculate scaling factor to maintain aspect ratio
+                scale_factor = longest_edge / current_longest
+                scaled_width = int(window.width * scale_factor)
+                scaled_height = int(window.height * scale_factor)
+                
+                # Check for single-band image with colormap
+                if rasterio_src.count == 1 and rasterio_src.colormap(1):
+                    out_shape = (scaled_height, scaled_width)
+                elif rasterio_src.count < 3:
+                    out_shape = (scaled_height, scaled_width)
+                else:
+                    # For RGB (3+ bands)
+                    out_shape = (3, scaled_height, scaled_width)
+        
+        # Check for single-band image with colormap
+        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+            # Read the single band with downsampling if needed
+            if out_shape:
+                image = rasterio_src.read(1, 
+                                          window=window, 
+                                          out_shape=out_shape,
+                                          resampling=rasterio.enums.Resampling.bilinear)
+            else:
+                image = rasterio_src.read(1, window=window)
+            
+            # Get the colormap
+            colormap = rasterio_src.colormap(1)
+            
+            # Create RGB image of appropriate size
+            if out_shape:
+                rgb_image = np.zeros((out_shape[0], out_shape[1], 3), dtype=np.uint8)
+            else:
+                rgb_image = np.zeros((window.height, window.width, 3), dtype=np.uint8)
+            
+            # Apply colormap to each unique value
+            for value in np.unique(image):
+                if value in colormap:
+                    # Get RGB values (ignore alpha)
+                    r, g, b, _ = colormap[value]
+                    mask = (image == value)
+                    rgb_image[mask] = [r, g, b]
+            
+            image = rgb_image
+            
+        elif rasterio_src.count < 3:
+            # Grayscale image without colormap
+            if out_shape:
+                # Downsampled read
+                image = rasterio_src.read(1, 
+                                          window=window,
+                                          out_shape=out_shape, 
+                                          resampling=rasterio.enums.Resampling.bilinear)
+            else:
+                # Full-resolution read
+                image = rasterio_src.read(1, window=window)
+                
+        else:
+            # RGB image
+            if out_shape:
+                # Downsampled read (top 3 bands)
+                image = rasterio_src.read([1, 2, 3], 
+                                          window=window, 
+                                          out_shape=out_shape,
+                                          resampling=rasterio.enums.Resampling.bilinear)
+            else:
+                # Full-resolution read (top 3 bands)
+                image = rasterio_src.read([1, 2, 3], window=window)
+            
+            # Transpose to height, width, channels format
+            image = np.transpose(image, (1, 2, 0))
+        
+        # Convert to uint8 if not already
+        if image.dtype != np.uint8:
+            if image.max() > 0:  # Avoid division by zero
+                image = image.astype(float) * (255.0 / image.max())
+            image = image.astype(np.uint8)
+
+        # Normalize data to 0-255 range if needed
+        if image.min() != 0 or image.max() != 255:
+            if not (image.max() - image.min() == 0):  # Avoid division by zero
+                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
+        
+        return image
+        
+    except Exception as e:
+        print(f"Error loading work area data: {str(e)}")
+        traceback.print_exc()
+        return None
     
 
 def pixmap_to_numpy(pixmap):

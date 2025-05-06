@@ -499,7 +499,6 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        print("Getting Work Areas Data")
         return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
 
     def _apply_model(self, inputs):
