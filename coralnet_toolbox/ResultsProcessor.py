@@ -3,7 +3,6 @@ import copy
 
 from PyQt5.QtCore import QPointF
 
-import cv2
 import numpy as np
 
 import torch
@@ -232,7 +231,7 @@ class ResultsProcessor:
         # Get the mask and convert to polygon points
         mask = result.masks.cpu().data.numpy().squeeze().astype(bool)
         
-        # Convert to biggest polygon
+        # Convert to biggest polygon (avoids multiple polygons for the same object)
         polygons = sv.detection.utils.mask_to_polygons(mask)
         
         if len(polygons) == 1:
@@ -488,8 +487,7 @@ class ResultsProcessor:
                 names = {i: str(i) for i in range(len(detection))} if len(detection) > 0 else {}
 
             if len(detection) == 0:
-                yield Results(orig_img=image, path=path, names=names)
-                continue
+                return [Results(orig_img=image, path=path, names=names)]
 
             # Handle masks if present
             if hasattr(detection, 'mask') and detection.mask is not None:
@@ -513,12 +511,12 @@ class ResultsProcessor:
                 scaled_boxes = scaled_boxes.unsqueeze(0)
             scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
 
-            # Create and yield Results object
-            yield Results(image,
-                          path=path,
-                          names=names,
-                          boxes=scaled_boxes, 
-                          masks=scaled_masks)
+            # Create and return Results object
+            return [Results(image,
+                            path=path,
+                            names=names,
+                            boxes=scaled_boxes, 
+                            masks=scaled_masks)]
             
     def combine_results(self, results: list):
         """

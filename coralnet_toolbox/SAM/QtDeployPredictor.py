@@ -578,82 +578,26 @@ class DeployPredictorDialog(QDialog):
 
         return results
 
-    def predict_from_results(self, results_generator, image_path=None):
+    def predict_from_results(self, results, image_path=None):
         """
         Make predictions using the currently loaded model and grouped results.
 
         Args:
-            results_generator (generator): A generator that yields Ultralytics Results.
+            results (ultralytics.engine.Results): Results object containing the predictions.
             image_path (str): Optional image path to override the image in the results.
         """
-        # Create a result processor with current settings.
-        result_processor = ResultsProcessor(self.main_window)
-
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
-        progress_bar.show()
-
-        # Process each batch from the results generator.
-        for results in results_generator:
-            # Apply filters to the results.
-            results = result_processor.apply_filters(results)
-            # Group detections by image path along with their bounding boxes and original image data.
-            group_dict = {}
-
-            # Start progress bar
-            progress_bar.start_progress(len(results))
-
-            # Group the results by image path
-            for result in results:
-                if result:
-                    # Extract the detection results
-                    path, cls_id, cls_name, conf, *bbox = result_processor.extract_detection_result(result)
-                    # Get the original image
-                    orig_img = result.orig_img
-
-                    if path not in group_dict:
-                        group_dict[path] = {'bboxes': [], 'orig_img': orig_img}
-                    # Add the bounding box to the group dictionary
-                    group_dict[path]['bboxes'].append(np.array(bbox))
-
-                # Update progress bar
-                progress_bar.update_progress()
-
-            # Reset progress bar
-            progress_bar.start_progress(len(group_dict))
-
-            # Process each grouped result and yield predictions.
-            for path, group in group_dict.items():
-                try:
-                    if image_path:
-                        # Override the image path if provided
-                        path = image_path
-
-                    # Set the image in the predictor
-                    self.set_image(image=group['orig_img'], image_path=path)
-                    bboxes = np.stack(group['bboxes'])
-                    new_results = self.predict_from_prompts(bboxes, [], [])
-                    # Optionally transfer additional properties from results if available.
-                    if hasattr(results, "names"):
-                        new_results.names = results.names
-                    if hasattr(results, "boxes"):
-                        new_results.boxes = results.boxes
-
-                    yield new_results
-
-                except Exception as e:
-                    QMessageBox.critical(self.annotation_window,
-                                         "Prediction Error",
-                                         f"Error predicting for image {path}: {e}")
-                finally:
-                    progress_bar.update_progress()
-
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
+        # Get the boxes (xyxy) from the results
+        boxes = results[0].boxes.xyxy.detach().cpu().numpy()
+        
+        # Set the image with SAM
+        self.set_image(image=results[0].orig_img, image_path=image_path)
+        # Make the predictions using the bounding boxes
+        new_results = self.predict_from_prompts(boxes, [], [])
+        
+        # Update the new results with the original results attributes ()
+        results[0].update(masks=new_results.masks.data)
+        
+        return results
 
     def deactivate_model(self):
         """

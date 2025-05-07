@@ -520,14 +520,14 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.show()
         progress_bar.start_progress(len(inputs))
         
-        results = []
+        results_list = []
 
         # Process each input separately
         for i, input_image in enumerate(inputs):
             # Make predictions on single image
             with torch.no_grad():
-                result = self.loaded_model(input_image)
-                results.append(result)
+                results = self.loaded_model(input_image)
+                results_list.append(results)
                 # Update the progress bar
                 progress_bar.update_progress()
                 # Clean up GPU memory after each prediction
@@ -539,16 +539,42 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.stop_progress()
         progress_bar.close()
                 
-        return results
+        return results_list
 
-    def _apply_sam(self, results, image_path):
+    def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
         # Check if SAM model is deployed
-        if self.use_sam_dropdown.currentText() == "True":
-            self.task = 'segment'
-            results = self.sam_dialog.predict_from_results(results, image_path)
+        if self.use_sam_dropdown.currentText() != "True":
+            return results_list
+        
+        # Update the task to segment
+        self.task = 'segment'
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
+        progress_bar.show()
+        progress_bar.start_progress(len(results_list))
+        
+        updated_results = []
+        
+        for idx, results in enumerate(results_list):
+            # Each Results is a list (within the results_list, [[], ]
+            if results:
+                # Run it rough the SAM model
+                results = self.sam_dialog.predict_from_results(results, image_path)
+                updated_results.append(results)
+            
+            # Update the progress bar
+            progress_bar.update_progress()
+            
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
 
-        return results
+        return updated_results
         
     def _process_results(self, results_processor, results_list, image_path):
         """Process the results using the result processor."""
