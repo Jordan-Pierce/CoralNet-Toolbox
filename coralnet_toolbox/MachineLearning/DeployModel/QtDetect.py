@@ -258,7 +258,6 @@ class Detect(Base):
             
         return work_areas_data
 
-    # TODO convert from stream to loop?
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
         results_generator = self.loaded_model(inputs,
@@ -347,9 +346,7 @@ class Detect(Base):
             # Each Results is a list (within the results_list, [[], ]
             if results:
                 # Update path
-                results[0].path = image_path
-                # results[0].names = {0: self.class_mapping[0].short_label_code}
-                
+                results[0].path = image_path                
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
                     # Map results from work area to the full image
