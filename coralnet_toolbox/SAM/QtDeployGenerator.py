@@ -474,7 +474,6 @@ class DeployGeneratorDialog(QDialog):
 
         try:
             for image_path in image_paths:
-                progress_bar.update_progress()
                 inputs = self._get_inputs(image_path)
                 if inputs is None:
                     continue
@@ -499,8 +498,7 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        work_areas_data = self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
-        return work_areas_data
+        return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""

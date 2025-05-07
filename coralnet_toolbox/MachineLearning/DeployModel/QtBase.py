@@ -32,6 +32,7 @@ class Base(QDialog):
         super().__init__(parent)
         self.main_window = main_window
         self.label_window = main_window.label_window
+        self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         self.sam_dialog = None
 

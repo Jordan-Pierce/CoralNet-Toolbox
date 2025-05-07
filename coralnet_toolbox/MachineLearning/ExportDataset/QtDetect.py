@@ -48,12 +48,12 @@ class Detect(Base):
         Update the state of annotation type checkboxes based on the selected dataset type.
         """
         self.include_patches_checkbox.setChecked(False)
-        self.include_patches_checkbox.setEnabled(False)
+        self.include_patches_checkbox.setEnabled(True)  # Enable patches for detection
         self.include_rectangles_checkbox.setChecked(True)
-        self.include_rectangles_checkbox.setEnabled(False)
+        self.include_rectangles_checkbox.setEnabled(True)  # Enable user to uncheck rectangles if desired
         self.include_polygons_checkbox.setChecked(True)
-        self.include_polygons_checkbox.setEnabled(True)
-
+        self.include_polygons_checkbox.setEnabled(True)  # Already enabled
+        
     def create_dataset(self, output_dir_path):
         """
         Create an object detection dataset.

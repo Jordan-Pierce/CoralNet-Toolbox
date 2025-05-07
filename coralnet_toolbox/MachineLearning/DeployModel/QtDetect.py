@@ -16,6 +16,7 @@ from ultralytics import YOLO, RTDETR
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
+from coralnet_toolbox.QtWorkArea import WorkArea
 from coralnet_toolbox.ResultsProcessor import ResultsProcessor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -191,12 +192,15 @@ class Detect(Base):
 
     def predict(self, image_paths=None):
         """
-        Predict the detection results for the given inputs.
-        """
-        if self.loaded_model is None:
-            return  # Early exit if there is no model loaded
+        Make predictions on the given image paths using the loaded model.
 
-        # Create a result processor
+        Args:
+            image_paths: List of image paths to process. If None, uses the current image.
+        """
+        if not self.loaded_model:
+            return
+
+        # Create a results processor
         results_processor = ResultsProcessor(
             self.main_window,
             self.class_mapping,
@@ -206,29 +210,31 @@ class Detect(Base):
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
 
-        # Use current image if image_paths is not provided.
         if not image_paths:
+            # Predict only the current image
             image_paths = [self.annotation_window.current_image_path]
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+        
         # Start the progress bar
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar = ProgressBar(self.annotation_window, title="Prediction Workflow")
         progress_bar.show()
         progress_bar.start_progress(len(image_paths))
 
         try:
-            # Loop through the image paths
             for image_path in image_paths:
-                progress_bar.update_progress()
                 inputs = self._get_inputs(image_path)
                 if inputs is None:
                     continue
 
                 results = self._apply_model(inputs)
                 results = self._apply_sam(results, image_path)
-                self._process_results(results_processor, results)
+                self._process_results(results_processor, results, image_path)
+                
+                # Update the progress bar
+                progress_bar.update_progress()
+                
         except Exception as e:
             print("An error occurred during prediction:", e)
         finally:
@@ -238,12 +244,13 @@ class Detect(Base):
             progress_bar.close()
 
         gc.collect()
-        empty_cache()  # Assuming this function is defined elsewhere
+        empty_cache()
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        return image_path
+        return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
 
+    # TODO convert from stream to loop?
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
         return self.loaded_model(
@@ -255,7 +262,7 @@ class Detect(Base):
             device=self.main_window.device,
             retina_masks=self.task == "segment",
             half=True,
-            stream=True
+            # stream=True
         )
 
     def _apply_sam(self, results, image_path):
@@ -264,22 +271,52 @@ class Detect(Base):
         if self.use_sam_dropdown.currentText() == "True":
             self.task = 'segment'
             results = self.sam_dialog.predict_from_results(results, image_path)
-        else:
-            self.task = 'detect'
 
         return results
 
-    def _apply_tile_postprocessing(self, results):
-        """Apply tile postprocessing if needed."""
-        # Check if tile inference tool is enabled
-        if self.main_window.tile_inference_tool_action.isChecked():
-            results = self.main_window.tile_processor.detect_them(results, self.task == 'segment')
-        return results
-
-    def _process_results(self, result_processor, results):
+    def _process_results(self, results_processor, results_generator, image_path):
         """Process the results using the result processor."""
-        # Process the detections
-        if self.task == 'segment':
-            result_processor.process_segmentation_results(results)
+        # Get the raster object
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        work_areas = raster.get_work_areas()
+        total = raster.count_work_items()
+        
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
+        progress_bar.show()
+        progress_bar.start_progress(total)
+        
+        idx = 0
+        mapped_results = []
+
+        # Executes the model predictions
+        for results in results_generator:
+            # Each result in the Results object
+            for result in results:
+                if result:
+                    # Update path and names
+                    # result.path = image_path
+                    # result.names = {0: self.class_mapping[0].short_label_code}
+                    
+                    # Check if the work area is valid, or the image path is being used
+                    if work_areas:
+                        # Map results from work area to the full image
+                        result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
+                        
+                    # Append the result to the updated results list
+                    mapped_results.append(result)
+                    
+                # Update the index for the next work area
+                idx += 1
+                progress_bar.update_progress()
+        
+        # Process the segmentations
+        if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
+            results_processor.process_segmentation_results(mapped_results)
         else:
-            result_processor.process_detection_results(results)
+            results_processor.process_detection_results(mapped_results)
+            
+        # Close the progress bar
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()

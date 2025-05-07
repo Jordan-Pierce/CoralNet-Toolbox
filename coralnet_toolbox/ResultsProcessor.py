@@ -638,7 +638,7 @@ class ResultsProcessor:
         
         # Copy other relevant attributes
         mapped_results.names = results.names
-        mapped_results.path = results.path
+        mapped_results.path = raster.image_path
         mapped_results.orig_shape = raster.shape
         
         # Get work area coordinates
