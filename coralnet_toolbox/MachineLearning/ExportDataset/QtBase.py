@@ -1,11 +1,8 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import os
-import json
 import random
+import ujson as json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QBrush, QColor
@@ -21,6 +18,9 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -110,7 +110,7 @@ class Base(QDialog):
         self.output_dir_button.clicked.connect(self.browse_output_dir)
         output_layout.addWidget(self.output_dir_edit)
         output_layout.addWidget(self.output_dir_button)
-        
+
         layout.addRow("Output Directory:", output_layout)
 
         group_box.setLayout(layout)
@@ -233,7 +233,7 @@ class Base(QDialog):
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self.update_summary_statistics)
         button_layout.addWidget(self.refresh_button)
-        
+
         # Add Shuffle button
         self.shuffle_button = QPushButton("Shuffle")
         self.shuffle_button.clicked.connect(self.update_summary_statistics)
@@ -520,7 +520,7 @@ class Base(QDialog):
         """
         if self.updating_summary_statistics:
             return
-        
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self, "Updating Summary Statistics")
@@ -583,7 +583,7 @@ class Base(QDialog):
         self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
 
         self.updating_summary_statistics = False
-        
+
         # Restore the cursor to the default cursor
         QApplication.restoreOverrideCursor()
         progress_bar.finish_progress()

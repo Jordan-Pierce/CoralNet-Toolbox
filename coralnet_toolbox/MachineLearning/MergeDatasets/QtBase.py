@@ -1,10 +1,8 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
-import json
 import os
 import shutil
+import ujson as json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import Qt
@@ -15,6 +13,9 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QWidget, QV
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -35,7 +36,7 @@ class Base(QDialog):
         :param parent: Parent widget, default is None.
         """
         super().__init__(parent)
-        
+
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Merge Datasets")
         self.resize(500, 500)
@@ -54,30 +55,30 @@ class Base(QDialog):
         self.setup_datasets_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
-        
+
     def setup_info_layout(self):
         """
         Set up the layout and widgets for the info layout.
         """
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
-        
+
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel("Select multiple Classification datasets to merge.")
-        
+
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_outputs_layout(self):
         """Setup the outputs layout."""
         group_box = QGroupBox("Output Dataset")
         layout = QFormLayout()
 
-        # Dataset Name Input 
+        # Dataset Name Input
         self.dataset_name_edit = QLineEdit()
         layout.addRow("Dataset Name:", self.dataset_name_edit)
 
@@ -92,7 +93,7 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-    
+
     def setup_datasets_layout(self):
         """Setup the datasets layout."""
         group_box = QGroupBox("Datasets")
@@ -106,20 +107,20 @@ class Base(QDialog):
         # Create a widget to hold the dataset entries
         self.datasets_widget = QWidget()
         self.datasets_layout = QVBoxLayout(self.datasets_widget)
-        
+
         # Add the widget to the scroll area
         scroll.setWidget(self.datasets_widget)
-        
+
         # Add button to add new dataset
         add_dataset_button = QPushButton("Add Dataset")
         add_dataset_button.clicked.connect(self.add_dataset_entry)
-        
+
         layout.addWidget(scroll)
         layout.addWidget(add_dataset_button)
-        
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_buttons_layout(self):
         """Setup the buttons layout."""
         # OK and Cancel Buttons
@@ -127,7 +128,7 @@ class Base(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.layout.addWidget(self.buttons)
-        
+
     def browse_output_directory(self, output_dir_edit):
         """
         Opens a dialog to select the output directory and sets the selected path."""
@@ -137,8 +138,8 @@ class Base(QDialog):
 
     def add_dataset_entry(self):
         """Add a new dataset entry row."""
-        self.dataset_count += 1 
-        
+        self.dataset_count += 1
+
         group_box = QGroupBox(f"Dataset {self.dataset_count}")
         form_layout = QFormLayout()
 
@@ -203,10 +204,10 @@ class Base(QDialog):
     def browse_class_mapping(self, class_mapping_edit, status_label):
         """Opens a dialog to select a class mapping JSON file, sets the path, and validates it."""
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   "Select class_mapping.json", 
-                                                   "", 
-                                                   "JSON Files (*.json);;All Files (*)", 
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select class_mapping.json",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
             class_mapping_edit.setText(file_path)
@@ -244,7 +245,7 @@ class Base(QDialog):
         """
         self.output_dir = self.output_dir_edit.text()
         self.dataset_name = self.dataset_name_edit.text()
-        
+
         if self.task != 'classify':
             QMessageBox.warning(self, "Warning", "Only Image Classification merging has been implemented.")
             return

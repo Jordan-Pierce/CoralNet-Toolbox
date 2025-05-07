@@ -4,15 +4,12 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import json
-import os
 import queue
 import random
-import sys
 
 from PyQt5.QtCore import Qt, QBasicTimer
 from PyQt5.QtGui import QPainter, QBrush
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PyQt5.QtWidgets import QMainWindow, QMessageBox
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -157,7 +154,7 @@ class Snake:
     def go(self, direction):
         """
         Move the snake in the given direction.
-        
+
         If encountering food, the snake grows.
         If colliding with the wall or its own body, the snake dies.
         """
@@ -223,18 +220,18 @@ class SnakeGame(QMainWindow):
         """
         super().__init__()
         self.main_window = main_window
-        
+
         # Remove minimize and maximize buttons.
-        self.setWindowFlags(Qt.Window | 
-                            Qt.CustomizeWindowHint | 
-                            Qt.WindowTitleHint | 
+        self.setWindowFlags(Qt.Window |
+                            Qt.CustomizeWindowHint |
+                            Qt.WindowTitleHint |
                             Qt.WindowCloseButtonHint)
-        
+
         # Set the window icon
         self.setWindowIcon(get_icon("snake.png"))
         # Set the window title
         self.title = "Snake Game"
-        
+
         # Set the size used for each board cell
         self.size = 30
         # Set the window opacity
@@ -255,7 +252,7 @@ class SnakeGame(QMainWindow):
         self.time_count = 0
         # Store the current speed (delay in ms)
         self.speed = SPEED
-        
+
     def start_game(self):
         """
         Start the game by initializing the game window and UI.
@@ -276,7 +273,7 @@ class SnakeGame(QMainWindow):
             self.init_game()                   # Create snake and set board dimensions.
             self.init_ui()                     # Use self.row and self.column for UI sizing.
             self.update_timer.start(self.speed, self)  # Start the timer.
-        
+
     def end_game(self):
         """
         End the game by stopping the timer and closing the window.
@@ -284,7 +281,7 @@ class SnakeGame(QMainWindow):
         self.snake = None
         self.update_timer.stop()
         self.close()
-        
+
     def closeEvent(self, event):
         """
         Handle the window close event.
@@ -304,7 +301,7 @@ class SnakeGame(QMainWindow):
         self.setWindowTitle(self.title)
         self.setWindowOpacity(self.opacity)
         self.show()
-        
+
     def init_game(self):
         """
         Create the snake instance and update board dimensions.
@@ -367,7 +364,7 @@ class SnakeGame(QMainWindow):
                 self.game_over()
         # Redraw the game board after handling the timer event
         self.update()
-    
+
     def win_game(self):
         # Stop the timer and congratulate the user.
         self.update_timer.stop()

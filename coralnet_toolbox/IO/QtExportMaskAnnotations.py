@@ -2,14 +2,12 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
-import json
-from pathlib import Path
+import ujson as json
 
 import cv2
 import numpy as np
 import rasterio
-from rasterio.transform import Affine
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
@@ -459,7 +457,7 @@ class ExportMaskAnnotations(QDialog):
 
         # Get the raster from the raster manager
         raster = self.image_window.raster_manager.get_raster(image_path)
-        
+
         # Only check for georeferencing if using TIF format and checkbox is checked
         can_preserve_georef = self.preserve_georef_checkbox.isChecked() and file_format.lower() == '.tif'
 
@@ -467,7 +465,7 @@ class ExportMaskAnnotations(QDialog):
             # Get dimensions from the raster
             width = raster.width
             height = raster.height
-            
+
             # Check for georeferencing if needed
             if can_preserve_georef and hasattr(raster.rasterio_src, 'transform'):
                 transform = raster.rasterio_src.transform

@@ -3,6 +3,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import cv2
+import numpy as np
+
 from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF, QRectF

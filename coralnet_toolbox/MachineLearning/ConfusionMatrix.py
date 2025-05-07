@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.ticker import FuncFormatter
 import os
-import json
+import ujson as json
 import pandas as pd
 
 

@@ -1,5 +1,6 @@
-import json
 import warnings
+
+import ujson as json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
@@ -36,7 +37,7 @@ class ExportAnnotations:
                                                    options=options)
         if not file_path:
             return
-        
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -49,12 +50,12 @@ class ExportAnnotations:
             export_dict = {}
             for annotation in self.annotation_window.annotations_dict.values():
                 image_path = annotation.image_path
-                
+
                 # Verify the image path exists in the raster manager
                 if image_path not in self.image_window.raster_manager.image_paths:
                     # Skip annotations for images that are not in the raster manager
                     continue
-                    
+
                 if image_path not in export_dict:
                     export_dict[image_path] = []
 
@@ -79,7 +80,7 @@ class ExportAnnotations:
 
                 export_dict[image_path].append(annotation_dict)
                 progress_bar.update_progress()
-            
+
             with open(file_path, 'w') as file:
                 json.dump(export_dict, file, indent=4)
                 file.flush()

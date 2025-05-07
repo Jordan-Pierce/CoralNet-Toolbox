@@ -3,12 +3,11 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
-import json
+import ujson as json
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLabel,
-                             QMessageBox, QApplication, QGroupBox, QHBoxLayout, QFormLayout, 
+                             QMessageBox, QApplication, QGroupBox, QHBoxLayout, QFormLayout,
                              QLineEdit)
 
 from coralnet_toolbox.QtLabelWindow import Label
@@ -22,7 +21,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Classes
+# Classesf
 # ----------------------------------------------------------------------------------------------------------------------
 
 
@@ -35,7 +34,7 @@ class OpenProject(QDialog):
         self.annotation_window = main_window.annotation_window
 
         self.current_project_path = self.main_window.current_project_path
-        
+
         self.updated_paths = {}
 
         self.setWindowTitle("Open Project")
@@ -45,7 +44,7 @@ class OpenProject(QDialog):
         self.setup_open_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
-        
+
     def showEvent(self, event):
         super().showEvent(event)
         self.file_path_edit.setText(self.current_project_path)
@@ -55,71 +54,71 @@ class OpenProject(QDialog):
         layout = QVBoxLayout()
         group_box = QGroupBox("Open Project")
         form_layout = QFormLayout()
-        
+
         # Create horizontal layout for path and browse button
         path_layout = QHBoxLayout()
         self.file_path_edit = QLineEdit()
         self.file_path_edit.setReadOnly(True)
         path_layout.addWidget(self.file_path_edit)
-        
+
         # Add browse button
         self.browse_button = QPushButton("Browse")
         self.browse_button.clicked.connect(self.browse_file)
         path_layout.addWidget(self.browse_button)
-        
+
         # Add to form layout
         form_layout.addRow("Project File:", path_layout)
-        
+
         # Set group box layout
         group_box.setLayout(form_layout)
-        
+
         # Add group box to main layout
         layout.addWidget(group_box)
         self.setLayout(layout)
 
     def setup_buttons_layout(self):
         layout = self.layout()
-        
+
         # Create horizontal layout for buttons
         button_layout = QHBoxLayout()
-        
+
         # Add open button
         self.open_button = QPushButton("Open")
         self.open_button.clicked.connect(self.load_selected_project)
         button_layout.addWidget(self.open_button)
-        
+
         # Add cancel button
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_button)
-        
+
         layout.addLayout(button_layout)
 
     def browse_file(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   "Open Project JSON", 
-                                                   "", 
-                                                   "JSON Files (*.json);;All Files (*)", 
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Open Project JSON",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
             self.file_path_edit.setText(file_path)
-            
+
     def load_selected_project(self):
         file_path = self.file_path_edit.text()
         if file_path:
             self.load_project(file_path)
         else:
-            QMessageBox.warning(self, 
-                                "Error", 
+            QMessageBox.warning(self,
+                                "Error",
                                 "Please select a project file first.")
 
     def open_project(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   "Open Project JSON", 
-                                                   "", 
-                                                   "JSON Files (*.json);;All Files (*)", 
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Open Project JSON",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
             self.load_project(file_path)
@@ -140,29 +139,29 @@ class OpenProject(QDialog):
             # Update current project path
             self.current_project_path = file_path
 
-            QMessageBox.information(self.annotation_window, 
+            QMessageBox.information(self.annotation_window,
                                     "Project Loaded",
                                     "Project has been successfully loaded.")
 
         except Exception as e:
-            QMessageBox.warning(self.annotation_window, 
-                                "Error Loading Project", 
+            QMessageBox.warning(self.annotation_window,
+                                "Error Loading Project",
                                 f"An error occurred while loading the project: {str(e)}")
 
         finally:
             # Restore the cursor to the default cursor
             QApplication.restoreOverrideCursor()
-        
+
         # Exit
         self.accept()
 
     def import_images(self, image_paths):
         if not image_paths:
             return
-        
+
         if not all([os.path.exists(path) for path in image_paths]):
-            image_paths, self.updated_paths = QtUpdateImagePaths.update_paths(image_paths)
-        
+            image_paths, self.updated_paths = UpdateImagePaths.update_paths(image_paths)
+
         # Start progress bar
         total_images = len(image_paths)
         progress_bar = ProgressBar(self.image_window, title="Importing Images")
@@ -175,10 +174,10 @@ class OpenProject(QDialog):
                 # Use the improved add_image method which handles both
                 # adding to raster_manager and updating filtered_paths
                 self.image_window.add_image(path)
-                
+
                 # Update the progress bar
                 progress_bar.update_progress()
-            
+
             # Show the last image if any were imported
             if self.image_window.raster_manager.image_paths:
                 self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])
@@ -195,7 +194,7 @@ class OpenProject(QDialog):
     def import_labels(self, labels):
         if not labels:
             return
-        
+
         # Create a progress bar
         total_labels = len(labels)
         progress_bar = ProgressBar(self.annotation_window, "Importing Labels")
@@ -207,7 +206,7 @@ class OpenProject(QDialog):
             for label in labels:
                 # Create a new label object
                 label = Label.from_dict(label)
-                
+
                 # Create a new label if it doesn't already exist
                 self.label_window.add_label_if_not_exists(label.short_label_code,
                                                           label.long_label_code,
@@ -215,7 +214,7 @@ class OpenProject(QDialog):
                                                           label.id)
                 # Update the progress bar
                 progress_bar.update_progress()
-                
+
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Labels",
@@ -229,7 +228,7 @@ class OpenProject(QDialog):
     def import_annotations(self, annotations):
         if not annotations:
             return
-        
+
         # Start the progress bar
         total_annotations = sum(len(image_annotations) for image_annotations in annotations.values())
         progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
@@ -242,10 +241,10 @@ class OpenProject(QDialog):
         try:
             # Loop through the annotations
             for image_path, image_annotations in annotations.items():
-                
+
                 # Checking if the image path is updated (moved)
                 updated_path = False
-                
+
                 if image_path not in self.image_window.raster_manager.image_paths:
                     # Check if the path was updated
                     if image_path in self.updated_paths:
@@ -254,17 +253,17 @@ class OpenProject(QDialog):
                     else:
                         print(f"Warning: Image not found: {image_path}")
                         continue
-                
+
                 for annotation in image_annotations:
                     # Check if all required keys are present
                     if not all(key in annotation for key in keys):
                         print(f"Warning: Missing required keys in annotation: {annotation}")
                         continue
-                    
+
                     # Check if the image path was updated
                     if updated_path:
                         annotation['image_path'] = image_path
-                    
+
                     # Get the annotation type
                     annotation_type = annotation.get('type')
                     if annotation_type == 'PatchAnnotation':
@@ -278,10 +277,10 @@ class OpenProject(QDialog):
 
                     # Add annotation to the dict
                     self.annotation_window.add_annotation_to_dict(annotation)
-                    
+
                     # Update the progress bar
                     progress_bar.update_progress()
-                    
+
                 # Update the image window's image annotations
                 self.image_window.update_image_annotations(image_path)
 

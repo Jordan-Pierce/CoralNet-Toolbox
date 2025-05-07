@@ -1,11 +1,9 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
-import gc
-import json
 import os
+import gc
 import random
+import ujson as json
 
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDialog,
@@ -14,6 +12,9 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDia
 from torch.cuda import empty_cache
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -46,7 +47,7 @@ class Base(QDialog):
         self.uncertainty_thresh = 0.30
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
-        
+
         self.task = None
         self.max_detect = 300
         self.model_path = None
@@ -103,7 +104,7 @@ class Base(QDialog):
 
     def setup_parameters_layout(self):
         raise NotImplementedError("Subclasses must implement this method")
-    
+
     def setup_sam_layout(self):
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -320,7 +321,7 @@ class Base(QDialog):
                 self.label_window.add_label_if_not_exists(label['short_label_code'],
                                                           label['long_label_code'],
                                                           QColor(*label['color']))
-                
+
     def handle_missing_class_mapping(self):
         """
         Handle the case when the class mapping file is missing.

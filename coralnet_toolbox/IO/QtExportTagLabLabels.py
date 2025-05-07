@@ -1,7 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import json
+import ujson as json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
@@ -19,11 +19,11 @@ class ExportTagLabLabels:
     def __init__(self, main_window):
         self.main_window = main_window
         self.label_window = main_window.label_window
-        
+
     def export_taglab_labels(self):
         self.main_window.untoggle_all_tools()
 
-        options = QFileDialog.Options() 
+        options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self.label_window,
                                                    "Export TagLab Labels",
                                                    "",
@@ -62,7 +62,7 @@ class ExportTagLabLabels:
                     json.dump(taglab_data, file, indent=4)
 
                 QMessageBox.information(self.label_window,
-                                        "Labels Exported", 
+                                        "Labels Exported",
                                         "TagLab labels have been successfully exported.")
 
             except Exception as e:
