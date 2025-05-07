@@ -523,7 +523,7 @@ class DeployGeneratorDialog(QDialog):
         results_list = []
 
         # Process each input separately
-        for i, input_image in enumerate(inputs):
+        for idx, input_image in enumerate(inputs):
             # Make predictions on single image
             with torch.no_grad():
                 results = self.loaded_model(input_image)

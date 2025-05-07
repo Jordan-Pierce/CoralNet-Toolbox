@@ -248,73 +248,127 @@ class Detect(Base):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        if self.annotation_window.get_selected_tool() != "work_area":
+            # Use the image path
+            work_areas_data = [raster.image_path]
+        else:
+            # Get the work areas
+            work_areas_data = raster.get_work_areas_data()
+            
+        return work_areas_data
 
     # TODO convert from stream to loop?
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
-        return self.loaded_model(
-            inputs,
-            agnostic_nms=True,
-            conf=self.main_window.get_uncertainty_thresh(),
-            iou=self.main_window.get_iou_thresh(),
-            max_det=self.max_detections_spinbox.value(),
-            device=self.main_window.device,
-            retina_masks=self.task == "segment",
-            half=True,
-            # stream=True
-        )
-
-    def _apply_sam(self, results, image_path):
+        results_generator = self.loaded_model(inputs,
+                                              agnostic_nms=True,
+                                              conf=self.main_window.get_uncertainty_thresh(),
+                                              iou=self.main_window.get_iou_thresh(),
+                                              max_det=self.max_detections_spinbox.value(),
+                                              device=self.main_window.device,
+                                              retina_masks=self.task == "segment",
+                                              half=True,
+                                              stream=True)  # memory efficient inference
+        
+        # Start the progress bar
+        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
+        progress_bar.show()
+        progress_bar.start_progress(len(inputs))
+        
+        results_list = []
+        
+        for results in results_generator:
+            results_list.append([results])
+            # Update the progress bar
+            progress_bar.update_progress()
+            # Clean up GPU memory after each prediction
+            gc.collect()
+            empty_cache()
+            
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
+        
+        return results_list
+        
+    def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
         # Check if SAM model is deployed
-        if self.use_sam_dropdown.currentText() == "True":
-            self.task = 'segment'
-            results = self.sam_dialog.predict_from_results(results, image_path)
+        if self.use_sam_dropdown.currentText() != "True":
+            return results_list
+        
+        # Update the task to segment
+        self.task = 'segment'
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
+        progress_bar.show()
+        progress_bar.start_progress(len(results_list))
+        
+        updated_results = []
+        
+        for idx, results in enumerate(results_list):
+            # Each Results is a list (within the results_list, [[], ]
+            if results:
+                # Run it rough the SAM model
+                results = self.sam_dialog.predict_from_results(results, image_path)
+                updated_results.append(results)
+            
+            # Update the progress bar
+            progress_bar.update_progress()
+            
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
 
-        return results
+        return updated_results
 
-    def _process_results(self, results_processor, results_generator, image_path):
+    def _process_results(self, results_processor, results_list, image_path):
         """Process the results using the result processor."""
-        # Get the raster object
+        # Get the raster object and number of work items
         raster = self.image_window.raster_manager.get_raster(image_path)
-        work_areas = raster.get_work_areas()
         total = raster.count_work_items()
+        
+        # Get the work areas (if any)
+        work_areas = raster.get_work_areas()
         
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
         progress_bar.show()
         progress_bar.start_progress(total)
         
-        idx = 0
-        mapped_results = []
+        updated_results = []
 
-        # Executes the model predictions
-        for results in results_generator:
-            # Each result in the Results object
-            for result in results:
-                if result:
-                    # Update path and names
-                    # result.path = image_path
-                    # result.names = {0: self.class_mapping[0].short_label_code}
+        for idx, results in enumerate(results_list):
+            # Each Results is a list (within the results_list, [[], ]
+            if results:
+                # Update path
+                results[0].path = image_path
+                # results[0].names = {0: self.class_mapping[0].short_label_code}
+                
+                # Check if the work area is valid, or the image path is being used
+                if work_areas and self.annotation_window.get_selected_tool() == "work_area":
+                    # Map results from work area to the full image
+                    results = results_processor.map_results_from_work_area(results[0], raster, work_areas[idx])
+                else:
+                    results = results[0]
                     
-                    # Check if the work area is valid, or the image path is being used
-                    if work_areas:
-                        # Map results from work area to the full image
-                        result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
-                        
-                    # Append the result to the updated results list
-                    mapped_results.append(result)
+                # Append the result object (not a list) to the updated results list
+                updated_results.append(results)
                     
                 # Update the index for the next work area
                 idx += 1
                 progress_bar.update_progress()
         
-        # Process the segmentations
+        # Process the Results
         if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(mapped_results)
+            results_processor.process_segmentation_results(updated_results)
         else:
-            results_processor.process_detection_results(mapped_results)
+            results_processor.process_detection_results(updated_results)
             
         # Close the progress bar
         progress_bar.finish_progress()
