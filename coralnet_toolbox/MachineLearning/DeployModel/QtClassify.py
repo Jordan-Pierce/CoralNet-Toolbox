@@ -90,15 +90,12 @@ class Classify(Base):
                 msg_box.setText("Model architecture could not be determined (is it still training?)\n"
                                 "Please select how to load this model:")
                 yolo_button = msg_box.addButton("Load as YOLO", QMessageBox.ActionRole)
-                rtdetr_button = msg_box.addButton("Load as RTDETR", QMessageBox.ActionRole)
                 cancel_button = msg_box.addButton(QMessageBox.Cancel)
                 
                 msg_box.exec_()
                 
                 if msg_box.clickedButton() == yolo_button:
                     model_architecture = "yolo"
-                elif msg_box.clickedButton() == rtdetr_button:
-                    model_architecture = "rtdetr"
                 else:
                     QApplication.restoreOverrideCursor()
                     return
@@ -106,8 +103,6 @@ class Classify(Base):
             # Check if the model is supported
             if model_architecture == "yolo":
                 self.loaded_model = YOLO(self.model_path)
-            elif model_architecture == "rtdetr":
-                self.loaded_model = RTDETR(self.model_path)
             else:
                 raise ValueError(f"Unsupported model architecture: {model_architecture}")
 
