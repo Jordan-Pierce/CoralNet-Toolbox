@@ -498,7 +498,15 @@ class DeployGeneratorDialog(QDialog):
 
     def _get_inputs(self, image_path):
         """Get the inputs for the model prediction."""
-        return self.image_window.raster_manager.get_raster(image_path).get_work_areas_data()
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        if self.annotation_window.get_selected_tool() != "work_area":
+            # Use the image path
+            work_areas_data = [raster.image_path]
+        else:
+            # Get the work areas
+            work_areas_data = raster.get_work_areas_data()
+            
+        return work_areas_data
 
     def _apply_model(self, inputs):
         """Apply the model to the inputs."""
@@ -541,48 +549,49 @@ class DeployGeneratorDialog(QDialog):
             results = self.sam_dialog.predict_from_results(results, image_path)
 
         return results
-
-    def _process_results(self, results_processor, results_generator, image_path):
+        
+    def _process_results(self, results_processor, results_list, image_path):
         """Process the results using the result processor."""
-        # Get the raster object
+        # Get the raster object and number of work items
         raster = self.image_window.raster_manager.get_raster(image_path)
-        work_areas = raster.get_work_areas()
         total = raster.count_work_items()
+        
+        # Get the work areas (if any)
+        work_areas = raster.get_work_areas()
         
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
         progress_bar.show()
         progress_bar.start_progress(total)
         
-        idx = 0
-        mapped_results = []
+        updated_results = []
 
-        # Executes the model predictions
-        for results in results_generator:
-            # Each result in the Results object
-            for result in results:
-                if result:
-                    # Update path and names
-                    result.path = image_path
-                    result.names = {0: self.class_mapping[0].short_label_code}
+        for idx, results in enumerate(results_list):
+            # Each Results is a list (within the results_list, [[], ]
+            if results:
+                # Update path and names
+                results[0].path = image_path
+                results[0].names = {0: self.class_mapping[0].short_label_code}
+                
+                # Check if the work area is valid, or the image path is being used
+                if work_areas and self.annotation_window.get_selected_tool() == "work_area":
+                    # Map results from work area to the full image
+                    results = results_processor.map_results_from_work_area(results[0], raster, work_areas[idx])
+                else:
+                    results = results[0]
                     
-                    # Check if the work area is valid, or the image path is being used
-                    if work_areas:
-                        # Map results from work area to the full image
-                        result = results_processor.map_results_from_work_area(result, raster, work_areas[idx])
-                        
-                    # Append the result to the updated results list
-                    mapped_results.append(result)
+                # Append the result object (not a list) to the updated results list
+                updated_results.append(results)
                     
                 # Update the index for the next work area
                 idx += 1
                 progress_bar.update_progress()
         
-        # Process the segmentations
+        # Process the Results
         if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
-            results_processor.process_segmentation_results(mapped_results)
+            results_processor.process_segmentation_results(updated_results)
         else:
-            results_processor.process_detection_results(mapped_results)
+            results_processor.process_detection_results(updated_results)
             
         # Close the progress bar
         progress_bar.finish_progress()

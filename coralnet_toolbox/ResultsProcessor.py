@@ -1,10 +1,11 @@
+import gc
 import copy
 
 from PyQt5.QtCore import QPointF
 
+import cv2
 import numpy as np
 
-import cv2
 import torch
 from torchvision.ops import nms
 
@@ -681,74 +682,43 @@ class ResultsProcessor:
             # Update boxes using the proper method
             mapped_results.update(boxes=mapped_boxes)
         
-            # Map masks if they exist
-            if results.masks is not None and len(results.masks) > 0:
-                import time
-                # For masks, we need to transform the mask data to match the full image dimensions
-                start_time_masks = time.time()
-                orig_h, orig_w = raster.height, raster.width
-                
-                # Get all masks as a batch
-                start_time_data = time.time()
-                masks_data = results.masks.data.cpu().numpy()
-                num_masks = masks_data.shape[0]
-                end_time_data = time.time()
-                print(f"Masks data conversion time: {end_time_data - start_time_data:.4f}s")
-                
-                # Check if we need to resize masks to match work area dimensions
-                start_time_resize = time.time()
-                if masks_data.shape[1] != wa_h or masks_data.shape[2] != wa_w:
-                    # Prepare a list to hold resized masks
-                    resized_masks = []
+        # Map masks if they exist - direct transformation approach
+        if results.masks is not None and len(results.masks) > 0:
+            orig_h, orig_w = raster.height, raster.width
+            
+            # Create a zero-filled tensor for the full image masks
+            device = results.masks.data.device
+            dtype = results.masks.data.dtype
+            full_masks = torch.zeros((len(results.masks), orig_h, orig_w), device=device, dtype=dtype)
+            
+            # Get the work area as slice coordinates
+            y_slice = slice(wa_y, wa_y + wa_h)
+            x_slice = slice(wa_x, wa_x + wa_w)
+            
+            # For each mask in the results
+            for i, mask in enumerate(results.masks.data):
+                # Resize mask to work area dimensions if needed
+                if mask.shape != (wa_h, wa_w):
+                    # Resize using interpolation
+                    resized_mask = torch.nn.functional.interpolate(
+                        mask.unsqueeze(0).unsqueeze(0).float(), 
+                        size=(wa_h, wa_w), 
+                        mode='bilinear', 
+                        align_corners=False
+                    ).squeeze(0).squeeze(0) > 0.5
+                else:
+                    resized_mask = mask
                     
-                    # Resize each mask to match work area
-                    for mask in masks_data:
-                        mask_resized = cv2.resize(mask.astype(np.uint8), 
-                                                  (wa_w, wa_h), 
-                                                  interpolation=cv2.INTER_NEAREST).astype(bool)
-                        resized_masks.append(mask_resized)
-                    
-                    # Stack back into an array
-                    masks_data = np.stack(resized_masks)
-                    
-                end_time_resize = time.time()
-                print(f"Masks resize time: {end_time_resize - start_time_resize:.4f}s")
+                # Place the resized mask in the correct position in the full image
+                full_masks[i, y_slice, x_slice] = resized_mask
+            
+            # Update masks in the result
+            mapped_results.update(masks=full_masks)
                 
-                # Create a batch of full-sized masks all at once
-                start_time_full = time.time()
-                full_masks = np.zeros((num_masks, orig_h, orig_w), dtype=bool)
-                
-                # Place all masks in their correct positions in one operation
-                # Make sure we don't exceed the image boundaries
-                y_end = min(wa_y + wa_h, orig_h)
-                x_end = min(wa_x + wa_w, orig_w)
-                y_size = y_end - wa_y
-                x_size = x_end - wa_x
-                
-                if y_size > 0 and x_size > 0:
-                    full_masks[:, wa_y:y_end, wa_x:x_end] = masks_data[:, :y_size, :x_size]
-                end_time_full = time.time()
-                print(f"Full masks creation time: {end_time_full - start_time_full:.4f}s")
-                
-                # Convert back to torch tensor and maintain original device and dtype
-                start_time_convert = time.time()
-                masks_tensor = torch.tensor(full_masks, 
-                                            device=results.masks.data.device,
-                                            dtype=results.masks.data.dtype)
-                end_time_convert = time.time()
-                print(f"Convert back to tensor time: {end_time_convert - start_time_convert:.4f}s")
-                
-                # Update the mapped results with the new masks
-                start_time_update = time.time()
-                mapped_results.update(masks=masks_tensor)
-                end_time_update = time.time()
-                print(f"Update results time: {end_time_update - start_time_update:.4f}s")
-                
-                end_time_masks = time.time()
-                print(f"Total masks processing time: {end_time_masks - start_time_masks:.4f}s")
-        
         # If there are probs (classification results), copy them directly
         if hasattr(results, 'probs') and results.probs is not None:
             mapped_results.update(probs=results.probs.data)
+            
+        gc.collect()
         
         return mapped_results

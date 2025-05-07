@@ -191,6 +191,10 @@ class AnnotationWindow(QGraphicsView):
             return False
 
         return self.viewport().rect().contains(pos)
+    
+    def get_selected_tool(self):
+        """Get the currently selected tool."""
+        return self.selected_tool
 
     def set_selected_tool(self, tool):
         """Set the currently active tool and deactivate the previous one."""
