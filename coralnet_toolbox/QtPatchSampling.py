@@ -16,6 +16,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
+from coralnet_toolbox.Common.QtMarginOverlay import MarginOverlay
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -291,7 +292,7 @@ class PatchSamplingDialog(QDialog):
         return annotations[:num_annotations]
 
     def update_annotation_graphics(self):
-        """Create and display annotation preview graphics."""
+        """Create and display annotation preview graphics, including margin overlays."""
         self.clear_annotation_graphics()
 
         # Get current parameters
@@ -311,23 +312,27 @@ class PatchSamplingDialog(QDialog):
             QMessageBox.warning(self, "Invalid Margins", str(e))
             return
 
+        # Add margin overlay
+        image_width = self.annotation_window.pixmap_image.width()
+        image_height = self.annotation_window.pixmap_image.height()
+        margin_overlay = MarginOverlay(image_width, image_height, margins)
+        self.annotation_window.scene.addItem(margin_overlay)
+        self.annotation_graphics.append(margin_overlay)
+
         # Sample new annotations
         self.sampled_annotations = self.sample_annotations(
             method,
             num_annotations,
             annotation_size,
             margins,
-            self.annotation_window.pixmap_image.width(),
-            self.annotation_window.pixmap_image.height()
+            image_width,
+            image_height
         )
 
         # Create graphics for each annotation
         for annotation in self.sampled_annotations:
             x, y, size = annotation
-
-            # Create simple patch graphic
             graphic = PatchGraphic(x, y, size, sample_label.color)
-
             self.annotation_window.scene.addItem(graphic)
             self.annotation_graphics.append(graphic)
 
@@ -457,7 +462,7 @@ class PatchSamplingDialog(QDialog):
         self.accept()
 
     def clear_annotation_graphics(self):
-        """Remove all annotation preview graphics."""
+        """Remove all annotation preview graphics, including margin overlays."""
         for graphic in self.annotation_graphics:
             self.annotation_window.scene.removeItem(graphic)
         self.annotation_graphics = []
