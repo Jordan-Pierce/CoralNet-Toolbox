@@ -516,6 +516,10 @@ def clean_polygon(polygon, tolerance=0.1, min_area=10):
     min_area: minimum area for a valid polygon (in pixel^2)
     Returns: cleaned Nx2 numpy array
     """
+    # Check if we have enough points to form a valid polygon
+    if polygon is None or len(polygon) < 3:
+        return np.empty((0, 2))
+        
     poly = Polygon(polygon)
     # Make valid if necessary
     if not poly.is_valid:
