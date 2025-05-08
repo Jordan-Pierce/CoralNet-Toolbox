@@ -20,10 +20,14 @@ from coralnet_toolbox.Tools import (
     SAMTool,
     SeeAnythingTool,
     SelectTool,
-    ZoomTool
+    ZoomTool,
+    WorkAreaTool
 )
 
+from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
+
 from coralnet_toolbox.utilities import rasterio_open
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -42,7 +46,6 @@ class AnnotationWindow(QGraphicsView):
     annotationSelected = pyqtSignal(int)  # Signal to emit when annotation is selected
     annotationDeleted = pyqtSignal(str)  # Signal to emit when annotation is deleted
     annotationCreated = pyqtSignal(str)  # Signal to emit when annotation is created
-    hover_point = pyqtSignal(QPointF)  # Signal to emit when mouse hovers over a point
 
     def __init__(self, main_window, parent=None):
         """Initialize the annotation window with the main window and parent widget."""
@@ -80,6 +83,10 @@ class AnnotationWindow(QGraphicsView):
         self.active_image = False
         self.current_image_path = None
 
+        # Initialize the graphics utility class for standardized visual elements
+        self.graphics_utility = GraphicsUtility()
+
+        # Connect signals to slots
         self.toolChanged.connect(self.set_selected_tool)
 
         self.tools = {
@@ -90,7 +97,8 @@ class AnnotationWindow(QGraphicsView):
             "rectangle": RectangleTool(self),
             "polygon": PolygonTool(self),
             "sam": SAMTool(self),
-            "see_anything": SeeAnythingTool(self)
+            "see_anything": SeeAnythingTool(self),
+            "work_area": WorkAreaTool(self)
         }
 
     def dragEnterEvent(self, event):
@@ -137,7 +145,6 @@ class AnnotationWindow(QGraphicsView):
 
         scene_pos = self.mapToScene(event.pos())
         self.mouseMoved.emit(int(scene_pos.x()), int(scene_pos.y()))
-        self.hover_point.emit(scene_pos)
 
         if not self.cursorInWindow(event.pos()):
             self.toggle_cursor_annotation()
@@ -184,6 +191,10 @@ class AnnotationWindow(QGraphicsView):
             return False
 
         return self.viewport().rect().contains(pos)
+    
+    def get_selected_tool(self):
+        """Get the currently selected tool."""
+        return self.selected_tool
 
     def set_selected_tool(self, tool):
         """Set the currently active tool and deactivate the previous one."""

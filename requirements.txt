@@ -5,6 +5,7 @@ open-clip-torch>=2.20.0
 supervision>=0.24.0
 scikit-learn
 pycocotools
+ujson
 timm==0.9.2
 autodistill
 transformers>=4.5.0

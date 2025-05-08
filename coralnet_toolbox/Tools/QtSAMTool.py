@@ -80,39 +80,6 @@ class SAMTool(Tool):
         self.cancel_working_area()
         self.has_active_prompts = False
 
-    def get_workarea_thickness(self):
-        """
-        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
-        """
-        view = self.annotation_window
-        if not view.pixmap_image:
-            return 5  # fallback
-
-        # Get the current zoom scale from the view's transformation matrix
-        scale = view.transform().m11()
-        if scale == 0:
-            scale = 1  # avoid division by zero
-
-        desired_px = 5  # Desired thickness in screen pixels
-        thickness = max(1, int(round(desired_px / scale)))
-        return thickness
-    
-    def get_rectangle_graphic_thickness(self):
-        """
-        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
-        """
-        view = self.annotation_window
-        if not view.pixmap_image:
-            return 2  # fallback
-
-        scale = view.transform().m11()
-        if scale == 0:
-            scale = 1  # avoid division by zero
-
-        desired_px = 2  # Desired thickness in screen pixels
-        thickness = max(1, int(round(desired_px / scale)))
-        return thickness 
-    
     def set_working_area(self):
         """
         Set the working area for the tool.
@@ -152,10 +119,13 @@ class SAMTool(Tool):
         # Set the working area
         working_rect = QRectF(left, top, right - left, bottom - top)
 
+        # Get the thickness for the working area graphic
+        width = self.annotation_window.graphics_utility.get_workarea_thickness(self.annotation_window)
+        
         # Create the graphic for the working area
         pen = QPen(Qt.green)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(self.get_workarea_thickness())
+        pen.setWidth(width)
         self.working_area = QGraphicsRectItem(working_rect)
         self.working_area.setPen(pen)
 
@@ -368,12 +338,18 @@ class SAMTool(Tool):
         if self.rectangle_graphics:
             self.annotation_window.scene.removeItem(self.rectangle_graphics)
             self.rectangle_graphics = None
-            
+        
         # Create rectangle graphic
         rect = QRectF(top_left, bottom_right)
+        
+        # Get the thickness for the rectangle graphic
+        width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
+        
+        # Create a dashed pen for the rectangle
         pen = QPen(self.annotation_window.selected_label.color)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(self.get_rectangle_graphic_thickness())
+        pen.setWidth(width)
+        
         self.rectangle_graphics = QGraphicsRectItem(rect)
         self.rectangle_graphics.setPen(pen)
         self.rectangle_graphics.setBrush(QBrush(Qt.transparent))

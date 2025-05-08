@@ -13,7 +13,9 @@ from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout, QLabel, QDi
                              QDoubleSpinBox, QComboBox, QPushButton, QFileDialog, QSpinBox,
                              QHBoxLayout, QWidget)
 
-from coralnet_toolbox.QtCommon import TileSizeInput, OverlapInput, MarginInput
+from coralnet_toolbox.Common.QtTileSizeInput import TileSizeInput
+from coralnet_toolbox.Common.QtOverlapInput import OverlapInput
+from coralnet_toolbox.Common.QtMarginInput import MarginInput
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 

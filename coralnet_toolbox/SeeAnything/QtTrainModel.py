@@ -1,12 +1,10 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import gc
-import json
 import datetime
 import traceback
+import ujson as json
 from pathlib import Path
 
 from ultralytics import YOLOE
@@ -17,12 +15,14 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, )
 
-import torch
 from torch.cuda import empty_cache
 
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -54,10 +54,10 @@ class TrainModelWorker(QThread):
         super().__init__()
         self.params = params
         self.device = device
-                
+
         self.model = None
         self.model_path = None
-                
+
     def pre_run(self):
         """
         Set up the model and prepare parameters for training.
@@ -67,10 +67,10 @@ class TrainModelWorker(QThread):
             self.model_path = self.params.pop('model', None)
             # Load the model
             self.model = YOLOE(self.model_path)
-                
+
             freeze = []
             training_mode = self.params.pop('training_mode', 'linear-probing')
-            
+
             if training_mode == 'linear-probing':
                 head_index = len(self.model.model.model) - 1
                 freeze = [str(f) for f in range(0, head_index)]
@@ -88,7 +88,7 @@ class TrainModelWorker(QThread):
                         f"{head_index}.cv3.2.1",
                     ]
                 )
-            
+
             self.params['freeze'] = freeze
 
         except Exception as e:
@@ -100,24 +100,24 @@ class TrainModelWorker(QThread):
         """
         Run the training process in a separate thread.
         """
-        try:            
+        try:
             # Emit signal to indicate training has started
             self.training_started.emit()
-            
+
             # Set up the model and parameters
             self.pre_run()
 
             # Train the model
-            self.model.train(**self.params, 
+            self.model.train(**self.params,
                              trainer=YOLOEPESegTrainer,
                              device=self.device)
-            
+
             # Post-run cleanup
             self.post_run()
 
             # Evaluate the model after training
             self.evaluate_model()
-            
+
             # Emit signal to indicate training has completed
             self.training_completed.emit()
 
@@ -126,7 +126,7 @@ class TrainModelWorker(QThread):
             self.training_error.emit(f"Error during training: {e} (see console log)")
         finally:
             self._cleanup()
-            
+
     def post_run(self):
         """
         Clean up resources after training.
@@ -218,7 +218,7 @@ class TrainModelDialog(QDialog):
         self.model_path = None
         # Class mapping
         self.class_mapping = {}
-        
+
         # Task specific parameters
         self.imgsz = 640
         self.batch = 4
@@ -257,11 +257,11 @@ class TrainModelDialog(QDialog):
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
-        
+
         self.task = "segment"
         self.imgsz = 640
         self.batch = 4
-        
+
         group_box = QGroupBox("Dataset")
         layout = QFormLayout()
 
@@ -297,22 +297,22 @@ class TrainModelDialog(QDialog):
 
         # Create tabbed widget
         tab_widget = QTabWidget()
-        
+
         # Tab 1: Select model from dropdown
         model_select_tab = QWidget()
         model_select_layout = QFormLayout(model_select_tab)
-        
+
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
         model_select_layout.addRow("Model:", self.model_combo)
-        
+
         tab_widget.addTab(model_select_tab, "Select Model")
-        
+
         # Tab 2: Use existing model
         model_existing_tab = QWidget()
         model_existing_layout = QFormLayout(model_existing_tab)
-        
+
         # Existing Model
         self.model_edit = QLineEdit()
         self.model_button = QPushButton("Browse...")
@@ -321,9 +321,9 @@ class TrainModelDialog(QDialog):
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
         model_existing_layout.addRow("Existing Model:", model_layout)
-        
+
         tab_widget.addTab(model_existing_tab, "Use Existing Model")
-        
+
         layout.addWidget(tab_widget)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -364,7 +364,7 @@ class TrainModelDialog(QDialog):
         # Name
         self.name_edit = QLineEdit()
         form_layout.addRow("Name:", self.name_edit)
-        
+
         # Fine-tune or Linear Probing
         self.training_mode = QComboBox()
         self.training_mode.addItems(["linear-probe", "fine-tune"])
@@ -453,7 +453,7 @@ class TrainModelDialog(QDialog):
         form_layout.addRow("", self.add_param_button)
 
         self.layout.addWidget(group_box)
-        
+
     def add_parameter_pair(self):
         """
         Add a new pair of parameter name and value input fields.
@@ -479,20 +479,20 @@ class TrainModelDialog(QDialog):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.layout.addWidget(self.cancel_button)
-        
+
     def update_by_training_mode(self):
         """Update certain parameters depending on the fine-tune / linear probing"""
         # Get the current value of the fine-tune combo box
         training_mode = self.training_mode.currentText()
-        
+
         if training_mode == "fine-tune":
             # Fine-tune mode
             self.epochs_spinbox.setValue(80)
             self.patience_spinbox.setValue(20)
-        else: 
+        else:
             self.epochs_spinbox.setValue(2)
             self.patience_spinbox.setValue(1)
-        
+
     def load_model_combobox(self):
         """Load the model combobox with the available models."""
         self.model_combo.clear()
@@ -573,9 +573,9 @@ class TrainModelDialog(QDialog):
         """
         Open a file dialog to browse for a model file.
         """
-        file_path, _ = QFileDialog.getOpenFileName(self, 
-                                                   "Select Model File", 
-                                                   "", 
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Select Model File",
+                                                   "",
                                                    "Model Files (*.pt *.pth);;All Files (*)")
         if file_path:
             self.model_path_edit.setText(file_path)
@@ -643,11 +643,11 @@ class TrainModelDialog(QDialog):
                             params[name] = float(value)
                         except ValueError:
                             params[name] = value
-            
+
         params['lr0'] = 1e-3 if 'lr0' not in params else params['lr0']
         params['warmup_bias_lr'] = 0.0 if 'warmup_bias_lr' not in params else params['warmup_bias_lr']
         params['weight_decay'] = 0.025 if 'weight_decay' not in params else params['weight_decay']
-        params['momentum'] = 0.9 if 'momentum' not in params else params['momentum']            
+        params['momentum'] = 0.9 if 'momentum' not in params else params['momentum']
         params['close_mosaic'] = 10 if 'close_mosaic' not in params else params['close_mosaic']
 
         # Return the dictionary of parameters

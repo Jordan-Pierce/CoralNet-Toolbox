@@ -1,3 +1,6 @@
+import gc
+import copy
+
 from PyQt5.QtCore import QPointF
 
 import numpy as np
@@ -33,6 +36,7 @@ class ResultsProcessor:
         # Initialize the ResultsProcessor with the main window
         self.main_window = main_window
         self.label_window = main_window.label_window
+        self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
 
         self.class_mapping = class_mapping
@@ -227,7 +231,7 @@ class ResultsProcessor:
         # Get the mask and convert to polygon points
         mask = result.masks.cpu().data.numpy().squeeze().astype(bool)
         
-        # Convert to biggest polygon
+        # Convert to biggest polygon (avoids multiple polygons for the same object)
         polygons = sv.detection.utils.mask_to_polygons(mask)
         
         if len(polygons) == 1:
@@ -381,7 +385,7 @@ class ResultsProcessor:
             self.main_window.confidence_window.display_cropped_image(annotation)
 
         # Update the image in the image window
-        self.main_window.image_window.update_image_annotations(image_path)
+        self.image_window.update_image_annotations(image_path)
         # Unselect all annotations
         self.annotation_window.unselect_annotations()
                 
@@ -483,8 +487,7 @@ class ResultsProcessor:
                 names = {i: str(i) for i in range(len(detection))} if len(detection) > 0 else {}
 
             if len(detection) == 0:
-                yield Results(orig_img=image, path=path, names=names)
-                continue
+                return [Results(orig_img=image, path=path, names=names)]
 
             # Handle masks if present
             if hasattr(detection, 'mask') and detection.mask is not None:
@@ -508,12 +511,12 @@ class ResultsProcessor:
                 scaled_boxes = scaled_boxes.unsqueeze(0)
             scaled_boxes = torch.cat([scaled_boxes, scores, cls], dim=1)
 
-            # Create and yield Results object
-            yield Results(image,
-                          path=path,
-                          names=names,
-                          boxes=scaled_boxes, 
-                          masks=scaled_masks)
+            # Create and return Results object
+            return [Results(image,
+                            path=path,
+                            names=names,
+                            boxes=scaled_boxes, 
+                            masks=scaled_masks)]
             
     def combine_results(self, results: list):
         """
@@ -605,3 +608,115 @@ class ResultsProcessor:
         combined_result.names = combined_names
         
         return combined_result
+    
+    def map_results_from_work_area(self, results, raster, work_area):
+        """
+        Maps coordinates in Results objects from work area to original image coordinates.
+        
+        Args:
+            results: Ultralytics Results object or list of Results objects
+            raster: Raster object containing the original image dimensions
+            work_area: WorkArea object containing the sub-region information
+            
+        Returns:
+            Results: Updated Results object with coordinates mapped to the original image
+        """
+        if results is None:
+            return None
+                
+        # Handle list of results
+        if isinstance(results, list):
+            return [self.map_results_from_work_area(r, raster, work_area) for r in results]
+        
+        # Get the raster object to get original image dimensions
+        if raster is None:
+            return results  # Return original results if raster not found
+        
+        # Create a new Results object to avoid modifying the original
+        mapped_results = copy.deepcopy(results)
+        
+        # Copy other relevant attributes
+        mapped_results.names = results.names
+        mapped_results.path = raster.image_path
+        mapped_results.orig_shape = raster.shape
+        
+        # Get work area coordinates
+        wa_x, wa_y = int(work_area.rect.x()), int(work_area.rect.y())
+        wa_w, wa_h = int(work_area.rect.width()), int(work_area.rect.height())
+        working_area_top_left = work_area.rect.topLeft()
+        
+        # Map bounding boxes if they exist
+        if results.boxes is not None and len(results.boxes) > 0:
+            # Get xyxyn format (normalized pixel coordinates in the cropped image)
+            boxes_xyxyn = results.boxes.xyxyn.detach().cpu().clone()
+            
+            # Scale box to work area size
+            boxes_rel = boxes_xyxyn.clone()
+            boxes_rel[:, 0] *= wa_w
+            boxes_rel[:, 1] *= wa_h
+            boxes_rel[:, 2] *= wa_w
+            boxes_rel[:, 3] *= wa_h
+            
+            # Offset to full image coordinates
+            boxes_abs = boxes_rel.clone()
+            boxes_abs[:, 0] += working_area_top_left.x()
+            boxes_abs[:, 1] += working_area_top_left.y()
+            boxes_abs[:, 2] += working_area_top_left.x()
+            boxes_abs[:, 3] += working_area_top_left.y()
+            
+            # Update the confidence values if they exist
+            conf = results.boxes.conf.detach().cpu().clone()
+            if conf.dim() == 1:
+                conf = conf.unsqueeze(1)
+            
+            # Get the class values
+            cls = results.boxes.cls.detach().cpu().clone()
+            if cls.dim() == 1:
+                cls = cls.unsqueeze(1)
+            
+            # Create the updated boxes tensor 
+            mapped_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
+                    
+            # Update boxes using the proper method
+            mapped_results.update(boxes=mapped_boxes)
+        
+        # Map masks if they exist - direct transformation approach
+        if results.masks is not None and len(results.masks) > 0:
+            orig_h, orig_w = raster.height, raster.width
+            
+            # Create a zero-filled tensor for the full image masks
+            device = results.masks.data.device
+            dtype = results.masks.data.dtype
+            full_masks = torch.zeros((len(results.masks), orig_h, orig_w), device=device, dtype=dtype)
+            
+            # Get the work area as slice coordinates
+            y_slice = slice(wa_y, wa_y + wa_h)
+            x_slice = slice(wa_x, wa_x + wa_w)
+            
+            # For each mask in the results
+            for i, mask in enumerate(results.masks.data):
+                # Resize mask to work area dimensions if needed
+                if mask.shape != (wa_h, wa_w):
+                    # Resize using interpolation
+                    resized_mask = torch.nn.functional.interpolate(
+                        mask.unsqueeze(0).unsqueeze(0).float(), 
+                        size=(wa_h, wa_w), 
+                        mode='bilinear', 
+                        align_corners=False
+                    ).squeeze(0).squeeze(0) > 0.5
+                else:
+                    resized_mask = mask
+                    
+                # Place the resized mask in the correct position in the full image
+                full_masks[i, y_slice, x_slice] = resized_mask
+            
+            # Update masks in the result
+            mapped_results.update(masks=full_masks)
+                
+        # If there are probs (classification results), copy them directly
+        if hasattr(results, 'probs') and results.probs is not None:
+            mapped_results.update(probs=results.probs.data)
+            
+        gc.collect()
+        
+        return mapped_results

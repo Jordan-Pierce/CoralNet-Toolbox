@@ -2,14 +2,19 @@ import warnings
 
 import os
 import gc
-from typing import Optional, Dict, Any, Set, Union, List
+from typing import Optional, Set, List
 
 import rasterio
+import numpy as np
 
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QObject
 
-from coralnet_toolbox.utilities import rasterio_open, rasterio_to_qimage
+from coralnet_toolbox.utilities import rasterio_open
+from coralnet_toolbox.utilities import rasterio_to_qimage
+from coralnet_toolbox.utilities import rasterio_to_cropped_image
+from coralnet_toolbox.utilities import work_area_to_numpy
+from coralnet_toolbox.utilities import pixmap_to_numpy
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
@@ -61,16 +66,36 @@ class Raster(QObject):
         self.annotation_count = 0
         self.annotations: List = []  # Store the actual annotations
         
+        # Work Area state
+        self.work_areas: List = []  # Store work area information
+        
         # Image dimensions and properties (populated when rasterio_src is loaded)
         self.width = 0
         self.height = 0
         self.channels = 0
+        self.shape = (0, 0, 0)  # Shape of the image (height, width, channels)
         
         # Metadata
         self.metadata = {}  # Can store any additional metadata
         
         # Load rasterio source
         self.load_rasterio()
+        
+    def set_selected(self, is_selected: bool):
+        """Mark this raster as selected in the UI"""
+        self.is_selected = is_selected
+    
+    def set_display_name(self, max_length=25):
+        """
+        Set a display name (truncated if necessary) for showing in table
+        
+        Args:
+            max_length (int): Maximum length for display name before truncation
+        """
+        if len(self.basename) > max_length:
+            self.display_name = self.basename[:max_length - 3] + "..."
+        else:
+            self.display_name = self.basename
         
     def load_rasterio(self) -> bool:
         """
@@ -89,6 +114,7 @@ class Raster(QObject):
             self.width = self._rasterio_src.width
             self.height = self._rasterio_src.height
             self.channels = self._rasterio_src.count
+            self.shape = (self.height, self.width, self.channels)
             
             # Update metadata
             self.metadata['dimensions'] = f"{self.width}x{self.height}"
@@ -170,6 +196,22 @@ class Raster(QObject):
         if qimage and not qimage.isNull():
             return QPixmap.fromImage(qimage)
         return None
+    
+    def get_numpy(self) -> Optional[np.ndarray]:
+        """
+        Get the image data as a numpy array.
+        
+        Returns:
+            np.ndarray or None: The image data as a numpy array, or None if loading fails
+        """
+        if self._rasterio_src is not None:
+            try:
+                # Read the image data into a numpy array
+                return pixmap_to_numpy(self.get_pixmap())
+            except Exception as e:
+                print(f"Error reading numpy data from {self.image_path}: {str(e)}")
+                return None
+        return None
         
     def update_annotation_info(self, annotations: list):
         """
@@ -188,23 +230,7 @@ class Raster(QObject):
         
         # Update labels
         self.labels = {annotation.label for annotation in annotations if annotation.label}
-    
-    def set_selected(self, is_selected: bool):
-        """Mark this raster as selected in the UI"""
-        self.is_selected = is_selected
-    
-    def set_display_name(self, max_length=25):
-        """
-        Set a display name (truncated if necessary) for showing in table
         
-        Args:
-            max_length (int): Maximum length for display name before truncation
-        """
-        if len(self.basename) > max_length:
-            self.display_name = self.basename[:max_length - 3] + "..."
-        else:
-            self.display_name = self.basename
-    
     def matches_filter(self, 
                        search_text="", 
                        search_label="", 
@@ -246,6 +272,96 @@ class Raster(QObject):
             return False
             
         return True
+    
+    def add_work_area(self, work_area):
+        """
+        Add a work area to the raster.
+        
+        Args:
+            work_area: Work area object to add
+        """
+        if work_area not in self.work_areas:
+            # Add the new work area
+            self.work_areas.append(work_area)
+            
+    def get_work_areas(self):
+        """
+        Get all work areas for this raster.
+        
+        Returns:
+            list: List of work area objects
+        """
+        return self.work_areas
+        
+    def has_work_areas(self):
+        """
+        Check if this raster has any work areas.
+        
+        Returns:
+            bool: True if the raster has work areas, False otherwise
+        """
+        return len(self.work_areas) > 0
+    
+    def count_work_items(self):
+        """
+        Count the number of work items for this raster.
+        If work areas are defined, each work area counts as a work item.
+        Otherwise, the entire image counts as a single work item.
+        
+        Returns:
+            int: Number of work items
+        """
+        if self.has_work_areas():
+            return len(self.work_areas)
+        else:
+            return 1  # The entire image counts as one work item
+    
+    def get_work_area_data(self, work_area):
+        """
+        Extract image data from a work area as a numpy array, with efficient downsampling.
+        
+        Args:
+            work_area: WorkArea object or QRectF
+            longest_edge (int, optional): If provided, limits the longest edge to this size
+                while maintaining aspect ratio
+                
+        Returns:
+            numpy.ndarray: Image data from the work area
+        """
+        return work_area_to_numpy(self._rasterio_src, work_area)
+    
+    def get_work_areas_data(self):
+        """
+        Get image data from all work areas as a list of numpy arrays.
+        
+        Returns:
+            list: List of numpy arrays representing image data from each work area
+        """
+        work_area_data = []
+        
+        for work_area in self.work_areas:
+            data = self.get_work_area_data(work_area)
+            if data is not None:
+                work_area_data.append(data)
+                
+        if len(work_area_data) == 0:
+            work_area_data = [self.image_path]  # Fallback to the full image path
+            
+        return work_area_data
+        
+    def remove_work_area(self, work_area):
+        """
+        Remove a work area from the raster.
+        
+        Args:
+            work_area: Work area object to remove
+        """
+        if work_area in self.work_areas:
+            self.work_areas.remove(work_area)
+                
+    def clear_work_areas(self):
+        """Clear all work areas."""
+        self.work_areas.clear()
         
     def cleanup(self):
         """Release all resources associated with this raster."""
@@ -261,8 +377,9 @@ class Raster(QObject):
         self._q_image = None
         self._thumbnail = None
         
-        # Clear annotations
+        # Clear annotations and work areas
         self.annotations = []
+        self.work_areas = []
         
         # Force garbage collection
         gc.collect()

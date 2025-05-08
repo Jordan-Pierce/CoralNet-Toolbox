@@ -1,12 +1,9 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import os
 import gc
-import json
+import ujson as json
 
-import torch
 import numpy as np
 
 from PyQt5.QtCore import Qt
@@ -30,6 +27,8 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
 
 from coralnet_toolbox.utilities import rasterio_to_numpy
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

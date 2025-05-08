@@ -1,9 +1,11 @@
 import os
-import json
-import math
 import argparse
-from collections import Counter
+import ujson as json
 from tqdm import tqdm
+from collections import Counter
+
+import math
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions

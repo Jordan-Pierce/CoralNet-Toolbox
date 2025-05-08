@@ -114,16 +114,21 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
             # Get the colormap
             colormap = rasterio_src.colormap(1)
             
-            # Create RGB image of appropriate size
-            rgb_image = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
+            # Create a lookup table for the colormap
+            max_idx = max(colormap.keys()) + 1
+            lut = np.zeros((max_idx, 3), dtype=np.uint8)
             
-            # Apply colormap to each unique value
-            for value in np.unique(image):
-                if value in colormap:
-                    # Get RGB values (ignore alpha)
-                    r, g, b, _ = colormap[value]
-                    mask = (image == value)
-                    rgb_image[mask] = [r, g, b]
+            # Fill the lookup table with RGB values
+            for idx, color in colormap.items():
+                if idx < max_idx:  # Safety check
+                    lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
+            
+            # Clip image indices to valid range for the LUT
+            image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
+            
+            # Use the image as indices into the lookup table
+            # This is a vectorized operation that maps each pixel to its RGB value
+            rgb_image = lut[image_indices]
             
             # Use RGB format for colormap images
             qimage_format = QImage.Format_RGB888
@@ -159,11 +164,6 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
             image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Normalize data to 0-255 range if it's not already
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
-
         # Convert the numpy array to QImage
         qimage = QImage(image.data.tobytes(),
                         scaled_width,
@@ -197,17 +197,22 @@ def rasterio_to_cropped_image(rasterio_src, window):
             
             # Get the colormap
             colormap = rasterio_src.colormap(1)
-
-            # Create RGB image of appropriate size
-            rgb_image = np.zeros((window.height, window.width, 3), dtype=np.uint8)
-
-            # Apply colormap to each unique value
-            for value in np.unique(image):
-                if value in colormap:
-                    # Get RGB values (ignore alpha)
-                    r, g, b, _ = colormap[value]
-                    mask = (image == value)
-                    rgb_image[mask] = [r, g, b]
+            
+            # Create a lookup table for the colormap
+            max_idx = max(colormap.keys()) + 1
+            lut = np.zeros((max_idx, 3), dtype=np.uint8)
+            
+            # Fill the lookup table with RGB values
+            for idx, color in colormap.items():
+                if idx < max_idx:  # Safety check
+                    lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
+            
+            # Clip image indices to valid range for the LUT
+            image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
+            
+            # Use the image as indices into the lookup table
+            # This is a vectorized operation that maps each pixel to its RGB value
+            rgb_image = lut[image_indices]
 
             # Use RGB format for colormap images
             qimage_format = QImage.Format_RGB888
@@ -233,11 +238,6 @@ def rasterio_to_cropped_image(rasterio_src, window):
         if image.dtype != np.uint8:
             image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
-
-        # Normalize data to 0-255 range if it's not already
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
         
         # Convert the numpy array to QImage
         qimage = QImage(image.data.tobytes(),
@@ -295,16 +295,21 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
             # Get the colormap
             colormap = rasterio_src.colormap(1)
             
-            # Create RGB image of appropriate size
-            rgb_image = np.zeros((scaled_height, scaled_width, 3), dtype=np.uint8)
+            # Create a lookup table for the colormap
+            max_idx = max(colormap.keys()) + 1
+            lut = np.zeros((max_idx, 3), dtype=np.uint8)
             
-            # Apply colormap to each unique value
-            for value in np.unique(image):
-                if value in colormap:
-                    # Get RGB values (ignore alpha)
-                    r, g, b, _ = colormap[value]
-                    mask = (image == value)
-                    rgb_image[mask] = [r, g, b]
+            # Fill the lookup table with RGB values
+            for idx, color in colormap.items():
+                if idx < max_idx:  # Safety check
+                    lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
+            
+            # Clip image indices to valid range for the LUT
+            image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
+            
+            # Use the image as indices into the lookup table
+            # This is a vectorized operation that maps each pixel to its RGB value
+            rgb_image = lut[image_indices]
             
             # Use the colorized RGB version of the image
             image = rgb_image
@@ -315,6 +320,10 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
                                       window=window,
                                       out_shape=(scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
+            
+            # Convert to 3-channel grayscale image
+            image = np.stack([image] * 3, axis=-1)  # Stack the single band to create 3 channels
+            
         elif rasterio_src.count >= 3:
             # Multi-band image (RGB)
             image = rasterio_src.read([1, 2, 3],
@@ -324,6 +333,7 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
 
             # Transpose to height, width, channels format
             image = np.transpose(image, (1, 2, 0))
+            
         else:
             raise ValueError(f"Unsupported number of bands: {rasterio_src.count}")
 
@@ -332,11 +342,6 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
             image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
 
-        # Normalize data to 0-255 range if it's not already
-        if image.min() != 0 or image.max() != 255:
-            if not (image.max() - image.min() == 0):
-                image = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
-
         return image
 
     except Exception as e:
@@ -344,6 +349,88 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
         traceback.print_exc()
         # Return a small empty array
         return np.zeros((100, 100, 3), dtype=np.uint8)
+
+
+def work_area_to_numpy(rasterio_src, work_area):
+    """
+    Extract image data from a work area as a numpy array.
+    Properly handles colormaps and different band types.
+    
+    Args:
+        rasterio_src: rasterio DatasetReader object
+        work_area: WorkArea object or QRectF
+            
+    Returns:
+        numpy.ndarray: Image data from the work area as numpy array (h, w, 3) for RGB, (h, w) for grayscale
+    """
+    if not rasterio_src:
+        return None
+    
+    # If we got a WorkArea object, use its rect
+    if hasattr(work_area, 'rect'):
+        rect = work_area.rect
+    else:
+        rect = work_area
+        
+    # Create a rasterio window from the rect
+    window = Window(
+        col_off=int(rect.x()),
+        row_off=int(rect.y()),
+        width=int(rect.width()),
+        height=int(rect.height())
+    )
+    
+    try:
+        if rasterio_src.count == 1 and rasterio_src.colormap(1):
+            # Read the single band
+            image = rasterio_src.read(1, window=window)
+            # Get the colormap
+            colormap = rasterio_src.colormap(1)
+            
+            # Create a lookup table for the colormap
+            max_idx = max(colormap.keys()) + 1
+            lut = np.zeros((max_idx, 3), dtype=np.uint8)
+            
+            # Fill the lookup table with RGB values
+            for idx, color in colormap.items():
+                if idx < max_idx:  # Safety check
+                    lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
+            
+            # Clip image indices to valid range for the LUT
+            image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
+            
+            # Use the image as indices into the lookup table
+            # This is a vectorized operation that maps each pixel to its RGB value
+            rgb_image = lut[image_indices]
+            
+            # Use the colorized RGB version of the image
+            image = rgb_image
+            
+        elif rasterio_src.count < 3:
+            # Grayscale image without colormap
+            image = rasterio_src.read(1, window=window)
+            
+            # Convert to 3-channel grayscale image
+            image = np.stack([image] * 3, axis=-1)
+                
+        else:
+            # Read RGB bands
+            image = rasterio_src.read([1, 2, 3], window=window)
+            
+            # Transpose to height, width, channels format
+            image = np.transpose(image, (1, 2, 0))
+        
+        # Convert to uint8 if not already
+        if image.dtype != np.uint8:
+            if image.max() > 0:  # Avoid division by zero
+                image = image.astype(float) * (255.0 / image.max())
+            image = image.astype(np.uint8)
+
+        return image
+        
+    except Exception as e:
+        traceback.print_exc()
+        return None
     
 
 def pixmap_to_numpy(pixmap):

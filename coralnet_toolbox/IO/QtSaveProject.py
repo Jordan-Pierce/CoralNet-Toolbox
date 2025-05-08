@@ -2,11 +2,10 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import os
-import json
+import ujson as json
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLabel, 
+from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLabel,
                              QMessageBox, QGroupBox, QFormLayout, QHBoxLayout, QLineEdit,
                              QApplication)
 
@@ -39,7 +38,7 @@ class SaveProject(QDialog):
         self.setup_save_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
-        
+
     def setup_save_layout(self):
         group_box = QGroupBox("Save Project")
         layout = QFormLayout()
@@ -70,10 +69,10 @@ class SaveProject(QDialog):
 
     def browse_file_path(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, 
-                                                   "Save Project JSON", 
-                                                   "", 
-                                                   "JSON Files (*.json);;All Files (*)", 
+        file_path, _ = QFileDialog.getSaveFileName(self,
+                                                   "Save Project JSON",
+                                                   "",
+                                                   "JSON Files (*.json);;All Files (*)",
                                                    options=options)
         if file_path:
             self.file_path_edit.setText(file_path)
@@ -84,7 +83,7 @@ class SaveProject(QDialog):
             self.save_project_data(file_path)
         else:  # Keep it as is
             self.file_path_edit.setText(self.current_project_path)
-        
+
     def save_project_data(self, file_path):
 
         # Make cursor busy
@@ -103,13 +102,13 @@ class SaveProject(QDialog):
             # Update current project path
             self.current_project_path = file_path
 
-            QMessageBox.information(self.annotation_window, 
-                                    "Project Saved", 
+            QMessageBox.information(self.annotation_window,
+                                    "Project Saved",
                                     "Project has been successfully saved.")
 
         except Exception as e:
-            QMessageBox.warning(self.annotation_window, 
-                                "Error Saving Project", 
+            QMessageBox.warning(self.annotation_window,
+                                "Error Saving Project",
                                 f"An error occurred while saving the project: {str(e)}")
 
         finally:
@@ -128,7 +127,7 @@ class SaveProject(QDialog):
 
         try:
             export_images = []
-            
+
             # Loop through all of the image paths
             for image_path in self.image_window.raster_manager.image_paths:
                 export_images.append(image_path)
@@ -235,7 +234,7 @@ class SaveProject(QDialog):
         if self.current_project_path:
             self.file_path_edit.setText(self.current_project_path)
         super().closeEvent(event)
-    
+
     def reject(self):
         """Handle dialog rejection (Cancel or close)"""
         if self.current_project_path:

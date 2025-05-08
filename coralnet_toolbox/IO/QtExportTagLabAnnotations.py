@@ -1,6 +1,7 @@
-import json
-import os
 import warnings
+
+import os
+import ujson as json
 
 import numpy as np
 from PyQt5.QtCore import Qt
@@ -95,18 +96,18 @@ class ExportTagLabAnnotations:
                 for idx, annotation in enumerate(self.annotation_window.annotations_dict.values()):
                     # Get the image once, create a dict entry
                     image_path = annotation.image_path
-                    
+
                     # Verify the image path exists in the raster manager
                     if image_path not in self.image_window.raster_manager.image_paths:
                         # Skip annotations for images that are not in the raster manager
                         continue
-                        
+
                     if image_path not in image_annotations:
                         # Get the raster from the manager
                         raster = self.image_window.raster_manager.get_raster(image_path)
                         if not raster:
                             continue
-                            
+
                         # Create image entry with dimensions from the raster
                         image_annotations[image_path] = {
                             "rect": [0.0, 0.0, 0.0, 0.0],

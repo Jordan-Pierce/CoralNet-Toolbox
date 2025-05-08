@@ -1,14 +1,14 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-import json
+import ujson as json
 
 from PyQt5.QtWidgets import (QApplication, QFileDialog, QMessageBox)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -55,7 +55,7 @@ class ImportLabels:
                 for label in labels:
                     # Create a new label object
                     label = Label.from_dict(label)
-                    
+
                     # Create a new label if it doesn't already exist
                     self.label_window.add_label_if_not_exists(label.short_label_code,
                                                               label.long_label_code,

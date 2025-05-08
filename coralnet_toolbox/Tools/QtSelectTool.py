@@ -6,6 +6,8 @@ from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsE
                              QGraphicsLineItem, QGraphicsPathItem)
 
 from coralnet_toolbox.Tools.QtTool import Tool
+
+from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
@@ -80,6 +82,7 @@ class SelectTool(Tool):
         if self.cutting_path:
             self.annotation_window.scene.removeItem(self.cutting_path)
             self.cutting_path = None
+            self.cutting_points = []
             
         # Reset cursor
         self.annotation_window.viewport().setCursor(self.cursor)
@@ -231,8 +234,16 @@ class SelectTool(Tool):
         self.rectangle_selection = True
         self.selection_start_pos = position
         self.selection_rectangle = QGraphicsRectItem()
-        line_thickness = self.get_selection_thickness()
-        self.selection_rectangle.setPen(QPen(Qt.black, line_thickness, Qt.DashLine))
+        
+        # Get the thickness for the selection rectangle
+        width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
+        
+        # Style the selection rectangle
+        pen = QPen(QColor(255, 255, 255), 2, Qt.DashLine)
+        pen.setWidth(width)
+        self.selection_rectangle.setPen(pen)
+        
+        self.selection_rectangle.setRect(QRectF(position, position))
         self.annotation_window.scene.addItem(self.selection_rectangle)
     
     def _cleanup_rectangle_selection(self):
@@ -454,7 +465,7 @@ class SelectTool(Tool):
         """Display resize handles for the given annotation."""
         self.remove_resize_handles()
         handles = self.get_handles(annotation)
-        handle_size = 10
+        handle_size = self.graphics_utility.get_handle_size(self.annotation_window)
 
         for handle, point in handles.items():
             ellipse = QGraphicsEllipseItem(point.x() - handle_size // 2,
@@ -491,13 +502,6 @@ class SelectTool(Tool):
         for handle in self.resize_handles:
             self.annotation_window.scene.removeItem(handle)
         self.resize_handles.clear()
-        
-    def get_selection_thickness(self):
-        """Calculate appropriate line thickness based on current view dimensions."""
-        extent = self.annotation_window.viewportToScene()
-        view_width = round(extent.width())
-        view_height = round(extent.height())
-        return max(5, min(20, max(view_width, view_height) // 1000))
 
     def get_item_center(self, item):
         """Return the center point of the item."""
@@ -522,7 +526,7 @@ class SelectTool(Tool):
             print("Need at least 2 annotations to combine.")
             return  # Need at least 2 annotations to combine
         
-        # Check if all are the same type (only combine rectangles with rectangles, polygons with polygons)
+        # Check if all are the same type (only combine rectangles with rectangles, polygons with polygons, etc.)
         first_type = type(selected_annotations[0])
         if not all(isinstance(annotation, first_type) for annotation in selected_annotations):
             QMessageBox.warning(
@@ -551,7 +555,9 @@ class SelectTool(Tool):
             return
         
         # Handle different annotation types
-        if isinstance(selected_annotations[0], RectangleAnnotation):
+        if isinstance(selected_annotations[0], PatchAnnotation):
+            combined_annotation = PatchAnnotation.combine(selected_annotations)
+        elif isinstance(selected_annotations[0], RectangleAnnotation):
             combined_annotation = RectangleAnnotation.combine(selected_annotations)
         elif isinstance(selected_annotations[0], PolygonAnnotation):
             combined_annotation = PolygonAnnotation.combine(selected_annotations)
@@ -602,8 +608,11 @@ class SelectTool(Tool):
         path = QPainterPath()
         path.moveTo(position)
         
+        # Get line thickness for the cutting path
+        line_thickness = self.graphics_utility.get_selection_thickness(self.annotation_window)
+        
+        # Create the cutting path item
         self.cutting_path = QGraphicsPathItem(path)
-        line_thickness = self.get_selection_thickness()
         self.cutting_path.setPen(QPen(Qt.red, line_thickness, Qt.DashLine))
         self.annotation_window.scene.addItem(self.cutting_path)
 

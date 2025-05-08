@@ -1,14 +1,12 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
+import os
 import uuid
 import yaml
 import glob
-import json
-import os
 import random
 import shutil
+import ujson as json
 
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, QPointF
@@ -23,6 +21,9 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -218,7 +219,7 @@ class Base(QDialog):
 
         # Update filtered images
         self.image_window.filter_images()
-        
+
         # Set the last added image as the current image if we have any
         if added_paths:
             self.image_window.load_image_by_path(added_paths[-1])

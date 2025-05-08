@@ -1,12 +1,10 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 import os
 import gc
-import json
 import datetime
 import traceback
+import ujson as json
 from pathlib import Path
 
 from ultralytics import YOLO, RTDETR
@@ -20,7 +18,6 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
 
-import torch
 from torch.cuda import empty_cache
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
@@ -29,6 +26,9 @@ from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificat
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -60,14 +60,14 @@ class TrainModelWorker(QThread):
         super().__init__()
         self.params = params
         self.device = device
-        
+
         self.is_yolo = True
-        
+
         self.model = None
         self.model_path = None
-        
+
         self.weighted = False
-        
+
     def pre_run(self):
         """
         Set up the model and prepare parameters for training.
@@ -79,31 +79,31 @@ class TrainModelWorker(QThread):
             self.weighted = self.params.pop('weighted', False)
             # Whether to use YOLO or RTDETR
             self.is_yolo = False if 'detr' in self.model_path.lower() else True
-            
+
             # Determine if ultralytics or community
             if self.model_path in get_available_configs(task=self.params['task']):
                 self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
                 # Cannot use weighted sampling with community models
                 self.weighted = False
-            
+
             # Use the custom dataset class for weighted sampling
             if self.weighted and self.params['task'] == 'classify':
                 train_build.ClassificationDataset = WeightedClassificationDataset
             elif self.weighted and self.params['task'] in ['detect', 'segment']:
                 build.YOLODataset = WeightedInstanceDataset
-                
+
             # Load the model
             if self.is_yolo:
                 self.model = YOLO(self.model_path)
             else:
                 self.model = RTDETR(self.model_path)
-                
+
             # Set the task in the model itself
             self.model.task = self.params['task']
-                
+
             # Freeze layers, freeze encoder
             freeze_layers = self.params.pop('freeze_layers', None)
-            
+
             if freeze_layers:
                 # Calculate the number of layers to freeze
                 num_layers = len(self.model.model.model[0:-1])
@@ -112,7 +112,7 @@ class TrainModelWorker(QThread):
                 print(f"Encoder layers frozen ({len(freeze_layers)})")
             else:
                 freeze_layers = []
-            
+
             # Set the freeze parameter for ultralytics
             self.params['freeze'] = freeze_layers
 
@@ -125,22 +125,22 @@ class TrainModelWorker(QThread):
         """
         Run the training process in a separate thread.
         """
-        try:            
+        try:
             # Emit signal to indicate training has started
             self.training_started.emit()
-            
+
             # Set up the model and parameters
             self.pre_run()
 
             # Train the model
             self.model.train(**self.params, device=self.device)
-            
+
             # Post-run cleanup
             self.post_run()
 
             # Evaluate the model after training
             self.evaluate_model()
-            
+
             # Emit signal to indicate training has completed
             self.training_completed.emit()
 
@@ -149,7 +149,7 @@ class TrainModelWorker(QThread):
             self.training_error.emit(f"Error during training: {e} (see console log)")
         finally:
             self._cleanup()
-            
+
     def post_run(self):
         """
         Clean up resources after training.
@@ -245,7 +245,7 @@ class Base(QDialog):
         self.model_path = None
         # Class mapping
         self.class_mapping = {}
-        
+
         # Task specific parameters
         self.imgsz = 640
         self.batch = 4
@@ -294,22 +294,22 @@ class Base(QDialog):
 
         # Create tabbed widget
         tab_widget = QTabWidget()
-        
+
         # Tab 1: Select model from dropdown
         model_select_tab = QWidget()
         model_select_layout = QFormLayout(model_select_tab)
-        
+
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
         model_select_layout.addRow("Model:", self.model_combo)
-        
+
         tab_widget.addTab(model_select_tab, "Select Model")
-        
+
         # Tab 2: Use existing model
         model_existing_tab = QWidget()
         model_existing_layout = QFormLayout(model_existing_tab)
-        
+
         # Existing Model
         self.model_edit = QLineEdit()
         self.model_button = QPushButton("Browse...")
@@ -318,9 +318,9 @@ class Base(QDialog):
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
         model_existing_layout.addRow("Existing Model:", model_layout)
-        
+
         tab_widget.addTab(model_existing_tab, "Use Existing Model")
-        
+
         layout.addWidget(tab_widget)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)

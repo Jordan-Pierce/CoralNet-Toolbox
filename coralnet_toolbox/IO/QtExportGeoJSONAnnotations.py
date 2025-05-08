@@ -2,14 +2,9 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
-import json
-from pathlib import Path
+import ujson as json
 
-import cv2
-import numpy as np
-import rasterio
 from rasterio.transform import Affine
-from PIL import Image, ImageDraw
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
@@ -23,8 +18,6 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-from coralnet_toolbox.utilities import rasterio_open
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -466,12 +459,12 @@ class ExportGeoJSONAnnotations(QDialog):
                                     "Invalid Image",
                                     f"Could not open {os.path.basename(image_path)}.")
                 return False
-                
+
             try:
                 # Get the image transform from the rasterio source
                 transform = raster.rasterio_src.transform
                 crs = raster.rasterio_src.crs
-                
+
                 # Check if CRS exists
                 if not crs:
                     QMessageBox.warning(self,

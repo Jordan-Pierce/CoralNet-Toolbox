@@ -2,7 +2,7 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import json
+import ujson as json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
@@ -49,39 +49,39 @@ class ImportAnnotations:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             progress_bar = ProgressBar(self.annotation_window, title="Reading Annotation File(s)")
             progress_bar.show()
-            
+
             # Start the progress bar
             progress_bar.start_progress(len(file_paths))
-            
+
             # Read the annotations
             all_data = {}
             for file_path in file_paths:
                 with open(file_path, 'r') as file:
                     data = json.load(file)
                     all_data.update(data)
-                
-                # Update the progress bar    
+
+                # Update the progress bar
                 progress_bar.update_progress()
-                
+
         except Exception as e:
             QMessageBox.warning(self.annotation_window,
                                 "Error Loading Annotations",
-                                f"An error occurred while loading annotations: {str(e)}")        
+                                f"An error occurred while loading annotations: {str(e)}")
         finally:
             # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-            
+
         if not all_data:
             QMessageBox.warning(self.annotation_window,
                                 "No Annotations Found",
                                 "No annotations were found in the selected files.")
             return
-        
+
         # Check if the annotations are in the correct format
         keys = ['label_short_code', 'label_long_code', 'annotation_color', 'image_path', 'label_id']
-        
+
         # Reformat the data
         filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.raster_manager.image_paths}
         total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
@@ -90,7 +90,7 @@ class ImportAnnotations:
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
         progress_bar.show()
-        
+
         # Start the progress bar
         progress_bar.start_progress(total_annotations)
 
@@ -99,7 +99,7 @@ class ImportAnnotations:
         try:
             # Load the labels
             for image_path, image_annotations in filtered_annotations.items():
-                
+
                 for annotation in image_annotations:
                     # Skip if missing required keys
                     if not all(key in annotation for key in keys):
@@ -121,29 +121,29 @@ class ImportAnnotations:
 
                     # Update progress
                     progress_bar.update_progress()
-                    
+
         except Exception as e:
             print(f"Error loading label: {str(e)}")
-            
+
         finally:
             # Restore the cursor
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
-            
+
         if updated_annotations:
             QMessageBox.information(self.annotation_window,
                                     "Annotations Updated",
                                     "Some annotations have been updated to match the "
                                     "color of the labels already in the project.")
-                    
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
         progress_bar.show()
 
         # Start the progress bar
-        progress_bar.start_progress(total_annotations) 
+        progress_bar.start_progress(total_annotations)
 
         try:
             # Load the annotations
@@ -164,7 +164,7 @@ class ImportAnnotations:
 
                     # Add annotation to the dict
                     self.annotation_window.add_annotation_to_dict(annotation)
-                    
+
                     # Update the progress bar
                     progress_bar.update_progress()
 

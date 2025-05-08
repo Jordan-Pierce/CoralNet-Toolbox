@@ -1,13 +1,12 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import os
-import json
 import uuid
 import traceback
+import ujson as json
 
 import numpy as np
+
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialog)
@@ -15,6 +14,8 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialo
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

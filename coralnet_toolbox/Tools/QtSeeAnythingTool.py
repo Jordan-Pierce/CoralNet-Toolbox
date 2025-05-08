@@ -101,26 +101,6 @@ class SeeAnythingTool(Tool):
         # Update the viewport
         self.annotation_window.scene.update()  
 
-    def get_workarea_thickness(self):
-        """
-        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
-        """
-        view = self.annotation_window
-        if not view.pixmap_image:
-            return 5  # fallback
-
-        # Get the current zoom scale from the view's transformation matrix
-        # m11() is the horizontal scale factor (scene to view)
-        scale = view.transform().m11()
-        if scale == 0:
-            scale = 1  # avoid division by zero
-
-        desired_px = 5  # Desired thickness in screen pixels
-
-        # To keep the line visually consistent, divide by the scale
-        thickness = max(1, int(round(desired_px / scale)))
-        return thickness
-
     def set_working_area(self):
         """
         Set the working area for the tool.
@@ -160,10 +140,13 @@ class SeeAnythingTool(Tool):
         # Set the working area
         working_rect = QRectF(left, top, right - left, bottom - top)
 
+        # Get the thickness for the working area graphics
+        width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        
         # Create the graphic for the working area
         pen = QPen(Qt.green)
         pen.setStyle(Qt.DashLine)
-        pen.setWidth(self.get_workarea_thickness())
+        pen.setWidth(width)
         self.working_area = QGraphicsRectItem(working_rect)
         self.working_area.setPen(pen)
 
@@ -193,26 +176,6 @@ class SeeAnythingTool(Tool):
         
         self.annotation_window.scene.update() 
         
-    def get_rectangle_graphic_thickness(self):
-        """
-        Calculate line thickness so it appears visually consistent regardless of zoom or image size.
-        """
-        view = self.annotation_window
-        if not view.pixmap_image:
-            return 2  # fallback
-
-        # Get the current zoom scale from the view's transformation matrix
-        # m11() is the horizontal scale factor (scene to view)
-        scale = view.transform().m11()
-        if scale == 0:
-            scale = 1  # avoid division by zero
-
-        desired_px = 2  # Desired thickness in screen pixels
-
-        # To keep the line visually consistent, divide by the scale
-        thickness = max(1, int(round(desired_px / scale)))
-        return thickness 
-        
     def create_rectangle_graphics(self):
         """
         Create a new rectangle graphics item for drawing with the selected label color.
@@ -238,9 +201,12 @@ class SeeAnythingTool(Tool):
             # Get color from the selected label
             color = self.annotation_window.selected_label.color
 
+            # Get the thickness for the rectangle graphics
+            width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
+            
             # Style the rectangle
             pen = QPen(QColor(color))
-            pen.setWidth(self.get_rectangle_graphic_thickness())
+            pen.setWidth(width)
             pen.setStyle(Qt.DashLine)
             self.current_rect_graphics.setPen(pen)
 
@@ -474,7 +440,8 @@ class SeeAnythingTool(Tool):
 
             if confidence < self.main_window.get_uncertainty_thresh():
                 continue
-
+            
+            # TODO?
             box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
 
             # Convert from normalized to pixel coordinates relative to the cropped image
@@ -796,5 +763,5 @@ class SeeAnythingTool(Tool):
         self.results = None
         
         # Force update to ensure graphics are removed visually
-        self.annotation_window.scene.update()  
-        
+        self.annotation_window.scene.update()
+

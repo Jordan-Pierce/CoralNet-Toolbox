@@ -2,13 +2,12 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
+import ujson as json
 
-import json
-import numpy as np
 import pandas as pd
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QDialog, 
+from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QDialog,
                              QVBoxLayout, QRadioButton, QPushButton, QGroupBox,
                              QLineEdit, QFormLayout, QHBoxLayout, QLabel, QTabWidget,
                              QWidget)
@@ -70,11 +69,11 @@ class ExportViscoreAnnotations(QDialog):
         """Set up the Viscore export CSV tab."""
         tab = QWidget()
         layout = QVBoxLayout()
-        
+
         # Add output group
         output_group = QGroupBox("Output")
         output_layout = QFormLayout()
-        
+
         self.csv_file_edit = QLineEdit()
         self.csv_file_button = QPushButton("Browse...")
         self.csv_file_button.clicked.connect(lambda: self.save_file(self.csv_file_edit, "CSV File (*.csv)"))
@@ -82,16 +81,16 @@ class ExportViscoreAnnotations(QDialog):
         file_layout.addWidget(self.csv_file_edit)
         file_layout.addWidget(self.csv_file_button)
         output_layout.addRow("Export CSV:", file_layout)
-        
+
         output_group.setLayout(output_layout)
         layout.addWidget(output_group)
 
         # Add voting options group
         layout.addWidget(self.create_voting_options())
-        
+
         tab.setLayout(layout)
         self.tab_widget.addTab(tab, "Export JSON")
-        
+
     def create_voting_options(self):
         """Create and return the voting options group."""
         group_box = QGroupBox("Voting Options")
@@ -164,7 +163,7 @@ class ExportViscoreAnnotations(QDialog):
         dir_layout.addWidget(self.output_dir_button)
         output_form.addRow("Output Directory:", dir_layout)
 
-        # Username field 
+        # Username field
         self.username_edit = QLineEdit()
         output_form.addRow("User Name:", self.username_edit)
 
@@ -225,7 +224,7 @@ class ExportViscoreAnnotations(QDialog):
         )
         if directory:
             self.output_dir_edit.setText(directory)
-            
+
     def export_annotations(self):
         """Handle the annotation export process."""
         if self.tab_widget.currentIndex() == 0:
@@ -237,7 +236,7 @@ class ExportViscoreAnnotations(QDialog):
         """Handle the CSV annotation export process."""
         file_path = self.csv_file_edit.text()
         if not file_path:
-            QMessageBox.warning(self, 
+            QMessageBox.warning(self,
                                 "Invalid File",
                                 "Please select a save location.")
             return
@@ -258,7 +257,7 @@ class ExportViscoreAnnotations(QDialog):
                     # Skip annotations for images not in the raster manager
                     if annotation.image_path not in self.image_window.raster_manager.image_paths:
                         continue
-                        
+
                     if 'Dot' in annotation.data:
                         # Get the annotation data
                         data = annotation.to_coralnet()
@@ -275,9 +274,9 @@ class ExportViscoreAnnotations(QDialog):
 
                         # Update the progress bar
                         progress_bar.update_progress()
-                        
+
             if not df or not dots_dict:
-                QMessageBox.warning(self, 
+                QMessageBox.warning(self,
                                     "No Annotations",
                                     "No annotations found in project with Viscore dot data.")
 
@@ -289,13 +288,13 @@ class ExportViscoreAnnotations(QDialog):
             df = pd.DataFrame(df)
             df.to_csv(file_path, index=False)
 
-            QMessageBox.information(self, 
+            QMessageBox.information(self,
                                     "Success",
                                     "Annotations have been successfully exported.")
             self.accept()
 
         except Exception as e:
-            QMessageBox.critical(self, 
+            QMessageBox.critical(self,
                                  "Critical Error",
                                  f"Failed to export annotations: {e}")
         finally:
@@ -337,76 +336,76 @@ class ExportViscoreAnnotations(QDialog):
             return consensus_results
 
         except Exception as e:
-            QMessageBox.warning(self, 
+            QMessageBox.warning(self,
                                 "Error Calculating Consensus",
                                 f"Failed to calculate consensus: {str(e)}")
             return []
-        
+
     def export_json_annotations(self):
         """Handle the JSON annotation export process."""
         # Extract the file paths
         labelset_json_path = self.label_json_edit.text()
         user_json_path = self.user_json_edit.text()
-        
+
         # Check if labelset file is selected and exists
         if not labelset_json_path:
-            QMessageBox.warning(self, 
+            QMessageBox.warning(self,
                                 "Invalid File",
                                 "Please select a labelset JSON file.")
             return
-            
+
         if not os.path.exists(labelset_json_path):
-            QMessageBox.warning(self, 
+            QMessageBox.warning(self,
                                 "Invalid File",
                                 "Labelset file does not exist.")
             return
-        
+
         # Check if user file exists if provided
         if user_json_path and not os.path.exists(user_json_path):
-            QMessageBox.warning(self, 
+            QMessageBox.warning(self,
                                 "Invalid File",
                                 "User file does not exist.")
             return
-        
+
         # Extract the output directory
         output_dir = self.output_dir_edit.text()
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Create the output file path
         username = self.username_edit.text()
         output_path = f"{output_dir}/samples.cl.user.{username}.json"
-        
+
         # Read the labelset file
         with open(labelset_json_path, 'r') as f:
             labelset_file = json.load(f)
-        
+
         if 'classlist' not in labelset_file:
-            QMessageBox.warning(self, 
+            QMessageBox.warning(self,
                                 "Invalid File",
                                 "The labelset file does not contain a classlist.")
             return
-        
+
         # Extract the classlist, create a DataFrame
         classlist = pd.DataFrame(labelset_file['classlist'], columns=['id', 'short_name', 'long_name'])
-        
+
         # Initialize output file structure
         output_file = {
             "savefileb": os.path.basename(output_path),
             "savefile": output_path,
         }
-        
+
         # Read the user file if provided, otherwise we'll fill cl later
         if user_json_path:
             with open(user_json_path, 'r') as f:
                 user_file = json.load(f)
             output_file["cl"] = [int(x) for x in user_file['cl']]
-        
+
         try:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
             progress_bar = ProgressBar(self, title="Reading Annotations")
             progress_bar.show()
-            
+
             # Start progress bar
             progress_bar.start_progress(len(self.annotation_window.annotations_dict))
 
@@ -419,7 +418,7 @@ class ExportViscoreAnnotations(QDialog):
                     # Skip annotations for images not in the raster manager
                     if annotation.image_path not in self.image_window.raster_manager.image_paths:
                         continue
-                        
+
                     if 'Dot' in annotation.data:
                         # Get the annotation data
                         data = annotation.to_coralnet()
@@ -431,34 +430,34 @@ class ExportViscoreAnnotations(QDialog):
 
                         # Update the progress bar
                         progress_bar.update_progress()
-            
+
             # If user file wasn't provided, initialize cl with -1 for each dot
             if not user_json_path:
                 max_dot_id = max(dots_dict.keys()) if dots_dict else -1
                 output_file["cl"] = [-1] * (max_dot_id + 1)
-            
+
             # Update progress bar
             progress_bar.setWindowTitle("Calculating Consensus")
             progress_bar.start_progress(len(dots_dict))
-            
+
             # Loop through each dot
             for dot, annotations in dots_dict.items():
                 votes = {}
-                
+
                 # Loop through each annotation associated with the dot
                 for ann in annotations:
                     for i in range(1, 6):
                         suggestion = ann.get(f"Machine suggestion {i}")
                         confidence = ann.get(f"Machine confidence {i}")
-                        
+
                         if suggestion is None or confidence is None:
                             continue
-                        
+
                         votes[suggestion] = votes.get(suggestion, 0) + float(confidence)
-                
+
                 # Calculate the consensus suggestion
                 consensus_suggestion = max(votes, key=votes.get) if votes else None
-                
+
                 # If the index is currently under Review, update
                 if output_file['cl'][dot] == -1 and consensus_suggestion:
                     try:
@@ -472,15 +471,15 @@ class ExportViscoreAnnotations(QDialog):
                     except Exception as e:
                         missing_labels.add(consensus_suggestion)
                         label_id = -1
-                            
+
                     output_file['cl'][dot] = label_id
-                
+
                 # Update the progress bar
                 progress_bar.update_progress()
-                
+
             # Ensure all values in cl are regular Python ints before saving
             output_file['cl'] = [int(x) for x in output_file['cl']]
-            
+
             # Save output json file
             with open(output_path, 'w') as f:
                 json.dump(output_file, f, indent=4)
@@ -488,18 +487,18 @@ class ExportViscoreAnnotations(QDialog):
             if missing_labels:
                 # Sort the missing labels
                 sorted_set = ', '.join(sorted([str(label) for label in missing_labels]))
-                
+
                 QMessageBox.warning(self,
                                     "Warning",
                                     f"The following labels were not found in the classlist:\n{sorted_set}")
 
-            QMessageBox.information(self, 
+            QMessageBox.information(self,
                                     "Success",
                                     "Annotations have been successfully exported.")
             self.accept()
 
         except Exception as e:
-            QMessageBox.critical(self, 
+            QMessageBox.critical(self,
                                 "Critical Error",
                                 f"Failed to export annotations: {e}")
         finally:
