@@ -308,7 +308,7 @@ class WorkAreaTool(Tool):
         rect = work_area.rect
         
         # Create a group item to hold the X shape
-        button_size = self.graphics_utility.get_handle_size(self.annotation_window)
+        button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2  # Size of the button
         button_group = QGraphicsItemGroup(work_area.graphics_item)
         
         # Create two diagonal lines to form an X
