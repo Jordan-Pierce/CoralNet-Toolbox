@@ -685,9 +685,10 @@ class ResultsProcessor:
             orig_h, orig_w = raster.height, raster.width
             
             # Create a zero-filled tensor for the full image masks
-            device = results.masks.data.device
-            dtype = results.masks.data.dtype
-            full_masks = torch.zeros((len(results.masks), orig_h, orig_w), device=device, dtype=dtype)
+            # Move mask processing to CPU to reduce GPU memory usage
+            device = torch.device('cpu')
+            # Use boolean dtype to save memory (binary masks only need 1 bit per pixel)
+            full_masks = torch.zeros((len(results.masks), orig_h, orig_w), device=device, dtype=torch.bool)
             
             # Get the work area as slice coordinates
             y_slice = slice(wa_y, wa_y + wa_h)
@@ -695,20 +696,31 @@ class ResultsProcessor:
             
             # For each mask in the results
             for i, mask in enumerate(results.masks.data):
+                # Move mask to CPU and convert to more memory-efficient format
+                mask_cpu = mask.to(device)
+                
                 # Resize mask to work area dimensions if needed
-                if mask.shape != (wa_h, wa_w):
+                if mask_cpu.shape != (wa_h, wa_w):
                     # Resize using interpolation
                     resized_mask = torch.nn.functional.interpolate(
-                        mask.unsqueeze(0).unsqueeze(0).float(), 
+                        mask_cpu.unsqueeze(0).unsqueeze(0).float(), 
                         size=(wa_h, wa_w), 
                         mode='bilinear', 
                         align_corners=False
                     ).squeeze(0).squeeze(0) > 0.5
                 else:
-                    resized_mask = mask
+                    resized_mask = mask_cpu
                     
                 # Place the resized mask in the correct position in the full image
                 full_masks[i, y_slice, x_slice] = resized_mask
+                
+                # Explicitly clear intermediate tensors to free memory
+                del mask_cpu, resized_mask
+                if i % 10 == 0:  # Periodically collect garbage to free memory
+                    gc.collect()
+            
+            # Only move masks back to original device at the end
+            full_masks = full_masks.to(results.masks.data.device)
             
             # Update masks in the result
             mapped_results.update(masks=full_masks)
