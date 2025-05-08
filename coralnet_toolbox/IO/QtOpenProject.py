@@ -178,6 +178,14 @@ class OpenProject(QDialog):
                 # Update the progress bar
                 progress_bar.update_progress()
 
+            # Set the selected image path to the last image *before* any filtering happens
+            # This prevents the automatic loading of the first image during filtering
+            if image_paths:
+                self.image_window.selected_image_path = image_paths[-1]
+                
+            # Apply any pending filtering
+            self.image_window.filter_images()
+            
             # Show the last image if any were imported
             if self.image_window.raster_manager.image_paths:
                 self.image_window.load_image_by_path(self.image_window.raster_manager.image_paths[-1])

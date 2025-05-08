@@ -383,6 +383,9 @@ class WorkAreaTool(Tool):
         
     def on_image_loaded(self, width, height):
         """Handle when a new image is loaded."""
+        # Clear existing work areas first, regardless of whether tool is active
+        self.hide_work_area_graphics()
+        
         # Only reload work areas if this tool is currently active
         if self.annotation_window.selected_tool == "work_area":
             self.load_work_areas()
