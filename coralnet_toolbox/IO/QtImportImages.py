@@ -78,11 +78,6 @@ class ImportImages:
                 # Update the progress bar
                 progress_bar.update_progress()
 
-            # If we have imported images, set the selected image path before filtering
-            # This prevents the automatic loading of the first image
-            if imported_paths:
-                self.image_window.selected_image_path = imported_paths[-1]
-                
             # Apply filtering to update the view
             self.image_window.filter_images()
             
