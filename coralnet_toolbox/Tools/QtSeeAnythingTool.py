@@ -22,6 +22,7 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.utilities import clean_polygon
@@ -103,7 +104,7 @@ class SeeAnythingTool(Tool):
 
     def set_working_area(self):
         """
-        Set the working area for the tool.
+        Set the working area for the tool using the WorkArea class.
         """
         self.annotation_window.setCursor(Qt.WaitCursor)
 
@@ -119,45 +120,29 @@ class SeeAnythingTool(Tool):
         # Current extent (view)
         extent = self.annotation_window.viewportToScene()
 
-        top = round(extent.top())
-        left = round(extent.left())
+        top = max(0, round(extent.top()))
+        left = max(0, round(extent.left()))
         width = round(extent.width())
         height = round(extent.height())
-        bottom = top + height
-        right = left + width
+        bottom = min(self.original_height, top + height)
+        right = min(self.original_width, left + width)
 
-        # If the current extent includes areas outside the
-        # original image, reduce it to be only the original image
-        if top < 0:
-            top = 0
-        if left < 0:
-            left = 0
-        if bottom > self.original_height:
-            bottom = self.original_height
-        if right > self.original_width:
-            right = self.original_width
-
-        # Set the working area
-        working_rect = QRectF(left, top, right - left, bottom - top)
-
-        # Get the thickness for the working area graphics
-        width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        # Create the WorkArea instance
+        self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         
-        # Create the graphic for the working area
-        pen = QPen(Qt.green)
-        pen.setStyle(Qt.DashLine)
-        pen.setWidth(width)
-        self.working_area = QGraphicsRectItem(working_rect)
-        self.working_area.setPen(pen)
-
-        # Add the working area to the scene
-        self.annotation_window.scene.addItem(self.working_area)
+        # Get the thickness for the working area graphics
+        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        
+        # Create and add the working area graphics
+        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.set_remove_button_visibility(False)
+        self.working_area.removed.connect(self.on_working_area_removed)
 
         # Create a semi-transparent overlay for the shadow
         shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
         shadow_path = QPainterPath()
         shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
-        shadow_path.addRect(working_rect)  # Add the work area rect
+        shadow_path.addRect(self.working_area.rect)  # Add the work area rect
         # Subtract the work area from the overlay
         shadow_path = shadow_path.simplified()
 
@@ -169,12 +154,20 @@ class SeeAnythingTool(Tool):
         # Add the shadow item to the scene
         self.annotation_window.scene.addItem(self.shadow_area)
 
-        # Crop the image based on the working_rect
+        # Crop the image based on the working area
         self.image_view = self.original_image[top:bottom, left:right]
 
+        # Set the image in the SeeAnything dialog
+        self.see_anything_dialog.set_image(self.image_view, self.image_path)
+
         self.annotation_window.setCursor(Qt.CrossCursor)
-        
         self.annotation_window.scene.update() 
+    
+    def on_working_area_removed(self, work_area):
+        """
+        Handle when the work area is removed via its internal mechanism.
+        """
+        self.cancel_working_area()
         
     def create_rectangle_graphics(self):
         """
@@ -245,7 +238,7 @@ class SeeAnythingTool(Tool):
                 return
 
             # Calculate rectangle coordinates relative to working area
-            working_area_top_left = self.working_area.rect().topLeft()
+            working_area_top_left = self.working_area.rect.topLeft()
 
             top_left = QPointF(
                 min(self.start_point.x(), self.end_point.x()) - working_area_top_left.x(),
@@ -288,7 +281,7 @@ class SeeAnythingTool(Tool):
         scene_pos = self.annotation_window.mapToScene(event.pos())
 
         # Check if the position is within the working area
-        if not self.working_area.rect().contains(scene_pos):
+        if not self.working_area.contains_point(scene_pos):
             return
 
         if event.button() == Qt.LeftButton and not self.drawing_rectangle:
@@ -341,7 +334,6 @@ class SeeAnythingTool(Tool):
             # If there is no working area, set it
             if not self.working_area:
                 self.set_working_area()
-                self.see_anything_dialog.set_image(self.image_view, self.image_path)
 
             # If there are user-drawn rectangles ready for processing, run the predictor
             elif len(self.rectangles) > 0 and not self.rectangles_processed:
@@ -401,7 +393,7 @@ class SeeAnythingTool(Tool):
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Move the points back to the original image space
-        working_area_top_left = self.working_area.rect().topLeft()
+        working_area_top_left = self.working_area.rect.topLeft()
 
         # Get the current transparency
         transparency = self.main_window.label_window.active_label.transparency
@@ -612,7 +604,7 @@ class SeeAnythingTool(Tool):
         results = copy.deepcopy(self.results)
 
         # Get working area offset to adjust box coordinates
-        working_area_top_left = self.working_area.rect().topLeft()
+        working_area_top_left = self.working_area.rect.topLeft()
         
         # Get boxes (xyxyn normalized pixel coordinates relative to image_view)
         boxes = results.boxes.xyxyn.detach().cpu().clone()
@@ -741,10 +733,11 @@ class SeeAnythingTool(Tool):
 
     def cancel_working_area(self):
         """
-        Cancel the working area.
+        Cancel the working area and clean up all associated resources.
         """
         if self.working_area:
-            self.annotation_window.scene.removeItem(self.working_area)
+            # Properly remove the working area using its method
+            self.working_area.remove_from_scene()
             self.working_area = None
 
         if self.shadow_area:
@@ -764,4 +757,3 @@ class SeeAnythingTool(Tool):
         
         # Force update to ensure graphics are removed visually
         self.annotation_window.scene.update()
-

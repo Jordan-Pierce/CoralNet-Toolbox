@@ -7,8 +7,10 @@ from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
-from coralnet_toolbox.utilities import pixmap_to_numpy, clean_polygon
+
 from coralnet_toolbox.QtWorkArea import WorkArea
+
+from coralnet_toolbox.utilities import pixmap_to_numpy, clean_polygon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -86,36 +88,51 @@ class SAMTool(Tool):
         Set the working area for the tool using the WorkArea class.
         """
         self.annotation_window.setCursor(Qt.WaitCursor)
+
+        # Cancel the current working area if it exists
         self.cancel_working_area()
 
+        # Original image (grab current from the annotation window)
         self.image_path = self.annotation_window.current_image_path
         self.original_image = pixmap_to_numpy(self.annotation_window.pixmap_image)
         self.original_width = self.annotation_window.pixmap_image.size().width()
         self.original_height = self.annotation_window.pixmap_image.size().height()
 
+        # Current extent (view)
         extent = self.annotation_window.viewportToScene()
+
         top = max(0, round(extent.top()))
         left = max(0, round(extent.left()))
-        bottom = min(self.original_height, round(extent.bottom()))
-        right = min(self.original_width, round(extent.right()))
-        
-        # Create the working area
+        width = round(extent.width())
+        height = round(extent.height())
+        bottom = min(self.original_height, top + height)
+        right = min(self.original_width, left + width)
+
+        # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
-        # Create the working area graphics
-        pen_width = self.annotation_window.graphics_utility.get_workarea_thickness(self.annotation_window)
+        
+        # Get the thickness for the working area graphics
+        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        
+        # Create and add the working area graphics
         self.working_area.create_graphics(self.annotation_window.scene, pen_width)
         self.working_area.set_remove_button_visibility(False)
         self.working_area.removed.connect(self.on_working_area_removed)
 
-        # Create the shadow area
-        shadow_brush = QBrush(QColor(0, 0, 0, 150))
+        # Create a semi-transparent overlay for the shadow
+        shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
         shadow_path = QPainterPath()
-        shadow_path.addRect(self.annotation_window.scene.sceneRect())
-        shadow_path.addRect(self.working_area.rect)
+        shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
+        shadow_path.addRect(self.working_area.rect)  # Add the work area rect
+        # Subtract the work area from the overlay
         shadow_path = shadow_path.simplified()
+
+        # Create the shadow item
         self.shadow_area = QGraphicsPathItem(shadow_path)
         self.shadow_area.setBrush(shadow_brush)
-        self.shadow_area.setPen(QPen(Qt.NoPen))
+        self.shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
+
+        # Add the shadow item to the scene
         self.annotation_window.scene.addItem(self.shadow_area)
 
         # Update the working area image, set in model
