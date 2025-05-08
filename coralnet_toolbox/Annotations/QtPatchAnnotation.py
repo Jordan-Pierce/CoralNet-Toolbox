@@ -232,13 +232,13 @@ class PatchAnnotation(Annotation):
     @classmethod
     def combine(cls, annotations: list):
         """
-        Combine multiple patch annotations into a single polygon annotation.
+        Combine multiple annotations (patches and/or polygons) into a single polygon annotation.
         
         Args:
-            annotations: List of PatchAnnotation objects to combine.
+            annotations: List of Annotation objects (PatchAnnotation or PolygonAnnotation) to combine.
             
         Returns:
-            A new PolygonAnnotation that encompasses the combined area of all input patches.
+            A new PolygonAnnotation that encompasses the combined area of all input annotations.
         """
         if not annotations:
             return None
@@ -248,78 +248,98 @@ class PatchAnnotation(Annotation):
         if not all(annotation.label.id == first_annotation.label.id for annotation in annotations):
             return None  # Can't combine annotations with different labels
         
-        # Determine the bounds for creating a combined mask
-        min_x = min(anno.get_bounding_box_top_left().x() for anno in annotations)
-        min_y = min(anno.get_bounding_box_top_left().y() for anno in annotations)
-        max_x = max(anno.get_bounding_box_bottom_right().x() for anno in annotations)
-        max_y = max(anno.get_bounding_box_bottom_right().y() for anno in annotations)
+        # Separate patches and polygons
+        patches = [annotation for annotation in annotations if isinstance(annotation, cls)]
+        polygons = [annotation for annotation in annotations if not isinstance(annotation, cls)]
         
-        # Add padding for safety
-        padding = 20
-        min_x -= padding
-        min_y -= padding
-        max_x += padding
-        max_y += padding
+        result_polygons = []
         
-        # Create a mask for the combined shape
-        width = int(max_x - min_x)
-        height = int(max_y - min_y)
-        if width <= 0 or height <= 0:
-            width = max(1, width)
-            height = max(1, height)
-        
-        combined_mask = np.zeros((height, width), dtype=np.uint8)
-        
-        # Draw all patches on the mask
-        for annotation in annotations:
-            half_size = annotation.annotation_size / 2
-            rect_x = int(annotation.center_xy.x() - half_size - min_x)
-            rect_y = int(annotation.center_xy.y() - half_size - min_y)
-            rect_width = int(annotation.annotation_size)
-            rect_height = int(annotation.annotation_size)
+        # If we have patches, combine them into a polygon
+        if patches:
+            # Determine the bounds for creating a combined mask
+            min_x = min(anno.get_bounding_box_top_left().x() for anno in patches)
+            min_y = min(anno.get_bounding_box_top_left().y() for anno in patches)
+            max_x = max(anno.get_bounding_box_bottom_right().x() for anno in patches)
+            max_y = max(anno.get_bounding_box_bottom_right().y() for anno in patches)
             
-            # Make sure the rectangle is within the mask bounds
-            rect_x = max(0, rect_x)
-            rect_y = max(0, rect_y)
-            rect_width = min(width - rect_x, rect_width)
-            rect_height = min(height - rect_y, rect_height)
+            # Add padding for safety
+            padding = 20
+            min_x -= padding
+            min_y -= padding
+            max_x += padding
+            max_y += padding
             
-            # Draw the rectangle on the mask
-            if rect_width > 0 and rect_height > 0:
-                combined_mask[rect_y: rect_y + rect_height, rect_x: rect_x + rect_width] = 255
+            # Create a mask for the combined shape
+            width = int(max_x - min_x)
+            height = int(max_y - min_y)
+            if width <= 0 or height <= 0:
+                width = max(1, width)
+                height = max(1, height)
+            
+            combined_mask = np.zeros((height, width), dtype=np.uint8)
+            
+            # Draw all patches on the mask
+            for annotation in patches:
+                half_size = annotation.annotation_size / 2
+                rect_x = int(annotation.center_xy.x() - half_size - min_x)
+                rect_y = int(annotation.center_xy.y() - half_size - min_y)
+                rect_width = int(annotation.annotation_size)
+                rect_height = int(annotation.annotation_size)
+                
+                # Make sure the rectangle is within the mask bounds
+                rect_x = max(0, rect_x)
+                rect_y = max(0, rect_y)
+                rect_width = min(width - rect_x, rect_width)
+                rect_height = min(height - rect_y, rect_height)
+                
+                # Draw the rectangle on the mask
+                if rect_width > 0 and rect_height > 0:
+                    combined_mask[rect_y: rect_y + rect_height, rect_x: rect_x + rect_width] = 255
+            
+            # Find contours of the combined shape
+            contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if contours:
+                # Get the largest contour
+                largest_contour = max(contours, key=cv2.contourArea)
+                
+                # Simplify the contour slightly to reduce point count
+                epsilon = 0.0005 * cv2.arcLength(largest_contour, True)
+                approx_contour = cv2.approxPolyDP(largest_contour, epsilon, True)
+                
+                # Convert back to original coordinate system and to QPointF
+                points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx_contour]
+                
+                # Create a new polygon annotation
+                patches_polygon = PolygonAnnotation(
+                    points=points,
+                    short_label_code=first_annotation.label.short_label_code,
+                    long_label_code=first_annotation.label.long_label_code,
+                    color=first_annotation.label.color,
+                    image_path=first_annotation.image_path,
+                    label_id=first_annotation.label.id
+                )
+                
+                # Copy rasterio source if available
+                if hasattr(first_annotation, 'rasterio_src') and first_annotation.rasterio_src is not None:
+                    patches_polygon.rasterio_src = first_annotation.rasterio_src
+                    patches_polygon.create_cropped_image(patches_polygon.rasterio_src)
+                
+                result_polygons.append(patches_polygon)
         
-        # Find contours of the combined shape
-        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Add existing polygons to the result list
+        result_polygons.extend(polygons)
         
-        if not contours:
-            return None  # No contours found, can't create polygon
+        # If we only have one result polygon, return it
+        if len(result_polygons) == 1:
+            return result_polygons[0]
         
-        # Get the largest contour
-        largest_contour = max(contours, key=cv2.contourArea)
+        # If we have multiple polygons, combine them using PolygonAnnotation.combine
+        elif len(result_polygons) > 1:
+            return PolygonAnnotation.combine(result_polygons)
         
-        # Simplify the contour slightly to reduce point count
-        epsilon = 0.0005 * cv2.arcLength(largest_contour, True)
-        approx_contour = cv2.approxPolyDP(largest_contour, epsilon, True)
-        
-        # Convert back to original coordinate system and to QPointF
-        points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx_contour]
-        
-        # Create a new polygon annotation
-        result = PolygonAnnotation(
-            points=points,
-            short_label_code=first_annotation.label.short_label_code,
-            long_label_code=first_annotation.label.long_label_code,
-            color=first_annotation.label.color,
-            image_path=first_annotation.image_path,
-            label_id=first_annotation.label.id
-        )
-        
-        # Copy rasterio source if available
-        if hasattr(first_annotation, 'rasterio_src') and first_annotation.rasterio_src is not None:
-            result.rasterio_src = first_annotation.rasterio_src
-            result.create_cropped_image(result.rasterio_src)
-        
-        return result
+        # Otherwise return None
+        return None
     
     @classmethod
     def cut(cls, annotations: list, cutting_points: list):

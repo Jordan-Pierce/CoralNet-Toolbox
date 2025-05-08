@@ -526,16 +526,6 @@ class SelectTool(Tool):
             print("Need at least 2 annotations to combine.")
             return  # Need at least 2 annotations to combine
         
-        # Check if all are the same type (only combine rectangles with rectangles, polygons with polygons, etc.)
-        first_type = type(selected_annotations[0])
-        if not all(isinstance(annotation, first_type) for annotation in selected_annotations):
-            QMessageBox.warning(
-                self.annotation_window,
-                "Cannot Combine",
-                "Can only combine annotations of the same type (rectangles with rectangles, polygons with polygons)."
-            )
-            return
-        
         # Check if any annotations have machine confidence
         if any(not annotation.verified for annotation in selected_annotations):
             QMessageBox.warning(
@@ -554,12 +544,38 @@ class SelectTool(Tool):
             )
             return
         
-        # Handle different annotation types
-        if isinstance(selected_annotations[0], PatchAnnotation):
+        # Identify the types of annotations being combined
+        has_patches = any(isinstance(annotation, PatchAnnotation) for annotation in selected_annotations)
+        has_polygons = any(isinstance(annotation, PolygonAnnotation) for annotation in selected_annotations)
+        has_rectangles = any(isinstance(annotation, RectangleAnnotation) for annotation in selected_annotations)
+        
+        # Handle cases where we can't combine different types
+        if has_rectangles and (has_patches or has_polygons):
+            QMessageBox.warning(
+                self.annotation_window,
+                "Cannot Combine",
+                "Rectangle annotations can only be combined with other rectangles."
+            )
+            return
+        
+        # Check if all rectangle annotations (if any) are the same type
+        if has_rectangles:
+            first_type = type(selected_annotations[0])
+            if not all(isinstance(annotation, first_type) for annotation in selected_annotations):
+                QMessageBox.warning(
+                    self.annotation_window,
+                    "Cannot Combine",
+                    "Can only combine rectangles with other rectangles."
+                )
+                return
+        
+        # Handle different annotation type combinations
+        if has_patches:
+            # PatchAnnotation.combine can handle both patches and polygons
             combined_annotation = PatchAnnotation.combine(selected_annotations)
-        elif isinstance(selected_annotations[0], RectangleAnnotation):
+        elif has_rectangles:
             combined_annotation = RectangleAnnotation.combine(selected_annotations)
-        elif isinstance(selected_annotations[0], PolygonAnnotation):
+        elif has_polygons:
             combined_annotation = PolygonAnnotation.combine(selected_annotations)
         else:
             print("Failed to combine annotations. Unsupported annotation types.")

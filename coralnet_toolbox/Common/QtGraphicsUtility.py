@@ -87,13 +87,13 @@ class GraphicsUtility:
             int: Appropriate handle size in pixels
         """
         if not hasattr(view, 'pixmap_image') or not view.pixmap_image:
-            return 20  # fallback size
+            return 10  # fallback size
             
         scale = view.transform().m11()
         if scale == 0:
             scale = 1  # avoid division by zero
             
-        desired_px = 20  # Desired handle size in screen pixels
+        desired_px = 10  # Desired handle size in screen pixels
         size = max(6, int(round(desired_px / scale)))
         return size
     
