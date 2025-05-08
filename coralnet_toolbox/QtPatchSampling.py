@@ -13,10 +13,10 @@ from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QLabel, QDialog, QHBoxLa
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
-from coralnet_toolbox.QtProgressBar import ProgressBar
-
+from coralnet_toolbox.QtWorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
-from coralnet_toolbox.Common.QtMarginOverlay import MarginOverlay
+
+from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -60,6 +60,8 @@ class PatchSamplingDialog(QDialog):
         self.annotation_window = main_window.annotation_window
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
+        
+        self.graphics_utility = self.annotation_window.graphics_utility
 
         self.setWindowTitle("Sample Annotations")
         self.setWindowIcon(get_icon("coral.png"))
@@ -292,18 +294,18 @@ class PatchSamplingDialog(QDialog):
         return annotations[:num_annotations]
 
     def update_annotation_graphics(self):
-        """Create and display annotation preview graphics, including margin overlays."""
+        """Create and display annotation preview graphics, including margin visualization."""
         self.clear_annotation_graphics()
-
+    
         # Get current parameters
         method = self.method_combo.currentText()
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
-
+    
         if not sample_label:
             return
-
+    
         try:
             # Validate margins before sampling
             margins = self.margin_input.get_margins(self.annotation_window.pixmap_image.width(),
@@ -311,14 +313,32 @@ class PatchSamplingDialog(QDialog):
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Margins", str(e))
             return
-
-        # Add margin overlay
+    
+        # Create a work area to represent the valid annotation area (inside margins)
         image_width = self.annotation_window.pixmap_image.width()
         image_height = self.annotation_window.pixmap_image.height()
-        margin_overlay = MarginOverlay(image_width, image_height, margins)
-        self.annotation_window.scene.addItem(margin_overlay)
-        self.annotation_graphics.append(margin_overlay)
-
+        left, top, right, bottom = margins
+        
+        # Calculate inner rectangle (area inside margins)
+        inner_x = left
+        inner_y = top
+        inner_width = image_width - left - right
+        inner_height = image_height - top - bottom
+        
+        # Create a work area for the margin visualization
+        margin_work_area = WorkArea(inner_x, 
+                                    inner_y, 
+                                    inner_width, 
+                                    inner_height, 
+                                    self.annotation_window.current_image_path)
+                
+        # Create graphics using the WorkArea's own method
+        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        margin_graphics = margin_work_area.create_graphics(self.annotation_window.scene, thickness)
+        
+        # Don't show remove button for margin visualization
+        self.annotation_graphics.append(margin_graphics)
+    
         # Sample new annotations
         self.sampled_annotations = self.sample_annotations(
             method,
@@ -328,7 +348,7 @@ class PatchSamplingDialog(QDialog):
             image_width,
             image_height
         )
-
+    
         # Create graphics for each annotation
         for annotation in self.sampled_annotations:
             x, y, size = annotation
@@ -462,7 +482,7 @@ class PatchSamplingDialog(QDialog):
         self.accept()
 
     def clear_annotation_graphics(self):
-        """Remove all annotation preview graphics, including margin overlays."""
+        """Remove all annotation preview graphics, including margin visualizations."""
         for graphic in self.annotation_graphics:
             self.annotation_window.scene.removeItem(graphic)
         self.annotation_graphics = []
