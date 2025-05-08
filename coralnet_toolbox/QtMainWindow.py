@@ -930,6 +930,14 @@ class MainWindow(QMainWindow):
                 self.import_images.dragMoveEvent(event)
 
     def toggle_tool(self, state):
+        """Toggle the selected tool and emit the toolChanged signal."""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Image Not Loaded",
+                                "Please load an image before using the tools.")
+            self.untoggle_all_tools()
+            return
+        
         # Unlock the label lock
         self.label_window.unlock_label_lock()
         
