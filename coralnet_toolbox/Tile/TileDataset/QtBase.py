@@ -92,7 +92,6 @@ class Base(QDialog):
         self.tile_config_group.setTitle("Tile Configuration Parameters")
         layout = QFormLayout()
 
-        # Existing tile config code...
         self.tile_size_input = TileSizeInput()
         layout.addRow(self.tile_size_input)
 
@@ -138,7 +137,7 @@ class Base(QDialog):
         self.dataset_config_group.setTitle("Dataset Configuration Parameters")
         layout = QFormLayout()
 
-        # Image Extensions - Now in separate group box with vertical form layout
+        # Image Extensions 
         ext_group = QGroupBox("Image Extensions")
         ext_form = QFormLayout(ext_group)
         
@@ -150,12 +149,19 @@ class Base(QDialog):
         self.output_ext_combo.addItems([".png", ".tif", ".jpeg", ".jpg"])
         self.output_ext_combo.setEditable(True)
         
+        # Add compression spinbox
+        self.compression_spinbox = QSpinBox()
+        self.compression_spinbox.setRange(0, 100)
+        self.compression_spinbox.setValue(90)
+        self.compression_spinbox.setSingleStep(5)
+        
         ext_form.addRow("Input Extension:", self.input_ext_combo)
         ext_form.addRow("Output Extension:", self.output_ext_combo)
+        ext_form.addRow("Compression (0-100):", self.compression_spinbox)
         
         layout.addRow(ext_group)
 
-        # Train, Validation, and Test Ratios - Now in separate group box with vertical form layout
+        # Train, Validation, and Test Ratios 
         ratios_group = QGroupBox("Dataset Split Ratios")
         ratios_form = QFormLayout(ratios_group)
 
@@ -180,7 +186,7 @@ class Base(QDialog):
 
         layout.addRow(ratios_group)
 
-        # Advanced options - Now in separate group box with vertical form layout
+        # Advanced options 
         advanced_group = QGroupBox("Advanced Parameters")
         advanced_form = QFormLayout(advanced_group)
         
@@ -199,25 +205,31 @@ class Base(QDialog):
         
         layout.addRow(advanced_group)
         
+        # Misc. options
+        misc_group = QGroupBox("Misc.")
+        misc_form = QFormLayout(misc_group)
+        
         # Include negative samples
         self.include_negatives_combo = QComboBox()
         self.include_negatives_combo.addItems(["True", "False"])
         self.include_negatives_combo.setEditable(False)
         self.include_negatives_combo.setCurrentIndex(0)
-        layout.addRow("Include Negative Samples:", self.include_negatives_combo)
+        misc_form.addRow("Include Negative Samples:", self.include_negatives_combo)
         
         # Copy source data
         self.copy_source_data_combo = QComboBox()
         self.copy_source_data_combo.addItems(["True", "False"])
         self.copy_source_data_combo.setEditable(False)
         self.copy_source_data_combo.setCurrentIndex(1)
-        layout.addRow("Copy Source Data:", self.copy_source_data_combo)
+        misc_form.addRow("Copy Source Data:", self.copy_source_data_combo)
         
         # Number of Visualization Samples
         self.num_viz_sample_spinbox = QSpinBox()
         self.num_viz_sample_spinbox.setRange(1, 1000)
-        self.num_viz_sample_spinbox.setValue(5)
-        layout.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
+        self.num_viz_sample_spinbox.setValue(3)
+        misc_form.addRow("# Visualization Samples:", self.num_viz_sample_spinbox)
+        
+        layout.addRow(misc_group)
 
         self.dataset_config_group.setLayout(layout)
 
@@ -368,6 +380,7 @@ class Base(QDialog):
 
         input_ext = self.input_ext_combo.currentText()
         output_ext = self.output_ext_combo.currentText()
+        compression = self.compression_spinbox.value()
         densify_factor = self.densify_factor_spinbox.value()
         smoothing_tolerance = self.smoothing_tolerance_spinbox.value()
         train_ratio = self.train_ratio_spinbox.value()
@@ -431,6 +444,7 @@ class Base(QDialog):
             margins=margins,
             include_negative_samples=include_negatives,
             copy_source_data=copy_source_data,
+            compression=compression,
         )
 
         tiler = YoloTiler(
