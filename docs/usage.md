@@ -160,13 +160,18 @@ The main window consists of several components:
   - **Left-Click**: Start a box; press again to end a box.
   - **Backspace**: Discard unfinalized predictions.
 
-- **Work Area Tool**: After a model is loaded
-  - **Space Bar**: Set working area on the cucrrent view;
-  - **Left-Click**: Start a work area; press again to end a work area;
-  - **Ctrl + Shift**: Show working area removal button (click the "X" to remove);
-  - **Ctrl + Shift + Backspace**: Remove all working areas in the current image;
-  - **Deploy a Model**:
-    - With working areas set, any model used will make predictions in just those areas.
+- **Work Area Tool**: For creating restricted areas for model prediction
+  - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Ctrl + Space**: Create a work area from the current view.
+  - **Ctrl + Shift**: Show removal buttons on existing work areas (click the "X" to remove).
+  - **Ctrl + Shift + Backspace**: Remove all work areas in the current image.
+  - **Ctrl + Alt**: Create temporary work area from current view (disappears when keys released).
+  - **Backspace**: Cancel drawing the current work area.
+  - **Mouse Movement**: Shows a preview of the work area while drawing.
+  - **Practical Use**:
+    - Define specific regions where models should make predictions
+    - Useful for processing only relevant parts of large images
+    - Work areas persist between tool changes and sessions
 
 ## Status Bar
 - **Image Size**: Displays the image size.

@@ -34,6 +34,7 @@ class WorkAreaTool(Tool):
         
         # Track if Ctrl key is pressed
         self.ctrl_pressed = False
+        self.temporary_work_area = None  # To store the temporary work area
         
         # Connect to the annotation window's image load signal
         self.annotation_window.imageLoaded.connect(self.on_image_loaded)
@@ -115,41 +116,90 @@ class WorkAreaTool(Tool):
         """Handle key press events for work area tool operations."""
         modifiers = event.modifiers()
         key = event.key()
-        
-        # Check for modifier combinations
-        is_shift_ctrl = (modifiers & Qt.ShiftModifier) and (modifiers & Qt.ControlModifier)
-        
-        # Clear all work areas
-        if is_shift_ctrl and key == Qt.Key_Backspace:
-            self.clear_work_areas()
+
+        # Ctrl+Alt for temporary work area
+        if (modifiers & Qt.ControlModifier) and (modifiers & Qt.AltModifier):
+            if not self.temporary_work_area:
+                self.temporary_work_area = self._create_temporary_work_area()
+                if self.temporary_work_area:
+                    self.save_work_area(self.temporary_work_area)  # Save to raster
             return
-        
-        # Show remove buttons and change cursor
-        if is_shift_ctrl:
+
+        # Ctrl+Shift to show remove buttons
+        if (modifiers & Qt.ControlModifier) and (modifiers & Qt.ShiftModifier):
             self.ctrl_pressed = True
-            self.update_remove_buttons_visibility(True)
-            self.annotation_window.viewport().setCursor(Qt.PointingHandCursor)
+            if self.work_areas:  # Only show remove buttons if there are work areas exist
+                self.update_remove_buttons_visibility(True)
+                self.annotation_window.viewport().setCursor(Qt.PointingHandCursor)
+            
+            # Clear all work areas (Ctrl+Shift+Backspace)
+            if key == Qt.Key_Backspace:
+                if self.temporary_work_area:
+                    self._remove_temporary_work_area()
+                self.clear_work_areas()
             return
-        
-        # Create work area from current view
-        if key == Qt.Key_Space and self.annotation_window.active_image:
+
+        # Ctrl+Space to create a work area from current view
+        if (modifiers & Qt.ControlModifier) and key == Qt.Key_Space and self.annotation_window.active_image:
             self.create_work_area_from_current_view()
             return
-        
-        # Cancel current drawing
-        if key == Qt.Key_Backspace and self.drawing:
+
+        # Cancel current drawing (Backspace - without modifiers)
+        if key == Qt.Key_Backspace and self.drawing and not (modifiers & Qt.ControlModifier):
             self.cancel_drawing()
             return
-    
+
     def keyReleaseEvent(self, event):
         """Handle key release events."""
-        # Track Ctrl key for showing/hiding remove buttons and resetting cursor
-        if event.key() == Qt.Key_Control:
+        modifiers = event.modifiers()
+        
+        # For Ctrl+Alt: remove temporary work area when either key is released
+        if (event.key() == Qt.Key_Control or event.key() == Qt.Key_Alt) and not (
+            (modifiers & Qt.ControlModifier) and (modifiers & Qt.AltModifier)
+        ):
+            if self.temporary_work_area is not None:
+                self._remove_temporary_work_area()
+        
+        # For Ctrl+Shift: hide remove buttons when either key is released
+        if (event.key() == Qt.Key_Control or event.key() == Qt.Key_Shift) and not (
+            (modifiers & Qt.ControlModifier) and (modifiers & Qt.ShiftModifier)
+        ):
             self.ctrl_pressed = False
             self.update_remove_buttons_visibility(False)
-            # Change cursor back to cross when Ctrl is released
             self.annotation_window.viewport().setCursor(self.cursor)
-    
+
+    def _create_temporary_work_area(self):
+        """Create a temporary work area from the current view."""
+        viewport_rect = self.annotation_window.viewportToScene()
+        constrained_viewport_rect = self.constrain_rect_to_image_bounds(viewport_rect)
+
+        if constrained_viewport_rect.width() < 10 or constrained_viewport_rect.height() < 10:
+            return None
+
+        work_area = WorkArea.from_rect(constrained_viewport_rect, self.get_current_image_name())
+        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        work_area.create_graphics(self.annotation_window.scene, thickness)
+
+        if work_area.graphics_item and work_area.graphics_item.scene():
+            return work_area
+
+        return None
+
+    def _remove_temporary_work_area(self):
+        """Remove the temporary work area from the scene and raster."""
+        if self.temporary_work_area is None:
+            return
+
+        raster = self.get_current_raster()
+        if raster:
+            raster.remove_work_area(self.temporary_work_area)
+
+        if self.temporary_work_area.graphics_item and self.temporary_work_area.graphics_item.scene():
+            self.annotation_window.scene.removeItem(self.temporary_work_area.graphics_item)
+            self.temporary_work_area.graphics_item = None
+
+        self.temporary_work_area = None
+        
     def start_drawing(self, pos):
         """Start drawing a work area at the given position."""
         self.drawing = True
