@@ -1,8 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt
-from PyQt5.QtGui import QPen, QColor
-from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem
+from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
+from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -89,13 +89,14 @@ class WorkArea(QObject):
             'image_path': self.image_path
         }
         
-    def create_graphics(self, scene, pen_width=2):
+    def create_graphics(self, scene, pen_width=2, include_shadow=True):
         """
         Create and return the graphics representation of this work area.
         
         Args:
             scene: The QGraphicsScene to add the items to
             pen_width: Width of the pen for the rectangle
+            include_shadow: Whether to include a shadow effect
             
         Returns:
             QGraphicsRectItem: The created rectangle item
@@ -112,7 +113,34 @@ class WorkArea(QObject):
             
             # Add to scene
             scene.addItem(self.graphics_item)
+        
+        # Remove any existing shadow before creating a new one
+        old_shadow = self.graphics_item.data(3) if self.graphics_item else None
+        if old_shadow is not None and hasattr(old_shadow, "scene") and old_shadow.scene():
+            old_shadow.scene().removeItem(old_shadow)
+            self.graphics_item.setData(3, None)
+        
+        # Add shadow if requested
+        if include_shadow:
+            # Create a semi-transparent overlay for the shadow
+            shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
+            shadow_path = QPainterPath()
+            shadow_path.addRect(scene.sceneRect())  # Cover the entire scene
+            shadow_path.addRect(self.rect)  # Add the work area rect
+            # Subtract the work area from the overlay
+            shadow_path = shadow_path.simplified()
+
+            # Create the shadow item
+            shadow_area = QGraphicsPathItem(shadow_path)
+            shadow_area.setBrush(shadow_brush)
+            shadow_area.setPen(QPen(Qt.NoPen))  # No outline for the shadow
             
+            # Add shadow to scene with z-value below the work area
+            scene.addItem(shadow_area)
+            
+            # Store reference to shadow
+            self.graphics_item.setData(3, shadow_area)
+        
         return self.graphics_item
         
     def create_remove_button(self, button_size=20, thickness=2):
@@ -196,6 +224,10 @@ class WorkArea(QObject):
             bool: True if successfully removed, False if not in a scene
         """
         if self.graphics_item and self.graphics_item.scene():
+            # Remove shadow if it exists
+            shadow_item = self.graphics_item.data(3)
+            if shadow_item is not None and hasattr(shadow_item, "scene") and shadow_item.scene():
+                shadow_item.scene().removeItem(shadow_item)
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
             self.remove_button = None

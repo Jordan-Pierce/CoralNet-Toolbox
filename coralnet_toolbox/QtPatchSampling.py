@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
-from PyQt5.QtGui import QPen, QBrush, QColor
+from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
 from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QLabel, QDialog, QHBoxLayout,
                              QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox,
                              QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox)
@@ -117,6 +117,13 @@ class PatchSamplingDialog(QDialog):
         self.label_combo.currentIndexChanged.connect(self.preview_annotations)
         layout.addRow("Select Label:", self.label_combo)
 
+        # Exclude Regions
+        self.exclude_regions_combo = QComboBox()
+        self.exclude_regions_combo.addItems(["False", "True"])
+        self.exclude_regions_combo.setCurrentIndex(0)
+        self.exclude_regions_combo.currentIndexChanged.connect(self.preview_annotations)
+        layout.addRow("Exclude Regions:", self.exclude_regions_combo)
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -216,13 +223,33 @@ class PatchSamplingDialog(QDialog):
             self.label_combo.addItem(label.short_label_code, label.id)
         self.label_combo.setCurrentIndex(0)
 
-    def sample_annotations(self, method, num_annotations, annotation_size, margins, image_width, image_height):
-        """Sample annotations using the specified method."""
+    def sample_annotations(self, method, num_annotations, annotation_size, 
+                           margins, image_width, image_height, exclude_regions=False, exclude_polygons=None):
+        """Sample annotations using the specified method, optionally excluding regions."""
         if not margins:
             return []
 
         left, top, right, bottom = margins
         annotations = []
+
+        def rect_overlaps_any_polygon(x, y, size, polygons):
+            """Check if the rectangle (x, y, size, size) overlaps any polygon in polygons."""
+            rect = QRectF(x, y, size, size)
+            rect_poly = QPolygonF([
+                rect.topLeft(),
+                rect.topRight(),
+                rect.bottomRight(),
+                rect.bottomLeft(),
+            ])
+            for poly in polygons:
+                if poly.intersects(rect_poly):
+                    return True
+            return False
+
+        # Prepare polygons for exclusion if needed
+        polygons = []
+        if exclude_regions and exclude_polygons:
+            polygons = exclude_polygons
 
         if method == "Random":
             min_spacing = annotation_size // 2
@@ -231,42 +258,48 @@ class PatchSamplingDialog(QDialog):
             y_min = top
             y_max = image_height - annotation_size - bottom
 
-            # Generate a large pool of candidate positions
-            num_candidates = max(num_annotations * 10, 1000)  # Adjust based on expected density
+            num_candidates = max(num_annotations * 10, 1000)
             x_candidates = np.random.randint(x_min, x_max + 1, num_candidates)
             y_candidates = np.random.randint(y_min, y_max + 1, num_candidates)
             candidates = np.column_stack((x_candidates, y_candidates))
 
             selected = []
-            remaining_indices = np.arange(num_candidates)  # Track which candidates are still viable
+            remaining_indices = np.arange(num_candidates)
 
             while len(selected) < num_annotations and remaining_indices.size > 0:
-                # Pick a random candidate from the remaining pool
                 idx = np.random.choice(remaining_indices)
                 current = candidates[idx]
+                x, y = current
+                # Exclude if overlaps any polygon
+                if polygons and rect_overlaps_any_polygon(x, y, annotation_size, polygons):
+                    # Remove this candidate and continue
+                    remaining_indices = remaining_indices[remaining_indices != idx]
+                    continue
                 selected.append(current)
 
-                # Remove candidates too close to the selected one
-                dx = np.abs(candidates[remaining_indices, 0] - current[0])
-                dy = np.abs(candidates[remaining_indices, 1] - current[1])
+                dx = np.abs(candidates[remaining_indices, 0] - x)
+                dy = np.abs(candidates[remaining_indices, 1] - y)
                 overlap_mask = ~((dx < min_spacing) & (dy < min_spacing))
                 remaining_indices = remaining_indices[overlap_mask]
 
-            # Convert to list of tuples with annotation size
             annotations = [(x, y, annotation_size) for x, y in selected]
 
             # If still short, fill remaining positions without spacing checks
             if len(annotations) < num_annotations:
                 needed = num_annotations - len(annotations)
-                x_rest = np.random.randint(x_min, x_max + 1, needed)
-                y_rest = np.random.randint(y_min, y_max + 1, needed)
-                annotations += [(x, y, annotation_size) for x, y in zip(x_rest, y_rest)]
+                tries = 0
+                while needed > 0 and tries < 10 * needed:
+                    x = np.random.randint(x_min, x_max + 1)
+                    y = np.random.randint(y_min, y_max + 1)
+                    if polygons and rect_overlaps_any_polygon(x, y, annotation_size, polygons):
+                        tries += 1
+                        continue
+                    annotations.append((x, y, annotation_size))
+                    needed -= 1
+                    tries += 1
 
         elif method in ["Uniform", "Stratified Random"]:
-            # Calculate grid size based on number of annotations
-            grid_size = int(num_annotations ** 0.5)  # Square root for grid dimensions
-
-            # Calculate available space and steps between annotations
+            grid_size = int(num_annotations ** 0.5)
             usable_width = image_width - left - right - annotation_size
             usable_height = image_height - top - bottom - annotation_size
 
@@ -285,9 +318,12 @@ class PatchSamplingDialog(QDialog):
                         x = int(left + i * x_step + random.uniform(0, x_step))
                         y = int(top + j * y_step + random.uniform(0, y_step))
 
-                    # Ensure we don't exceed image boundaries and respect margins
                     x = max(left, min(x, image_width - annotation_size - right))
                     y = max(top, min(y, image_height - annotation_size - bottom))
+
+                    # Exclude if overlaps any polygon
+                    if polygons and rect_overlaps_any_polygon(x, y, annotation_size, polygons):
+                        continue
 
                     annotations.append((x, y, annotation_size))
 
@@ -302,6 +338,7 @@ class PatchSamplingDialog(QDialog):
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
+        exclude_regions = self.exclude_regions_combo.currentText() == "True"
     
         if not sample_label:
             return
@@ -334,11 +371,18 @@ class PatchSamplingDialog(QDialog):
                 
         # Create graphics using the WorkArea's own method
         thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        margin_graphics = margin_work_area.create_graphics(self.annotation_window.scene, thickness)
+        margin_graphics = margin_work_area.create_graphics(self.annotation_window.scene, thickness, include_shadow=True)
         
         # Don't show remove button for margin visualization
         self.annotation_graphics.append(margin_graphics)
     
+        # Prepare polygons to exclude if needed
+        polygons = []
+        if exclude_regions:
+            # Get all annotation polygons for the current image
+            image_annotations = self.annotation_window.get_image_annotations()
+            polygons = [a.get_polygon() for a in image_annotations]
+
         # Sample new annotations
         self.sampled_annotations = self.sample_annotations(
             method,
@@ -346,7 +390,9 @@ class PatchSamplingDialog(QDialog):
             annotation_size,
             margins,
             image_width,
-            image_height
+            image_height,
+            exclude_regions=exclude_regions,
+            exclude_polygons=polygons
         )
     
         # Create graphics for each annotation
@@ -393,6 +439,9 @@ class PatchSamplingDialog(QDialog):
             QMessageBox.warning(self, "Error", "No image is currently selected")
             return
 
+        # Prepare exclude regions flag
+        exclude_regions = self.exclude_regions_combo.currentText() == "True"
+
         # Determine which images to apply annotations to
         if self.apply_to_filtered:
             image_paths = self.image_window.table_model.filtered_paths
@@ -436,13 +485,22 @@ class PatchSamplingDialog(QDialog):
                 # Validate margins for each image
                 margins = self.margin_input.get_margins(width, height)
                 
+                # Prepare polygons to exclude if needed
+                polygons = []
+                if exclude_regions:
+                    # Get all annotation polygons for this image
+                    image_annotations = self.annotation_window.get_image_annotations(image_path)
+                    polygons = [a.get_polygon() for a in image_annotations]
+
                 # Sample the annotations given params
                 annotations_coords = self.sample_annotations(method,
                                                              num_annotations,
                                                              annotation_size,
                                                              margins,
                                                              width,
-                                                             height)
+                                                             height,
+                                                             exclude_regions=exclude_regions,
+                                                             exclude_polygons=polygons)
 
                 for x, y, size in annotations_coords:
                     # Create the annotation with center point
