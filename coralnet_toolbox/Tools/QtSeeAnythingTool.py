@@ -38,8 +38,8 @@ class SeeAnythingTool(Tool):
         super().__init__(annotation_window)
 
         self.annotation_window = annotation_window
-        self.main_window = self.annotation_window.main_window
-
+        self.main_window = annotation_window.main_window
+        
         self.see_anything_dialog = None
 
         self.top_left = None
@@ -47,7 +47,7 @@ class SeeAnythingTool(Tool):
         self.cursor = Qt.CrossCursor
         self.annotation_graphics = None
 
-        self.image_view = None
+        self.work_area_image = None
         self.rectangles = []       # Store rectangle coordinates for SeeAnything processing
         self.rectangle_items = []  # Store QGraphicsRectItem objects
 
@@ -155,10 +155,10 @@ class SeeAnythingTool(Tool):
         self.annotation_window.scene.addItem(self.shadow_area)
 
         # Crop the image based on the working area
-        self.image_view = self.original_image[top:bottom, left:right]
+        self.work_area_image = self.original_image[top:bottom, left:right]
 
         # Set the image in the SeeAnything dialog
-        self.see_anything_dialog.set_image(self.image_view, self.image_path)
+        self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update() 
@@ -420,7 +420,7 @@ class SeeAnythingTool(Tool):
         self.results = results_processor.apply_filters(results)
 
         # Calculate the area of the image
-        image_area = self.image_view.shape[0] * self.image_view.shape[1]
+        image_area = self.work_area_image.shape[0] * self.work_area_image.shape[1]
 
         # Clear previous annotations if any
         self.clear_annotations()
@@ -433,23 +433,22 @@ class SeeAnythingTool(Tool):
             if confidence < self.main_window.get_uncertainty_thresh():
                 continue
             
-            # TODO?
+            # Get the bounding box coordinates (x1, y1, x2, y2) in normalized format
             box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
 
-            # Convert from normalized to pixel coordinates relative to the cropped image
-            box_rel = box * np.array([self.image_view.shape[1],
-                                      self.image_view.shape[0],
-                                      self.image_view.shape[1],
-                                      self.image_view.shape[0]])
-
-            # Convert to whole image coordinates
-            box_abs = box_rel.copy()
+            # Convert from normalized coordinates directly to absolute pixel coordinates in the whole image
+            box_abs = box.copy() * np.array([self.work_area_image.shape[1],
+                                             self.work_area_image.shape[0],
+                                             self.work_area_image.shape[1],
+                                             self.work_area_image.shape[0]])
+            
+            # Add working area offset to get coordinates in the whole image
             box_abs[0] += working_area_top_left.x()
             box_abs[1] += working_area_top_left.y()
             box_abs[2] += working_area_top_left.x()
             box_abs[3] += working_area_top_left.y()
 
-            # Check box area relative to **image view** area
+            # Check box area relative to **work area view** area
             box_area = (box_abs[2] - box_abs[0]) * (box_abs[3] - box_abs[1])
 
             # self.main_window.get_area_thresh_min()
@@ -463,13 +462,9 @@ class SeeAnythingTool(Tool):
                 # Use polygons from result.masks.data.xyn (list of polygons, each Nx2, normalized to crop)
                 polygon = result.masks.xyn[0]  # np.array of polygons, each as Nx2 array
 
-                # Scale normalized points to crop pixel coordinates
-                polygon[:, 0] *= self.image_view.shape[1]  # width
-                polygon[:, 1] *= self.image_view.shape[0]  # height
-
-                # Convert to whole image coordinates
-                polygon[:, 0] += working_area_top_left.x()
-                polygon[:, 1] += working_area_top_left.y()
+                # Convert normalized polygon points directly to whole image coordinates
+                polygon[:, 0] = polygon[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
+                polygon[:, 1] = polygon[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
                 
                 polygon = clean_polygon(polygon)
 
@@ -586,10 +581,10 @@ class SeeAnythingTool(Tool):
         ones created by the SeeAnything predictor."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+    
         # Create a class mapping dictionary
         class_mapping = {0: self.annotation_window.selected_label}
-
+    
         # Create a results processor
         results_processor = ResultsProcessor(
             self.main_window,
@@ -599,65 +594,37 @@ class SeeAnythingTool(Tool):
             min_area_thresh=self.main_window.get_area_thresh_min(),
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
-
+        
         # Make a copy of the results
         results = copy.deepcopy(self.results)
-
-        # Get working area offset to adjust box coordinates
-        working_area_top_left = self.working_area.rect.topLeft()
         
-        # Get boxes (xyxyn normalized pixel coordinates relative to image_view)
-        boxes = results.boxes.xyxyn.detach().cpu().clone()
-
-        # Scale the boxes (tesnor) using image_view dimensions
-        boxes_rel = boxes.clone()
-        boxes_rel[:, 0] *= self.image_view.shape[1]  # width
-        boxes_rel[:, 1] *= self.image_view.shape[0]  # height
-        boxes_rel[:, 2] *= self.image_view.shape[1]  # width
-        boxes_rel[:, 3] *= self.image_view.shape[0]  # height
-
-        # Convert to whole image coordinates
-        boxes_abs = boxes_rel.clone()
-        boxes_abs[:, 0] += working_area_top_left.x()
-        boxes_abs[:, 1] += working_area_top_left.y()
-        boxes_abs[:, 2] += working_area_top_left.x()
-        boxes_abs[:, 3] += working_area_top_left.y()
-
-        # Update the confidence values if they exist
-        conf = results.boxes.conf.detach().cpu().clone()
-        if conf.dim() == 1:
-            conf = conf.unsqueeze(1)
-        
-        # Get the class values
-        cls = results.boxes.cls.detach().cpu().clone()
-        if cls.dim() == 1:
-            cls = cls.unsqueeze(1)
-        
-        # Create the updated boxes tensor 
-        updated_boxes = torch.cat([boxes_abs, conf, cls], dim=1)
-                
-        # Update boxes using the proper method
-        results.update(boxes=updated_boxes)
-
-        # Replace the image view with the original image for SAM
-        results.orig_img = self.original_image.copy()
-        results.orig_shape = self.original_image.shape
-        results.path = self.image_path
         # Update the class mapping for the results
         results.names = {0: class_mapping[0].short_label_code}
 
-        # Process the results with the SAM predictor
-        results = self.see_anything_dialog.sam_dialog.predict_from_results([results])
-
+        # Process the results with the SAM predictor using the new
+        results = self.see_anything_dialog.sam_dialog.predict_from_results([results], self.image_path)
+        
+        # Get the raster 
+        raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
+        
+        # Map results from working area to the original image coordinates
+        results = results_processor.map_results_from_work_area(
+            results, 
+            raster, 
+            self.working_area
+        )
+        
+        # Update the results with work area image
+        self.results.orig_image = self.work_area_image
+        self.results.orig_shape = self.work_area_image.shape
+        
         # Process the results
         results_processor.process_segmentation_results(results)
-
+    
         # Make cursor normal
         QApplication.restoreOverrideCursor()
-
         # Clear the previous, non-confirmed annotations
         self.clear_annotations()
-
         # Clear the working area
         self.cancel_working_area()
 
@@ -746,7 +713,7 @@ class SeeAnythingTool(Tool):
 
         self.image_path = None
         self.original_image = None
-        self.image_view = None
+        self.work_area_image = None
 
         # Clear all rectangles when canceling the working area
         self.clear_all_rectangles()
