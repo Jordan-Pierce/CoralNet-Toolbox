@@ -417,15 +417,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tool-bar" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tool Bar
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#status-bar" class="md-nav__link">
     <span class="md-ellipsis">
       Status Bar
@@ -618,15 +609,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tool-bar" class="md-nav__link">
-    <span class="md-ellipsis">
-      Tool Bar
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#status-bar" class="md-nav__link">
     <span class="md-ellipsis">
       Status Bar
@@ -768,8 +750,8 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Export Labels (JSON)</strong>: Save label data to a JSON file.</li>
 <li><strong>Export TagLab Labels (JSON)</strong>: Save label data to a TagLab JSON file.</li>
 <li><strong>Export Annotations (JSON)</strong>: Save annotation data to a JSON file.</li>
-<li><strong>Export GeoJSON Annotations</strong>: Save annotations to GeoJSON file (only for GeoTIFFs with CRS and Transforms data)</li>
-<li><strong>Export Mask Annotations (Raster)</strong>: Save annotations as segmentation masks</li>
+<li><strong>Export GeoJSON Annotations</strong>: Save annotations to GeoJSON file (only for GeoTIFFs with CRS and Transforms data).</li>
+<li><strong>Export Mask Annotations (Raster)</strong>: Save annotations as segmentation masks.</li>
 <li><strong>Export CoralNet Annotations</strong>: Save annotation data to a CoralNet CSV file.</li>
 <li><strong>Export TagLab Annotations</strong>: Save annotation data to a TagLab JSON file.</li>
 <li><strong>Export Viscore Annotations</strong>: Save annotation data to a Viscore CSV file.</li>
@@ -781,6 +763,18 @@ This guide provides instructions on how to use the application, including key fu
 </li>
 <li>
 <p><strong>Sample Annotations</strong>: Automatically generate Patch annotations.</p>
+<ul>
+<li><strong>Sampling Method</strong>: Choose between Random, Stratified Random, or Uniform distribution.</li>
+<li><strong>Number of Annotations</strong>: Specify how many annotations to generate.</li>
+<li><strong>Annotation Size</strong>: Set the size of the generated patch annotations.</li>
+<li><strong>Label Selection</strong>: Choose which label to assign to generated annotations.</li>
+<li><strong>Exclude Regions</strong>: Option to prevent sampling in areas with existing annotations.</li>
+<li><strong>Margins</strong>: Define image boundary constraints for sampling:</li>
+<li>Set margins in pixels or percentage</li>
+<li>Configure different values for top, right, bottom, and left edges</li>
+<li>Annotations will only be placed within these margins</li>
+<li><strong>Apply Options</strong>: Apply sampling to current image, filtered images, previous/next images, or all images.</li>
+</ul>
 </li>
 <li>
 <p><strong>Tile</strong>:</p>
@@ -791,9 +785,26 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>CoralNet</strong>: </p>
 </li>
-<li><strong>Authenticate</strong>: Authenticate with CoralNet.</li>
+<li><strong>Authenticate</strong>: Authenticate with CoralNet.<ul>
+<li>Enter your CoralNet username and password to access your sources.</li>
+<li>Authentication is required before downloading any CoralNet data.</li>
+</ul>
+</li>
 <li>
 <p><strong>Download</strong>: Download data from CoralNet.</p>
+<ul>
+<li><strong>Source ID</strong>: Enter the Source ID (or multiple IDs separated by commas).</li>
+<li><strong>Output Directory</strong>: Select where to save downloaded files.</li>
+<li><strong>Download Options</strong>: Choose what to download:</li>
+<li>Metadata: Source information and settings</li>
+<li>Labelset: All available labels from the source</li>
+<li>Annotations: Point annotations with their labels</li>
+<li>Images: Original images from the source</li>
+<li><strong>Parameters</strong>: Configure download settings:</li>
+<li>Image Fetch Rate: Time between image downloads (seconds)</li>
+<li>Image Fetch Break Time: Pause duration between batches (seconds)</li>
+<li><strong>Debug Mode</strong>: Toggle headless browser mode for troubleshooting.</li>
+</ul>
 </li>
 <li>
 <p><strong>Ultralytics</strong>:</p>
@@ -830,24 +841,54 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 </li>
 <li><strong>Batch Inference</strong>: Perform batch inferences.</li>
-</ul>
-<h2 id="tool-bar">Tool Bar<a class="headerlink" href="#tool-bar" title="Permanent link">&para;</a></h2>
+<li>
+<p><strong>Select Tool</strong>: After selecting the tool</p>
 <ul>
-<li>
-<p><strong>Select Tool</strong>:
-  -</p>
+<li><strong>Left-Click</strong>: Select an annotation; drag to move it.</li>
+<li><strong>Ctrl + Left-Click</strong>: Add/remove annotation to current selection.</li>
+<li><strong>Ctrl + Drag</strong>: Create rectangle selection to select multiple annotations.</li>
+<li><strong>Delete / Backspace</strong>: Remove selected annotation(s).</li>
+<li><strong>Ctrl + Shift</strong>: Show resize handles for the selected annotation.</li>
+<li><strong>Ctrl + Mouse Wheel</strong>: Change size of the selected annotation.</li>
+<li><strong>Ctrl + Space</strong>: Confirm prediction for selected annotation with top machine confidence.</li>
+<li><strong>Ctrl + C</strong>: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.</li>
+<li><strong>Combining Rules</strong>: <ul>
+<li>All selected annotations must have the same label</li>
+<li>All selected annotations must be verified (not machine predictions)</li>
+<li>Patch annotations can be combined with other patches or polygons</li>
+<li>Rectangle annotations can only be combined with other rectangles</li>
+<li>Polygon annotations can be combined with other polygons</li>
+</ul>
+</li>
+<li><strong>Cutting Mode</strong>: Left-click to start drawing a cut line, click again to complete the cut.</li>
+<li><strong>Backspace/Ctrl + C</strong>: Cancel cutting mode.</li>
+</ul>
 </li>
 <li>
-<p><strong>Patch Tool</strong>:</p>
+<p><strong>Patch Tool</strong>: After selecting the tool</p>
 </li>
-<li></li>
+<li><strong>Left-Click</strong>: Add a patch annotation at the clicked position.</li>
+<li><strong>Ctrl + Mouse Wheel</strong>: Adjust the patch size up or down.</li>
 <li>
-<p><strong>Rectangle Tool</strong>:
-  -</p>
+<p><strong>Mouse Movement</strong>: Shows a semi-transparent preview of the patch at the cursor position.</p>
 </li>
 <li>
-<p><strong>Polygon Tool</strong>:
-  -</p>
+<p><strong>Rectangle Tool</strong>: After selecting the tool</p>
+</li>
+<li><strong>Left-Click</strong>: Start drawing a rectangle; click again to finish.</li>
+<li><strong>Mouse Movement</strong>: Shows a preview of the rectangle while drawing.</li>
+<li>
+<p><strong>Backspace</strong>: Cancel the current rectangle annotation.</p>
+</li>
+<li>
+<p><strong>Polygon Tool</strong>: After selecting the tool</p>
+</li>
+<li><strong>Left-Click (first)</strong>: Start drawing a polygon.</li>
+<li><strong>Left-Click (subsequent)</strong>: Add points to the polygon; click near the first point to close.</li>
+<li><strong>Ctrl + Left-Click</strong>: Enable straight line mode; click to add straight line segments.</li>
+<li><strong>Mouse Movement</strong>: Shows a preview of the polygon as you draw.</li>
+<li>
+<p><strong>Backspace</strong>: Cancel the current polygon annotation.</p>
 </li>
 <li>
 <p><strong>SAM Tool</strong>: After a model is loaded</p>
@@ -864,7 +905,20 @@ This guide provides instructions on how to use the application, including key fu
 </li>
 <li><strong>Space Bar</strong>: Set working area; run prediction; finalize predictions and exit working area.</li>
 <li><strong>Left-Click</strong>: Start a box; press again to end a box.</li>
-<li><strong>Backspace</strong>: Discard unfinalized predictions.</li>
+<li>
+<p><strong>Backspace</strong>: Discard unfinalized predictions.</p>
+</li>
+<li>
+<p><strong>Work Area Tool</strong>: After a model is loaded</p>
+</li>
+<li><strong>Space Bar</strong>: Set working area on the cucrrent view;</li>
+<li><strong>Left-Click</strong>: Start a work area; press again to end a work area;</li>
+<li><strong>Ctrl + Shift</strong>: Show working area removal button (click the "X" to remove);</li>
+<li><strong>Ctrl + Shift + Backspace</strong>: Remove all working areas in the current image;</li>
+<li><strong>Deploy a Model</strong>:<ul>
+<li>With working areas set, any model used will make predictions in just those areas.</li>
+</ul>
+</li>
 </ul>
 <h2 id="status-bar">Status Bar<a class="headerlink" href="#status-bar" title="Permanent link">&para;</a></h2>
 <ul>
@@ -889,6 +943,13 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Delete Label</strong>: Click the "Delete Label" button to delete the selected label.</li>
 <li><strong>Edit Label</strong>: Click the "Edit Label" button to edit the selected label.</li>
 <li><strong>Lock Label</strong>: Click the "Lock Label" button to lock the selected label.</li>
+<li><strong>Filter Labels</strong>: Use the filter text box to search for specific labels.</li>
+<li><strong>Label Count</strong>: Displays the total number of labels in the project.</li>
+<li><strong>Annotation Count</strong>: Shows information about the current annotations:</li>
+<li>When no annotation is selected: Shows the total count of annotations</li>
+<li>When a single annotation is selected: Shows the selected annotation's index</li>
+<li>When multiple annotations are selected: Shows how many annotations are selected</li>
+<li>Can be edited (when in select mode) to navigate to a specific annotation by index</li>
 </ul>
 <h2 id="image-window">Image Window<a class="headerlink" href="#image-window" title="Permanent link">&para;</a></h2>
 <ul>
@@ -902,12 +963,34 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Has Annotations</strong>: Filter images with annotations.</li>
 <li><strong>Has Predictions</strong>: Filter images with predictions.</li>
 <li><strong>Selected</strong>: Filter images selected.</li>
+<li><strong>Navigation</strong>:</li>
+<li><strong>Home Button</strong>: Click to center the table on the current image.</li>
+<li><strong>Select All</strong>: Select all images in the current filtered view.</li>
+<li><strong>Deselect All</strong>: Deselect all images in the current filtered view.</li>
+<li><strong>Image Preview</strong>: Hover over an image row to see a preview tooltip.</li>
+<li><strong>Current Image Info</strong>: Shows the current image index and total image count.</li>
+<li><strong>Batch Operations</strong>: Right-click after selecting multiple images (using checkboxes) to:</li>
+<li>Delete multiple images at once</li>
+<li>Delete annotations for multiple images at once</li>
 </ul>
 <h2 id="confidence-window">Confidence Window<a class="headerlink" href="#confidence-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Display Cropped Image</strong>: Shows the cropped image of the selected annotation.</li>
+<li>The dimensions shown include both original and scaled sizes when applicable.</li>
+<li>The border of the image is highlighted with the color of the top confident label.</li>
 <li><strong>Confidence Chart</strong>: Displays a bar chart with confidence scores.</li>
-<li><strong>Prediction Selection</strong>: Select a prediction from the list to change the label.</li>
+<li><strong>Top 5 Predictions</strong>: Shows up to 5 predictions with their confidence scores.</li>
+<li><strong>Prediction Selection</strong>: Click on any confidence bar to change the annotation's label.</li>
+<li><strong>Numerical Keys</strong>: Press keys 1-5 to quickly select from the top 5 predictions.</li>
+<li><strong>Confidence Mode Toggle</strong>: </li>
+<li>Click the icon button next to the dimensions to toggle between user and machine confidence views.</li>
+<li>User icon shows user-assigned confidence scores.</li>
+<li>Machine icon shows model-predicted confidence scores.</li>
+<li>The toggle is only enabled when both user and machine confidences are available.</li>
+<li><strong>Visual Indicators</strong>:</li>
+<li>Each confidence bar shows the label color and confidence percentage.</li>
+<li>Numbered indicators (1-5) show the rank of each prediction.</li>
+<li>Hover over confidence bars to see a pointing hand cursor when selection is possible.</li>
 </ul>
 <h3 id="hotkeys">Hotkeys<a class="headerlink" href="#hotkeys" title="Permanent link">&para;</a></h3>
 <ul>
@@ -950,7 +1033,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 24, 2025 17:27:40"><span class="timeago" datetime="2025-04-24T17:27:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 24, 2025 17:27:40">2025-04-24</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 9, 2025 18:19:28"><span class="timeago" datetime="2025-05-09T18:19:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 9, 2025 18:19:28">2025-05-09</span>
   </span>
 
     
