@@ -1,9 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor
-from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsSimpleTextItem, QMessageBox, 
-                             QGraphicsPixmapItem, QGraphicsItemGroup, QGraphicsLineItem)
+from PyQt5.QtGui import QMouseEvent, QPen, QColor
+from PyQt5.QtWidgets import (QGraphicsRectItem, QMessageBox, QGraphicsPixmapItem)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.QtWorkArea import WorkArea
@@ -28,9 +27,9 @@ class WorkAreaTool(Tool):
         self.drawing = False
         self.start_pos = None
         self.current_rect = None
-        self.work_areas = []  # List to store WorkArea objects
+        self.work_areas = []  # List to store WorkArea objects for the current image
         
-        # Style settings - removed the semi-transparent brush
+        # Style settings for drawing the work area rectangle
         self.work_area_pen = QPen(QColor(0, 255, 0), 2, Qt.DashLine)
         
         # Track if Ctrl key is pressed
@@ -38,6 +37,9 @@ class WorkAreaTool(Tool):
         
         # Connect to the annotation window's image load signal
         self.annotation_window.imageLoaded.connect(self.on_image_loaded)
+        
+        # Track current image path to detect image changes
+        self.current_image_path = None
         
     def activate(self):
         """Activate the work area tool and set the appropriate cursor."""
@@ -53,18 +55,25 @@ class WorkAreaTool(Tool):
             self.cancel_drawing()
             
         # Remove all work area graphics from the scene without clearing the raster data
-        self.hide_work_area_graphics()
+        self.clear_work_area_graphics()
             
         super().deactivate()
         
-    def hide_work_area_graphics(self):
+    def clear_work_area_graphics(self):
         """Remove all work area graphics from the scene without clearing the data in the raster."""
         # Create a copy to safely iterate
         for work_area in self.work_areas:
+            # Then handle the main graphics item and its children
             if work_area.graphics_item and work_area.graphics_item.scene():
-                # Remove from scene but keep the object
-                self.annotation_window.scene.removeItem(work_area.graphics_item)
-                work_area.graphics_item = None
+                try:
+                    # Remove from scene but keep the object
+                    self.annotation_window.scene.removeItem(work_area.graphics_item)
+                except RuntimeError as e:
+                    print(f"Error removing graphics item: {e}")
+                
+            # Always clear references, even if scene removal fails
+            work_area.graphics_item = None
+            work_area.remove_button = None
         
         # Clear our internal list since we removed the graphics items
         # This doesn't remove them from the raster
@@ -146,7 +155,7 @@ class WorkAreaTool(Tool):
         self.drawing = True
         self.start_pos = pos
         
-        # Create an initial rectangle item for visual feedback - no brush
+        # Create an initial rectangle item for visual feedback
         self.current_rect = QGraphicsRectItem(QRectF(pos.x(), pos.y(), 0, 0))
         
         # Get the width
@@ -192,17 +201,21 @@ class WorkAreaTool(Tool):
             self.cancel_drawing()
             return
             
-        # Update the current rectangle with the final dimensions
-        self.current_rect.setRect(rect)
-        
+        # Remove the temporary drawing rectangle
+        if self.current_rect in self.annotation_window.scene.items():
+            self.annotation_window.scene.removeItem(self.current_rect)
+            
         # Create a WorkArea object from the rect
         work_area = WorkArea.from_rect(rect, self.get_current_image_name())
         
-        # Add graphics item reference to the work area
-        work_area.graphics_item = self.current_rect
+        # Create graphics using the WorkArea's own method
+        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        work_area.create_graphics(self.annotation_window.scene, thickness)
         
         # Add close button but initially hidden unless Ctrl is pressed
-        self.add_remove_button(work_area)
+        button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
+        work_area.create_remove_button(button_size, thickness)
+        work_area.set_remove_button_visibility(self.ctrl_pressed)
         
         # Connect to remove signal
         work_area.removed.connect(self.on_work_area_removed)
@@ -246,29 +259,25 @@ class WorkAreaTool(Tool):
         # Create a WorkArea object from the viewport rect
         work_area = WorkArea.from_rect(viewport_rect, self.get_current_image_name())
         
-        # Create a new rectangle for the current view - no brush
-        rect_item = QGraphicsRectItem(viewport_rect)
-        rect_item.setPen(self.work_area_pen)
-        # No brush - transparent interior
+        # Add work area graphics to the scene in one step
+        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
         
-        # Add to scene
-        self.annotation_window.scene.addItem(rect_item)
-        
-        # Add graphics item reference to the work area
-        work_area.graphics_item = rect_item
-        
-        # Add close button but initially hidden unless Ctrl is pressed
-        self.add_remove_button(work_area)
-        
-        # Connect to remove signal
-        work_area.removed.connect(self.on_work_area_removed)
-        
-        # Add to work areas list
-        self.work_areas.append(work_area)
-        
-        # Store the work area in the raster
-        self.save_work_area(work_area)
-        
+        if work_area.add_to_scene(self.annotation_window.scene, thickness, button_size):
+            # Set initial button visibility based on Ctrl state
+            work_area.set_remove_button_visibility(self.ctrl_pressed)
+            
+            # Connect to remove signal
+            work_area.removed.connect(self.on_work_area_removed)
+            
+            # Add to work areas list
+            self.work_areas.append(work_area)
+            
+            # Store the work area in the raster
+            self.save_work_area(work_area)
+        else:
+            print(f"Warning: Failed to add work area to scene: {work_area.to_dict()}")
+            
     def constrain_rect_to_image_bounds(self, rect):
         """Constrain a rectangle to stay within the image boundaries."""
         # Get image boundaries
@@ -302,58 +311,10 @@ class WorkAreaTool(Tool):
         
         return rect
         
-    def add_remove_button(self, work_area):
-        """Add a remove button (X) to the work area (initially hidden)."""
-        # Get the rectangle dimensions
-        rect = work_area.rect
-        
-        # Create a group item to hold the X shape
-        button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2  # Size of the button
-        button_group = QGraphicsItemGroup(work_area.graphics_item)
-        
-        # Create two diagonal lines to form an X
-        line1 = QGraphicsLineItem(0, 0, button_size, button_size, button_group)
-        line2 = QGraphicsLineItem(0, button_size, button_size, 0, button_group)
-        
-        # Set the pen properties - thicker red lines
-        thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        red_pen = QPen(QColor(255, 0, 0), 2)
-        red_pen.setWidth(thickness)
-        line1.setPen(red_pen)
-        line2.setPen(red_pen)
-        
-        # Position in the top-right corner
-        button_group.setPos(rect.right() - button_size - 10, rect.top() + 10)
-        
-        # Store data to identify this button and its work area
-        button_group.setData(0, "remove_button")
-        button_group.setData(1, work_area)  # Store reference to the work area
-        
-        # Make the group item clickable
-        button_group.setAcceptedMouseButtons(Qt.LeftButton)
-        
-        # Store reference to the work area and button in the graphics item
-        work_area.graphics_item.setData(0, "work_area")
-        work_area.graphics_item.setData(1, work_area)  # Store reference to the work area
-        work_area.graphics_item.setData(2, button_group)  # Store reference to the remove button
-        
-        # Initially hide the remove button
-        button_group.setVisible(self.ctrl_pressed)
-        
-        # When the remove button is clicked, remove the work area
-        def on_press(event):
-            work_area.remove()
-            
-        # Override mousePressEvent for the button item
-        button_group.mousePressEvent = on_press
-        
     def update_remove_buttons_visibility(self, visible):
         """Update the visibility of all remove buttons based on Ctrl key state."""
         for work_area in self.work_areas:
-            if work_area.graphics_item:
-                remove_button = work_area.graphics_item.data(2)
-                if remove_button:
-                    remove_button.setVisible(visible)
+            work_area.set_remove_button_visibility(visible)
         
     def on_work_area_removed(self, work_area):
         """Handle when a work area is removed."""
@@ -383,51 +344,78 @@ class WorkAreaTool(Tool):
         
     def on_image_loaded(self, width, height):
         """Handle when a new image is loaded."""
-        # Clear existing work areas first, regardless of whether tool is active
-        self.hide_work_area_graphics()
+        # Get current image path
+        new_image_path = self.get_current_image_name()
         
-        # Only reload work areas if this tool is currently active
+        # Check if the image has actually changed
+        if new_image_path != self.current_image_path:
+            # Update our tracking variable
+            self.current_image_path = new_image_path
+            
+            # Always reload work areas when the image changes, regardless of whether this tool is active
+            if self.annotation_window.selected_tool == "work_area":
+                self.load_work_areas()
+        
+    def check_and_reload_work_areas(self):
+        """
+        Check if we need to reload work areas - this can be called when the tool becomes
+        visible or when we need to ensure graphics are displayed.
+        """
+        # If this is the active tool, always reload work areas
         if self.annotation_window.selected_tool == "work_area":
             self.load_work_areas()
             
     def load_work_areas(self):
         """Load existing work areas for the current image."""
-        # Clear existing work areas first
-        self.clear_work_areas()
+        # Remove existing work area graphics from the scene first
+        self.clear_work_area_graphics()
         
         # Get the raster for the current image
         raster = self.get_current_raster()
         if not raster:
             return
             
-        # Get work areas from the raster's work_areas list, not just metadata
+        # Get work areas from the raster's work_areas list
         stored_work_areas = raster.get_work_areas()
         image_path = self.get_current_image_name()
         
-        # Create work area objects for each stored rectangle
+        if not stored_work_areas:
+            return
+            
+        # Create graphics for each stored work area
         for work_area in stored_work_areas:
             # If the work area already has an image path that matches the current image
             # and a valid rect, use it directly
             if work_area.image_path == image_path and work_area.is_valid():
-                # Create a graphics item for display - no brush
-                rect_item = QGraphicsRectItem(work_area.rect)
-                rect_item.setPen(self.work_area_pen)
-                # No brush - transparent interior
+                # Ensure work area has no existing graphics references
+                # This is important when reloading previously viewed images
+                work_area.graphics_item = None
+                work_area.remove_button = None
                 
-                # Add to scene
-                self.annotation_window.scene.addItem(rect_item)
+                # Add work area graphics to the scene
+                thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+                button_size = self.graphics_utility.get_handle_size(self.annotation_window) * 2
                 
-                # Add graphics item reference to the work area
-                work_area.graphics_item = rect_item
-                
-                # Add close button (initially hidden unless Ctrl is pressed)
-                self.add_remove_button(work_area)
-                
-                # Connect to remove signal
-                work_area.removed.connect(self.on_work_area_removed)
-                
-                # Add to work areas list
-                self.work_areas.append(work_area)
+                if work_area.add_to_scene(self.annotation_window.scene, thickness, button_size):
+                    # Set initial button visibility based on Ctrl state
+                    work_area.set_remove_button_visibility(self.ctrl_pressed)
+                    
+                    # Connect to remove signal
+                    # Disconnect first to avoid duplicate connections
+                    try:
+                        work_area.removed.disconnect(self.on_work_area_removed)
+                    except TypeError:
+                        # Ignore if not connected
+                        pass
+                    work_area.removed.connect(self.on_work_area_removed)
+                    
+                    # Add to work areas list
+                    self.work_areas.append(work_area)
+                else:
+                    print(f"Warning: Failed to add work area to scene: {work_area.to_dict()}")
+                    # Debug information
+                    print(f"  - Graphics item: {work_area.graphics_item}")
+                    print(f"  - Remove button: {work_area.remove_button}")
             
     def save_work_area(self, work_area):
         """Save the work area to the current raster."""
@@ -438,24 +426,31 @@ class WorkAreaTool(Tool):
         # Add to raster's work_areas list
         raster.add_work_area(work_area)
             
-    def remove_work_area(self, work_area):
-        """Remove a work area."""
-        # Just call the work area's remove method
-        work_area.remove()
-            
     def clear_work_areas(self):
-        """Clear all work area graphics from the scene, but don't remove from the raster."""
+        """Clear all work areas completely - removing both graphics and data from the raster."""
+        # Get the current raster first
+        raster = self.get_current_raster()
+        
         # Create a copy of the list to safely iterate and remove
         work_areas_copy = self.work_areas.copy()
         
         # Clear the list first to avoid on_work_area_removed removing during iteration
         self.work_areas = []
         
-        # Remove each work area's graphics item from the scene, but don't affect the raster data
+        # Remove each work area's graphics item from the scene
         for work_area in work_areas_copy:
+            # If the graphics item exists and is in the scene, it will automatically
+            # remove all its children (including the remove_button) when removed
             if work_area.graphics_item and work_area.graphics_item.scene():
                 self.annotation_window.scene.removeItem(work_area.graphics_item)
                 work_area.graphics_item = None
+                # We don't need to explicitly remove the button as it was a child item
+                # Just make sure we clear our reference to it
+                work_area.remove_button = None
+                
+        # Also clear all work areas from the raster data
+        if raster:
+            raster.clear_work_areas()
         
     def update_cursor_annotation(self, scene_pos=None):
         """Method required by tool interface but not used for work area tool."""

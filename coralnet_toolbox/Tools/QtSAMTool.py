@@ -7,6 +7,9 @@ from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+
+from coralnet_toolbox.QtWorkArea import WorkArea
+
 from coralnet_toolbox.utilities import pixmap_to_numpy, clean_polygon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -82,7 +85,7 @@ class SAMTool(Tool):
 
     def set_working_area(self):
         """
-        Set the working area for the tool.
+        Set the working area for the tool using the WorkArea class.
         """
         self.annotation_window.setCursor(Qt.WaitCursor)
 
@@ -98,45 +101,29 @@ class SAMTool(Tool):
         # Current extent (view)
         extent = self.annotation_window.viewportToScene()
 
-        top = round(extent.top())
-        left = round(extent.left())
+        top = max(0, round(extent.top()))
+        left = max(0, round(extent.left()))
         width = round(extent.width())
         height = round(extent.height())
-        bottom = top + height
-        right = left + width
+        bottom = min(self.original_height, top + height)
+        right = min(self.original_width, left + width)
 
-        # If the current extent includes areas outside the
-        # original image, reduce it to be only the original image
-        if top < 0:
-            top = 0
-        if left < 0:
-            left = 0
-        if bottom > self.original_height:
-            bottom = self.original_height
-        if right > self.original_width:
-            right = self.original_width
-
-        # Set the working area
-        working_rect = QRectF(left, top, right - left, bottom - top)
-
-        # Get the thickness for the working area graphic
-        width = self.annotation_window.graphics_utility.get_workarea_thickness(self.annotation_window)
+        # Create the WorkArea instance
+        self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
         
-        # Create the graphic for the working area
-        pen = QPen(Qt.green)
-        pen.setStyle(Qt.DashLine)
-        pen.setWidth(width)
-        self.working_area = QGraphicsRectItem(working_rect)
-        self.working_area.setPen(pen)
-
-        # Add the working area to the scene
-        self.annotation_window.scene.addItem(self.working_area)
+        # Get the thickness for the working area graphics
+        pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
+        
+        # Create and add the working area graphics
+        self.working_area.create_graphics(self.annotation_window.scene, pen_width)
+        self.working_area.set_remove_button_visibility(False)
+        self.working_area.removed.connect(self.on_working_area_removed)
 
         # Create a semi-transparent overlay for the shadow
         shadow_brush = QBrush(QColor(0, 0, 0, 150))  # Semi-transparent black
         shadow_path = QPainterPath()
         shadow_path.addRect(self.annotation_window.scene.sceneRect())  # Cover the entire scene
-        shadow_path.addRect(working_rect)  # Add the work area rect
+        shadow_path.addRect(self.working_area.rect)  # Add the work area rect
         # Subtract the work area from the overlay
         shadow_path = shadow_path.simplified()
 
@@ -148,14 +135,18 @@ class SAMTool(Tool):
         # Add the shadow item to the scene
         self.annotation_window.scene.addItem(self.shadow_area)
 
-        # Crop the image based on the working_rect
+        # Update the working area image, set in model
         self.image = self.original_image[top:bottom, left:right]
-
-        # Initialize SAM with the cropped image
         self.sam_dialog.set_image(self.image, self.image_path)
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
+
+    def on_working_area_removed(self, work_area):
+        """
+        Handle when the work area is removed via its internal mechanism.
+        """
+        self.cancel_working_area()
 
     def clear_temp_annotation(self):
         """
@@ -234,7 +225,7 @@ class SAMTool(Tool):
         # Add hover point as a positive point if available and we're not drawing a rectangle
         if scene_pos and not self.drawing_rectangle:
             # Adjust hover point relative to working area
-            working_area_top_left = self.working_area.rect().topLeft()
+            working_area_top_left = self.working_area.rect.topLeft()
             adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
                                    scene_pos.y() - working_area_top_left.y())
             # Add to positive points for prediction
@@ -277,16 +268,18 @@ class SAMTool(Tool):
         # Clean the polygon using Ramer-Douglas-Peucker algorithm
         predictions = clean_polygon(predictions)
         
-        # Move the points back to the original image space
-        working_area_top_left = self.working_area.rect().topLeft()
-        points = [(point[0] + working_area_top_left.x(), 
-                   point[1] + working_area_top_left.y()) for point in predictions]
-        self.points = [QPointF(*point) for point in points]
-        
         # Safety check: need at least 3 points for a valid polygon
-        if len(self.points) < 3:
+        if len(predictions) < 3:
             QApplication.restoreOverrideCursor()
             return
+        
+        # Move the points back to the original image space
+        working_area_top_left = self.working_area.rect.topLeft()
+        points = [(point[0] + working_area_top_left.x(), 
+                   point[1] + working_area_top_left.y()) for point in predictions]
+        
+        # Convert to QPointF for graphics
+        self.points = [QPointF(*point) for point in points]
             
         # Get confidence for the annotation
         confidence = results.boxes.conf[top1_index].item()
@@ -318,7 +311,7 @@ class SAMTool(Tool):
         if not self.working_area or not self.start_point or not self.end_point:
             return
             
-        working_area_top_left = self.working_area.rect().topLeft()
+        working_area_top_left = self.working_area.rect.topLeft()
         
         # Calculate rectangle coordinates
         top_left = QPointF(min(self.start_point.x(), self.end_point.x()),
@@ -375,11 +368,11 @@ class SAMTool(Tool):
         scene_pos = self.annotation_window.mapToScene(event.pos())
         
         # Check if position is within working area
-        if not self.working_area.rect().contains(scene_pos):
+        if not self.working_area.contains_point(scene_pos):
             return
             
         # Get position relative to working area
-        working_area_top_left = self.working_area.rect().topLeft()
+        working_area_top_left = self.working_area.rect.topLeft()
         adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
                                scene_pos.y() - working_area_top_left.y())
         
@@ -606,7 +599,7 @@ class SAMTool(Tool):
         predictions = clean_polygon(predictions)
         
         # Move points back to original image space
-        working_area_top_left = self.working_area.rect().topLeft()
+        working_area_top_left = self.working_area.rect.topLeft()
         points = [(point[0] + working_area_top_left.x(), 
                    point[1] + working_area_top_left.y()) for point in predictions]
         self.points = [QPointF(*point) for point in points]
@@ -661,7 +654,7 @@ class SAMTool(Tool):
         
         # Remove working area graphic
         if self.working_area:
-            self.annotation_window.scene.removeItem(self.working_area)
+            self.working_area.remove_from_scene()
             self.working_area = None
             
         # Remove shadow area

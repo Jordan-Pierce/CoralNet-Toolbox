@@ -640,12 +640,32 @@ class ResultsProcessor:
         mapped_results.path = raster.image_path
         mapped_results.orig_shape = raster.shape
         
-        # Get work area coordinates
+        # Get work area coordinates for mapping
+        working_area_top_left = work_area.rect.topLeft()
         wa_x, wa_y = int(work_area.rect.x()), int(work_area.rect.y())
         wa_w, wa_h = int(work_area.rect.width()), int(work_area.rect.height())
-        working_area_top_left = work_area.rect.topLeft()
         
-        # Map bounding boxes if they exist
+        # Map each component separately
+        mapped_results = self._map_boxes(results, mapped_results, working_area_top_left, wa_w, wa_h)
+        mapped_results = self._map_masks(results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h)
+        mapped_results = self._map_probs(results, mapped_results)
+        
+        gc.collect()
+        return mapped_results
+        
+    def _map_boxes(self, results, mapped_results, working_area_top_left, wa_w, wa_h):
+        """
+        Maps bounding boxes from work area to original image coordinates.
+        
+        Args:
+            results: Original Results object
+            mapped_results: New Results object to be updated
+            working_area_top_left: Top left corner of the work area
+            wa_w, wa_h: Width and height of the work area
+            
+        Returns:
+            Results: Updated Results object with mapped boxes
+        """
         if results.boxes is not None and len(results.boxes) > 0:
             # Get xyxyn format (normalized pixel coordinates in the cropped image)
             boxes_xyxyn = results.boxes.xyxyn.detach().cpu().clone()
@@ -679,8 +699,23 @@ class ResultsProcessor:
                     
             # Update boxes using the proper method
             mapped_results.update(boxes=mapped_boxes)
+            
+        return mapped_results
         
-        # Map masks if they exist - direct transformation approach
+    def _map_masks(self, results, mapped_results, raster, wa_x, wa_y, wa_w, wa_h):
+        """
+        Maps masks from work area to original image coordinates.
+        
+        Args:
+            results: Original Results object
+            mapped_results: New Results object to be updated
+            raster: Raster object containing the original image dimensions
+            wa_x, wa_y: Top-left coordinates of the work area
+            wa_w, wa_h: Width and height of the work area
+            
+        Returns:
+            Results: Updated Results object with mapped masks
+        """
         if results.masks is not None and len(results.masks) > 0:
             orig_h, orig_w = raster.height, raster.width
             
@@ -724,11 +759,22 @@ class ResultsProcessor:
             
             # Update masks in the result
             mapped_results.update(masks=full_masks)
-                
+        
+        return mapped_results
+    
+    def _map_probs(self, results, mapped_results):
+        """
+        Maps classification probabilities from original result to the mapped result.
+        
+        Args:
+            results: Original Results object
+            mapped_results: New Results object to be updated
+            
+        Returns:
+            Results: Updated Results object with mapped probabilities
+        """
         # If there are probs (classification results), copy them directly
         if hasattr(results, 'probs') and results.probs is not None:
             mapped_results.update(probs=results.probs.data)
             
-        gc.collect()
-        
         return mapped_results
