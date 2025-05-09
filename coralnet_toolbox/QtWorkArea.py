@@ -39,6 +39,7 @@ class WorkArea(QObject):
         self.graphics_item = None  # Reference to the main graphics item in the scene
         self.remove_button = None  # Reference to the remove button graphics item
         self.work_area_pen = QPen(QColor(0, 255, 0), 2, Qt.DashLine)  # Default style
+        self.shadow_area = None  # Reference to the shadow graphics item
         
     @classmethod
     def from_rect(cls, rect, image_path=None):
@@ -89,7 +90,7 @@ class WorkArea(QObject):
             'image_path': self.image_path
         }
         
-    def create_graphics(self, scene, pen_width=2, include_shadow=True):
+    def create_graphics(self, scene, pen_width=2, include_shadow=False):
         """
         Create and return the graphics representation of this work area.
         
@@ -115,10 +116,11 @@ class WorkArea(QObject):
             scene.addItem(self.graphics_item)
         
         # Remove any existing shadow before creating a new one
-        old_shadow = self.graphics_item.data(3) if self.graphics_item else None
-        if old_shadow is not None and hasattr(old_shadow, "scene") and old_shadow.scene():
-            old_shadow.scene().removeItem(old_shadow)
-            self.graphics_item.setData(3, None)
+        if self.shadow_area is not None and hasattr(self.shadow_area, "scene") and self.shadow_area.scene():
+            self.shadow_area.scene().removeItem(self.shadow_area)
+            self.shadow_area = None
+            if self.graphics_item:
+                self.graphics_item.setData(3, None)
         
         # Add shadow if requested
         if include_shadow:
@@ -139,7 +141,9 @@ class WorkArea(QObject):
             scene.addItem(shadow_area)
             
             # Store reference to shadow
-            self.graphics_item.setData(3, shadow_area)
+            self.shadow_area = shadow_area
+            if self.graphics_item:
+                self.graphics_item.setData(3, shadow_area)
         
         return self.graphics_item
         
@@ -223,11 +227,10 @@ class WorkArea(QObject):
         Returns:
             bool: True if successfully removed, False if not in a scene
         """
+        if self.shadow_area is not None and hasattr(self.shadow_area, "scene") and self.shadow_area.scene():
+            self.shadow_area.scene().removeItem(self.shadow_area)
+            self.shadow_area = None
         if self.graphics_item and self.graphics_item.scene():
-            # Remove shadow if it exists
-            shadow_item = self.graphics_item.data(3)
-            if shadow_item is not None and hasattr(shadow_item, "scene") and shadow_item.scene():
-                shadow_item.scene().removeItem(shadow_item)
             self.graphics_item.scene().removeItem(self.graphics_item)
             self.graphics_item = None
             self.remove_button = None

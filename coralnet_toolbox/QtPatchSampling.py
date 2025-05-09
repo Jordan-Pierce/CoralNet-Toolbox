@@ -81,6 +81,8 @@ class PatchSamplingDialog(QDialog):
 
         # Initialize graphics list
         self.annotation_graphics = []
+        # Add margin work area attribute
+        self.margin_work_area = None
 
     def setup_sampling_config_layout(self):
         """Set up the sampling method and count configuration."""
@@ -332,6 +334,11 @@ class PatchSamplingDialog(QDialog):
     def update_annotation_graphics(self):
         """Create and display annotation preview graphics, including margin visualization."""
         self.clear_annotation_graphics()
+
+        # Remove previous margin work area and its graphics if present
+        if self.margin_work_area is not None:
+            self.margin_work_area.remove_from_scene()
+            self.margin_work_area = None
     
         # Get current parameters
         method = self.method_combo.currentText()
@@ -362,16 +369,18 @@ class PatchSamplingDialog(QDialog):
         inner_width = image_width - left - right
         inner_height = image_height - top - bottom
         
-        # Create a work area for the margin visualization
-        margin_work_area = WorkArea(inner_x, 
-                                    inner_y, 
-                                    inner_width, 
-                                    inner_height, 
-                                    self.annotation_window.current_image_path)
+        # Create a work area for the margin visualization and store as attribute
+        self.margin_work_area = WorkArea(inner_x, 
+                                         inner_y, 
+                                         inner_width, 
+                                         inner_height, 
+                                         self.annotation_window.current_image_path)
                 
         # Create graphics using the WorkArea's own method
         thickness = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        margin_graphics = margin_work_area.create_graphics(self.annotation_window.scene, thickness, include_shadow=True)
+        margin_graphics = self.margin_work_area.create_graphics(self.annotation_window.scene, 
+                                                                thickness, 
+                                                                include_shadow=True)
         
         # Don't show remove button for margin visualization
         self.annotation_graphics.append(margin_graphics)
@@ -544,4 +553,8 @@ class PatchSamplingDialog(QDialog):
         for graphic in self.annotation_graphics:
             self.annotation_window.scene.removeItem(graphic)
         self.annotation_graphics = []
+        # Remove margin work area and its shadow if present
+        if self.margin_work_area is not None:
+            self.margin_work_area.remove_from_scene()
+            self.margin_work_area = None
         self.annotation_window.viewport().update()
