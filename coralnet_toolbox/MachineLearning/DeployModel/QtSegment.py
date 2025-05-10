@@ -253,7 +253,7 @@ class Segment(Base):
             work_areas_data = [raster.image_path]
         else:
             # Get the work areas
-            work_areas_data = raster.get_work_areas_data()
+            work_areas_data = raster.get_work_areas_data(as_format='BRG')
             
         return work_areas_data
 
