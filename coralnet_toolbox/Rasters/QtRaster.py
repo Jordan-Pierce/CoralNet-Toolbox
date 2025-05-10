@@ -4,6 +4,7 @@ import os
 import gc
 from typing import Optional, Set, List
 
+import cv2
 import rasterio
 import numpy as np
 
@@ -316,19 +317,26 @@ class Raster(QObject):
         else:
             return 1  # The entire image counts as one work item
     
-    def get_work_area_data(self, work_area):
+    def get_work_area_data(self, work_area, as_format='RGB'):
         """
-        Extract image data from a work area as a numpy array, with efficient downsampling.
+        Extract image data from a work area as a numpy array.
         
         Args:
-            work_area: WorkArea object or QRectF
-            longest_edge (int, optional): If provided, limits the longest edge to this size
-                while maintaining aspect ratio
+            work_area: WorkArea object or QRectF defining the area to extract
+            as_type (str): Format to return the data in, 'cv2' converts to BGR color format
                 
         Returns:
-            numpy.ndarray: Image data from the work area
+            numpy.ndarray: Image data from the work area, in BGR format if as_format='cv2',
+                           otherwise in RGB format
         """
-        return work_area_to_numpy(self._rasterio_src, work_area)
+        # Convert work area to numpy array
+        work_area_data = work_area_to_numpy(self._rasterio_src, work_area) 
+        
+        if as_format == 'BRG':
+            # Convert to RGB to BGR format for OpenCV
+            work_area_data = cv2.cvtColor(work_area_data, cv2.COLOR_RGB2BGR)
+            
+        return work_area_data
     
     def get_work_areas_data(self):
         """
