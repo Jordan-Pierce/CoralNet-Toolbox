@@ -162,6 +162,9 @@ class ResultsProcessor:
         :param result: Detection result
         :return: Tuple containing class, class name, confidence, and bounding box coordinates
         """
+        import time
+        start_time = time.time()
+        
         # Class ID, class name, confidence, and bounding box coordinates
         image_path = result.path.replace("\\", "/")
         cls = int(result.boxes.cls.cpu().numpy()[0])
@@ -169,6 +172,7 @@ class ResultsProcessor:
         conf = float(result.boxes.conf.cpu().numpy()[0])
         x_min, y_min, x_max, y_max = map(float, result.boxes.xyxy.cpu().numpy()[0])
 
+        print(f"Extracted detection result in {time.time() - start_time:.2f} seconds")
         return image_path, cls, cls_name, conf, x_min, y_min, x_max, y_max
 
     def process_single_detection_result(self, result):
@@ -218,28 +222,26 @@ class ResultsProcessor:
     def extract_segmentation_result(self, result):
         """
         Extract relevant information from a segmentation result.
-
+    
         :param result: Segmentation result
         :return: Tuple containing class, class name, confidence, and polygon points
         """
+        import time
+        start_time = time.time()
+        
         # Class ID, class name, confidence, and polygon points
         image_path = result.path.replace("\\", "/")
         cls = int(result.boxes.cls.cpu().numpy()[0])
         cls_name = result.names[cls]
         conf = float(result.boxes.conf.cpu().numpy()[0])
         
-        # Get the mask and convert to polygon points
-        mask = result.masks.cpu().data.numpy().squeeze().astype(bool)
+        # Get polygon points directly using the xy property
+        points = result.masks.xy[0]
         
-        # Convert to biggest polygon (avoids multiple polygons for the same object)
-        polygons = sv.detection.utils.mask_to_polygons(mask)
+        # Convert to list of tuples for consistency
+        points = [(float(x), float(y)) for x, y in points]
         
-        if len(polygons) == 1:
-            points = polygons[0]
-        else:
-            # Grab the index of the largest polygon
-            points = max(polygons, key=lambda x: len(x))
-
+        print(f"Extracted segmentation result in {time.time() - start_time:.2f} seconds")
         return image_path, cls, cls_name, conf, points
 
     def process_single_segmentation_result(self, result):
@@ -632,6 +634,9 @@ class ResultsProcessor:
         if raster is None:
             return results  # Return original results if raster not found
         
+        import time
+        start_time = time.time()
+        
         # Create a new Results object to avoid modifying the original
         mapped_results = copy.deepcopy(results)
         
@@ -651,6 +656,8 @@ class ResultsProcessor:
         mapped_results = self._map_probs(results, mapped_results)
         
         gc.collect()
+        
+        print(f"Mapping results took {time.time() - start_time:.2f} seconds")
         return mapped_results
         
     def _map_boxes(self, results, mapped_results, working_area_top_left, wa_w, wa_h):
