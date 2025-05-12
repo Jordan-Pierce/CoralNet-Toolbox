@@ -202,7 +202,18 @@ class DownloadDialog(QDialog):
         self.debug_button.setToolTip("Toggle Headless Mode")
         self.debug_button.setCheckable(True)
         self.debug_button.setMaximumWidth(30)
-        self.debug_button.toggled.connect(lambda checked: setattr(self, 'headless', not checked))
+        
+        # Initialize button state based on headless property
+        self.debug_button.setChecked(not self.headless)
+        
+        # Improved toggle handler that ensures button state matches headless state
+        def toggle_headless(checked):
+            self.headless = not checked
+            # Ensure button state matches headless value
+            if self.debug_button.isChecked() != (not self.headless):
+                self.debug_button.setChecked(not self.headless)
+        
+        self.debug_button.toggled.connect(toggle_headless)
         button_layout.addWidget(self.debug_button)
 
         self.download_button = QPushButton("Download")
@@ -594,7 +605,7 @@ class DownloadDialog(QDialog):
                     print("Metadata saved successfully")
                     success = True
                 else:
-                    raise Exception("WARNING: Metadata could not be saved")
+                    raise Exception("Metadata could not be saved")
 
         except Exception as e:
             print(f"ERROR: Issue with downloading metadata: {str(e)}")
@@ -666,7 +677,7 @@ class DownloadDialog(QDialog):
                     print("Labelset saved successfully")
                     success = True
                 else:
-                    raise Exception("WARNING: Labelset could not be saved")
+                    raise Exception("Labelset could not be saved")
 
         except Exception as e:
             print(f"ERROR: Issue with downloading labelset: {str(e)}")
@@ -731,12 +742,15 @@ class DownloadDialog(QDialog):
             while "Working" in go_button.accessible_name:
                 time.sleep(3)
 
+            # Wait for the download to complete
+            time.sleep(10)
+            
             # Check that it was saved
             if os.path.exists(f"{self.source_dir}\\annotations.csv"):
                 print("Annotations saved successfully")
                 success = True
             else:
-                raise Exception("WARNING: Annotations could not be saved")
+                raise Exception("Annotations may not have been saved")
 
         except Exception as e:
             print(f"ERROR: Issue with downloading annotations: {str(e)}")

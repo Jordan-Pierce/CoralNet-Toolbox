@@ -43,9 +43,6 @@ class MapResults:
         if raster is None:
             return results  # Return original results if raster not found
         
-        import time
-        start_time = time.time()
-        
         # Create a new Results object to avoid modifying the original
         mapped_results = copy.deepcopy(results)
         
@@ -69,7 +66,6 @@ class MapResults:
         
         gc.collect()
         
-        print(f"Mapping results took {time.time() - start_time:.2f} seconds")
         return mapped_results
         
     def _map_boxes(self, results, mapped_results, working_area_top_left, wa_w, wa_h):
