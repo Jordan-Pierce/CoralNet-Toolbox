@@ -16,7 +16,9 @@ from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
-from coralnet_toolbox.ResultsProcessor import ResultsProcessor
+from coralnet_toolbox.Results import ResultsProcessor
+from coralnet_toolbox.Results import CombineResults
+from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -39,7 +41,7 @@ class SeeAnythingTool(Tool):
 
         self.annotation_window = annotation_window
         self.main_window = annotation_window.main_window
-        
+
         self.see_anything_dialog = None
 
         self.top_left = None
@@ -100,7 +102,7 @@ class SeeAnythingTool(Tool):
         self.results = None
 
         # Update the viewport
-        self.annotation_window.scene.update()  
+        self.annotation_window.scene.update()
 
     def set_working_area(self):
         """
@@ -129,10 +131,10 @@ class SeeAnythingTool(Tool):
 
         # Create the WorkArea instance
         self.working_area = WorkArea(left, top, right - left, bottom - top, self.image_path)
-        
+
         # Get the thickness for the working area graphics
         pen_width = self.graphics_utility.get_workarea_thickness(self.annotation_window)
-        
+
         # Create and add the working area graphics
         self.working_area.create_graphics(self.annotation_window.scene, pen_width)
         self.working_area.set_remove_button_visibility(False)
@@ -161,14 +163,14 @@ class SeeAnythingTool(Tool):
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
 
         self.annotation_window.setCursor(Qt.CrossCursor)
-        self.annotation_window.scene.update() 
-    
+        self.annotation_window.scene.update()
+
     def on_working_area_removed(self, work_area):
         """
         Handle when the work area is removed via its internal mechanism.
         """
         self.cancel_working_area()
-        
+
     def create_rectangle_graphics(self):
         """
         Create a new rectangle graphics item for drawing with the selected label color.
@@ -196,7 +198,7 @@ class SeeAnythingTool(Tool):
 
             # Get the thickness for the rectangle graphics
             width = self.graphics_utility.get_rectangle_graphic_thickness(self.annotation_window)
-            
+
             # Style the rectangle
             pen = QPen(QColor(color))
             pen.setWidth(width)
@@ -257,7 +259,7 @@ class SeeAnythingTool(Tool):
             # Reset the current rectangle graphics item without removing from scene
             # It's now tracked in rectangle_items
             self.current_rect_graphics = None
-            
+
             # Set rectangles_processed to False since we have new user rectangles
             self.rectangles_processed = False  # Indicate prediction is needed
 
@@ -307,8 +309,8 @@ class SeeAnythingTool(Tool):
             self.start_point = None
             self.end_point = None
 
-        self.annotation_window.scene.update()  
-        
+        self.annotation_window.scene.update()
+
     def mouseMoveEvent(self, event: QMouseEvent):
         """
         Handles the mouse move event.
@@ -321,8 +323,8 @@ class SeeAnythingTool(Tool):
             self.end_point = self.annotation_window.mapToScene(event.pos())
             self.update_rectangle_graphics()
 
-        self.annotation_window.scene.update()  
-        
+        self.annotation_window.scene.update()
+
     def keyPressEvent(self, event: QKeyEvent):
         """
         Handles the key press event.
@@ -371,8 +373,8 @@ class SeeAnythingTool(Tool):
             else:
                 self.clear_all_rectangles()  # Clears user input rectangles
 
-        self.annotation_window.scene.update()  
-        
+        self.annotation_window.scene.update()
+
     def create_annotations_from_rectangles(self):
         """
         Create annotations based on the user-drawn rectangles.
@@ -405,7 +407,7 @@ class SeeAnythingTool(Tool):
             # Make cursor normal
             QApplication.restoreOverrideCursor()
             return None
-        
+
         # Create a results processor to merge and filter results
         results_processor = ResultsProcessor(self.main_window,
                                              uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
@@ -414,10 +416,10 @@ class SeeAnythingTool(Tool):
                                              max_area_thresh=self.main_window.get_area_thresh_max())
         # Merge
         if self.results:
-            results = results_processor.combine_results([self.results, results])
-            
+            results = CombineResults().combine_results([self.results, results])
+
         # Filter
-        self.results = results_processor.apply_filters(results)
+        self.results = results_processor.apply_filters_to_results(results)
 
         # Calculate the area of the image
         image_area = self.work_area_image.shape[0] * self.work_area_image.shape[1]
@@ -432,7 +434,7 @@ class SeeAnythingTool(Tool):
 
             if confidence < self.main_window.get_uncertainty_thresh():
                 continue
-            
+
             # Get the bounding box coordinates (x1, y1, x2, y2) in normalized format
             box = result.boxes.xyxyn.detach().cpu().numpy().squeeze()
 
@@ -441,7 +443,7 @@ class SeeAnythingTool(Tool):
                                              self.work_area_image.shape[0],
                                              self.work_area_image.shape[1],
                                              self.work_area_image.shape[0]])
-            
+
             # Add working area offset to get coordinates in the whole image
             box_abs[0] += working_area_top_left.x()
             box_abs[1] += working_area_top_left.y()
@@ -465,7 +467,7 @@ class SeeAnythingTool(Tool):
                 # Convert normalized polygon points directly to whole image coordinates
                 polygon[:, 0] = polygon[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
                 polygon[:, 1] = polygon[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
-                
+
                 polygon = clean_polygon(polygon)
 
                 # Create the polygon annotation and add it to self.annotations
@@ -474,10 +476,10 @@ class SeeAnythingTool(Tool):
                 # Create the rectangle annotation and add it to self.annotations
                 self.create_rectangle_annotation(box_abs, confidence, transparency)
 
-        self.annotation_window.scene.update()  
-        
+        self.annotation_window.scene.update()
+
         # Make cursor normal
-        QApplication.restoreOverrideCursor() 
+        QApplication.restoreOverrideCursor()
 
     def create_rectangle_annotation(self, box, confidence, transparency):
         """
@@ -581,10 +583,10 @@ class SeeAnythingTool(Tool):
         ones created by the SeeAnything predictor."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-    
+
         # Create a class mapping dictionary
         class_mapping = {0: self.annotation_window.selected_label}
-    
+
         # Create a results processor
         results_processor = ResultsProcessor(
             self.main_window,
@@ -594,33 +596,33 @@ class SeeAnythingTool(Tool):
             min_area_thresh=self.main_window.get_area_thresh_min(),
             max_area_thresh=self.main_window.get_area_thresh_max()
         )
-        
+
         # Make a copy of the results
         results = copy.deepcopy(self.results)
-        
+
         # Update the class mapping for the results
         results.names = {0: class_mapping[0].short_label_code}
 
         # Process the results with the SAM predictor using the new
         results = self.see_anything_dialog.sam_dialog.predict_from_results([results], self.image_path)
-        
-        # Get the raster 
+
+        # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
-        
+
         # Map results from working area to the original image coordinates
-        results = results_processor.map_results_from_work_area(
-            results, 
-            raster, 
+        results = MapResults().map_results_from_work_area(
+            results,
+            raster,
             self.working_area
         )
-        
+
         # Update the results with work area image
         self.results.orig_image = self.work_area_image
         self.results.orig_shape = self.work_area_image.shape
-        
+
         # Process the results
         results_processor.process_segmentation_results(results)
-    
+
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         # Clear the previous, non-confirmed annotations
@@ -645,7 +647,7 @@ class SeeAnythingTool(Tool):
         # Clear the list holding the unconfirmed annotations
         self.annotations = []
 
-        self.annotation_window.scene.update() 
+        self.annotation_window.scene.update()
 
     def clear_rectangle_graphics(self):
         """
@@ -658,7 +660,7 @@ class SeeAnythingTool(Tool):
                 child_items = rect_item.childItems()
                 for child in child_items:
                     self.annotation_window.scene.removeItem(child)
-                
+
                 # Remove the rectangle item itself
                 self.annotation_window.scene.removeItem(rect_item)
             rect_item = None  # Explicitly dereference
@@ -670,17 +672,17 @@ class SeeAnythingTool(Tool):
                 child_items = self.current_rect_graphics.childItems()
                 for child in child_items:
                     self.annotation_window.scene.removeItem(child)
-                    
+
                 self.annotation_window.scene.removeItem(self.current_rect_graphics)
             self.current_rect_graphics = None
 
         # Reset the graphics list
         self.rectangle_items = []
-        
+
         # Force a full scene update and repaint
         self.annotation_window.scene.update()
         self.annotation_window.viewport().update()
-        
+
     def clear_rectangle_data(self):
         """
         Clear rectangle data structures but keep the graphics.
@@ -721,6 +723,6 @@ class SeeAnythingTool(Tool):
 
         self.annotations = []
         self.results = None
-        
+
         # Force update to ensure graphics are removed visually
         self.annotation_window.scene.update()

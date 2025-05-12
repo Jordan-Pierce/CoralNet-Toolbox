@@ -338,9 +338,12 @@ class Raster(QObject):
             
         return work_area_data
     
-    def get_work_areas_data(self):
+    def get_work_areas_data(self, as_format='RGB'):
         """
         Get image data from all work areas as a list of numpy arrays.
+        
+         Args:
+            as_type (str): Format to return the data in, 'cv2' converts to BGR color format
         
         Returns:
             list: List of numpy arrays representing image data from each work area
@@ -348,7 +351,7 @@ class Raster(QObject):
         work_area_data = []
         
         for work_area in self.work_areas:
-            data = self.get_work_area_data(work_area)
+            data = self.get_work_area_data(work_area, as_format=as_format)
             if data is not None:
                 work_area_data.append(data)
                 

@@ -24,6 +24,8 @@ from coralnet_toolbox.Tools import (
     WorkAreaTool
 )
 
+from coralnet_toolbox.QtWorkArea import WorkArea
+
 from coralnet_toolbox.Common.QtGraphicsUtility import GraphicsUtility
 
 from coralnet_toolbox.utilities import rasterio_open
@@ -408,6 +410,19 @@ class AnnotationWindow(QGraphicsView):
         if self.pixmap_image:
             return self.pixmap_image.size().width(), self.pixmap_image.size().height()
         return 0, 0
+    
+    def center_on_work_area(self, work_area):
+        """Center the view on the specified work area."""
+        # Create graphics item if it doesn't exist
+        if not work_area.graphics_item:
+            work_area.create_graphics_item(self.scene)
+
+        # Get the bounding rect of the work area in scene coordinates
+        work_area_rect = work_area.graphics_item.boundingRect()
+        work_area_center = work_area_rect.center()
+
+        # Center the view on the work area's center
+        self.centerOn(work_area_center)
 
     def center_on_annotation(self, annotation):
         """Center the view on the specified annotation."""

@@ -20,7 +20,7 @@ from ultralytics.models.yolo.yoloe import YOLOEVPDetectPredictor
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
 
-from coralnet_toolbox.ResultsProcessor import ResultsProcessor
+from coralnet_toolbox.Results import ResultsProcessor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -608,7 +608,7 @@ class DeployPredictorDialog(QDialog):
         # Create a visual dictionary
         visuals = {
             'bboxes': np.array(refer_annotations),
-            'cls': np.zeros(len(refer_annotations))  # TODO figure this out
+            'cls': np.zeros(len(refer_annotations))
         }
 
         # Set the predictor
