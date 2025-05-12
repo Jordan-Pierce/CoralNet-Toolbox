@@ -365,6 +365,8 @@ class PatchAnnotation(Annotation):
                          QColor(*data['annotation_color']),
                          data['image_path'],
                          data['label_id'])
+        
+        # Add any additional data from the dictionary
         annotation.data = data.get('data', {})
 
         # Convert machine_confidence keys back to Label objects
@@ -374,11 +376,12 @@ class PatchAnnotation(Annotation):
             if label:
                 machine_confidence[label] = confidence
 
-        annotation.update_machine_confidence(machine_confidence)
+        # Set the machine confidence
+        annotation.update_machine_confidence(machine_confidence, from_import=True)
         
         # Override the verified attribute if it exists in the data
         if 'verified' in data:
-            annotation.update_verified(data['verified'])
+            annotation.set_verified(data['verified'])
 
         return annotation
 

@@ -191,12 +191,12 @@ class ImportCoralNetAnnotations:
                         machine_confidence[suggested_label] = confidence
 
                     # Update the machine confidence
-                    annotation.update_machine_confidence(machine_confidence)
+                    annotation.update_machine_confidence(machine_confidence, from_import=True)
                     
                     if 'Verified' in row:
                         # If the verified status is True, update the annotation's verified status
                         verified = str(row['Verified']).lower() == 'true' or row['Verified'] == 1 
-                        annotation.update_verified(verified)
+                        annotation.set_verified(verified)
                             
                     # Add annotation to the dict
                     self.annotation_window.add_annotation_to_dict(annotation)

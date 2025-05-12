@@ -730,11 +730,12 @@ class PolygonAnnotation(Annotation):
             if label:
                 machine_confidence[label] = confidence
 
-        annotation.update_machine_confidence(machine_confidence)
+        # Set the machine confidence
+        annotation.update_machine_confidence(machine_confidence, from_import=True)
         
         # Override the verified attribute if it exists in the data
         if 'verified' in data:
-            annotation.update_verified(data['verified'])
+            annotation.set_verified(data['verified'])
 
         return annotation
 

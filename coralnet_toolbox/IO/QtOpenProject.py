@@ -161,7 +161,7 @@ class OpenProject(QDialog):
             return
         
         if not all([os.path.exists(path) for path in image_paths]):
-            image_paths, self.updated_paths = QtUpdateImagePaths.update_paths(image_paths)
+            image_paths, self.updated_paths = UpdateImagePaths.update_paths(image_paths)
         
         # Start progress bar
         total_images = len(image_paths)
