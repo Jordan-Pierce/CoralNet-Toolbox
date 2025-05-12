@@ -5,6 +5,8 @@ from torchvision.ops import nms
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
+from coralnet_toolbox.utilities import clean_polygon
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -276,6 +278,8 @@ class ResultsProcessor:
         """
         # Convert to list of tuples for consistency
         points = [(float(x), float(y)) for x, y in xy]
+        # Filter out small disconnected polygons, keeping only the largest one
+        points = clean_polygon(points)
 
         # Get image path, class, class name, confidence, and polygon points
         image_path, cls, cls_name, conf = self.extract_segmentation_result(result)
