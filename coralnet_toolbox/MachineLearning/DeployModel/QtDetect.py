@@ -16,8 +16,8 @@ from ultralytics import YOLO, RTDETR
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
-from coralnet_toolbox.QtWorkArea import WorkArea
-from coralnet_toolbox.ResultsProcessor import ResultsProcessor
+from coralnet_toolbox.Results import ResultsProcessor
+from coralnet_toolbox.Results.MapResults import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -54,7 +54,7 @@ class Detect(Base):
         """
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
-        
+
         # Max detections spinbox
         self.max_detections_spinbox = QSpinBox()
         self.max_detections_spinbox.setRange(1, 10000)
@@ -216,7 +216,7 @@ class Detect(Base):
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Prediction Workflow")
         progress_bar.show()
@@ -231,10 +231,10 @@ class Detect(Base):
                 results = self._apply_model(inputs)
                 results = self._apply_sam(results, image_path)
                 self._process_results(results_processor, results, image_path)
-                
+
                 # Update the progress bar
                 progress_bar.update_progress()
-                
+
         except Exception as e:
             print("An error occurred during prediction:", e)
         finally:
@@ -255,7 +255,7 @@ class Detect(Base):
         else:
             # Get the work areas
             work_areas_data = raster.get_work_areas_data(as_format='BRG')
-            
+
         return work_areas_data
 
     def _apply_model(self, inputs):
@@ -269,14 +269,14 @@ class Detect(Base):
                                               retina_masks=self.task == "segment",
                                               half=True,
                                               stream=True)  # memory efficient inference
-        
+
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
         progress_bar.show()
         progress_bar.start_progress(len(inputs))
-        
+
         results_list = []
-        
+
         for results in results_generator:
             results_list.append([results])
             # Update the progress bar
@@ -284,40 +284,40 @@ class Detect(Base):
             # Clean up GPU memory after each prediction
             gc.collect()
             empty_cache()
-            
+
         progress_bar.finish_progress()
         progress_bar.stop_progress()
         progress_bar.close()
-        
+
         return results_list
-        
+
     def _apply_sam(self, results_list, image_path):
         """Apply SAM to the results if needed."""
         # Check if SAM model is deployed
         if self.use_sam_dropdown.currentText() != "True":
             return results_list
-        
+
         # Update the task to segment
         self.task = 'segment'
-        
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Predicting with SAM")
         progress_bar.show()
         progress_bar.start_progress(len(results_list))
-        
+
         updated_results = []
-        
+
         for idx, results in enumerate(results_list):
             # Each Results is a list (within the results_list, [[], ]
             if results:
                 # Run it rough the SAM model
                 results = self.sam_dialog.predict_from_results(results, image_path)
                 updated_results.append(results)
-            
+
             # Update the progress bar
             progress_bar.update_progress()
-            
+
         # Make cursor normal
         QApplication.restoreOverrideCursor()
         progress_bar.finish_progress()
@@ -331,42 +331,45 @@ class Detect(Base):
         # Get the raster object and number of work items
         raster = self.image_window.raster_manager.get_raster(image_path)
         total = raster.count_work_items()
-        
+
         # Get the work areas (if any)
         work_areas = raster.get_work_areas()
-        
+
         # Start the progress bar
         progress_bar = ProgressBar(self.annotation_window, title="Processing Results")
         progress_bar.show()
         progress_bar.start_progress(total)
-        
+
         updated_results = []
 
         for idx, results in enumerate(results_list):
             # Each Results is a list (within the results_list, [[], ]
             if results:
                 # Update path
-                results[0].path = image_path                
+                results[0].path = image_path
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
                     # Map results from work area to the full image
-                    results = results_processor.map_results_from_work_area(results[0], raster, work_areas[idx])
+                    results = MapResults().map_results_from_work_area(results[0], 
+                                                                      raster, 
+                                                                      work_areas[idx],
+                                                                      self.task == 'segment')
                 else:
                     results = results[0]
-                    
+
                 # Append the result object (not a list) to the updated results list
                 updated_results.append(results)
-                    
+
                 # Update the index for the next work area
                 idx += 1
                 progress_bar.update_progress()
-        
+
         # Process the Results
         if self.task == 'segment' or self.use_sam_dropdown.currentText() == "True":
             results_processor.process_segmentation_results(updated_results)
         else:
             results_processor.process_detection_results(updated_results)
-            
+
         # Close the progress bar
         progress_bar.finish_progress()
         progress_bar.stop_progress()

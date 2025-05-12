@@ -14,6 +14,7 @@ import numpy as np
 
 import rasterio
 from rasterio.windows import Window
+from shapely.validation import make_valid
 from shapely.geometry import Polygon, MultiPolygon, GeometryCollection
 
 from PyQt5.QtGui import QImage
@@ -524,7 +525,6 @@ def clean_polygon(polygon, tolerance=0.1, min_area=10):
     # Make valid if necessary
     if not poly.is_valid:
         try:
-            from shapely.validation import make_valid
             poly = make_valid(poly)
         except ImportError:
             poly = poly.buffer(0)

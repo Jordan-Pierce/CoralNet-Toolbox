@@ -16,7 +16,7 @@ from ultralytics import YOLO, RTDETR
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
-from coralnet_toolbox.ResultsProcessor import ResultsProcessor
+from coralnet_toolbox.Results import ResultsProcessor
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
 from coralnet_toolbox.utilities import check_model_architecture
@@ -65,7 +65,7 @@ class Classify(Base):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
     def setup_sam_layout(self):
         pass
 
@@ -82,7 +82,7 @@ class Classify(Base):
 
             # Get the model architecture and task
             model_architecture, task = check_model_architecture(self.model_path)
-            
+
             if not model_architecture:
                 # If architecture can't be determined, ask user to choose
                 msg_box = QMessageBox(self)
@@ -91,9 +91,9 @@ class Classify(Base):
                                 "Please select how to load this model:")
                 yolo_button = msg_box.addButton("Load as YOLO", QMessageBox.ActionRole)
                 cancel_button = msg_box.addButton(QMessageBox.Cancel)
-                
+
                 msg_box.exec_()
-                
+
                 if msg_box.clickedButton() == yolo_button:
                     model_architecture = "yolo"
                 else:
@@ -150,7 +150,7 @@ class Classify(Base):
         if not inputs:
             # If no annotations are selected, predict all annotations in the image
             inputs = self.annotation_window.get_image_review_annotations()
-            
+
         if not inputs:
             # If no annotations are available, return
             QApplication.restoreOverrideCursor()
@@ -159,7 +159,7 @@ class Classify(Base):
         # Create lists to store valid images and their corresponding annotations
         images_np = []
         valid_inputs = []
-        
+
         # Only add images and inputs that have valid cropped images
         for annotation in inputs:
             if hasattr(annotation, 'cropped_image') and annotation.cropped_image:
@@ -179,7 +179,7 @@ class Classify(Base):
                                         device=self.main_window.device,
                                         half=True,
                                         stream=True)
-            
+
             # Create a result processor
             results_processor = ResultsProcessor(self.main_window,
                                                  self.class_mapping,
@@ -192,4 +192,3 @@ class Classify(Base):
         QApplication.restoreOverrideCursor()
         gc.collect()
         empty_cache()
-        

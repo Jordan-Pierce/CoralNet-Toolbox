@@ -20,7 +20,9 @@ from x_segment_anything import sam_model_urls
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
 
-from coralnet_toolbox.ResultsProcessor import ResultsProcessor
+from coralnet_toolbox.Results import ResultsProcessor
+from coralnet_toolbox.Results import ConvertResults
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.utilities import rasterio_open
@@ -550,11 +552,11 @@ class DeployPredictorDialog(QDialog):
                                                                point_coords=point_coords,
                                                                point_labels=point_labels,
                                                                num_multimask_outputs=3)
-            
+
             # Select the mask with the highest score for each prompt
             best_indices = torch.argmax(scores, dim=1)  # Get indices of highest scores
             batch_indices = torch.arange(scores.shape[0], device=scores.device)
-            
+
             # Select the best masks and scores
             best_masks = masks[batch_indices, best_indices].unsqueeze(1)  # Shape: (B, 1, H, W)
             best_scores = scores[batch_indices, best_indices]  # Shape: (B)
@@ -568,7 +570,7 @@ class DeployPredictorDialog(QDialog):
                                                  max_area_thresh=self.main_window.get_area_thresh_max())
 
             # Post-process the results with the best masks
-            results = results_processor.from_sam(best_masks, best_scores, self.original_image, self.image_path)
+            results = ConvertResults().from_sam(best_masks, best_scores, self.original_image, self.image_path)
 
         except Exception as e:
             QMessageBox.critical(self.annotation_window,
@@ -588,15 +590,15 @@ class DeployPredictorDialog(QDialog):
         """
         # Get the boxes (xyxy) from the results
         boxes = results[0].boxes.xyxy.detach().cpu().numpy()
-        
+
         # Set the image with SAM
         self.set_image(image=results[0].orig_img, image_path=image_path)
         # Make the predictions using the bounding boxes
         new_results = self.predict_from_prompts(boxes, [], [])
-        
+
         # Update the new results with the original results attributes ()
         results[0].update(masks=new_results.masks.data)
-        
+
         return results
 
     def deactivate_model(self):
