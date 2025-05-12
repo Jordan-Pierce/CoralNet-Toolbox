@@ -28,6 +28,7 @@ from coralnet_toolbox.Tile import (
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
+    TileInference as TileInferenceDialog
 )
 
 # TODO update IO classes to have dialogs
@@ -245,6 +246,7 @@ class MainWindow(QMainWindow):
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
+        self.tile_inference_dialog = TileInferenceDialog(self)
         
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
@@ -442,6 +444,10 @@ class MainWindow(QMainWindow):
         self.segment_tile_dataset_action = QAction("Segment", self)
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
+        # Tile Inference
+        self.tile_inference_action = QAction("Tile Inference", self)
+        self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
+        self.tile_menu.addAction(self.tile_inference_action)
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -1581,6 +1587,20 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_tile_dataset_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_tile_inference_dialog(self):
+        # Check if there are loaded images
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Tile Inference",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.tile_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
