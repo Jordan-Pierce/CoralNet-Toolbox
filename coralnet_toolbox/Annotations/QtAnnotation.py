@@ -380,30 +380,39 @@ class Annotation(QObject):
         self.update_graphics_item()
         self.show_message = False
 
-    def update_machine_confidence(self, prediction: dict):
+    def update_machine_confidence(self, prediction: dict, from_import: bool = False):
         """Update annotation with machine-generated confidence scores."""
         if not prediction:
             return
 
         # Convert any numpy numeric types to regular Python float for JSON compatibility
         prediction = {k: float(v) if isinstance(v, (np.floating, np.integer)) else v for k, v in prediction.items()}
-        # Set user confidence to None
-        self.user_confidence = {}
         # Sort the prediction by confidence (descending order)
         prediction = {k: v for k, v in sorted(prediction.items(), key=lambda item: item[1], reverse=True)}
         # Update machine confidence
         self.machine_confidence = prediction
-        # Pass the label with the largest confidence as the label
-        self.label = max(prediction, key=prediction.get)
-        # Mark as not verified
-        self.verified = False
+        
+        if not from_import:
+            # Set user confidence to None
+            self.user_confidence = {}
+            # Pass the label with the largest confidence as the label
+            self.label = max(prediction, key=prediction.get)
+            # Mark as not verified
+            self.verified = False
 
-        # Create the graphic
-        self.update_graphics_item()
-        self.show_message = True
+            # Create the graphic
+            self.update_graphics_item()
+            self.show_message = True
+            
+    def set_verified(self, verified: bool):
+        """Set the verified status of the annotation.
+        This method is called on importing annotations to set the verified status."""
+        # Update the verified status
+        self.verified = verified
         
     def update_verified(self, verified: bool):
-        """Update the verified status of the annotation, and update user confidence if necessary."""
+        """Update the verified status of the annotation, and update user confidence if necessary.
+        This method is called when the user verifies or un-verifies an annotation."""
         # If the verified status is the same as the current one, do nothing
         if verified == self.verified:
             return
