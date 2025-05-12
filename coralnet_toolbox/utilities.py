@@ -510,46 +510,54 @@ def attempt_download_asset(app, asset_name, asset_url):
     progress_dialog.close()
 
 
-def clean_polygon(polygon, tolerance=0.1, min_area=10):
+def clean_polygon(xy_points, simplify_tolerance=0.1):
     """
-    polygon: Nx2 numpy array of (x, y) points
-    tolerance: simplification tolerance (in pixels)
-    min_area: minimum area for a valid polygon (in pixel^2)
-    Returns: cleaned Nx2 numpy array
+    Filter a list of points to keep only the largest polygon and simplify it.
+    
+    :param xy_points: List of (x, y) coordinates that might form multiple polygons
+    :param simplify_tolerance: Tolerance parameter for polygon simplification (higher values = more simplification)
+    :return: List of (x, y) coordinates for the largest, simplified polygon
     """
-    # Check if we have enough points to form a valid polygon
-    if polygon is None or len(polygon) < 3:
-        return np.empty((0, 2))
+    # Convert input points to a numpy array if not already
+    if not isinstance(xy_points, np.ndarray):
+        xy_points = np.array(xy_points)
+    
+    try:
+        # Create a polygon from the points
+        polygon = Polygon(xy_points)
         
-    poly = Polygon(polygon)
-    # Make valid if necessary
-    if not poly.is_valid:
-        try:
-            poly = make_valid(poly)
-        except ImportError:
-            poly = poly.buffer(0)
-        if poly.is_empty:
-            return np.empty((0, 2))
-
-    # Simplify
-    poly = poly.simplify(tolerance, preserve_topology=True)
-    if poly.is_empty or not poly.is_valid:
-        return np.empty((0, 2))
-
-    # Handle GeometryCollection or MultiPolygon
-    if isinstance(poly, (MultiPolygon, GeometryCollection)):
-        # Extract all polygons from the collection
-        polygons = [g for g in poly.geoms if isinstance(g, Polygon) and g.area >= min_area]
-        if not polygons:
-            return np.empty((0, 2))
-        # Take largest
-        poly = max(polygons, key=lambda p: p.area)
-    elif not isinstance(poly, Polygon) or poly.area < min_area:
-        return np.empty((0, 2))
-
-    # Return exterior coordinates as Nx2 array
-    coords = np.array(poly.exterior.coords)
-    return coords
+        # If we have an invalid polygon, handle it
+        if not polygon.is_valid:
+            # Buffer(0) is a common trick to fix invalid polygons
+            polygon = polygon.buffer(0)
+        
+        # Get all polygons (in case we have a MultiPolygon)
+        if polygon.geom_type == 'MultiPolygon':
+            # Find the polygon with the largest area
+            polygons = list(polygon.geoms)
+            largest_polygon = max(polygons, key=lambda p: p.area)
+        else:
+            largest_polygon = polygon
+        
+        # Simplify the largest polygon to reduce the number of vertices
+        # preserve_topology=True ensures the simplified polygon doesn't self-intersect
+        simplified_polygon = largest_polygon.simplify(tolerance=simplify_tolerance, preserve_topology=True)
+        
+        # In rare cases, simplification could create a MultiPolygon
+        # If that happens, take only the largest part
+        if simplified_polygon.geom_type == 'MultiPolygon':
+            simplified_polygon = max(list(simplified_polygon.geoms), key=lambda p: p.area)
+            
+        # Extract the exterior coordinates from the simplified polygon
+        simplified_coords = list(simplified_polygon.exterior.coords)
+        
+        # Return all points except the last one (Shapely adds a duplicate point at the end)
+        return simplified_coords[:-1]
+    
+    except Exception as e:
+        print(f"Error filtering/simplifying polygon: {e}")
+        # Return original points if something went wrong
+        return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
 
 
 # TODO deal with optimized model types
