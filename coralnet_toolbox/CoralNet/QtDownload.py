@@ -547,6 +547,9 @@ class DownloadDialog(QDialog):
 
             # Convert the page to soup
             soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            
+            if soup is None:
+                raise Exception("Unable to parse the page source")
 
             script = None
 
@@ -638,6 +641,9 @@ class DownloadDialog(QDialog):
             soup = BeautifulSoup(html_content, 'html.parser')
             # Find the table with id 'label-table'
             table = soup.find('table', {'id': 'label-table'})
+            
+            if table is None:
+                raise Exception("Unable to find the label table in the page source")
 
             if not table.find_all('tr'):
                 success = True  # Nothing to download, exit early
@@ -650,6 +656,7 @@ class DownloadDialog(QDialog):
 
                 # Loop through each row in the table
                 for idx, row in enumerate(table.find_all('tr')):
+                    
                     # Skip the header row
                     if not row.find('th'):
                         # Extract label ID from href attribute of the anchor tag
@@ -909,79 +916,87 @@ class DownloadDialog(QDialog):
         Given a list of image page URLs, retrieve the image URLs for each image page.
         This function uses requests to authenticate with the website and retrieve
         the image URLs, because it is thread-safe, unlike Selenium.
+        
+        Returns:
+            list: A list of image URLs in the same order as the input image_page_urls,
+                  with None for any URLs that couldn't be retrieved.
         """
-        # List to hold all the image URLs
-        image_urls = []
-
+        # List to hold all the image URLs (with same length as image_page_urls)
+        image_urls = [None] * len(image_page_urls)
+    
         # Initialize progress bar
         self.progress_bar.set_title(f"Retrieving URLs for {len(image_page_urls)} Images")
         self.progress_bar.start_progress(100)
-
+    
         try:
             # Send a GET request to the login page to retrieve the login form
             response = requests.get(self.authentication_dialog.LOGIN_URL, timeout=30)
-
+    
             # Pass along the cookies
             cookies = response.cookies
-
+    
             # Parse the HTML of the response using BeautifulSoup
             soup = BeautifulSoup(response.text, "html.parser")
-
+    
             # Extract the CSRF token from the HTML of the login page
             csrf_token = soup.find("input", attrs={"name": "csrfmiddlewaretoken"})
-
+    
             # Create a dictionary with the login form fields and their values
             data = {
                 "username": self.username,
                 "password": self.password,
                 "csrfmiddlewaretoken": csrf_token["value"],
             }
-
+    
             # Include the "Referer" header in the request
             headers = {
                 "Referer": self.authentication_dialog.LOGIN_URL,
             }
-
+    
             # Use requests.Session to create a session that will maintain your login state
             session = requests.Session()
-
+    
             # Use session.post() to submit the login form
             session.post(self.authentication_dialog.LOGIN_URL, data=data, headers=headers, cookies=cookies)
-
+    
             # Use a thread pool with a reasonable number of workers
             with ThreadPoolExecutor(max_workers=os.cpu_count() // 2) as executor:
                 # Submit the image_url retrieval tasks to the thread pool
-                future_to_url = {
-                    executor.submit(self.get_image_url, session, url): url
-                    for url in image_page_urls
+                # Include the index to maintain order
+                future_to_idx_url = {
+                    executor.submit(self.get_image_url, session, url): (idx, url)
+                    for idx, url in enumerate(image_page_urls)
                 }
-
+    
                 # Retrieve the completed results as they become available
-                total_urls = len(future_to_url)
-                for idx, future in enumerate(concurrent.futures.as_completed(future_to_url)):
-                    url = future_to_url[future]
+                total_urls = len(future_to_idx_url)
+                completed = 0
+                
+                for future in concurrent.futures.as_completed(future_to_idx_url):
+                    idx, url = future_to_idx_url[future]
                     try:
                         image_url = future.result()
-
-                        if image_url:
-                            image_urls.append(image_url)
-                        else:
-                            raise Exception(f"Failed to retrieve image URL for {url}")
-
+                        
+                        # Store result at the correct index
+                        image_urls[idx] = image_url
+                        
+                        if not image_url:
+                            print(f"Warning: Failed to retrieve image URL for {url}")
+    
                     except Exception as e:
-                        image_urls.append(None)
-                        print(f"ERROR: {e}")
-
+                        print(f"ERROR: Failed to retrieve URL for {url}: {str(e)}")
+                    
                     # Update progress bar
-                    progress_percent = int((idx + 1) / total_urls * 100)
+                    completed += 1
+                    progress_percent = int(completed / total_urls * 100)
                     self.progress_bar.update_progress_percentage(progress_percent)
-
+    
         except Exception as e:
             raise Exception(f"ERROR: Failed to retrieve image URLs: {str(e)}")
-
+    
         finally:
             self.progress_bar.finish_progress()
-
+    
         return image_urls
 
     @staticmethod
