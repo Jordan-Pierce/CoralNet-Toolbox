@@ -20,7 +20,6 @@ from x_segment_anything import sam_model_urls
 from torch.cuda import empty_cache
 from ultralytics.utils import ops
 
-from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import ConvertResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -560,14 +559,6 @@ class DeployPredictorDialog(QDialog):
             # Select the best masks and scores
             best_masks = masks[batch_indices, best_indices].unsqueeze(1)  # Shape: (B, 1, H, W)
             best_scores = scores[batch_indices, best_indices]  # Shape: (B)
-
-            # Create a results processor
-            results_processor = ResultsProcessor(self.main_window,
-                                                 class_mapping=None,
-                                                 uncertainty_thresh=self.main_window.get_uncertainty_thresh(),
-                                                 iou_thresh=self.main_window.get_iou_thresh(),
-                                                 min_area_thresh=self.main_window.get_area_thresh_min(),
-                                                 max_area_thresh=self.main_window.get_area_thresh_max())
 
             # Post-process the results with the best masks
             results = ConvertResults().from_sam(best_masks, best_scores, self.original_image, self.image_path)
