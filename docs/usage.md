@@ -169,9 +169,9 @@ The main window consists of several components:
   - **Backspace**: Cancel drawing the current work area.
   - **Mouse Movement**: Shows a preview of the work area while drawing.
   - **Practical Use**:
-    - Define specific regions where models should make predictions
-    - Useful for processing only relevant parts of large images
-    - Work areas persist between tool changes and sessions
+    - Define specific regions where models should make predictions.
+    - Useful for processing only relevant parts of large images.
+    - Work areas persist between tool changes and sessions.
 
 ## Status Bar
 - **Image Size**: Displays the image size.
@@ -196,31 +196,33 @@ The main window consists of several components:
 - **Filter Labels**: Use the filter text box to search for specific labels.
 - **Label Count**: Displays the total number of labels in the project.
 - **Annotation Count**: Shows information about the current annotations:
-  - When no annotation is selected: Shows the total count of annotations
-  - When a single annotation is selected: Shows the selected annotation's index
-  - When multiple annotations are selected: Shows how many annotations are selected
-  - Can be edited (when in select mode) to navigate to a specific annotation by index
+  - When no annotation is selected: Shows the total count of annotations.
+  - When a single annotation is selected: Shows the selected annotation's index.
+  - When multiple annotations are selected: Shows how many annotations are selected.
+  - Can be edited (when in select mode) to navigate to a specific annotation by index.
 
 ## Image Window
-- **Load Image**: Click on a row to load the image in the annotation window.
-- **Delete Image**: Right-click on a row and select "Delete Image" to remove the image.
-- **Delete Annotations**: Right-click on a row and select "Delete Annotations" to remove the image's annotations.
+- **Select Image**: Double-click on a row to select and load the image in the annotation window.
+- **Highlight Image**: Single-click on a row to highlight one or more rows in the image window.
+  - **Ctrl + Left-click**: Select multiple, non-adjacent rows.
+  - **Shift + Left-click**: Select multiple, adjacent rows.
+- **Open Context Menu**:
+  - **Right-click on a single highlighted row**: Delete images / annotations for the highlighted row.
+  - **Shift + Right-click on multiple highlighted rows: Delete images / annotations for highlighted rows.
 - **Search / Filter**:
   - **By Image**: Filter for images by name or sub-string.
   - **By Label**: Filter images by labels they contain.
   - **No Annotations**: Filter images with no annotations.
   - **Has Annotations**: Filter images with annotations.
   - **Has Predictions**: Filter images with predictions.
-  - **Selected**: Filter images selected.
+  - **Highlighted**: Filter highlighted images.
 - **Navigation**:
-  - **Home Button**: Click to center the table on the current image.
-  - **Select All**: Select all images in the current filtered view.
-  - **Deselect All**: Deselect all images in the current filtered view.
-- **Image Preview**: Hover over an image row to see a preview tooltip.
-- **Current Image Info**: Shows the current image index and total image count.
-- **Batch Operations**: Right-click after selecting multiple images (using checkboxes) to:
-  - Delete multiple images at once
-  - Delete annotations for multiple images at once
+  - **Home Button**: Click to center the table on the currently selected image.
+  - **Highlight All**: Highlight all images in the current filtered view.
+  - **Unhighlight All**: Unhighlight all images in the current filtered view.
+- **Image Preview**:
+  - **Tool Tip**: Hover over a row to show image metadata.
+  - **Thumbnail**: Hold Ctrl while hovering over a row to show a thumbnail.
 
 ## Confidence Window
 - **Display Cropped Image**: Shows the cropped image of the selected annotation.
