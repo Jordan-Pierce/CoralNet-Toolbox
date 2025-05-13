@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import rasterio
 
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QThreadPool, QItemSelectionModel
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QButtonGroup, QAbstractItemView, QGroupBox, QPushButton, 
@@ -49,6 +49,7 @@ class ImageWindow(QWidget):
         self.image_filter = ImageFilter(self.raster_manager)
         self.selected_image_path = None
         self.hover_row = -1
+        self.last_highlighted_row = -1
         
         # Connect manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
@@ -104,11 +105,11 @@ class ImageWindow(QWidget):
         self.checkbox_group = QButtonGroup(self)
         self.checkbox_group.setExclusive(False)
 
-        # Top row: Selected and Has Predictions
-        self.selected_checkbox = QCheckBox("Selected", self) 
-        self.selected_checkbox.stateChanged.connect(self.schedule_filter)
-        self.checkbox_row1.addWidget(self.selected_checkbox)
-        self.checkbox_group.addButton(self.selected_checkbox)
+        # Top row: Highlighted and Has Predictions
+        self.highlighted_checkbox = QCheckBox("Highlighted", self) 
+        self.highlighted_checkbox.stateChanged.connect(self.schedule_filter)
+        self.checkbox_row1.addWidget(self.highlighted_checkbox)
+        self.checkbox_group.addButton(self.highlighted_checkbox)
 
         self.has_predictions_checkbox = QCheckBox("Has Predictions", self)
         self.has_predictions_checkbox.stateChanged.connect(self.schedule_filter)
@@ -218,22 +219,23 @@ class ImageWindow(QWidget):
         # Create and setup table view
         self.tableView = QTableView(self)
         self.tableView.setSelectionBehavior(QTableView.SelectRows)
-        self.tableView.setSelectionMode(QTableView.SingleSelection)
+        self.tableView.setSelectionMode(QTableView.ExtendedSelection)  # Support multiple selection
         self.tableView.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tableView.customContextMenuRequested.connect(self.show_context_menu)
         self.tableView.setMouseTracking(True)
         self.tableView.viewport().installEventFilter(self)
         
+        # Install event filter for wheel events on the table view
+        self.tableView.installEventFilter(self)
+        
         # Set the model for the table view
         self.table_model = RasterTableModel(self.raster_manager, self)
         self.tableView.setModel(self.table_model)
         
-        # Set column widths
-        self.tableView.setColumnWidth(0, 50)
-        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        self.tableView.setColumnWidth(2, 120)
-        self.tableView.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
-        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # Set column widths - removed checkbox column, adjust accordingly
+        self.tableView.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tableView.setColumnWidth(1, 120)
+        self.tableView.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         
         # Style the header
         self.tableView.horizontalHeader().setStyleSheet("""
@@ -244,8 +246,9 @@ class ImageWindow(QWidget):
             }
         """)
         
-        # Connect signals
-        self.tableView.clicked.connect(self.on_table_clicked)
+        # Connect signals for clicking
+        self.tableView.pressed.connect(self.on_table_pressed)
+        self.tableView.doubleClicked.connect(self.on_table_double_clicked)
         
         # Add table view to the layout
         info_table_layout.addWidget(self.tableView)
@@ -254,15 +257,15 @@ class ImageWindow(QWidget):
         self.button_layout = QHBoxLayout()
         info_table_layout.addLayout(self.button_layout)
 
-        # Add 'Select All' button to the new layout
-        self.select_all_button = QPushButton("Select All", self)
-        self.select_all_button.clicked.connect(self.select_all_checkboxes)
-        self.button_layout.addWidget(self.select_all_button)
+        # Add 'Highlight All' button to the new layout
+        self.highlight_all_button = QPushButton("Highlight All", self)
+        self.highlight_all_button.clicked.connect(self.highlight_all_rows)
+        self.button_layout.addWidget(self.highlight_all_button)
 
-        # Add 'Deselect All' button to the new layout
-        self.deselect_all_button = QPushButton("Deselect All", self)
-        self.deselect_all_button.clicked.connect(self.deselect_all_checkboxes)
-        self.button_layout.addWidget(self.deselect_all_button)
+        # Add 'Unhighlight All' button to the new layout
+        self.unhighlight_all_button = QPushButton("Unhighlight All", self)
+        self.unhighlight_all_button.clicked.connect(self.unhighlight_all_rows)
+        self.button_layout.addWidget(self.unhighlight_all_button)
 
         # Add the group box to the main layout
         self.layout.addWidget(self.info_table_group)
@@ -300,7 +303,28 @@ class ImageWindow(QWidget):
     #
     
     def eventFilter(self, source, event):
-        """Event filter to track mouse movement over table rows."""
+        """Event filter to track mouse movement over table rows and handle scrolling."""
+        # Handle wheel events on the table view to customize scrolling
+        if source is self.tableView and event.type() == event.Wheel:
+            # Get the direction of the scroll
+            delta = event.angleDelta().y()
+            
+            # Get the current vertical scrollbar
+            vscroll = self.tableView.verticalScrollBar()
+            current_value = vscroll.value()
+            
+            # Calculate new position based on single row scrolling
+            if delta > 0:
+                # Scroll up by one row
+                vscroll.setValue(current_value - self.tableView.rowHeight(0))
+            else:
+                # Scroll down by one row
+                vscroll.setValue(current_value + self.tableView.rowHeight(0))
+                
+            # Event has been handled
+            return True
+        
+        # Handle mouse movement events for showing image previews
         if source is self.tableView.viewport():
             if event.type() == event.Enter:
                 # Mouse entered the table viewport
@@ -320,10 +344,22 @@ class ImageWindow(QWidget):
                     self.hide_image_preview()
                     self.hover_row = row
                     
-                    if row >= 0 and row < len(self.table_model.filtered_paths):
+                    # Only show preview if Ctrl is pressed
+                    modifiers = QApplication.keyboardModifiers()
+                    if (row >= 0 and row < len(self.table_model.filtered_paths)
+                        and modifiers & Qt.ControlModifier):
                         # Show preview immediately
                         self.show_image_preview()
-                    
+                else:
+                    # If still on the same row, check if Ctrl was just pressed
+                    modifiers = QApplication.keyboardModifiers()
+                    if (row >= 0 and row < len(self.table_model.filtered_paths)
+                        and modifiers & Qt.ControlModifier):
+                        if not self.preview_tooltip.isVisible():
+                            self.show_image_preview()
+                    else:
+                        self.hide_image_preview()
+        
         return super().eventFilter(source, event)
         
     def closeEvent(self, event):
@@ -352,8 +388,54 @@ class ImageWindow(QWidget):
     # Signal handlers
     #
     
-    def on_table_clicked(self, index):
-        """Handle click on table view."""
+    def on_table_pressed(self, index):
+        """Handle a single click on the table view."""
+        if not index.isValid():
+            return
+        
+        # Get the path at the clicked row
+        path = self.table_model.get_path_at_row(index.row())
+        if not path:
+            return
+        
+        # Get keyboard modifiers
+        modifiers = QApplication.keyboardModifiers()
+        
+        # Handle highlighting logic
+        if modifiers & Qt.ControlModifier:
+            # Ctrl+Click: Toggle highlight for the clicked row
+            raster = self.raster_manager.get_raster(path)
+            if raster:
+                self.table_model.highlight_path(path, not raster.is_highlighted)
+        elif modifiers & Qt.ShiftModifier:
+            # Shift+Click: Highlight range from last highlighted to current
+            if self.last_highlighted_row >= 0:
+                # Get the current row and last highlighted row
+                current_row = index.row()
+                
+                # Calculate range (handle both directions)
+                start_row = min(self.last_highlighted_row, current_row)
+                end_row = max(self.last_highlighted_row, current_row)
+                
+                # Highlight the range
+                for row in range(start_row, end_row + 1):
+                    path_to_highlight = self.table_model.get_path_at_row(row)
+                    if path_to_highlight:
+                        self.table_model.highlight_path(path_to_highlight, True)
+            else:
+                # No previous selection, just highlight the current row
+                self.table_model.highlight_path(path, True)
+                
+            # Update the last highlighted row
+            self.last_highlighted_row = index.row()
+        else:
+            # Regular click: Clear all highlights and highlight only this row
+            self.table_model.clear_highlights()
+            self.table_model.highlight_path(path, True)
+            self.last_highlighted_row = index.row()
+        
+    def on_table_double_clicked(self, index):
+        """Handle double click on table view (selects image and loads it)."""
         if not index.isValid():
             return
             
@@ -361,7 +443,7 @@ class ImageWindow(QWidget):
         path = self.table_model.get_path_at_row(index.row())
         if path:
             self.load_image_by_path(path)
-            
+        
     def on_raster_added(self, path):
         """Handler for when a raster is added."""
         self.rasterAdded.emit(path)
@@ -562,8 +644,19 @@ class ImageWindow(QWidget):
         """
         row = self.table_model.get_row_for_path(path)
         if row >= 0:
-            self.tableView.selectRow(row)
+            # Create model index for the row
+            model_index = self.table_model.index(row, 0)
             
+            # Select the row in the table view
+            self.tableView.setCurrentIndex(model_index)
+            
+            # Do not use selectRow as it triggers clicked signal
+            # Use selection model directly to avoid infinite loops
+            selection_model = self.tableView.selectionModel()
+            if selection_model:
+                selection_flags = QItemSelectionModel.Select | QItemSelectionModel.Rows
+                selection_model.select(model_index, selection_flags)
+                
     def center_table_on_current_image(self):
         """Center the table view on the current image."""
         if not self.selected_image_path:
@@ -586,10 +679,10 @@ class ImageWindow(QWidget):
         no_annotations = self.no_annotations_checkbox.isChecked()
         has_annotations = self.has_annotations_checkbox.isChecked()
         has_predictions = self.has_predictions_checkbox.isChecked()
-        selected_only = self.selected_checkbox.isChecked()
+        highlighted_only = self.highlighted_checkbox.isChecked()
         
-        # Get selected checkboxes if needed
-        selected_paths = self._get_selected_image_paths() if selected_only else None
+        # Get highlighted paths if needed
+        highlighted_paths = self.table_model.get_highlighted_paths() if highlighted_only else None
         
         # Run the filter
         self.image_filter.filter_images(
@@ -598,21 +691,9 @@ class ImageWindow(QWidget):
             require_annotations=has_annotations,
             require_no_annotations=no_annotations,
             require_predictions=has_predictions,
-            selected_paths=selected_paths,
+            selected_paths=highlighted_paths,
             use_threading=True
         )
-        
-    def _get_selected_image_paths(self):
-        """Get paths for all images with checked checkboxes."""
-        selected_paths = []
-        
-        # Iterate through paths and check checkbox state
-        for path in self.raster_manager.image_paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster and raster.checkbox_state:
-                selected_paths.append(path)
-                
-        return selected_paths
         
     def update_current_image_index_label(self):
         """Update the label showing current image index."""
@@ -802,6 +883,20 @@ class ImageWindow(QWidget):
         # Load the next image
         self.load_image_by_path(self.table_model.get_path_at_row(next_index))
         
+    def highlight_all_rows(self):
+        """Highlight all rows in the filtered view."""
+        for path in self.table_model.filtered_paths:
+            self.table_model.highlight_path(path, True)
+        
+        # Update the last highlighted row
+        if self.table_model.filtered_paths:
+            self.last_highlighted_row = self.table_model.get_row_for_path(self.table_model.filtered_paths[-1])
+        
+    def unhighlight_all_rows(self):
+        """Clear all highlights."""
+        self.table_model.clear_highlights()
+        self.last_highlighted_row = -1
+        
     def show_context_menu(self, position):
         """
         Show the context menu for the table.
@@ -809,57 +904,72 @@ class ImageWindow(QWidget):
         Args:
             position (QPoint): Position to show the menu
         """
-        # Get selected checkboxes
-        selected_paths = self._get_selected_image_paths()
-        if not selected_paths:
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        if not highlighted_paths:
+            # If no highlights, highlight the row under the cursor only
+            index = self.tableView.indexAt(position)
+            if index.isValid():
+                path = self.table_model.get_path_at_row(index.row())
+                if path:
+                    self.table_model.set_highlighted_paths([path])
+                    self.last_highlighted_row = index.row()
+                    highlighted_paths = [path]
+        else:
+            # If any highlights, ensure all highlighted rows are used (no change needed)
+            self.table_model.set_highlighted_paths(highlighted_paths)
+        if not highlighted_paths:
             return
-            
-        # Create menu
         context_menu = QMenu(self)
-        
-        # Add actions
-        delete_images_action = context_menu.addAction(f"Delete {len(selected_paths)} Images")
-        delete_images_action.triggered.connect(lambda: self.delete_selected_images())
-        
+        count = len(highlighted_paths)
+        delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Image{'s' if count > 1 else ''}")
+        delete_images_action.triggered.connect(lambda: self.delete_highlighted_images())
         delete_annotations_action = context_menu.addAction(
-            f"Delete Annotations for {len(selected_paths)} Images"
+            f"Delete Annotations for {count} Highlighted Image{'s' if count > 1 else ''}"
         )
         delete_annotations_action.triggered.connect(
-            lambda: self.delete_selected_images_annotations()
+            lambda: self.delete_highlighted_images_annotations()
         )
-        
-        # Show the menu
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
         
-    def delete_selected_images(self):
-        """Delete the selected images."""
-        selected_paths = self._get_selected_image_paths()
-        if not selected_paths:
+    def delete_highlighted_images(self):
+        """Delete the highlighted images."""
+        # Get all highlighted paths, the same way we do in filter_images
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        
+        # Print for debugging
+        print(f"Deleting {len(highlighted_paths)} highlighted images")
+        
+        if not highlighted_paths:
             return
             
         # Confirm deletion
         reply = QMessageBox.question(
             self,
             "Confirm Multiple Image Deletions",
-            f"Are you sure you want to delete {len(selected_paths)} images?\n"
+            f"Are you sure you want to delete {len(highlighted_paths)} images?\n"
             "This will delete all associated annotations.",
             QMessageBox.Yes | QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            self.delete_images(selected_paths)
+            self.delete_images(highlighted_paths)
             
-    def delete_selected_images_annotations(self):
-        """Delete annotations for the selected images."""
-        selected_paths = self._get_selected_image_paths()
-        if not selected_paths:
+    def delete_highlighted_images_annotations(self):
+        """Delete annotations for the highlighted images."""
+        # Get all highlighted paths, the same way we do in filter_images
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        
+        # Print for debugging
+        print(f"Deleting annotations for {len(highlighted_paths)} highlighted images")
+        
+        if not highlighted_paths:
             return
             
         # Confirm deletion
         reply = QMessageBox.question(
             self,
             "Confirm Multiple Annotation Deletions",
-            f"Are you sure you want to delete annotations for {len(selected_paths)} images?",
+            f"Are you sure you want to delete annotations for {len(highlighted_paths)} images?",
             QMessageBox.Yes | QMessageBox.No
         )
         
@@ -872,10 +982,10 @@ class ImageWindow(QWidget):
                 # Show progress
                 progress_bar = ProgressBar(self, title="Deleting Annotations")
                 progress_bar.show()
-                progress_bar.start_progress(len(selected_paths))
+                progress_bar.start_progress(len(highlighted_paths))
                 
                 # Delete annotations
-                for path in selected_paths:
+                for path in highlighted_paths:
                     # Delete the annotations
                     self.annotation_window.delete_image_annotations(path)
                     
@@ -891,7 +1001,7 @@ class ImageWindow(QWidget):
                 self.annotation_window.annotationDeleted.connect(self.update_annotation_count)
                 
                 # Close progress bar
-                if progress_bar:
+                if 'progress_bar' in locals() and progress_bar:
                     progress_bar.stop_progress()
                     progress_bar.close()
                     
@@ -961,30 +1071,6 @@ class ImageWindow(QWidget):
                 
             # Update UI
             self.filter_images()
-            
-    def select_all_checkboxes(self):
-        """Select all checkboxes in the current view."""
-        # Update all rasters in the current view
-        for path in self.table_model.filtered_paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster:
-                raster.checkbox_state = True
-                
-        # Notify the model that data has changed
-        self.table_model.beginResetModel()
-        self.table_model.endResetModel()
-        
-    def deselect_all_checkboxes(self):
-        """Deselect all checkboxes in the current view."""
-        # Update all rasters in the current view
-        for path in self.table_model.filtered_paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster:
-                raster.checkbox_state = False
-                
-        # Notify the model that data has changed
-        self.table_model.beginResetModel()
-        self.table_model.endResetModel()
 
 
 class ImagePreviewTooltip(QFrame):
