@@ -449,12 +449,78 @@ class Base(QDialog):
         self.custom_params_layout = QVBoxLayout()
         form_layout.addRow("Additional Parameters:", self.custom_params_layout)
 
-        # Add button for new parameter pairs
+        # Add buttons for parameter management
+        param_buttons_layout = QHBoxLayout()
+
         self.add_param_button = QPushButton("Add Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
-        form_layout.addRow("", self.add_param_button)
+        param_buttons_layout.addWidget(self.add_param_button)
+
+        self.remove_param_button = QPushButton("Remove Parameter")
+        self.remove_param_button.clicked.connect(self.remove_parameter_pair)
+        self.remove_param_button.setEnabled(False)  # Disabled until at least one parameter is added
+        param_buttons_layout.addWidget(self.remove_param_button)
+
+        form_layout.addRow("", param_buttons_layout)
 
         self.layout.addWidget(group_box)
+
+    def add_parameter_pair(self):
+        """
+        Add a new parameter input group with name, value, and type selector.
+        """
+        param_layout = QHBoxLayout()
+
+        # Parameter name field
+        param_name = QLineEdit()
+        param_name.setPlaceholderText("Parameter name")
+
+        # Parameter value field
+        param_value = QLineEdit()
+        param_value.setPlaceholderText("Value")
+
+        # Parameter type selector
+        param_type = QComboBox()
+        param_type.addItems(["string", "int", "float", "bool"])
+
+        # Add widgets to layout
+        param_layout.addWidget(param_name)
+        param_layout.addWidget(param_value)
+        param_layout.addWidget(param_type)
+
+        # Store the widgets for later retrieval
+        self.custom_params.append((param_name, param_value, param_type))
+        self.custom_params_layout.addLayout(param_layout)
+
+        # Enable the remove button since we now have at least one parameter
+        self.remove_param_button.setEnabled(True)
+
+    def remove_parameter_pair(self):
+        """
+        Remove the most recently added parameter pair.
+        """
+        if not self.custom_params:
+            return
+
+        # Get the last parameter group
+        param_name, param_value, param_type = self.custom_params.pop()
+
+        # Remove the layout containing these widgets
+        layout_to_remove = self.custom_params_layout.itemAt(self.custom_params_layout.count() - 1)
+
+        if layout_to_remove:
+            # Remove and delete widgets from the layout
+            while layout_to_remove.count():
+                widget = layout_to_remove.takeAt(0).widget()
+                if widget:
+                    widget.deleteLater()
+
+            # Remove the layout itself
+            self.custom_params_layout.removeItem(layout_to_remove)
+
+        # Disable the remove button if no more parameters
+        if not self.custom_params:
+            self.remove_param_button.setEnabled(False)
 
     def setup_buttons_layout(self):
         """
@@ -468,19 +534,6 @@ class Base(QDialog):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.layout.addWidget(self.cancel_button)
-
-    def add_parameter_pair(self):
-        """
-        Add a new pair of parameter name and value input fields.
-        """
-        param_layout = QHBoxLayout()
-        param_name = QLineEdit()
-        param_value = QLineEdit()
-        param_layout.addWidget(param_name)
-        param_layout.addWidget(param_value)
-
-        self.custom_params.append((param_name, param_value))
-        self.custom_params_layout.addLayout(param_layout)
 
     def load_model_combobox(self):
         raise NotImplementedError("Subclasses must implement this method.")
@@ -560,7 +613,7 @@ class Base(QDialog):
     def get_parameters(self):
         """
         Get the training parameters from the dialog widgets.
-
+    
         Returns:
             dict: A dictionary of training parameters.
         """
@@ -596,25 +649,32 @@ class Base(QDialog):
         params['name'] = params['name'] if params['name'] else now
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
-
+    
         # Add custom parameters (allows overriding the above parameters)
-        for param_name, param_value in self.custom_params:
+        for param_info in self.custom_params:
+            param_name, param_value, param_type = param_info
             name = param_name.text().strip()
-            value = param_value.text().strip().lower()
+            value = param_value.text().strip()
+            type_name = param_type.currentText()
+            
             if name:
-                if value == 'true':
-                    params[name] = True
-                elif value == 'false':
-                    params[name] = False
-                else:
+                if type_name == "bool":
+                    params[name] = value.lower() == "true"
+                elif type_name == "int":
                     try:
                         params[name] = int(value)
                     except ValueError:
-                        try:
-                            params[name] = float(value)
-                        except ValueError:
-                            params[name] = value
-
+                        print(f"Warning: Could not convert '{value}' to int for parameter '{name}', using as string")
+                        params[name] = value
+                elif type_name == "float":
+                    try:
+                        params[name] = float(value)
+                    except ValueError:
+                        print(f"Warning: Could not convert '{value}' to float for parameter '{name}', using as string")
+                        params[name] = value
+                else:  # string type
+                    params[name] = value
+    
         # Return the dictionary of parameters
         return params
 
