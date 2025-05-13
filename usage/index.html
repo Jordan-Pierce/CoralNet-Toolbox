@@ -22,7 +22,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.13">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
     
     
       
@@ -417,6 +417,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tool-bar-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tool Bar Tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#status-bar" class="md-nav__link">
     <span class="md-ellipsis">
       Status Bar
@@ -463,9 +472,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#hotkeys" class="md-nav__link">
+  <a href="#secret-hotkeys" class="md-nav__link">
     <span class="md-ellipsis">
-      Hotkeys
+      Secret Hotkeys
     </span>
   </a>
   
@@ -609,6 +618,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#tool-bar-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      Tool Bar Tools
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#status-bar" class="md-nav__link">
     <span class="md-ellipsis">
       Status Bar
@@ -655,9 +673,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#hotkeys" class="md-nav__link">
+  <a href="#secret-hotkeys" class="md-nav__link">
     <span class="md-ellipsis">
-      Hotkeys
+      Secret Hotkeys
     </span>
   </a>
   
@@ -841,9 +859,10 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 </li>
 <li><strong>Batch Inference</strong>: Perform batch inferences.</li>
-<li>
-<p><strong>Select Tool</strong>: After selecting the tool</p>
+</ul>
+<h2 id="tool-bar-tools">Tool Bar Tools<a class="headerlink" href="#tool-bar-tools" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>Select Tool</strong>: After selecting the tool</li>
 <li><strong>Left-Click</strong>: Select an annotation; drag to move it.</li>
 <li><strong>Ctrl + Left-Click</strong>: Add/remove annotation to current selection.</li>
 <li><strong>Ctrl + Drag</strong>: Create rectangle selection to select multiple annotations.</li>
@@ -851,18 +870,18 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Ctrl + Shift</strong>: Show resize handles for the selected annotation.</li>
 <li><strong>Ctrl + Mouse Wheel</strong>: Change size of the selected annotation.</li>
 <li><strong>Ctrl + Space</strong>: Confirm prediction for selected annotation with top machine confidence.</li>
-<li><strong>Ctrl + C</strong>: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.</li>
-<li><strong>Combining Rules</strong>: <ul>
+<li><strong>Ctrl + C</strong>: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.<ul>
+<li><strong>Combining Rules</strong>: </li>
 <li>All selected annotations must have the same label</li>
 <li>All selected annotations must be verified (not machine predictions)</li>
 <li>Patch annotations can be combined with other patches or polygons</li>
 <li>Rectangle annotations can only be combined with other rectangles</li>
 <li>Polygon annotations can be combined with other polygons</li>
+<li><strong>Cutting Mode</strong>: Left-click to start drawing a cut line, click again to complete the cut.</li>
 </ul>
 </li>
-<li><strong>Cutting Mode</strong>: Left-click to start drawing a cut line, click again to complete the cut.</li>
-<li><strong>Backspace/Ctrl + C</strong>: Cancel cutting mode.</li>
-</ul>
+<li>
+<p><strong>Backspace/Ctrl + C</strong>: Cancel cutting mode.</p>
 </li>
 <li>
 <p><strong>Patch Tool</strong>: After selecting the tool</p>
@@ -919,9 +938,9 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
 <li><strong>Mouse Movement</strong>: Shows a preview of the work area while drawing.</li>
 <li><strong>Practical Use</strong>:<ul>
-<li>Define specific regions where models should make predictions</li>
-<li>Useful for processing only relevant parts of large images</li>
-<li>Work areas persist between tool changes and sessions</li>
+<li>Define specific regions where models should make predictions.</li>
+<li>Useful for processing only relevant parts of large images.</li>
+<li>Work areas persist between tool changes and sessions.</li>
 </ul>
 </li>
 </ul>
@@ -951,32 +970,34 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Filter Labels</strong>: Use the filter text box to search for specific labels.</li>
 <li><strong>Label Count</strong>: Displays the total number of labels in the project.</li>
 <li><strong>Annotation Count</strong>: Shows information about the current annotations:</li>
-<li>When no annotation is selected: Shows the total count of annotations</li>
-<li>When a single annotation is selected: Shows the selected annotation's index</li>
-<li>When multiple annotations are selected: Shows how many annotations are selected</li>
-<li>Can be edited (when in select mode) to navigate to a specific annotation by index</li>
+<li>When no annotation is selected: Shows the total count of annotations.</li>
+<li>When a single annotation is selected: Shows the selected annotation's index.</li>
+<li>When multiple annotations are selected: Shows how many annotations are selected.</li>
+<li>Can be edited (when in select mode) to navigate to a specific annotation by index.</li>
 </ul>
 <h2 id="image-window">Image Window<a class="headerlink" href="#image-window" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Load Image</strong>: Click on a row to load the image in the annotation window.</li>
-<li><strong>Delete Image</strong>: Right-click on a row and select "Delete Image" to remove the image.</li>
-<li><strong>Delete Annotations</strong>: Right-click on a row and select "Delete Annotations" to remove the image's annotations.</li>
+<li><strong>Select Image</strong>: Double-click on a row to select and load the image in the annotation window.</li>
+<li><strong>Highlight Image</strong>: Single-click on a row to highlight one or more rows in the image window.</li>
+<li><strong>Ctrl + Left-click</strong>: Select multiple, non-adjacent rows.</li>
+<li><strong>Shift + Left-click</strong>: Select multiple, adjacent rows.</li>
+<li><strong>Open Context Menu</strong>:</li>
+<li><strong>Right-click on a single highlighted row</strong>: Delete images / annotations for the highlighted row.</li>
+<li>**Shift + Right-click on multiple highlighted rows: Delete images / annotations for highlighted rows.</li>
 <li><strong>Search / Filter</strong>:</li>
 <li><strong>By Image</strong>: Filter for images by name or sub-string.</li>
 <li><strong>By Label</strong>: Filter images by labels they contain.</li>
 <li><strong>No Annotations</strong>: Filter images with no annotations.</li>
 <li><strong>Has Annotations</strong>: Filter images with annotations.</li>
 <li><strong>Has Predictions</strong>: Filter images with predictions.</li>
-<li><strong>Selected</strong>: Filter images selected.</li>
+<li><strong>Highlighted</strong>: Filter highlighted images.</li>
 <li><strong>Navigation</strong>:</li>
-<li><strong>Home Button</strong>: Click to center the table on the current image.</li>
-<li><strong>Select All</strong>: Select all images in the current filtered view.</li>
-<li><strong>Deselect All</strong>: Deselect all images in the current filtered view.</li>
-<li><strong>Image Preview</strong>: Hover over an image row to see a preview tooltip.</li>
-<li><strong>Current Image Info</strong>: Shows the current image index and total image count.</li>
-<li><strong>Batch Operations</strong>: Right-click after selecting multiple images (using checkboxes) to:</li>
-<li>Delete multiple images at once</li>
-<li>Delete annotations for multiple images at once</li>
+<li><strong>Home Button</strong>: Click to center the table on the currently selected image.</li>
+<li><strong>Highlight All</strong>: Highlight all images in the current filtered view.</li>
+<li><strong>Unhighlight All</strong>: Unhighlight all images in the current filtered view.</li>
+<li><strong>Image Preview</strong>:</li>
+<li><strong>Tool Tip</strong>: Hover over a row to show image metadata.</li>
+<li><strong>Thumbnail</strong>: Hold Ctrl while hovering over a row to show a thumbnail.</li>
 </ul>
 <h2 id="confidence-window">Confidence Window<a class="headerlink" href="#confidence-window" title="Permanent link">&para;</a></h2>
 <ul>
@@ -997,11 +1018,11 @@ This guide provides instructions on how to use the application, including key fu
 <li>Numbered indicators (1-5) show the rank of each prediction.</li>
 <li>Hover over confidence bars to see a pointing hand cursor when selection is possible.</li>
 </ul>
-<h3 id="hotkeys">Hotkeys<a class="headerlink" href="#hotkeys" title="Permanent link">&para;</a></h3>
+<h3 id="secret-hotkeys">Secret Hotkeys<a class="headerlink" href="#secret-hotkeys" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Ctrl + W/A/S/D</strong>: Navigate through labels.</li>
+<li><strong>Alt + Up/Down</strong>: Cycle through images.</li>
+<li><strong>Ctrl + W/A/S/D</strong>: Cycle through labels.</li>
 <li><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</li>
-<li><strong>Ctrl + Up/Down</strong>: Cycle through images.</li>
 <li><strong>Ctrl + Shift + &lt;</strong>: Select all annotations.</li>
 <li><strong>Ctrl + Shift + &gt;</strong>: Unselect all annotations.</li>
 <li>
@@ -1038,7 +1059,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 9, 2025 20:23:44"><span class="timeago" datetime="2025-05-09T20:23:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 9, 2025 20:23:44">2025-05-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 13, 2025 17:39:04"><span class="timeago" datetime="2025-05-13T17:39:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 13, 2025 17:39:04">2025-05-13</span>
   </span>
 
     
