@@ -51,10 +51,22 @@ class OverlapInput(QGroupBox):
         self.height_double.setDecimals(2)
         self.height_double.hide()
 
-        layout.addRow("Width:", self.width_spin)
-        layout.addRow("", self.width_double)
-        layout.addRow("Height:", self.height_spin)
-        layout.addRow("", self.height_double)
+        # Instead of adding separate rows, create container widgets
+        width_container = QWidget()
+        width_layout = QHBoxLayout(width_container)
+        width_layout.setContentsMargins(0, 0, 0, 0)
+        width_layout.addWidget(self.width_spin)
+        width_layout.addWidget(self.width_double)
+
+        height_container = QWidget()
+        height_layout = QHBoxLayout(height_container)
+        height_layout.setContentsMargins(0, 0, 0, 0)
+        height_layout.addWidget(self.height_spin)
+        height_layout.addWidget(self.height_double)
+
+        # Add the containers as rows
+        layout.addRow("Width:", width_container)
+        layout.addRow("Height:", height_container)
 
         self.value_type.currentIndexChanged.connect(self.update_input_mode)
 
