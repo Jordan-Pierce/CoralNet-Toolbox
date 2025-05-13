@@ -66,14 +66,6 @@ class GlobalEventFilter(QObject):
                 if event.key() == Qt.Key_Right:
                     self.annotation_window.cycle_annotations(1)
                     return True
-
-                # Handle thumbnail cycling hotkeys
-                if event.key() == Qt.Key_Up:
-                    self.image_window.cycle_previous_image()
-                    return True
-                if event.key() == Qt.Key_Down:
-                    self.image_window.cycle_next_image()
-                    return True
                 
                 # Delete (backspace or delete key) selected annotations when select tool is active
                 if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
@@ -81,6 +73,14 @@ class GlobalEventFilter(QObject):
                         if self.annotation_window.selected_annotations:
                             self.annotation_window.delete_selected_annotations()
                     return True
+                
+            # Handle image cycling hotkeys
+            if event.key() == Qt.Key_Up and event.modifiers() == (Qt.AltModifier):
+                self.image_window.cycle_previous_image()
+                return True
+            if event.key() == Qt.Key_Down and event.modifiers() == (Qt.AltModifier):
+                self.image_window.cycle_next_image()
+                return True
 
             # Handle Ctrl + Shift + S for saving project
             if event.key() == Qt.Key_S and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):

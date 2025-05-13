@@ -61,8 +61,12 @@ class ImageFilter(QObject):
             List[str]: List of filtered image paths
         """
         # If no filters are active, return all paths
-        if not any([search_text, search_label, require_annotations, 
-                   require_no_annotations, require_predictions, selected_paths]):
+        if not any([search_text, 
+                    search_label, 
+                    require_annotations, 
+                   require_no_annotations, 
+                   require_predictions, 
+                   selected_paths]):
             result = self.raster_manager.image_paths.copy()
             self.filteringStarted.emit()
             self.filteringFinished.emit(result)

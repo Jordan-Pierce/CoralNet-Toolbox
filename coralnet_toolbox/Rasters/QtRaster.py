@@ -56,6 +56,7 @@ class Raster(QObject):
         self.checkbox_state = False
         self.row_in_table = -1
         self.is_selected = False
+        self.is_highlighted = False  # Track if the row is highlighted
         self.is_filtered = True
         self.is_visible = True
         self.display_name = self.basename  # Can be truncated for display
@@ -85,6 +86,10 @@ class Raster(QObject):
     def set_selected(self, is_selected: bool):
         """Mark this raster as selected in the UI"""
         self.is_selected = is_selected
+        
+    def set_highlighted(self, is_highlighted: bool):
+        """Mark this raster as highlighted in the UI"""
+        self.is_highlighted = is_highlighted
     
     def set_display_name(self, max_length=25):
         """
