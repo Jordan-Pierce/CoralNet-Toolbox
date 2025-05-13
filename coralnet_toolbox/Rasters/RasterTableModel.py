@@ -38,7 +38,10 @@ class RasterTableModel(QAbstractTableModel):
         super().__init__(parent)
         self.raster_manager = raster_manager
         self.filtered_paths: List[str] = []
-        self.highlighted_paths: Set[str] = set()
+        
+        # We'll remove this separate tracking mechanism to avoid inconsistency
+        # self.highlighted_paths: Set[str] = set()
+        
         self.column_headers = ["Image Name", "Annotations"]
         
         # Column widths
@@ -98,7 +101,7 @@ class RasterTableModel(QAbstractTableModel):
             # Set background color based on selection/highlight state
             if raster.is_selected:
                 return QBrush(self.SELECTED_COLOR)
-            elif raster.is_highlighted or path in self.highlighted_paths:
+            elif raster.is_highlighted:
                 return QBrush(self.HIGHLIGHTED_COLOR)
                 
         elif role == Qt.ToolTipRole:
@@ -127,17 +130,12 @@ class RasterTableModel(QAbstractTableModel):
             path (str): Image path to highlight/unhighlight
             highlighted (bool): Whether to highlight (True) or unhighlight (False)
         """
-        if path in self.raster_manager.image_paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster:
+        raster = self.raster_manager.get_raster(path)
+        if raster:
+            # Only update if state is changing
+            if raster.is_highlighted != highlighted:
                 raster.set_highlighted(highlighted)
                 
-                # Also store in our set for quick lookups
-                if highlighted:
-                    self.highlighted_paths.add(path)
-                elif path in self.highlighted_paths:
-                    self.highlighted_paths.remove(path)
-                    
                 # Update the view
                 row = self.get_row_for_path(path)
                 if row >= 0:
@@ -148,28 +146,17 @@ class RasterTableModel(QAbstractTableModel):
                     
     def clear_highlights(self):
         """Clear all highlighted paths"""
-        # First, get all paths that are highlighted in either way (set or raster property)
-        paths_to_update = set(self.highlighted_paths)
-        
-        # Also check all filtered paths for any with is_highlighted=True
+        # Find all highlighted rasters
+        highlighted_paths = []
         for path in self.filtered_paths:
             raster = self.raster_manager.get_raster(path)
             if raster and raster.is_highlighted:
-                paths_to_update.add(path)
+                highlighted_paths.append(path)
         
-        # Now unhighlight all paths
-        for path in paths_to_update:
+        # Unhighlight all paths
+        for path in highlighted_paths:
             self.highlight_path(path, False)
-        
-        # Clear our set
-        self.highlighted_paths.clear()
-        
-        # Refresh the view
-        self.dataChanged.emit(
-            self.index(0, 0),
-            self.index(self.rowCount() - 1, self.columnCount() - 1)
-        )
-        
+            
     def set_highlighted_paths(self, paths: List[str]):
         """
         Set the highlighted state for a list of paths, clearing all others.
@@ -177,12 +164,18 @@ class RasterTableModel(QAbstractTableModel):
         Args:
             paths (List[str]): List of image paths to highlight
         """
-        # Unhighlight all first
-        for path in self.get_highlighted_paths():
-            self.highlight_path(path, False)
-        # Highlight the new set
+        # First get all currently highlighted paths
+        current_highlighted = self.get_highlighted_paths()
+        
+        # Unhighlight those that shouldn't be highlighted
+        for path in current_highlighted:
+            if path not in paths:
+                self.highlight_path(path, False)
+                
+        # Highlight those that should be highlighted
         for path in paths:
-            self.highlight_path(path, True)
+            if path in self.filtered_paths:  # Only highlight visible paths
+                self.highlight_path(path, True)
 
     def clear_highlights_except(self, paths_to_keep: List[str]):
         """
@@ -202,13 +195,12 @@ class RasterTableModel(QAbstractTableModel):
         Returns:
             List[str]: List of highlighted image paths
         """
-        # Only return filtered paths that are highlighted
-        all_highlighted = set()
+        highlighted_paths = []
         for path in self.filtered_paths:
             raster = self.raster_manager.get_raster(path)
             if raster and raster.is_highlighted:
-                all_highlighted.add(path)
-        return list(all_highlighted)
+                highlighted_paths.append(path)
+        return highlighted_paths
         
     def set_filtered_paths(self, paths: List[str]):
         """
@@ -218,7 +210,7 @@ class RasterTableModel(QAbstractTableModel):
             paths (List[str]): List of image paths to display
         """
         self.beginResetModel()
-        self.filtered_paths = paths
+        self.filtered_paths = [p for p in paths if p in self.raster_manager.image_paths]
         self.endResetModel()
         
     def get_path_at_row(self, row: int) -> Optional[str]:
@@ -257,10 +249,17 @@ class RasterTableModel(QAbstractTableModel):
         Args:
             path (str): Image path to select
         """
-        # Clear any previous selection
+        # Get currently selected paths first
+        selected_paths = []
         for p in self.filtered_paths:
             raster = self.raster_manager.get_raster(p)
             if raster and raster.is_selected:
+                selected_paths.append(p)
+        
+        # Clear any previous selection
+        for p in selected_paths:
+            raster = self.raster_manager.get_raster(p)
+            if raster:
                 raster.set_selected(False)
                 row = self.get_row_for_path(p)
                 if row >= 0:
@@ -272,13 +271,28 @@ class RasterTableModel(QAbstractTableModel):
         # Set new selection
         raster = self.raster_manager.get_raster(path)
         if raster:
-            raster.set_selected(True)
-            row = self.get_row_for_path(path)
-            if row >= 0:
-                self.dataChanged.emit(
-                    self.index(row, 0),
-                    self.index(row, self.columnCount() - 1)
-                )
+            # Only update if state is changing
+            if not raster.is_selected:
+                raster.set_selected(True)
+                row = self.get_row_for_path(path)
+                if row >= 0:
+                    self.dataChanged.emit(
+                        self.index(row, 0),
+                        self.index(row, self.columnCount() - 1)
+                    )
+    
+    def get_selected_path(self) -> Optional[str]:
+        """
+        Get the currently selected path.
+        
+        Returns:
+            str or None: Selected path or None if no selection
+        """
+        for path in self.filtered_paths:
+            raster = self.raster_manager.get_raster(path)
+            if raster and raster.is_selected:
+                return path
+        return None
                 
     def update_raster_data(self, path: str):
         """
@@ -296,7 +310,11 @@ class RasterTableModel(QAbstractTableModel):
             
     def on_raster_added(self, path: str):
         """Handler for when a raster is added to the manager."""
-        # No need to do anything here, as filtered_paths is set separately
+        # If we want to automatically add new rasters to filtered list:
+        # if path not in self.filtered_paths:
+        #     self.beginInsertRows(QModelIndex(), len(self.filtered_paths), len(self.filtered_paths))
+        #     self.filtered_paths.append(path)
+        #     self.endInsertRows()
         pass
         
     def on_raster_removed(self, path: str):
@@ -310,3 +328,32 @@ class RasterTableModel(QAbstractTableModel):
     def on_raster_updated(self, path: str):
         """Handler for when a raster is updated in the manager."""
         self.update_raster_data(path)
+    
+    # New methods to better sync with Qt's selection model
+    def sync_with_selection_model(self, selected_indexes, deselected_indexes):
+        """
+        Synchronize with Qt's selection model changes.
+        
+        Args:
+            selected_indexes: Indexes that were selected
+            deselected_indexes: Indexes that were deselected
+        """
+        # Handle deselections
+        for index in deselected_indexes:
+            if index.isValid():
+                path = self.get_path_at_row(index.row())
+                if path:
+                    raster = self.raster_manager.get_raster(path)
+                    if raster and raster.is_selected:
+                        raster.set_selected(False)
+                        self.update_raster_data(path)
+        
+        # Handle selections
+        for index in selected_indexes:
+            if index.isValid():
+                path = self.get_path_at_row(index.row())
+                if path:
+                    raster = self.raster_manager.get_raster(path)
+                    if raster and not raster.is_selected:
+                        raster.set_selected(True)
+                        self.update_raster_data(path)

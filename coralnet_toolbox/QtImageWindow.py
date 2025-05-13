@@ -29,6 +29,14 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class NoArrowKeyTableView(QTableView):
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Up, Qt.Key_Down):
+            event.ignore()
+            return
+        super().keyPressEvent(event)
+        
+
 class ImageWindow(QWidget):
     # Signals
     imageSelected = pyqtSignal(str)  # Path of selected image
@@ -203,21 +211,28 @@ class ImageWindow(QWidget):
         self.info_layout.addSpacing(10)
 
         # Add a label to display the index of the currently selected image
-        self.current_image_index_label = QLabel("Current Image: None", self)
+        self.current_image_index_label = QLabel("Current: None", self)
         self.current_image_index_label.setAlignment(Qt.AlignCenter)
         self.current_image_index_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.current_image_index_label.setFixedHeight(24)
         self.info_layout.addWidget(self.current_image_index_label)
 
+        # Add a label to display the number of highlighted images
+        self.highlighted_count_label = QLabel("Highlighted: 0", self)
+        self.highlighted_count_label.setAlignment(Qt.AlignCenter)
+        self.highlighted_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.highlighted_count_label.setFixedHeight(24)
+        self.info_layout.addWidget(self.highlighted_count_label)
+
         # Add a label to display the total number of images
-        self.image_count_label = QLabel("Total Images: 0", self)
+        self.image_count_label = QLabel("Total: 0", self)
         self.image_count_label.setAlignment(Qt.AlignCenter)
         self.image_count_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.image_count_label.setFixedHeight(24)
         self.info_layout.addWidget(self.image_count_label)
 
         # Create and setup table view
-        self.tableView = QTableView(self)
+        self.tableView = NoArrowKeyTableView(self)
         self.tableView.setSelectionBehavior(QTableView.SelectRows)
         self.tableView.setSelectionMode(QTableView.ExtendedSelection)  # Support multiple selection
         self.tableView.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -407,6 +422,9 @@ class ImageWindow(QWidget):
             raster = self.raster_manager.get_raster(path)
             if raster:
                 self.table_model.highlight_path(path, not raster.is_highlighted)
+                # Update highlighted count
+                self.update_highlighted_count_label()
+                
         elif modifiers & Qt.ShiftModifier:
             # Shift+Click: Highlight range from last highlighted to current
             if self.last_highlighted_row >= 0:
@@ -428,12 +446,18 @@ class ImageWindow(QWidget):
                 
             # Update the last highlighted row
             self.last_highlighted_row = index.row()
+            
+            # Update highlighted count
+            self.update_highlighted_count_label()
         else:
             # Regular click: Clear all highlights and highlight only this row
             self.table_model.clear_highlights()
             self.table_model.highlight_path(path, True)
             self.last_highlighted_row = index.row()
-        
+            
+            # Update highlighted count
+            self.update_highlighted_count_label()
+
     def on_table_double_clicked(self, index):
         """Handle double click on table view (selects image and loads it)."""
         if not index.isValid():
@@ -471,6 +495,7 @@ class ImageWindow(QWidget):
         
         # Update labels
         self.update_current_image_index_label()
+        self.update_highlighted_count_label()  # Update highlighted count
         self.filterChanged.emit(len(filtered_paths))
         
         # Restore selection if possible
@@ -600,6 +625,9 @@ class ImageWindow(QWidget):
             
         with self.busy_cursor():
             try:
+                # Unhighlight all rows
+                self.unhighlight_all_rows()
+                                
                 # Get the raster
                 raster = self.raster_manager.get_raster(image_path)
                 
@@ -702,11 +730,11 @@ class ImageWindow(QWidget):
             row = self.table_model.get_row_for_path(self.selected_image_path)
             if row >= 0:
                 # Show 1-based index
-                self.current_image_index_label.setText(f"Current Image: {row + 1}")
+                self.current_image_index_label.setText(f"Current: {row + 1}")
                 return
                 
         # No valid selection
-        self.current_image_index_label.setText("Current Image: None")
+        self.current_image_index_label.setText("Current: None")
         
     def update_image_count_label(self, count=None):
         """
@@ -718,7 +746,13 @@ class ImageWindow(QWidget):
         if count is None:
             count = len(self.table_model.filtered_paths)
             
-        self.image_count_label.setText(f"Total Images: {count}")
+        self.image_count_label.setText(f"Total: {count}")
+        
+    def update_highlighted_count_label(self):
+        """Update the label showing highlighted image count."""
+        highlighted_paths = self.table_model.get_highlighted_paths()
+        count = len(highlighted_paths)
+        self.highlighted_count_label.setText(f"Highlighted: {count}")
         
     def show_image_preview(self):
         """Show image preview tooltip for the current hover row."""
@@ -891,11 +925,17 @@ class ImageWindow(QWidget):
         # Update the last highlighted row
         if self.table_model.filtered_paths:
             self.last_highlighted_row = self.table_model.get_row_for_path(self.table_model.filtered_paths[-1])
+            
+        # Update the highlighted count label
+        self.update_highlighted_count_label()
         
     def unhighlight_all_rows(self):
         """Clear all highlights."""
         self.table_model.clear_highlights()
         self.last_highlighted_row = -1
+        
+        # Update the highlighted count label
+        self.update_highlighted_count_label()
         
     def show_context_menu(self, position):
         """
@@ -936,9 +976,6 @@ class ImageWindow(QWidget):
         # Get all highlighted paths, the same way we do in filter_images
         highlighted_paths = self.table_model.get_highlighted_paths()
         
-        # Print for debugging
-        print(f"Deleting {len(highlighted_paths)} highlighted images")
-        
         if not highlighted_paths:
             return
             
@@ -958,9 +995,6 @@ class ImageWindow(QWidget):
         """Delete annotations for the highlighted images."""
         # Get all highlighted paths, the same way we do in filter_images
         highlighted_paths = self.table_model.get_highlighted_paths()
-        
-        # Print for debugging
-        print(f"Deleting annotations for {len(highlighted_paths)} highlighted images")
         
         if not highlighted_paths:
             return

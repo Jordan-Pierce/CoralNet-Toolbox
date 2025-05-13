@@ -1,5 +1,7 @@
 import warnings
 
+import random
+
 from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem
@@ -38,8 +40,11 @@ class WorkArea(QObject):
         self.image_path = image_path
         self.graphics_item = None  # Reference to the main graphics item in the scene
         self.remove_button = None  # Reference to the remove button graphics item
-        self.work_area_pen = QPen(QColor(0, 255, 0), 2, Qt.DashLine)  # Default style
         self.shadow_area = None  # Reference to the shadow graphics item
+        
+        # Create a random color for the work area
+        random_color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.work_area_pen = QPen(random_color, 2, Qt.DashLine)  # Default style
         
     @classmethod
     def from_rect(cls, rect, image_path=None):

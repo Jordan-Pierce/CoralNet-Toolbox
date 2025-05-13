@@ -113,23 +113,25 @@ The main window consists of several components:
   - **Deploy Model**: Deploy a foundational model
     - Models Available: `Grounding DINO`, `OWLViT`, `OmDetTurbo`
   - **Batch Inference**: Perform batch inferences.
-  - **Select Tool**: After selecting the tool
-    - **Left-Click**: Select an annotation; drag to move it.
-    - **Ctrl + Left-Click**: Add/remove annotation to current selection.
-    - **Ctrl + Drag**: Create rectangle selection to select multiple annotations.
-    - **Delete / Backspace**: Remove selected annotation(s).
-    - **Ctrl + Shift**: Show resize handles for the selected annotation.
-    - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
-    - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
-    - **Ctrl + C**: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.
-      - **Combining Rules**: 
-        - All selected annotations must have the same label
-        - All selected annotations must be verified (not machine predictions)
-        - Patch annotations can be combined with other patches or polygons
-        - Rectangle annotations can only be combined with other rectangles
-        - Polygon annotations can be combined with other polygons
-      - **Cutting Mode**: Left-click to start drawing a cut line, click again to complete the cut.
-    - **Backspace/Ctrl + C**: Cancel cutting mode.
+
+## Tool Bar Tools
+- **Select Tool**: After selecting the tool
+  - **Left-Click**: Select an annotation; drag to move it.
+  - **Ctrl + Left-Click**: Add/remove annotation to current selection.
+  - **Ctrl + Drag**: Create rectangle selection to select multiple annotations.
+  - **Delete / Backspace**: Remove selected annotation(s).
+  - **Ctrl + Shift**: Show resize handles for the selected annotation.
+  - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
+  - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
+  - **Ctrl + C**: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.
+    - **Combining Rules**: 
+      - All selected annotations must have the same label
+      - All selected annotations must be verified (not machine predictions)
+      - Patch annotations can be combined with other patches or polygons
+      - Rectangle annotations can only be combined with other rectangles
+      - Polygon annotations can be combined with other polygons
+    - **Cutting Mode**: Left-click to start drawing a cut line, click again to complete the cut.
+  - **Backspace/Ctrl + C**: Cancel cutting mode.
 
 - **Patch Tool**: After selecting the tool
   - **Left-Click**: Add a patch annotation at the clicked position.
@@ -242,10 +244,10 @@ The main window consists of several components:
   - Numbered indicators (1-5) show the rank of each prediction.
   - Hover over confidence bars to see a pointing hand cursor when selection is possible.
 
-### Hotkeys
-- **Ctrl + W/A/S/D**: Navigate through labels.
+### Secret Hotkeys
+- **Alt + Up/Down**: Cycle through images.
+- **Ctrl + W/A/S/D**: Cycle through labels.
 - **Ctrl + Left/Right**: Cycle through annotations.
-- **Ctrl + Up/Down**: Cycle through images.
 - **Ctrl + Shift + <**: Select all annotations.
 - **Ctrl + Shift + >**: Unselect all annotations.
 - **Escape**: Exit the program.
