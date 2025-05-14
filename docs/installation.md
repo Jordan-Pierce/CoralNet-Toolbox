@@ -82,6 +82,12 @@ If you prefer to clone the repository and run the `toolbox` from the source code
 conda create --name coralnet10 python=3.10 -y
 conda activate coralnet10
 
+# Install git via conda, if not already installed
+conda install git -y
+
+# Change to the desired directory (e.g., Documents)
+cd Documents
+
 # Clone and enter the repository
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
 cd CoralNet-Toolbox
@@ -100,12 +106,30 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 coralnet-toolbox
 ```
 
-Or, if you want to simply install from the `toolbox` from the GitHub repo directly you can do the following:
+To update your repository to match the current version on `main`, run `fetch` and `pull` commands:
 
 ```bash
 # cmd
 
-pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main
+# Change to the proper directory
+cd Coralnet-Toolbox
+
+# Ask for the updates on main
+git fetch
+
+# Pull the updates from main
+git pull
+
+# Update your conda environment 
+pip install -e . -U
+```
+
+Or, if you want to simply install the `toolbox` from the GitHub repo directly you can also do the following:
+
+```bash
+# cmd
+
+pip install git+https://github.com/Jordan-Pierce/CoralNet-Toolbox.git@main -U
 
 # replace @main with a different branch if you want to test out experimental code
 ```
