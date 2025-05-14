@@ -6,7 +6,6 @@
   </p>
 </div>
 
-
 <div align="center">
 
 [![python-version](https://img.shields.io/pypi/pyversions/CoralNet-Toolbox.svg)](https://pypi.org/project/CoralNet-Toolbox)
@@ -36,7 +35,6 @@
   </table>
 </div>
 
-
 ## 🚦 Quick Start
 
 Running the following command will install the `coralnet-toolbox`, which you can then run from the command line:
@@ -58,7 +56,7 @@ For further instructions please see the following guides:
 - [Patch-based Image Classifier](https://jordan-pierce.github.io/CoralNet-Toolbox/classify)
 
 <details open>
-  <summary><h2><b>Watch the Video Demos</b></h2></summary>
+  <summary><h2><b>🎥 Watch the Video Demos</b></h2></summary>
   <p align="center">
     <a href="https://youtube.com/playlist?list=PLG5z9IbwhS5NQT3B2jrg3hxQgilDeZak9&feature=shared">
       <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="90%">
@@ -66,7 +64,7 @@ For further instructions please see the following guides:
   </p>
 </details>
 
-## TL;Dr
+## ⏩ TL;Dr
 
 The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on
 [CoralNet](https://coralnet.ucsd.edu/).
@@ -130,7 +128,7 @@ Enhance your CoralNet experience with these tools:
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 
-### TODO
+### 📝 TODO
 - 🤗 Model Zoo: Download `Ultralytics` models from `HuggingFace` for use in `toolbox`
 - 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)

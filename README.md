@@ -6,7 +6,6 @@
   </p>
 </div>
 
-
 <div align="center">
 
 [![python-version](https://img.shields.io/pypi/pyversions/CoralNet-Toolbox.svg)](https://pypi.org/project/CoralNet-Toolbox)
@@ -36,7 +35,6 @@
   </table>
 </div>
 
-
 ## 🚦 Quick Start
 
 Running the following command will install the `coralnet-toolbox`, which you can then run from the command line:
@@ -58,7 +56,7 @@ For further instructions please see the following guides:
 - [Patch-based Image Classifier](https://jordan-pierce.github.io/CoralNet-Toolbox/classify)
 
 <details open>
-  <summary><h2><b>Watch the Video Demos</b></h2></summary>
+  <summary><h2><b>🎥 Watch the Video Demos</b></h2></summary>
   <p align="center">
     <a href="https://youtube.com/playlist?list=PLG5z9IbwhS5NQT3B2jrg3hxQgilDeZak9&feature=shared">
       <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/toolbox_qt.PNG" alt="Video Title" width="90%">
@@ -66,7 +64,7 @@ For further instructions please see the following guides:
   </p>
 </details>
 
-## TL;Dr
+## ⏩ TL;Dr
 
 The `CoralNet-Toolbox` is an unofficial codebase that can be used to augment processes associated with those on
 [CoralNet](https://coralnet.ucsd.edu/).
@@ -130,15 +128,14 @@ Enhance your CoralNet experience with these tools:
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
 
-### TODO
+### 📝 TODO
 - 🤗 Model Zoo: Download `Ultralytics` models from `HuggingFace` for use in `toolbox`
 - 🦊 BioCLIP, MobileCLIP (AutoDistill): Automatically classify annotations
 - 📦 [Toolshed: Access tools from the old repository](https://github.com/Jordan-Pierce/CoralNet-Toolshed)
 
+## 💾 **How to Install**
 
-## **How to Install**
-
-### Anaconda
+### 🐍 Anaconda
 
 It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 ```bash
@@ -149,7 +146,7 @@ conda create --name coralnet10 python=3.10 -y
 conda activate coralnet10
 ```
 
-### Install
+### 📦 Install
 
 Once this has finished, install the `toolbox` using `uv`: 
 
@@ -172,7 +169,7 @@ Although fast, `uv` is still relatively new; if this fails, simply fall back to 
 pip install coralnet-toolbox
 ```
 
-### CUDA
+### ⚡ CUDA
 
 If you have `CUDA`, you should install the versions of `cuda-nvcc` and `cudatoolkit` that you
 need, and then install the corresponding versions of `torch` and `torchvision`. Below is an example of how that can be
@@ -197,8 +194,7 @@ See here for more details on versions for the following:
 - [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit)
 - [`torch`](https://pytorch.org/get-started/locally/)
 
-
-### Run
+### ▶️ Run
 
 Finally, you can run the `toolbox` from the command line:
 
@@ -211,9 +207,9 @@ coralnet-toolbox
 
 ## 🌊 Success Stories
 
-Using the `toolbox`? Share your successes and we can feature your work to help others.
+Using the `toolbox`? Share your successes and we can feature your work to help others learn!
 
-## [**About CoralNet**](https://coralnet.ucsd.edu/source/)
+## 🐠 [**About CoralNet**](https://coralnet.ucsd.edu/source/)
 
 Coral reefs are vital ecosystems that support a wide range of marine life and provide numerous
 benefits to humans. However, they are under threat due to climate change, pollution, overfishing,
@@ -227,16 +223,14 @@ for analyzing the annotated images, and create patch-based image classifiers.
 The CoralNet-Toolbox is an unofficial tool developed to augment processes associated with analyses that
 use CoralNet and Coral Point Count (CPCe).
 
-
-## **Conclusion**
+## 🏁 **Conclusion**
 
 In summary, this repository provides a range of tools that can assist with interacting with
 CoralNet and performing various tasks related to analyzing annotated images. These tools can be
 useful for researchers and scientists working with coral reefs, as well as for students and
 hobbyists interested in learning more about these important ecosystems.
 
-
-## Citation
+## 📝 Citation
 
 If used in project or publication, please attribute your use of this repository with the following:
 
@@ -252,7 +246,7 @@ If used in project or publication, please attribute your use of this repository 
 
 ---
 
-## Disclaimer
+## ⚠️ Disclaimer
 
 This repository is a scientific product and is not official communication of the National
 Oceanic and Atmospheric Administration, or the United States Department of Commerce. All NOAA
@@ -265,8 +259,7 @@ Department of Commerce. The Department of Commerce seal and logo, or the seal an
 bureau, shall not be used in any manner to imply endorsement of any commercial product or activity
 by DOC or the United States Government.
 
-
-## License
+## 📝 License
 
 Software code created by U.S. Government employees is not subject to copyright in the United States
 (17 U.S.C. §105). The United States/Department of Commerce reserve all rights to seek and obtain
