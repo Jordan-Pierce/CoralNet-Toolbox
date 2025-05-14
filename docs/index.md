@@ -17,8 +17,27 @@
 [![ubuntu](https://github.com/Jordan-Pierce/CoralNet-Toolbox/actions/workflows/ubuntu.yml/badge.svg)](https://pypi.org/project/CoralNet-Toolbox)
 </div>
 
+<div align="center">
+  <table>
+    <tr>
+      <td align="center" width="33%">
+        <h3>🔍 Annotation</h3>
+        <p>Create patches, rectangles, and polygons with AI assistance</p>
+      </td>
+      <td align="center" width="33%">
+        <h3>🧠 AI-Powered</h3>
+        <p>Leverage SAM, YOLOE, and various foundation models</p>
+      </td>
+      <td align="center" width="33%">
+        <h3>🚀 Complete Workflow</h3>
+        <p>From data collection to model training and deployment</p>
+      </td>
+    </tr>
+  </table>
+</div>
 
-## Quick Start
+
+## 🚦 Quick Start
 
 Running the following command will install the `coralnet-toolbox`, which you can then run from the command line:
 ```bash
@@ -30,6 +49,8 @@ pip install coralnet-toolbox
 # Run
 coralnet-toolbox
 ```
+
+## 📚 Guides
 
 For further instructions please see the following guides:
 - [Installation](https://jordan-pierce.github.io/CoralNet-Toolbox/installation)
@@ -54,95 +75,34 @@ It uses✨[`Ultralytics`](https://github.com/ultralytics/ultralytics)🚀 as a  
 computer vision and deep learning built in `PyTorch`. For more information on their `AGPL-3.0` license, see
 [here](https://github.com/ultralytics/ultralytics/blob/main/LICENSE).
 
-The `toolbox` also uses the following to create rectangle and polygon annotations:
-- [`Fast-SAM`](https://github.com/CASIA-IVA-Lab/FastSAM)
-- [`RepViT-SAM`](https://github.com/THU-MIG/RepViT)
-- [`EdgeSAM`](https://github.com/chongzhou96/EdgeSAM)
-- [`MobileSAM`](https://github.com/ChaoningZhang/MobileSAM)
-- [`CoralSCOP`](https://github.com/zhengziqiang/CoralSCOP)
-- [`SAM`](https://github.com/facebookresearch/segment-anything)
-- [`YOLOE`](https://github.com/THU-MIG/yoloe)
-- [`AutoDistill`](https://github.com/autodistill)
-  - [`Grounding Dino`](https://huggingface.co/docs/transformers/en/model_doc/grounding-dino)
-  - [`OWLViT`](https://huggingface.co/docs/transformers/en/model_doc/owlvit)
-  - [`OmDetTurbo`](https://huggingface.co/docs/transformers/en/model_doc/omdet-turbo)
+### 🚀 Supported Models
 
-
-## Tools
+The `toolbox` integrates a variety of state-of-the-art models to help you create rectangle and polygon annotations efficiently. Below is a categorized overview of the supported models and frameworks:
 
 <div align="center">
-  <table>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" height="200"/>
-        <br>
-        <em>Patch Annotation Tool</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" height="200"/>
-        <br>
-        <em>Rectangle Annotation Tool</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" height="200"/>
-        <br>
-        <em>Polygon Annotation Tool</em>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" height="200"/>
-        <br>
-        <em>Patch-based Image Classification</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" height="200"/>
-        <br>
-        <em>Object Detection</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" height="200"/>
-        <br>
-        <em>Instance Segmentation</em>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" height="200"/>
-        <br>
-        <em>Segment Anything Model (SAM)</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" height="200"/>
-        <br>
-        <em>Polygon Classification</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" height="200"/>
-        <br>
-        <em>Patch-based LAI Classification</em>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif" height="200"/>
-        <br>
-        <em>Cut</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif" height="200"/>
-        <br>
-        <em>Combine</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" height="200"/>
-        <br>
-        <em>See Anything (YOLOE)</em>
-      </td>
-    </tr>
-  </table>
+
+| Category                | Models                                                                                       |
+|-------------------------|---------------------------------------------------------------------------------------------------------|
+| **Trainable**           | - 🦾 [YOLOv3](https://docs.ultralytics.com/models/) <br> - 🦈 [YOLOv4](https://docs.ultralytics.com/models/) <br> - 🦅 [YOLOv5](https://docs.ultralytics.com/models/) <br> - 🐬 [YOLOv6](https://docs.ultralytics.com/models/) <br> - 🐢 [YOLOv7](https://docs.ultralytics.com/models/) <br> - 🐙 [YOLOv8](https://docs.ultralytics.com/models/) <br> - 🐠 [YOLOv9](https://docs.ultralytics.com/models/) <br> - 🦑 [YOLOv10](https://docs.ultralytics.com/models/) <br> - 🚀 [YOLO11](https://docs.ultralytics.com/models/) <br> - 🐳 [YOLO12](https://docs.ultralytics.com/models/) |
+| **Segment Anything**    | - 🪸 [SAM](https://github.com/facebookresearch/segment-anything) <br> - 🌊 [CoralSCOP](https://github.com/zhengziqiang/CoralSCOP) <br> - ⚡ [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) <br> - 🔁 [RepViT-SAM](https://github.com/THU-MIG/RepViT) <br> - ✂️ [EdgeSAM](https://github.com/chongzhou96/EdgeSAM) <br> - 📱 [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) |
+| **Visual Prompting**    | - 👁️ [YOLOE](https://github.com/THU-MIG/yoloe) <br> - 🤖 [AutoDistill](https://github.com/autodistill): <br> &nbsp;&nbsp;&nbsp;• 🦒 Grounding DINO <br> &nbsp;&nbsp;&nbsp;• 🦉 OWLViT <br> &nbsp;&nbsp;&nbsp;• ⚡ OmDetTurbo |
+
 </div>
 
+These models enable fast, accurate, and flexible annotation workflows for a wide range of use cases for patch-based image classification, object detection, instance segmentation.
+
+## 🛠️ Toolbox Features
+
+<div align="center">
+
+| ![Patch Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif)<br><sub>**Patch Annotation**</sub> | ![Rectangle Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif)<br><sub>**Rectangle Annotation**</sub> | ![Polygon Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif)<br><sub>**Polygon Annotation**</sub> |
+|:--:|:--:|:--:|
+| ![Patch-based Image Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif)<br><sub>**Image Classification**</sub> | ![Object Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif)<br><sub>**Object Detection**</sub> | ![Instance Segmentation](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif)<br><sub>**Instance Segmentation**</sub> |
+| ![Segment Anything Model (SAM)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif)<br><sub>**Segment Anything (SAM)**</sub> | ![Polygon Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif)<br><sub>**Polygon Classification**</sub> | ![Patch-based LAI Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif)<br><sub>**Patch-based LAI Classification**</sub> |
+| ![Cut](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif)<br><sub>**Cut**</sub> | ![Combine](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif)<br><sub>**Combine**</sub> | ![See Anything (YOLOE)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif)<br><sub>**See Anything (YOLOE)**</sub> |
+|  | ![Region-based Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif)<br><sub>**Region-based Detection**</sub> |  |
+
+</div>
 
 Enhance your CoralNet experience with these tools:
 - 📥 [Download](https://www.youtube.com/watch?v=Ds9JZATmCmw): Retrieve Source data (images and annotations) from CoralNet
