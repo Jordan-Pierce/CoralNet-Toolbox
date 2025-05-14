@@ -817,11 +817,29 @@ class AnnotationWindow(QGraphicsView):
     def delete_image_annotations(self, image_path):
         """Delete all annotations associated with a specific image path."""
         if image_path in self.image_annotations_dict:
+            # Check if a label is locked
+            label_locked = self.main_window.label_window.label_locked
+            locked_label_id = self.main_window.label_window.locked_label.id if label_locked else None
+            
+            # Create a copy of annotations to safely iterate
             annotations = list(self.image_annotations_dict[image_path].copy())
-            self.delete_annotations(annotations)
-
-            # Remove the image path from the dictionary (no longer contains annotations)
-            del self.image_annotations_dict[image_path]
+            annotations_to_delete = []
+            
+            # Filter annotations based on locked label
+            for annotation in annotations:
+                # Skip annotations with locked label
+                if label_locked and annotation.label.id == locked_label_id:
+                    continue
+                
+                # Add to delete list
+                annotations_to_delete.append(annotation)
+            
+            # Delete filtered annotations
+            self.delete_annotations(annotations_to_delete)
+            
+            # If all annotations were deleted, remove the image path from the dictionary
+            if not self.image_annotations_dict.get(image_path, []):
+                del self.image_annotations_dict[image_path]
 
     def delete_image(self, image_path):
         """Delete an image and all its associated annotations."""
