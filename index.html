@@ -319,7 +319,16 @@
         <li class="md-nav__item">
   <a href="#quick-start" class="md-nav__link">
     <span class="md-ellipsis">
-      Quick Start
+      🚦 Quick Start
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      📚 Guides
     </span>
   </a>
   
@@ -332,16 +341,31 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tools" class="md-nav__link">
+    <nav class="md-nav" aria-label="TL;Dr">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#supported-models" class="md-nav__link">
     <span class="md-ellipsis">
-      Tools
+      🚀 Supported Models
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Tools">
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#toolbox-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      🛠️ Toolbox Features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="🛠️ Toolbox Features">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -483,7 +507,16 @@
         <li class="md-nav__item">
   <a href="#quick-start" class="md-nav__link">
     <span class="md-ellipsis">
-      Quick Start
+      🚦 Quick Start
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guides" class="md-nav__link">
+    <span class="md-ellipsis">
+      📚 Guides
     </span>
   </a>
   
@@ -496,16 +529,31 @@
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tools" class="md-nav__link">
+    <nav class="md-nav" aria-label="TL;Dr">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#supported-models" class="md-nav__link">
     <span class="md-ellipsis">
-      Tools
+      🚀 Supported Models
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Tools">
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#toolbox-features" class="md-nav__link">
+    <span class="md-ellipsis">
+      🛠️ Toolbox Features
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="🛠️ Toolbox Features">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -561,7 +609,26 @@
 [![ubuntu](https://github.com/Jordan-Pierce/CoralNet-Toolbox/actions/workflows/ubuntu.yml/badge.svg)](https://pypi.org/project/CoralNet-Toolbox)
 </div>
 
-<h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
+<div align="center">
+  <table>
+    <tr>
+      <td align="center" width="33%">
+        <h3>🔍 Annotation</h3>
+        <p>Create patches, rectangles, and polygons with AI assistance</p>
+      </td>
+      <td align="center" width="33%">
+        <h3>🧠 AI-Powered</h3>
+        <p>Leverage SAM, YOLOE, and various foundation models</p>
+      </td>
+      <td align="center" width="33%">
+        <h3>🚀 Complete Workflow</h3>
+        <p>From data collection to model training and deployment</p>
+      </td>
+    </tr>
+  </table>
+</div>
+
+<h2 id="quick-start">🚦 Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <p>Running the following command will install the <code>coralnet-toolbox</code>, which you can then run from the command line:
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
 <span class="normal">2</span>
@@ -577,6 +644,7 @@ pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
 <span class="c1"># Run</span>
 coralnet-toolbox
 </code></pre></div></td></tr></table></div></p>
+<h2 id="guides">📚 Guides<a class="headerlink" href="#guides" title="Permanent link">&para;</a></h2>
 <p>For further instructions please see the following guides:
 - <a href="https://jordan-pierce.github.io/CoralNet-Toolbox/installation">Installation</a>
 - <a href="https://jordan-pierce.github.io/CoralNet-Toolbox/usage">Usage</a>
@@ -596,90 +664,29 @@ coralnet-toolbox
 <p>It uses✨<a href="https://github.com/ultralytics/ultralytics"><code>Ultralytics</code></a>🚀 as a  base, which is an open-source library for
 computer vision and deep learning built in <code>PyTorch</code>. For more information on their <code>AGPL-3.0</code> license, see
 <a href="https://github.com/ultralytics/ultralytics/blob/main/LICENSE">here</a>.</p>
-<p>The <code>toolbox</code> also uses the following to create rectangle and polygon annotations:
-- <a href="https://github.com/CASIA-IVA-Lab/FastSAM"><code>Fast-SAM</code></a>
-- <a href="https://github.com/THU-MIG/RepViT"><code>RepViT-SAM</code></a>
-- <a href="https://github.com/chongzhou96/EdgeSAM"><code>EdgeSAM</code></a>
-- <a href="https://github.com/ChaoningZhang/MobileSAM"><code>MobileSAM</code></a>
-- <a href="https://github.com/zhengziqiang/CoralSCOP"><code>CoralSCOP</code></a>
-- <a href="https://github.com/facebookresearch/segment-anything"><code>SAM</code></a>
-- <a href="https://github.com/THU-MIG/yoloe"><code>YOLOE</code></a>
-- <a href="https://github.com/autodistill"><code>AutoDistill</code></a>
-  - <a href="https://huggingface.co/docs/transformers/en/model_doc/grounding-dino"><code>Grounding Dino</code></a>
-  - <a href="https://huggingface.co/docs/transformers/en/model_doc/owlvit"><code>OWLViT</code></a>
-  - <a href="https://huggingface.co/docs/transformers/en/model_doc/omdet-turbo"><code>OmDetTurbo</code></a></p>
-<h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
+<h3 id="supported-models">🚀 Supported Models<a class="headerlink" href="#supported-models" title="Permanent link">&para;</a></h3>
+<p>The <code>toolbox</code> integrates a variety of state-of-the-art models to help you create rectangle and polygon annotations efficiently. Below is a categorized overview of the supported models and frameworks:</p>
 <div align="center">
-  <table>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif" height="200"/>
-        <br>
-        <em>Patch Annotation Tool</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif" height="200"/>
-        <br>
-        <em>Rectangle Annotation Tool</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif" height="200"/>
-        <br>
-        <em>Polygon Annotation Tool</em>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif" height="200"/>
-        <br>
-        <em>Patch-based Image Classification</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif" height="200"/>
-        <br>
-        <em>Object Detection</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif" height="200"/>
-        <br>
-        <em>Instance Segmentation</em>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif" height="200"/>
-        <br>
-        <em>Segment Anything Model (SAM)</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif" height="200"/>
-        <br>
-        <em>Polygon Classification</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif" height="200"/>
-        <br>
-        <em>Patch-based LAI Classification</em>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif" height="200"/>
-        <br>
-        <em>Cut</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif" height="200"/>
-        <br>
-        <em>Combine</em>
-      </td>
-      <td align="center">
-        <img src="https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif" height="200"/>
-        <br>
-        <em>See Anything (YOLOE)</em>
-      </td>
-    </tr>
-  </table>
+
+| Category                | Models                                                                                       |
+|-------------------------|---------------------------------------------------------------------------------------------------------|
+| **Trainable**           | - 🦾 [YOLOv3](https://docs.ultralytics.com/models/) <br> - 🦈 [YOLOv4](https://docs.ultralytics.com/models/) <br> - 🦅 [YOLOv5](https://docs.ultralytics.com/models/) <br> - 🐬 [YOLOv6](https://docs.ultralytics.com/models/) <br> - 🐢 [YOLOv7](https://docs.ultralytics.com/models/) <br> - 🐙 [YOLOv8](https://docs.ultralytics.com/models/) <br> - 🐠 [YOLOv9](https://docs.ultralytics.com/models/) <br> - 🦑 [YOLOv10](https://docs.ultralytics.com/models/) <br> - 🚀 [YOLO11](https://docs.ultralytics.com/models/) <br> - 🐳 [YOLO12](https://docs.ultralytics.com/models/) |
+| **Segment Anything**    | - 🪸 [SAM](https://github.com/facebookresearch/segment-anything) <br> - 🌊 [CoralSCOP](https://github.com/zhengziqiang/CoralSCOP) <br> - ⚡ [FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM) <br> - 🔁 [RepViT-SAM](https://github.com/THU-MIG/RepViT) <br> - ✂️ [EdgeSAM](https://github.com/chongzhou96/EdgeSAM) <br> - 📱 [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) |
+| **Visual Prompting**    | - 👁️ [YOLOE](https://github.com/THU-MIG/yoloe) <br> - 🤖 [AutoDistill](https://github.com/autodistill): <br> &nbsp;&nbsp;&nbsp;• 🦒 Grounding DINO <br> &nbsp;&nbsp;&nbsp;• 🦉 OWLViT <br> &nbsp;&nbsp;&nbsp;• ⚡ OmDetTurbo |
+
+</div>
+
+<p>These models enable fast, accurate, and flexible annotation workflows for a wide range of use cases for patch-based image classification, object detection, instance segmentation.</p>
+<h2 id="toolbox-features">🛠️ Toolbox Features<a class="headerlink" href="#toolbox-features" title="Permanent link">&para;</a></h2>
+<div align="center">
+
+| ![Patch Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif)<br><sub>**Patch Annotation**</sub> | ![Rectangle Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif)<br><sub>**Rectangle Annotation**</sub> | ![Polygon Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif)<br><sub>**Polygon Annotation**</sub> |
+|:--:|:--:|:--:|
+| ![Patch-based Image Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif)<br><sub>**Image Classification**</sub> | ![Object Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif)<br><sub>**Object Detection**</sub> | ![Instance Segmentation](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif)<br><sub>**Instance Segmentation**</sub> |
+| ![Segment Anything Model (SAM)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif)<br><sub>**Segment Anything (SAM)**</sub> | ![Polygon Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif)<br><sub>**Polygon Classification**</sub> | ![Patch-based LAI Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif)<br><sub>**Patch-based LAI Classification**</sub> |
+| ![Cut](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif)<br><sub>**Cut**</sub> | ![Combine](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif)<br><sub>**Combine**</sub> | ![See Anything (YOLOE)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif)<br><sub>**See Anything (YOLOE)**</sub> |
+|  | ![Region-based Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif)<br><sub>**Region-based Detection**</sub> |  |
+
 </div>
 
 <p>Enhance your CoralNet experience with these tools:
@@ -735,7 +742,7 @@ computer vision and deep learning built in <code>PyTorch</code>. For more inform
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="April 25, 2025 19:50:08"><span class="timeago" datetime="2025-04-25T19:50:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="April 25, 2025 19:50:08">2025-04-25</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 14, 2025 13:40:24"><span class="timeago" datetime="2025-05-14T13:40:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 14, 2025 13:40:24">2025-05-14</span>
   </span>
 
     
