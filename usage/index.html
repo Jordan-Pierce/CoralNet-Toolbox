@@ -797,8 +797,9 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Tile</strong>:</p>
 </li>
+<li><strong>Tile Dataset</strong>: Tile existing Classification, Detection or Segmention datasets using <code>yolo-tiling</code>.</li>
 <li>
-<p><strong>Tile Dataset</strong>: Tile existing Classification, Detection or Segmention datasets using <code>yolo-tiling</code>.</p>
+<p><strong>Tile Inference</strong>: Pre-compute multiple work areas for the current image.</p>
 </li>
 <li>
 <p><strong>CoralNet</strong>: </p>
@@ -931,12 +932,11 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Work Area Tool</strong>: For creating restricted areas for model prediction</p>
 </li>
 <li><strong>Left-Click</strong>: Start drawing a work area; click again to finish drawing.</li>
+<li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
 <li><strong>Ctrl + Space</strong>: Create a work area from the current view.</li>
+<li><strong>Ctrl + Alt</strong>: Create temporary work area from current view (disappears when keys released / pressed again).</li>
 <li><strong>Ctrl + Shift</strong>: Show removal buttons on existing work areas (click the "X" to remove).</li>
 <li><strong>Ctrl + Shift + Backspace</strong>: Remove all work areas in the current image.</li>
-<li><strong>Ctrl + Alt</strong>: Create temporary work area from current view (disappears when keys released).</li>
-<li><strong>Backspace</strong>: Cancel drawing the current work area.</li>
-<li><strong>Mouse Movement</strong>: Shows a preview of the work area while drawing.</li>
 <li><strong>Practical Use</strong>:<ul>
 <li>Define specific regions where models should make predictions.</li>
 <li>Useful for processing only relevant parts of large images.</li>
@@ -983,7 +983,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Shift + Left-click</strong>: Select multiple, adjacent rows.</li>
 <li><strong>Open Context Menu</strong>:</li>
 <li><strong>Right-click on a single highlighted row</strong>: Delete images / annotations for the highlighted row.</li>
-<li>**Shift + Right-click on multiple highlighted rows: Delete images / annotations for highlighted rows.</li>
+<li><strong>Shift + Right-click on multiple highlighted rows</strong>: Delete images / annotations for highlighted rows.</li>
 <li><strong>Search / Filter</strong>:</li>
 <li><strong>By Image</strong>: Filter for images by name or sub-string.</li>
 <li><strong>By Label</strong>: Filter images by labels they contain.</li>
@@ -1022,9 +1022,15 @@ This guide provides instructions on how to use the application, including key fu
 <ul>
 <li><strong>Alt + Up/Down</strong>: Cycle through images.</li>
 <li><strong>Ctrl + W/A/S/D</strong>: Cycle through labels.</li>
-<li><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</li>
-<li><strong>Ctrl + Shift + &lt;</strong>: Select all annotations.</li>
-<li><strong>Ctrl + Shift + &gt;</strong>: Unselect all annotations.</li>
+<li>
+<p><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</p>
+</li>
+<li>
+<p><strong>Ctrl + Shift + &lt;</strong>: Select all annotations.</p>
+</li>
+<li>
+<p><strong>Ctrl + Shift + &gt;</strong>: Unselect all annotations.</p>
+</li>
 <li>
 <p><strong>Escape</strong>: Exit the program.</p>
 </li>
@@ -1059,7 +1065,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 13, 2025 17:39:04"><span class="timeago" datetime="2025-05-13T17:39:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 13, 2025 17:39:04">2025-05-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 15, 2025 15:46:10"><span class="timeago" datetime="2025-05-15T15:46:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 15, 2025 15:46:10">2025-05-15</span>
   </span>
 
     
