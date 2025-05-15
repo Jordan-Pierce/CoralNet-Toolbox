@@ -1,10 +1,7 @@
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import cv2
 import numpy as np
-
 from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
@@ -17,6 +14,7 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -35,11 +33,11 @@ class PatchAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg=False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-
+        
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = annotation_size
-
+        
         self.set_precision(center_xy, False)
         self.set_centroid()
         self.set_cropped_bbox()
@@ -196,13 +194,29 @@ class PatchAnnotation(Annotation):
 
         self.annotationUpdated.emit(self)  # Notify update
 
-    def update_graphics_item(self, crop_image=True):
-        """Update the graphical representation of the annotation."""
-        super().update_graphics_item(crop_image)
+    def create_graphics_item(self, scene: QGraphicsScene):
+        """Create all graphics items for the patch annotation and add them to the scene as a group."""
+        # Use a rectangle as the main graphics item
+        half_size = self.annotation_size / 2
+        rect = QRectF(self.center_xy.x() - half_size, 
+                      self.center_xy.y() - half_size,
+                      self.annotation_size, 
+                      self.annotation_size)
+        self.graphics_item = QGraphicsRectItem(rect)
+        # Call parent to handle group and helpers
+        super().create_graphics_item(scene)
 
-        # Update the cropped image if necessary
-        if self.rasterio_src and crop_image:
-            self.create_cropped_image(self.rasterio_src)
+    def update_graphics_item(self, crop_image=True):
+        """Update the graphical representation of the patch annotation."""
+        # Use a rectangle as the main graphics item
+        half_size = self.annotation_size / 2
+        rect = QRectF(self.center_xy.x() - half_size, 
+                      self.center_xy.y() - half_size,
+                      self.annotation_size, 
+                      self.annotation_size)
+        self.graphics_item = QGraphicsRectItem(rect)
+        # Call parent to handle group and helpers
+        super().update_graphics_item(crop_image)
 
     def update_location(self, new_center_xy: QPointF):
         """Update the location of the annotation."""
@@ -233,12 +247,7 @@ class PatchAnnotation(Annotation):
     def combine(cls, annotations: list):
         """
         Combine multiple annotations (patches and/or polygons) into a single polygon annotation.
-        
-        Args:
-            annotations: List of Annotation objects (PatchAnnotation or PolygonAnnotation) to combine.
-            
-        Returns:
-            A new PolygonAnnotation that encompasses the combined area of all input annotations.
+        If any annotation is not touching at least one other, cancel the operation (return None).
         """
         if not annotations:
             return None
@@ -252,6 +261,50 @@ class PatchAnnotation(Annotation):
         patches = [annotation for annotation in annotations if isinstance(annotation, cls)]
         polygons = [annotation for annotation in annotations if not isinstance(annotation, cls)]
         
+        # --- TOUCHING CHECK ---
+        # For each annotation, check if it touches at least one other
+        def patch_touches(a, b):
+            # Use bounding box intersection for patches
+            rect_a = QRectF(a.get_bounding_box_top_left(), a.get_bounding_box_bottom_right())
+            rect_b = QRectF(b.get_bounding_box_top_left(), b.get_bounding_box_bottom_right())
+            return rect_a.intersects(rect_b)
+
+        def poly_touches(a, b):
+            # Use polygon intersection for polygons
+            poly_a = a.get_polygon()
+            poly_b = b.get_polygon()
+            return poly_a.intersected(poly_b).count() > 0
+
+        for i, anno_i in enumerate(annotations):
+            has_touch = False
+            for j, anno_j in enumerate(annotations):
+                if i == j:
+                    continue
+                if isinstance(anno_i, cls) and isinstance(anno_j, cls):
+                    if patch_touches(anno_i, anno_j):
+                        has_touch = True
+                        break
+                elif not isinstance(anno_i, cls) and not isinstance(anno_j, cls):
+                    if poly_touches(anno_i, anno_j):
+                        has_touch = True
+                        break
+                else:
+                    # Patch vs Polygon: check if patch bbox intersects polygon
+                    patch = anno_i if isinstance(anno_i, cls) else anno_j
+                    poly = anno_j if isinstance(anno_i, cls) else anno_i
+                    rect_patch = QRectF(
+                        patch.get_bounding_box_top_left(),
+                        patch.get_bounding_box_bottom_right()
+                    )
+                    poly_tl = poly.get_bounding_box_top_left()
+                    poly_br = poly.get_bounding_box_bottom_right()
+                    if any(rect_patch.contains(pt) for pt in [poly_tl, poly_br]):
+                        has_touch = True
+                        break
+            if not has_touch:
+                return None  # Cancel combine if any annotation is not touching another
+        
+        # Separate patches and polygons
         result_polygons = []
         
         # If we have patches, combine them into a polygon

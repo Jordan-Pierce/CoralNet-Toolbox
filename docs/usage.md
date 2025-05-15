@@ -8,6 +8,7 @@ This guide provides instructions on how to use the application, including key fu
 - **PatchAnnotation**: Represents a patch annotation.
 - **RectangleAnnotation**: Represents a rectangular annotation.
 - **PolygonAnnotation**: Represents a polygonal annotation.
+- **MultiPolygonAnnotation**: Represents multiple, non-connected PolygonAnnotations
 
 ## Computer Vision Tasks
 - **Classification**: Assign a label to an image (Patch).
@@ -123,7 +124,8 @@ The main window consists of several components:
   - **Ctrl + Shift**: Show resize handles for the selected annotation.
   - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
   - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
-  - **Ctrl + C**: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.
+  - **Ctrl + C**: Combine multiple selected annotations (if same type and label).
+  - **Ctrl + X**: Enter cutting mode for single annotation, and simply break apart all selected MultiPolygonAnnotations. 
     - **Combining Rules**: 
       - All selected annotations must have the same label
       - All selected annotations must be verified (not machine predictions)
@@ -131,7 +133,7 @@ The main window consists of several components:
       - Rectangle annotations can only be combined with other rectangles
       - Polygon annotations can be combined with other polygons
     - **Cutting Mode**: Left-click to start drawing a cut line, click again to complete the cut.
-  - **Backspace/Ctrl + C**: Cancel cutting mode.
+  - **Backspace/Ctrl + X**: Cancel cutting mode.
 
 - **Patch Tool**: After selecting the tool
   - **Left-Click**: Add a patch annotation at the clicked position.

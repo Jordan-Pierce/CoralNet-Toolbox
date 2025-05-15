@@ -188,13 +188,31 @@ class RectangleAnnotation(Annotation):
 
         self.annotationUpdated.emit(self)  # Notify update
 
-    def update_graphics_item(self, crop_image=True):
-        """Update the graphical representation of the annotation using base class method."""
-        super().update_graphics_item(crop_image)
+    def create_graphics_item(self, scene: QGraphicsScene):
+        """Create all graphics items for the rectangle annotation and add them to the scene as a group."""
+        # Use a rectangle as the main graphics item
+        rect = QPolygonF([
+            self.top_left,
+            QPointF(self.bottom_right.x(), self.top_left.y()),
+            self.bottom_right,
+            QPointF(self.top_left.x(), self.bottom_right.y())
+        ]).boundingRect()
+        self.graphics_item = QGraphicsRectItem(rect)
+        # Call parent to handle group and helpers
+        super().create_graphics_item(scene)
 
-        # Update the cropped image if necessary
-        if self.rasterio_src and crop_image:
-            self.create_cropped_image(self.rasterio_src)
+    def update_graphics_item(self, crop_image=True):
+        """Update the graphical representation of the rectangle annotation."""
+        # Use a rectangle as the main graphics item
+        rect = QPolygonF([
+            self.top_left,
+            QPointF(self.bottom_right.x(), self.top_left.y()),
+            self.bottom_right,
+            QPointF(self.top_left.x(), self.bottom_right.y())
+        ]).boundingRect()
+        self.graphics_item = QGraphicsRectItem(rect)
+        # Call parent to handle group and helpers
+        super().update_graphics_item(crop_image)
 
     def update_location(self, new_center_xy: QPointF):
         """# Update the location of the annotation"""

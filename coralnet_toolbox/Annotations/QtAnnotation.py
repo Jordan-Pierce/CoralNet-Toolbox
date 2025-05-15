@@ -6,7 +6,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF
 from PyQt5.QtGui import QColor, QImage, QPolygonF, QPen, QBrush
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsScene
+from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -55,6 +55,9 @@ class Annotation(QObject):
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
         self.polygon_graphics_item = None
+
+        # New: group for all graphics items
+        self.graphics_item_group = None
         
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
@@ -131,59 +134,57 @@ class Annotation(QObject):
 
     def delete(self):
         """Remove the annotation and all associated graphics items from the scene."""
-
         # Emit the deletion signal first
         self.annotationDeleted.emit(self)
 
-        # Remove the main graphics item
-        if self.graphics_item and self.graphics_item.scene():
-            self.graphics_item.scene().removeItem(self.graphics_item)
-            self.graphics_item = None
-
-        # Remove the center graphics item
-        if self.center_graphics_item and self.center_graphics_item.scene():
-            self.center_graphics_item.scene().removeItem(self.center_graphics_item)
-            self.center_graphics_item = None
-
-        # Remove the bounding box graphics item
-        if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
-            self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
-            self.bounding_box_graphics_item = None
-
-        # Remove the polygon graphics item
-        if self.polygon_graphics_item and self.polygon_graphics_item.scene():
-            self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
-            self.polygon_graphics_item = None
+        # Remove the graphics item group if it exists
+        if self.graphics_item_group and self.graphics_item_group.scene():
+            self.graphics_item_group.scene().removeItem(self.graphics_item_group)
+            self.graphics_item_group = None
 
         # Clean up resources
         if self.cropped_image:
             del self.cropped_image
             self.cropped_image = None
+
+        # Remove references to individual items
+        self.graphics_item = None
+        self.center_graphics_item = None
+        self.bounding_box_graphics_item = None
+        self.polygon_graphics_item = None
             
     def create_graphics_item(self, scene: QGraphicsScene):
-        """Create all graphics items for the annotation and add them to the scene."""
+        """Create all graphics items for the annotation and add them to the scene as a group."""
+        # Remove old group if it exists
+        if self.graphics_item_group and self.graphics_item_group.scene():
+            self.graphics_item_group.scene().removeItem(self.graphics_item_group)
+            # Clear references to deleted items
+            self.center_graphics_item = None
+            self.bounding_box_graphics_item = None
+            self.polygon_graphics_item = None
+        self.graphics_item_group = QGraphicsItemGroup()
+
         # Create the main graphics item based on the polygon
         polygon = self.get_polygon()
-        
         self.graphics_item = QGraphicsPolygonItem(polygon)
         self.update_graphics_item()
         self.graphics_item.setData(0, self.id)
-        
-        scene.addItem(self.graphics_item)
+        self.graphics_item_group.addToGroup(self.graphics_item)
 
         # Create the center graphics item
-        self.create_center_graphics_item(self.center_xy, scene)
-        
+        self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         # Create the bounding box graphics item
         self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(), 
                                                self.get_bounding_box_bottom_right(),
-                                               scene)
+                                               scene, add_to_group=True)
         # Create the polygon graphics item
-        # Convert polygon to list of points
         points = [polygon.at(i) for i in range(polygon.count())]
-        self.create_polygon_graphics_item(points, scene)
-        
-    def create_center_graphics_item(self, center_xy, scene):
+        self.create_polygon_graphics_item(points, scene, add_to_group=True)
+
+        # Add the group to the scene
+        scene.addItem(self.graphics_item_group)
+
+    def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
         if self.center_graphics_item and self.center_graphics_item.scene():
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
@@ -195,9 +196,12 @@ class Annotation(QObject):
 
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
-        scene.addItem(self.center_graphics_item)
+        if add_to_group and self.graphics_item_group:
+            self.graphics_item_group.addToGroup(self.center_graphics_item)
+        else:
+            scene.addItem(self.center_graphics_item)
 
-    def create_bounding_box_graphics_item(self, top_left, bottom_right, scene):
+    def create_bounding_box_graphics_item(self, top_left, bottom_right, scene, add_to_group=False):
         """Create a graphical item representing the annotation's bounding box."""
         if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
@@ -210,11 +214,13 @@ class Annotation(QObject):
         self.bounding_box_graphics_item = QGraphicsRectItem(top_left.x(), top_left.y(),
                                                             bottom_right.x() - top_left.x(),
                                                             bottom_right.y() - top_left.y())
-
         self.bounding_box_graphics_item.setPen(color)
-        scene.addItem(self.bounding_box_graphics_item)
+        if add_to_group and self.graphics_item_group:
+            self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
+        else:
+            scene.addItem(self.bounding_box_graphics_item)
 
-    def create_polygon_graphics_item(self, points, scene):
+    def create_polygon_graphics_item(self, points, scene, add_to_group=False):
         """Create a graphical item representing the annotation's polygon outline."""
         if self.polygon_graphics_item and self.polygon_graphics_item.scene():
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
@@ -227,7 +233,10 @@ class Annotation(QObject):
         polygon = QPolygonF(points)
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
-        scene.addItem(self.polygon_graphics_item)
+        if add_to_group and self.graphics_item_group:
+            self.graphics_item_group.addToGroup(self.polygon_graphics_item)
+        else:
+            scene.addItem(self.polygon_graphics_item)
             
     def get_center_xy(self):
         """Get the center coordinates of the annotation."""
@@ -257,40 +266,43 @@ class Annotation(QObject):
 
     def update_graphics_item(self, crop_image=True):
         """Update the graphical representation of the annotation."""
-        if self.graphics_item and self.graphics_item.scene():
-            scene = self.graphics_item.scene()
-            if scene:
-                scene.removeItem(self.graphics_item)
+        # Remove and recreate the group if it exists
+        if self.graphics_item_group and self.graphics_item_group.scene():
+            scene = self.graphics_item_group.scene()
+            scene.removeItem(self.graphics_item_group)
+            self.graphics_item_group = QGraphicsItemGroup()
+            # Clear references to deleted items
+            self.center_graphics_item = None
+            self.bounding_box_graphics_item = None
+            self.polygon_graphics_item = None
+        else:
+            scene = None
+        # Get the polygon representation
+        polygon = self.get_polygon()
+        self.graphics_item = QGraphicsPolygonItem(polygon)
+        color = QColor(self.label.color)
+        color.setAlpha(self.transparency)
+        if self.is_selected:
+            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+            pen = QPen(inverse_color, 6, Qt.DotLine)
+        else:
+            pen = QPen(color, 4, Qt.SolidLine)
+        self.graphics_item.setPen(pen)
+        self.graphics_item.setBrush(QBrush(color))
+        self.graphics_item.setData(0, self.id)
+        self.graphics_item_group.addToGroup(self.graphics_item)
+        # Update separate graphics items
+        self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
+        self.create_bounding_box_graphics_item(
+            self.get_bounding_box_top_left(),
+            self.get_bounding_box_bottom_right(),
+            scene, add_to_group=True)
+        points = [polygon.at(i) for i in range(polygon.count())]
+        self.create_polygon_graphics_item(points, scene, add_to_group=True)
+        # Add the group back to the scene
+        if scene:
+            scene.addItem(self.graphics_item_group)
 
-                # Get the polygon representation
-                polygon = self.get_polygon()
-                self.graphics_item = QGraphicsPolygonItem(polygon)
-
-                # Set color and style
-                color = QColor(self.label.color)
-                color.setAlpha(self.transparency)
-
-                if self.is_selected:
-                    inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                    pen = QPen(inverse_color, 6, Qt.DotLine)
-                else:
-                    pen = QPen(color, 4, Qt.SolidLine)
-
-                self.graphics_item.setPen(pen)
-                self.graphics_item.setBrush(QBrush(color))
-                self.graphics_item.setData(0, self.id)
-                scene.addItem(self.graphics_item)
-
-                # Update separate graphics items
-                self.update_center_graphics_item(self.center_xy)
-                self.update_bounding_box_graphics_item(
-                    self.get_bounding_box_top_left(),
-                    self.get_bounding_box_bottom_right()
-                )
-                # Convert polygon to list of points
-                points = [polygon.at(i) for i in range(polygon.count())]
-                self.update_polygon_graphics_item(points)
-                
     def update_center_graphics_item(self, center_xy):
         """Update the position and appearance of the center graphics item."""
         if self.center_graphics_item:
