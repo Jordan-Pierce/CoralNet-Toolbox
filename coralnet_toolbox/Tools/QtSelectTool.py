@@ -192,6 +192,7 @@ class SelectTool(Tool):
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:
             if len(self.annotation_window.selected_annotations) > 1:
                 self.combine_selected_annotations()
+                
         # Handle Ctrl+X to cut selected annotation(s)
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_X:
             if self.cutting_mode:
@@ -619,15 +620,27 @@ class SelectTool(Tool):
         if len(self.annotation_window.selected_annotations) != 1:
             return
         
+        annotation = self.annotation_window.selected_annotations[0]
+        
         # Check if any annotations have machine confidence
-        if any(not annotation.verified for annotation in self.annotation_window.selected_annotations):
+        if not annotation.verified:
             QMessageBox.warning(
                 self.annotation_window,
                 "Cannot Cut",
                 "Cannot cut annotations with machine confidence. Confirm predictions (Ctrl+Space) first."
             )
-            return        
-            
+            return
+        
+        # If MultiPolygonAnnotation, break apart immediately
+        if isinstance(annotation, MultiPolygonAnnotation):
+            new_annotations = annotation.cut()
+            self.annotation_window.delete_selected_annotations()
+            for new_anno in new_annotations:
+                self.annotation_window.add_annotation_from_tool(new_anno)
+            self.annotation_window.unselect_annotations()
+            return
+        
+        # Otherwise, enter cutting mode for supported types
         self.cutting_mode = True
         self.drawing_cut_line = False
         self.cutting_points = []
