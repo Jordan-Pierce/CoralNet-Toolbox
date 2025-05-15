@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QForm
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -374,6 +375,7 @@ class ExportMaskAnnotations(QDialog):
             self.annotation_types.append(RectangleAnnotation)
         if self.polygon_checkbox.isChecked():
             self.annotation_types.append(PolygonAnnotation)
+            self.annotation_types.append(MultiPolygonAnnotation)
 
         # Create class mapping
         self.class_mapping = {}
@@ -443,6 +445,10 @@ class ExportMaskAnnotations(QDialog):
 
             elif self.polygon_checkbox.isChecked() and isinstance(annotation, PolygonAnnotation):
                 annotations.append(annotation)
+                
+            elif self.polygon_checkbox.isChecked() and isinstance(annotation, MultiPolygonAnnotation):
+                for polygon in annotation.polygons:
+                    annotations.append(polygon)
 
         return annotations
 
@@ -522,6 +528,12 @@ class ExportMaskAnnotations(QDialog):
                 # Draw a filled polygon
                 points = np.array([[p.x(), p.y()] for p in annotation.points]).astype(np.int32)
                 cv2.fillPoly(mask, [points], label_index)
+                
+            # Draw the multipolygon annotation
+            elif isinstance(annotation, MultiPolygonAnnotation):
+                for polygon in annotation.polygons:
+                    points = np.array([[p.x(), p.y()] for p in polygon.points]).astype(np.int32)
+                    cv2.fillPoly(mask, [points], label_index)
 
         return mask
 

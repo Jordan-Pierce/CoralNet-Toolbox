@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLa
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -200,6 +201,11 @@ class SaveProject(QDialog):
                 elif isinstance(annotation, RectangleAnnotation):
                     annotation_dict = {
                         'type': 'RectangleAnnotation',
+                        **annotation.to_dict()
+                    }
+                elif isinstance(annotation, MultiPolygonAnnotation):
+                    annotation_dict = {
+                        'type': 'MultiPolygonAnnotation',
                         **annotation.to_dict()
                     }
                 else:

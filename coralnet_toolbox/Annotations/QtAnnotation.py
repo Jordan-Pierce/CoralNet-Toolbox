@@ -6,7 +6,8 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF
 from PyQt5.QtGui import QColor, QImage, QPolygonF, QPen, QBrush
-from PyQt5.QtWidgets import QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup
+from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, 
+                             QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup)
 
 from coralnet_toolbox.QtLabelWindow import Label
 
@@ -186,14 +187,22 @@ class Annotation(QObject):
 
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
-        if self.center_graphics_item and self.center_graphics_item.scene():
+        # First safely check if the center_graphics_item is still valid
+        try:
+            has_scene = self.center_graphics_item and self.center_graphics_item.scene()
+        except RuntimeError:
+            # The C++ object has been deleted, so set it to None
+            self.center_graphics_item = None
+            has_scene = False
+            
+        if has_scene:
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
-
+    
         color = QColor(self.label.color)
         if self.is_selected:
             color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
         color.setAlpha(self.transparency)
-
+    
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
         if add_to_group and self.graphics_item_group:
@@ -203,14 +212,22 @@ class Annotation(QObject):
 
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene, add_to_group=False):
         """Create a graphical item representing the annotation's bounding box."""
-        if self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene():
+        # Safely check if the bounding_box_graphics_item is still valid
+        try:
+            has_scene = self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene()
+        except RuntimeError:
+            # The C++ object has been deleted, so set it to None
+            self.bounding_box_graphics_item = None
+            has_scene = False
+            
+        if has_scene:
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
-
+    
         color = QColor(self.label.color)
         if self.is_selected:
             color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
         color.setAlpha(self.transparency)
-
+    
         self.bounding_box_graphics_item = QGraphicsRectItem(top_left.x(), top_left.y(),
                                                             bottom_right.x() - top_left.x(),
                                                             bottom_right.y() - top_left.y())
@@ -219,17 +236,25 @@ class Annotation(QObject):
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
         else:
             scene.addItem(self.bounding_box_graphics_item)
-
+    
     def create_polygon_graphics_item(self, points, scene, add_to_group=False):
         """Create a graphical item representing the annotation's polygon outline."""
-        if self.polygon_graphics_item and self.polygon_graphics_item.scene():
+        # Safely check if the polygon_graphics_item is still valid
+        try:
+            has_scene = self.polygon_graphics_item and self.polygon_graphics_item.scene()
+        except RuntimeError:
+            # The C++ object has been deleted, so set it to None
+            self.polygon_graphics_item = None
+            has_scene = False
+            
+        if has_scene:
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
-
+    
         color = QColor(self.label.color)
         if self.is_selected:
             color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
         color.setAlpha(self.transparency)
-
+    
         polygon = QPolygonF(points)
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
@@ -266,8 +291,15 @@ class Annotation(QObject):
 
     def update_graphics_item(self, crop_image=True):
         """Update the graphical representation of the annotation."""
-        # Remove and recreate the group if it exists
-        if self.graphics_item_group and self.graphics_item_group.scene():
+        # Safely check if the graphics_item_group is still valid
+        try:
+            has_scene = self.graphics_item_group and self.graphics_item_group.scene()
+        except RuntimeError:
+            # The C++ object has been deleted, so set it to None
+            self.graphics_item_group = None
+            has_scene = False
+            
+        if has_scene:
             scene = self.graphics_item_group.scene()
             scene.removeItem(self.graphics_item_group)
             self.graphics_item_group = QGraphicsItemGroup()
@@ -277,6 +309,8 @@ class Annotation(QObject):
             self.polygon_graphics_item = None
         else:
             scene = None
+            if self.graphics_item_group is None:
+                self.graphics_item_group = QGraphicsItemGroup()
         # Get the polygon representation
         polygon = self.get_polygon()
         self.graphics_item = QGraphicsPolygonItem(polygon)

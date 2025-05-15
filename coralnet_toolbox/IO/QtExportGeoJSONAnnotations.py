@@ -1,25 +1,24 @@
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import os
 import ujson as json
-
 from rasterio.transform import Affine
-
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
-                             QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
-                             QApplication, QMessageBox, QLabel, QProgressDialog,
-                             QGroupBox, QListWidget, QAbstractItemView, QListWidgetItem,
-                             QButtonGroup, QScrollArea, QWidget)
-
+from PyQt5.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
+    QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
+    QApplication, QMessageBox, QLabel, QScrollArea, QWidget,
+    QButtonGroup
+)
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -129,15 +128,15 @@ class ExportGeoJSONAnnotations(QDialog):
         """Setup the annotation types, and label selection layout."""
         groupbox = QGroupBox("Annotations to Include")
         layout = QVBoxLayout()
-
+    
         # Patch Annotation type checkboxes
         self.patch_checkbox = QCheckBox("Patch Annotations")
         self.patch_checkbox.setChecked(True)
         layout.addWidget(self.patch_checkbox)
-
+    
         # Setup patch representation selection
         self.setup_patch_representation_layout(layout)
-
+    
         # Annotation types checkboxes
         self.rectangle_checkbox = QCheckBox("Rectangle Annotations")
         self.rectangle_checkbox.setChecked(True)
@@ -145,7 +144,10 @@ class ExportGeoJSONAnnotations(QDialog):
         self.polygon_checkbox = QCheckBox("Polygon Annotations")
         self.polygon_checkbox.setChecked(True)
         layout.addWidget(self.polygon_checkbox)
-
+        self.multipolygon_checkbox = QCheckBox("MultiPolygon Annotations")
+        self.multipolygon_checkbox.setChecked(True)
+        layout.addWidget(self.multipolygon_checkbox)
+    
         groupbox.setLayout(layout)
         self.layout.addWidget(groupbox)
 
@@ -263,29 +265,28 @@ class ExportGeoJSONAnnotations(QDialog):
         """Get annotations for a specific image."""
         # Get the selected labels' short label codes
         selected_labels = [label.short_label_code for label in self.selected_labels]
-
+    
         # Get all annotations for this image
         annotations = []
-
+    
         for annotation in self.annotation_window.get_image_annotations(image_path):
-            # Check that the annotation is of the correct type
-            if not isinstance(annotation, tuple(self.annotation_types)):
-                continue
-
             # Check that the annotation's label is in the selected labels
             if annotation.label.short_label_code not in selected_labels:
                 continue
-
+    
             # Add the annotation to the list based on its type, if selected
             if self.patch_checkbox.isChecked() and isinstance(annotation, PatchAnnotation):
                 annotations.append(annotation)
-
+    
             elif self.rectangle_checkbox.isChecked() and isinstance(annotation, RectangleAnnotation):
                 annotations.append(annotation)
-
+    
             elif self.polygon_checkbox.isChecked() and isinstance(annotation, PolygonAnnotation):
                 annotations.append(annotation)
-
+                
+            elif self.multipolygon_checkbox.isChecked() and isinstance(annotation, MultiPolygonAnnotation):
+                annotations.append(annotation)
+    
         return annotations
 
     def convert_annotation_to_polygon(self, annotation):
@@ -380,7 +381,7 @@ class ExportGeoJSONAnnotations(QDialog):
             try:
                 # Transform the coordinates
                 [[geo_x, geo_y]] = self.transform_coordinates([(x, y)], transform)
-            except ValueError as e:
+            except ValueError:
                 # Skip this annotation
                 return None
 
@@ -400,39 +401,85 @@ class ExportGeoJSONAnnotations(QDialog):
             }
             return feature
 
-        polygon_coords = self.convert_annotation_to_polygon(annotation)
+        # Handle MultiPolygon Annotations
+        elif isinstance(annotation, MultiPolygonAnnotation):
+            multipolygon_coords = []
 
-        # Ensure the polygon has at least 4 points
-        if len(polygon_coords) < 4:
-            print(f"Skipping annotation with less than 4 points in {image_path}")
-            return None
+            for polygon in annotation.polygons:
+                polygon_coords = self.convert_annotation_to_polygon(polygon)
 
-        try:
-            # Transform the coordinates
-            polygon_coords = self.transform_coordinates(polygon_coords, transform)
-        except ValueError as e:
-            # Skip this annotation
-            return None
+                # Ensure the polygon has at least 4 points
+                if len(polygon_coords) < 4:
+                    print(f"Skipping polygon with less than 4 points in {image_path}")
+                    continue
 
-        # Ensure the polygon is closed (first and last positions are the same)
-        if polygon_coords[0] != polygon_coords[-1]:
-            polygon_coords.append(polygon_coords[0])
+                try:
+                    # Transform the coordinates
+                    polygon_coords = self.transform_coordinates(polygon_coords, transform)
+                except ValueError:
+                    # Skip this polygon
+                    continue
 
-        # Create the GeoJSON feature
-        feature = {
-            "type": "Feature",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [polygon_coords]
-            },
-            "properties": {
-                "label": annotation.label.short_label_code,
-                "label_properties": annotation.label.to_dict(),
-                "source_image": os.path.basename(image_path),
-                "coordinate_system": "geographic"
+                # Ensure the polygon is closed (first and last positions are the same)
+                if polygon_coords[0] != polygon_coords[-1]:
+                    polygon_coords.append(polygon_coords[0])
+
+                multipolygon_coords.append([polygon_coords])
+
+            if not multipolygon_coords:
+                return None
+
+            # Create the GeoJSON feature for MultiPolygon
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "MultiPolygon",
+                    "coordinates": multipolygon_coords
+                },
+                "properties": {
+                    "label": annotation.label.short_label_code,
+                    "label_properties": annotation.label.to_dict(),
+                    "source_image": os.path.basename(image_path),
+                    "coordinate_system": "geographic"
+                }
             }
-        }
-        return feature
+            return feature
+        
+        else:
+            # Handle all other annotations as Polygons
+            polygon_coords = self.convert_annotation_to_polygon(annotation)
+
+            # Ensure the polygon has at least 4 points
+            if len(polygon_coords) < 4:
+                print(f"Skipping annotation with less than 4 points in {image_path}")
+                return None
+
+            try:
+                # Transform the coordinates
+                polygon_coords = self.transform_coordinates(polygon_coords, transform)
+            except ValueError:
+                # Skip this annotation
+                return None
+
+            # Ensure the polygon is closed (first and last positions are the same)
+            if polygon_coords[0] != polygon_coords[-1]:
+                polygon_coords.append(polygon_coords[0])
+
+            # Create the GeoJSON feature
+            feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [polygon_coords]
+                },
+                "properties": {
+                    "label": annotation.label.short_label_code,
+                    "label_properties": annotation.label.to_dict(),
+                    "source_image": os.path.basename(image_path),
+                    "coordinate_system": "geographic"
+                }
+            }
+            return feature
 
     def validate_images(self, images):
         """
@@ -499,7 +546,8 @@ class ExportGeoJSONAnnotations(QDialog):
         # Check if at least one annotation type is selected
         if not any([self.patch_checkbox.isChecked(),
                     self.rectangle_checkbox.isChecked(),
-                    self.polygon_checkbox.isChecked()]):
+                    self.polygon_checkbox.isChecked(),
+                    self.multipolygon_checkbox.isChecked()]):
             QMessageBox.warning(self,
                                 "No Annotation Type Selected",
                                 "Please select at least one annotation type.")
@@ -540,7 +588,9 @@ class ExportGeoJSONAnnotations(QDialog):
             self.annotation_types.append(RectangleAnnotation)
         if self.polygon_checkbox.isChecked():
             self.annotation_types.append(PolygonAnnotation)
-
+        if self.multipolygon_checkbox.isChecked():
+            self.annotation_types.append(MultiPolygonAnnotation)
+            
         # Create the GeoJSON structure
         geojson_data = {
             "type": "FeatureCollection",

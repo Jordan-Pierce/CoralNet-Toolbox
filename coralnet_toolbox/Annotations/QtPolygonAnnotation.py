@@ -498,8 +498,19 @@ class PolygonAnnotation(Annotation):
         # If any polygon is not visited, the annotations don't form a connected component
         if False in visited:
             # Create MultiPolygonAnnotation with all input polygons
+            # Wrap each annotation's points in a PolygonAnnotation object
+            polygons = [
+                cls(
+                    points=anno.points,
+                    short_label_code=anno.label.short_label_code,
+                    long_label_code=anno.label.long_label_code,
+                    color=anno.label.color,
+                    image_path=anno.image_path,
+                    label_id=anno.label.id
+                ) for anno in annotations
+            ]
             new_anno = MultiPolygonAnnotation(
-                polygons=[anno.points for anno in annotations],
+                polygons=polygons,
                 short_label_code=annotations[0].label.short_label_code,
                 long_label_code=annotations[0].label.long_label_code,
                 color=annotations[0].label.color,
@@ -755,3 +766,4 @@ class PolygonAnnotation(Annotation):
                 f"label={self.label.short_label_code}, "
                 f"data={self.data}, "
                 f"machine_confidence={self.machine_confidence})")
+

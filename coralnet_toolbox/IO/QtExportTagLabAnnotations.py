@@ -9,6 +9,8 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -134,54 +136,34 @@ class ExportTagLabAnnotations:
                             "metadata": {},
                             "grid": None
                         }
+                        
+                    # Create a polygon annotation from a MultiPolygonAnnotation
+                    if isinstance(annotation, MultiPolygonAnnotation):
+                        for polygon in annotation.polygons:
+                            annotation_dict = self.create_polygon_annotation_dict(polygon)
+                            annotation_dict["id"] = idx  # TODO figure this out
+                            
+                            # Add the annotation to the image entry
+                            image_annotations[image_path]["annotations"]["regions"].append(annotation_dict)
 
                     # Create a polygon annotation
-                    if isinstance(annotation, PolygonAnnotation):
-                        # Calculate bounding box, centroid, area, perimeter, and contour
-                        points = annotation.points
-                        min_x = int(min(point.x() for point in points))
-                        min_y = int(min(point.y() for point in points))
-                        max_x = int(max(point.x() for point in points))
-                        max_y = int(max(point.y() for point in points))
-                        width = max_x - min_x
-                        height = max_y - min_y
-                        centroid_x = float(f"{sum(point.x() for point in points) / len(points):.1f}")
-                        centroid_y = float(f"{sum(point.y() for point in points) / len(points):.1f}")
-                        area = float(f"{annotation.get_area():.1f}")
-                        perimeter = float(f"{annotation.get_perimeter():.1f}")
-                        contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
-
-                        annotation_dict = {
-                            "bbox": [min_y, min_x, width, height],
-                            "centroid": [centroid_x, centroid_y],
-                            "area": area,
-                            "perimeter": perimeter,
-                            "contour": contour,
-                            "inner contours": [],
-                            "class name": annotation.label.short_label_code,
-                            "instance name": "coral0",  # Placeholder, update as needed
-                            "blob name": f"c-0-{centroid_x}x-{centroid_y}y",
-                            "id": idx,
-                            "note": "",
-                            "data": {}
-                        }
+                    elif isinstance(annotation, PolygonAnnotation):
+                        annotation_dict = self.create_polygon_annotation_dict(annotation)
+                        annotation_dict["id"] = idx
+                        
+                        # Add the annotation to the image entry
                         image_annotations[image_path]["annotations"]["regions"].append(annotation_dict)
 
                     # Create a point annotation
-                    if isinstance(annotation, PatchAnnotation):
-                        # Calculate the XY
-                        x = annotation.center_xy.x()
-                        y = annotation.center_xy.y()
-
-                        annotation_dict = {
-                            "X": x,
-                            "Y": y,
-                            "Class": annotation.label.short_label_code,
-                            "Id": idx,
-                            "Note": "",
-                            "Data": {}
-                        }
+                    elif isinstance(annotation, PatchAnnotation):
+                        annotation_dict = self.create_point_annotation_dict(annotation)
+                        annotation_dict["id"] = idx
+                        
+                        # Add the annotation to the image entry
                         image_annotations[image_path]["annotations"]["points"].append(annotation_dict)
+                        
+                    else:
+                        pass  # Skip unsupported annotation types
 
                     # Update the progress bar
                     progress_bar.update_progress()
@@ -208,3 +190,55 @@ class ExportTagLabAnnotations:
                 QApplication.restoreOverrideCursor()
                 progress_bar.stop_progress()
                 progress_bar.close()
+                
+    def create_polygon_annotation_dict(self, annotation):
+        """
+        Create a dictionary representation of a polygon annotation for TagLab export.
+        """
+        # Calculate bounding box, centroid, area, perimeter, and contour
+        points = annotation.points
+        min_x = int(min(point.x() for point in points))
+        min_y = int(min(point.y() for point in points))
+        max_x = int(max(point.x() for point in points))
+        max_y = int(max(point.y() for point in points))
+        width = max_x - min_x
+        height = max_y - min_y
+        centroid_x = float(f"{sum(point.x() for point in points) / len(points):.1f}")
+        centroid_y = float(f"{sum(point.y() for point in points) / len(points):.1f}")
+        area = float(f"{annotation.get_area():.1f}")
+        perimeter = float(f"{annotation.get_perimeter():.1f}")
+        contour = self.taglabToPoints(np.array([[point.x(), point.y()] for point in points]))
+
+        annotation_dict = {
+            "bbox": [min_y, min_x, width, height],
+            "centroid": [centroid_x, centroid_y],
+            "area": area,
+            "perimeter": perimeter,
+            "contour": contour,
+            "inner contours": [],
+            "class name": annotation.label.short_label_code,
+            "instance name": "coral0",  # Placeholder, update as needed
+            "blob name": f"c-0-{centroid_x}x-{centroid_y}y",
+            "note": "",
+            "data": {}
+        }
+        
+        return annotation_dict
+    
+    def create_point_annotation_dict(self, annotation):
+        """
+        Create a dictionary representation of a point annotation for TagLab export.
+        """
+        # Calculate the XY
+        x = annotation.center_xy.x()
+        y = annotation.center_xy.y()
+
+        annotation_dict = {
+            "X": x,
+            "Y": y,
+            "Class": annotation.label.short_label_code,
+            "Note": "",
+            "Data": {}
+        }
+        
+        return annotation_dict
