@@ -520,7 +520,7 @@ class SeeAnythingTool(Tool):
             confidence (float): The confidence score for the annotation.
             transparency (int): The transparency level for the annotation.
         """
-        if len(points) <= 3:
+        if len(points) > 3:
             # Convert to QPointF
             points = [QPointF(point[0], point[1]) for point in points]
             # Create the annotation
@@ -605,7 +605,23 @@ class SeeAnythingTool(Tool):
 
         # Process the results with the SAM predictor using the new
         results = self.see_anything_dialog.sam_dialog.predict_from_results([results], self.image_path)
+        
+        # Get SAM resizing dimensions
+        original_h, original_w = self.work_area_image.shape[:2]
+        resized_h, resized_w = self.see_anything_dialog.sam_dialog.resized_image.shape[:2]
 
+        # Calculate scaling factors
+        scale_x = original_w / resized_w
+        scale_y = original_h / resized_h
+
+        # Update mask coordinates to account for resizing
+        for i, mask in enumerate(results[0].masks.xy):
+            if len(mask) > 0:
+                # Scale coordinates back to original size
+                mask[:, 0] *= scale_x
+                mask[:, 1] *= scale_y
+                results[0].masks.xy[i] = mask
+        
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
 
@@ -613,12 +629,9 @@ class SeeAnythingTool(Tool):
         results = MapResults().map_results_from_work_area(
             results,
             raster,
-            self.working_area
+            self.working_area,
+            map_masks=True
         )
-
-        # Update the results with work area image
-        self.results.orig_image = self.work_area_image
-        self.results.orig_shape = self.work_area_image.shape
 
         # Process the results
         results_processor.process_segmentation_results(results)
@@ -634,19 +647,10 @@ class SeeAnythingTool(Tool):
         """
         Clear all *unconfirmed* annotations created by this tool from the scene.
         """
-        # Remove all annotations currently in self.annotations from the scene
         for annotation in self.annotations:
-            if annotation.graphics_item:
-                self.annotation_window.scene.removeItem(annotation.graphics_item)
-                annotation.graphics_item = None  # Ensure graphics item is cleared
+            annotation.delete()  # Let the annotation handle all graphics cleanup
 
-            # Optionally call a delete method if it exists and handles cleanup
-            annotation.delete()
-            annotation = None
-
-        # Clear the list holding the unconfirmed annotations
         self.annotations = []
-
         self.annotation_window.scene.update()
 
     def clear_rectangle_graphics(self):
