@@ -114,6 +114,7 @@ Enhance your CoralNet experience with these tools:
 - ✍️ Edit: Cut and Combine polygons and rectangles
 - 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
   - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
+- 👷‍♂️ Work areas: Perform region-specific detections / segmentations with any model
 - 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically
 - 🧪 AutoDistill: Use `AutoDistill` to access the following for creating rectangles and polygons:
   - Uses `Grounding DINO`, `OWLViT`, `OmDetTurbo`
@@ -127,6 +128,7 @@ Enhance your CoralNet experience with these tools:
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
+- 🏗️ Tile Inference: Pre-compute multiple work areas for an entire image
 
 ### 📝 TODO
 - 🤗 Model Zoo: Download `Ultralytics` models from `HuggingFace` for use in `toolbox`

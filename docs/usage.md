@@ -73,6 +73,7 @@ The main window consists of several components:
 
 - **Tile**:
   - **Tile Dataset**: Tile existing Classification, Detection or Segmention datasets using `yolo-tiling`.
+  - **Tile Inference**: Pre-compute multiple work areas for the current image.
 
 - **CoralNet**: 
   - **Authenticate**: Authenticate with CoralNet.
@@ -164,12 +165,11 @@ The main window consists of several components:
 
 - **Work Area Tool**: For creating restricted areas for model prediction
   - **Left-Click**: Start drawing a work area; click again to finish drawing.
+  - **Backspace**: Cancel drawing the current work area.
   - **Ctrl + Space**: Create a work area from the current view.
+  - **Ctrl + Alt**: Create temporary work area from current view (disappears when keys released / pressed again).
   - **Ctrl + Shift**: Show removal buttons on existing work areas (click the "X" to remove).
   - **Ctrl + Shift + Backspace**: Remove all work areas in the current image.
-  - **Ctrl + Alt**: Create temporary work area from current view (disappears when keys released).
-  - **Backspace**: Cancel drawing the current work area.
-  - **Mouse Movement**: Shows a preview of the work area while drawing.
   - **Practical Use**:
     - Define specific regions where models should make predictions.
     - Useful for processing only relevant parts of large images.
@@ -210,7 +210,7 @@ The main window consists of several components:
   - **Shift + Left-click**: Select multiple, adjacent rows.
 - **Open Context Menu**:
   - **Right-click on a single highlighted row**: Delete images / annotations for the highlighted row.
-  - **Shift + Right-click on multiple highlighted rows: Delete images / annotations for highlighted rows.
+  - **Shift + Right-click on multiple highlighted rows**: Delete images / annotations for highlighted rows.
 - **Search / Filter**:
   - **By Image**: Filter for images by name or sub-string.
   - **By Label**: Filter images by labels they contain.
@@ -248,8 +248,10 @@ The main window consists of several components:
 - **Alt + Up/Down**: Cycle through images.
 - **Ctrl + W/A/S/D**: Cycle through labels.
 - **Ctrl + Left/Right**: Cycle through annotations.
+
 - **Ctrl + Shift + <**: Select all annotations.
 - **Ctrl + Shift + >**: Unselect all annotations.
+
 - **Escape**: Exit the program.
 
 - **Machine Learning, SAM, and AutoDistill**: After a model is loaded
