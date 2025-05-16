@@ -245,14 +245,13 @@ The main window consists of several components:
   - Hover over confidence bars to see a pointing hand cursor when selection is possible.
 
 ### Secret Hotkeys
+- **Escape**: Exit the program.
+
 - **Alt + Up/Down**: Cycle through images.
 - **Ctrl + W/A/S/D**: Cycle through labels.
 - **Ctrl + Left/Right**: Cycle through annotations.
-
 - **Ctrl + Shift + <**: Select all annotations.
 - **Ctrl + Shift + >**: Unselect all annotations.
-
-- **Escape**: Exit the program.
 
 - **Machine Learning, SAM, and AutoDistill**: After a model is loaded
   - **Ctrl + 1**: Make prediction on selected Patch annotation, else all in the image with Review label.
