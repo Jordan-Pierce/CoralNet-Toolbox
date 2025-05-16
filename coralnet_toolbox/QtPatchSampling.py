@@ -117,7 +117,7 @@ class PatchSamplingDialog(QDialog):
             self.label_combo.addItem(label.short_label_code, label.id)
         self.label_combo.setCurrentIndex(0)
         self.label_combo.currentIndexChanged.connect(self.preview_annotations)
-        layout.addRow("Select Label:", self.label_combo)
+        layout.addRow("Sample As:", self.label_combo)
 
         # Exclude Regions
         self.exclude_regions_combo = QComboBox()

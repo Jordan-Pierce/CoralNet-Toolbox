@@ -281,10 +281,7 @@ class LabelWindow(QWidget):
         self.active_label = None
 
         # Add default label
-        default_short_label_code = "Review"
-        default_long_label_code = "Review"
-        default_color = QColor(255, 255, 255)  # White color
-        self.add_label(default_short_label_code, default_long_label_code, default_color, label_id="-1")
+        self.add_review_label()
         
         # Deselect at first
         self.active_label.deselect()
@@ -425,6 +422,20 @@ class LabelWindow(QWidget):
                 self.active_label.setToolTip(self.active_label.long_label_code)
                 self.update_labels_per_row()
                 self.reorganize_labels()
+                
+    def add_review_label(self):
+        """Add a review label to the window and place it at the front of the label list."""
+        # Create the label
+        label = Label("Review", "Review", QColor(255, 255, 255), label_id="-1")
+        # Connect
+        label.selected.connect(self.set_active_label)
+        label.label_deleted.connect(self.delete_label)
+        # Insert at the beginning of the labels list instead of appending
+        self.labels.insert(0, label)
+        # Update in LabelWindow
+        self.update_labels_per_row()
+        self.reorganize_labels()
+        self.set_active_label(label)
 
     def add_label(self, short_label_code, long_label_code, color, label_id=None):
         """Add a new label to the window."""
@@ -539,34 +550,42 @@ class LabelWindow(QWidget):
             if label.id == label_id:
                 return label.transparency
         return None
+    
+    def get_review_label(self):
+        """Get the review label."""
+        return self.labels[0]
 
     def get_label_by_id(self, label_id):
         """Find and return a label by its ID."""
         for label in self.labels:
             if label.id == label_id:
                 return label
-        return None
-
+        print(f"Warning: Label with ID '{label_id}' not found.")
+        return self.get_review_label()
+    
     def get_label_by_codes(self, short_label_code, long_label_code):
         """Find and return a label by its short and long codes."""
         for label in self.labels:
             if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
                 return label
-        return None
-
+        print(f"Warning: Label with short code '{short_label_code}' and long code '{long_label_code}' not found.")
+        return self.get_review_label()
+    
     def get_label_by_short_code(self, short_label_code):
         """Find and return a label by its short code."""
         for label in self.labels:
             if short_label_code == label.short_label_code:
                 return label
-        return None
-
+        print(f"Warning: Label with short code '{short_label_code}' not found.")
+        return self.get_review_label()
+    
     def get_label_by_long_code(self, long_label_code):
         """Find and return a label by its long code."""
         for label in self.labels:
             if long_label_code == label.long_label_code:
                 return label
-        return None
+        print(f"Warning: Label with long code '{long_label_code}' not found.")
+        return self.get_review_label()
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
         """Check if a label with the given codes or ID already exists."""
@@ -625,7 +644,7 @@ class LabelWindow(QWidget):
                                 "Cannot Delete Label", 
                                 "The 'Review' label cannot be deleted.")
             return
-
+    
         if self.show_confirmation_dialog:
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Question)
@@ -633,35 +652,45 @@ class LabelWindow(QWidget):
             msg_box.setText("Are you sure you want to delete this label?\n"
                             "This will delete all associated annotations.")
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-
+    
             checkbox = QCheckBox("Do not show this message again")
             msg_box.setCheckBox(checkbox)
-
+    
             result = msg_box.exec_()
-
+    
             if checkbox.isChecked():
                 self.show_confirmation_dialog = False
-
+    
             if result == QMessageBox.No:
                 return
-
+    
+        # Store affected image paths before deletion to update them later
+        affected_images = set()
+        for annotation in self.annotation_window.annotations_dict.values():
+            if annotation.label.id == label.id:
+                affected_images.add(annotation.image_path)
+    
         # Remove from the LabelWindow
         self.labels.remove(label)
         label.deleteLater()
-
+    
         # Delete annotations associated with the label
         self.annotation_window.delete_label_annotations(label)
-
+    
         # Reset active label if it was deleted
         if self.active_label == label:
             self.active_label = None
             if self.labels:
                 self.set_active_label(self.labels[0])
-
+    
         # Update the LabelWindow
         self.update_labels_per_row()
         self.reorganize_labels()
         self.update_label_count()
+        
+        # Explicitly update affected images in the image window
+        for image_path in affected_images:
+            self.main_window.image_window.update_image_annotations(image_path)
 
     def handle_wasd_key(self, key):
         """Handle WASD key presses to navigate the label grid."""

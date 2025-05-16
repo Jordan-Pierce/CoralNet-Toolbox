@@ -8,8 +8,9 @@ from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsE
 from coralnet_toolbox.Tools.QtTool import Tool
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
-from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -182,21 +183,24 @@ class SelectTool(Tool):
         if len(self.annotation_window.selected_annotations) == 1:
             if event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier:
                 self.display_resize_handles(self.annotation_window.selected_annotations[0])
-            
+        
         # Handle Ctrl+Spacebar to update annotation with top machine confidence
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_Space:
             self.update_with_top_machine_confidence()
-            
-        # Handle Ctrl+C to combine selected annotations, enter cutting mode, or cancel cutting mode
+        
+        # Handle Ctrl+C to combine selected annotations
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_C:
-            if self.cutting_mode:
-                # Cancel cutting mode if already in it (pressing Ctrl+C again)
-                self.cancel_cutting_mode()
-            elif len(self.annotation_window.selected_annotations) > 1:
+            if len(self.annotation_window.selected_annotations) > 1:
                 self.combine_selected_annotations()
+                
+        # Handle Ctrl+X to cut selected annotation(s)
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_X:
+            if self.cutting_mode:
+                # Cancel cutting mode if already in it (pressing Ctrl+X again)
+                self.cancel_cutting_mode()
             elif len(self.annotation_window.selected_annotations) == 1:
                 self.start_cutting_mode()
-                
+        
         # Handle Backspace to cancel cutting mode
         if event.key() == Qt.Key_Backspace and self.cutting_mode:
             self.cancel_cutting_mode()
@@ -440,6 +444,11 @@ class SelectTool(Tool):
             return self.get_rectangle_handles(annotation)
         elif isinstance(annotation, PolygonAnnotation):
             return self.get_polygon_handles(annotation)
+        elif isinstance(annotation, MultiPolygonAnnotation):
+            pass  # Do nothing for multi-polygon
+        elif isinstance(annotation, PatchAnnotation):
+            pass  # Do nothing for patch
+        
         return {}
 
     def get_rectangle_handles(self, annotation):
@@ -547,10 +556,11 @@ class SelectTool(Tool):
         # Identify the types of annotations being combined
         has_patches = any(isinstance(annotation, PatchAnnotation) for annotation in selected_annotations)
         has_polygons = any(isinstance(annotation, PolygonAnnotation) for annotation in selected_annotations)
+        has_multi_polygons = any(isinstance(annotation, MultiPolygonAnnotation) for annotation in selected_annotations)
         has_rectangles = any(isinstance(annotation, RectangleAnnotation) for annotation in selected_annotations)
         
         # Handle cases where we can't combine different types
-        if has_rectangles and (has_patches or has_polygons):
+        if has_rectangles and (has_patches or has_polygons or has_multi_polygons):
             QMessageBox.warning(
                 self.annotation_window,
                 "Cannot Combine",
@@ -575,8 +585,19 @@ class SelectTool(Tool):
             combined_annotation = PatchAnnotation.combine(selected_annotations)
         elif has_rectangles:
             combined_annotation = RectangleAnnotation.combine(selected_annotations)
-        elif has_polygons:
-            combined_annotation = PolygonAnnotation.combine(selected_annotations)
+        elif has_polygons or has_multi_polygons:
+            # Convert any MultiPolygonAnnotations to individual PolygonAnnotations first
+            annotations_to_combine = []
+            for annotation in selected_annotations:
+                if isinstance(annotation, MultiPolygonAnnotation):
+                    # Cut the MultiPolygonAnnotation into individual PolygonAnnotations
+                    individual_polygons = annotation.cut()
+                    annotations_to_combine.extend(individual_polygons)
+                else:
+                    annotations_to_combine.append(annotation)
+            
+            # Now combine all the polygons
+            combined_annotation = PolygonAnnotation.combine(annotations_to_combine)
         else:
             print("Failed to combine annotations. Unsupported annotation types.")
             return  # Unsupported annotation type
@@ -599,15 +620,27 @@ class SelectTool(Tool):
         if len(self.annotation_window.selected_annotations) != 1:
             return
         
+        annotation = self.annotation_window.selected_annotations[0]
+        
         # Check if any annotations have machine confidence
-        if any(not annotation.verified for annotation in self.annotation_window.selected_annotations):
+        if not annotation.verified:
             QMessageBox.warning(
                 self.annotation_window,
                 "Cannot Cut",
                 "Cannot cut annotations with machine confidence. Confirm predictions (Ctrl+Space) first."
             )
             return
-            
+        
+        # If MultiPolygonAnnotation, break apart immediately
+        if isinstance(annotation, MultiPolygonAnnotation):
+            new_annotations = annotation.cut()
+            self.annotation_window.delete_selected_annotations()
+            for new_anno in new_annotations:
+                self.annotation_window.add_annotation_from_tool(new_anno)
+            self.annotation_window.unselect_annotations()
+            return
+        
+        # Otherwise, enter cutting mode for supported types
         self.cutting_mode = True
         self.drawing_cut_line = False
         self.cutting_points = []
@@ -677,6 +710,10 @@ class SelectTool(Tool):
             new_annotations = RectangleAnnotation.cut(annotation, cutting_points)
         elif isinstance(annotation, PolygonAnnotation):
             new_annotations = PolygonAnnotation.cut(annotation, cutting_points)
+        elif isinstance(annotation, MultiPolygonAnnotation):
+            # For MultiPolygonAnnotation, we don't cut directly
+            # Instead, we decompose it into individual PolygonAnnotations
+            new_annotations = annotation.cut()
         else:
             self.cancel_cutting_mode()
             return  # Unsupported annotation type

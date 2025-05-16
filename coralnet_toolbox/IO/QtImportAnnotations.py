@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
+
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 
@@ -159,6 +161,8 @@ class ImportAnnotations:
                         annotation = PolygonAnnotation.from_dict(annotation, self.label_window)
                     elif annotation_type == 'RectangleAnnotation':
                         annotation = RectangleAnnotation.from_dict(annotation, self.label_window)
+                    elif annotation_type == 'MultiPolygonAnnotation':
+                        annotation = MultiPolygonAnnotation.from_dict(annotation, self.label_window)
                     else:
                         raise ValueError(f"Unknown annotation type: {annotation_type}")
 

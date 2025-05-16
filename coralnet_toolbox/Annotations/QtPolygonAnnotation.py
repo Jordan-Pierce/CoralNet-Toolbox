@@ -7,8 +7,9 @@ import math
 import numpy as np
 
 from rasterio.windows import Window
-from shapely.geometry import Point
-from shapely.geometry import Polygon, LineString
+
+from shapely.ops import split
+from shapely.geometry import Point, Polygon, LineString
 
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
@@ -16,6 +17,7 @@ from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF,
                          QPainter, QRegion, QImage)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
@@ -34,15 +36,12 @@ class PolygonAnnotation(Annotation):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg=False):  # Added epsilon parameter with default value
+                 show_msg=False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
-        
-        self.epsilon = 1.0  # Store epsilon for polygon simplification
-
+        self.epsilon = 1.0
         self.set_precision(points, True)
         self.set_centroid()
         self.set_cropped_bbox()
@@ -294,13 +293,19 @@ class PolygonAnnotation(Annotation):
 
         self.annotationUpdated.emit(self)  # Notify update
 
-    def update_graphics_item(self, crop_image=True):
-        """Update the graphical representation of the annotation using base class method."""
-        super().update_graphics_item(crop_image)
+    def create_graphics_item(self, scene: QGraphicsScene):
+        """Create all graphics items for the polygon annotation and add them to the scene as a group."""
+        # Use a polygon as the main graphics item
+        self.graphics_item = QPolygonF(self.points)
+        # Call parent to handle group and helpers
+        super().create_graphics_item(scene)
 
-        # Update the cropped image if necessary
-        if self.rasterio_src and crop_image:
-            self.create_cropped_image(self.rasterio_src)
+    def update_graphics_item(self, crop_image=True):
+        """Update the graphical representation of the polygon annotation."""
+        # Use a polygon as the main graphics item
+        self.graphics_item = QPolygonF(self.points)
+        # Call parent to handle group and helpers
+        super().update_graphics_item(crop_image)
 
     def update_location(self, new_center_xy: QPointF):
         """Update the location of the annotation by moving it to a new center point."""
@@ -405,16 +410,7 @@ class PolygonAnnotation(Annotation):
     
     @classmethod
     def combine(cls, annotations: list):
-        """Combine multiple polygon annotations into a single polygon using polygon union,
-        as long as the polygons form a connected component (directly or indirectly connected).
-        
-        Args:
-            annotations: List of PolygonAnnotation objects to combine.
-            
-        Returns:
-            A new PolygonAnnotation that encompasses all input polygons if they form a connected component,
-            or None if the polygons form disconnected groups.
-        """
+        """Combine annotations. Returns PolygonAnnotation (merged) or MultiPolygonAnnotation (disjoint)."""
         if not annotations:
             return None
         
@@ -503,7 +499,32 @@ class PolygonAnnotation(Annotation):
         
         # If any polygon is not visited, the annotations don't form a connected component
         if False in visited:
-            return None
+            # Create MultiPolygonAnnotation with all input polygons
+            # Wrap each annotation's points in a PolygonAnnotation object
+            polygons = [
+                cls(
+                    points=anno.points,
+                    short_label_code=anno.label.short_label_code,
+                    long_label_code=anno.label.long_label_code,
+                    color=anno.label.color,
+                    image_path=anno.image_path,
+                    label_id=anno.label.id
+                ) for anno in annotations
+            ]
+            new_anno = MultiPolygonAnnotation(
+                polygons=polygons,
+                short_label_code=annotations[0].label.short_label_code,
+                long_label_code=annotations[0].label.long_label_code,
+                color=annotations[0].label.color,
+                image_path=annotations[0].image_path,
+                label_id=annotations[0].label.id
+            )
+            # Transfer rasterio source if applicable
+            if all(hasattr(anno, 'rasterio_src') and anno.rasterio_src is not None for anno in annotations):
+                if len(set(id(anno.rasterio_src) for anno in annotations)) == 1:
+                    new_anno.rasterio_src = annotations[0].rasterio_src
+                    new_anno.create_cropped_image(new_anno.rasterio_src)
+            return new_anno
         
         # Combine polygons by creating a binary mask of all polygons
         # Determine the bounds of all polygons
@@ -657,7 +678,6 @@ class PolygonAnnotation(Annotation):
         # Cut the polygon with the extended line
         try:
             # Split the polygon along the cutting line
-            from shapely.ops import split
             split_polygons = split(polygon, extended_line)
             
             # Convert the split geometries back to polygons
@@ -747,3 +767,4 @@ class PolygonAnnotation(Annotation):
                 f"label={self.label.short_label_code}, "
                 f"data={self.data}, "
                 f"machine_confidence={self.machine_confidence})")
+

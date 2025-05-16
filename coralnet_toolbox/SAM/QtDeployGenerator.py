@@ -283,20 +283,18 @@ class DeployGeneratorDialog(QDialog):
         self.layout.addWidget(group_box)
 
     def update_detect_as_combo(self):
-        """Update the label combo box with the current labels."""
+        """Update the label combo box with the current labels, preserving previous selection."""
+        # Store the previously selected index
+        previous_index = self.detect_as_combo.currentIndex() if hasattr(self, 'detect_as_combo') else 0
+
         self.detect_as_combo.clear()
         for label in self.label_window.labels:
             self.detect_as_combo.addItem(label.short_label_code, label.id)
 
-        # Get the currently selected label
-        active_label = self.label_window.active_label.short_label_code
-        # Set the current index to the selected label
-        if active_label:
-            index = self.detect_as_combo.findText(active_label)
-            if index != -1:
-                self.detect_as_combo.setCurrentIndex(index)
+        # Restore the previous selection if possible
+        if 0 <= previous_index < self.detect_as_combo.count():
+            self.detect_as_combo.setCurrentIndex(previous_index)
         else:
-            # If no active label, set to the first one
             self.detect_as_combo.setCurrentIndex(0)
 
     def update_class_mapping(self):

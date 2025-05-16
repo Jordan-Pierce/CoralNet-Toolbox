@@ -49,7 +49,6 @@ class SAMTool(Tool):
         
         # Temporary annotation display
         self.temp_annotation = None
-        self.temp_graphics = None
         
         # Last hover position for continuous annotation updates
         self.hover_pos = None
@@ -152,13 +151,11 @@ class SAMTool(Tool):
         """
         Clear the temporary annotation and its graphics.
         """
-        if self.temp_graphics:
-            self.annotation_window.scene.removeItem(self.temp_graphics)
-            self.temp_graphics = None
-            
+        # We don't need to remove temp_graphics separately, as it's now handled by the annotation
         if self.temp_annotation:
             self.temp_annotation.delete()
             self.temp_annotation = None
+            self.temp_graphics = None
             
         self.annotation_window.scene.update()
 
@@ -298,9 +295,9 @@ class SAMTool(Tool):
         # Update confidence score
         self.temp_annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
         
-        # Create and display the graphics for the temporary annotation
-        self.temp_graphics = self.temp_annotation.create_graphics_item(self.annotation_window.scene)
-        
+        # Create the graphics item for the temporary annotation
+        self.temp_annotation.create_graphics_item(self.annotation_window.scene)
+
         # Restore cursor
         QApplication.restoreOverrideCursor()
 
@@ -465,9 +462,11 @@ class SAMTool(Tool):
         Handle key press events.
         """
         if event.key() == Qt.Key_Space:
+            
             # If no working area, set it up
             if not self.working_area:
                 self.set_working_area()
+                
             # If we have active prompts, create a permanent annotation
             elif self.has_active_prompts:
                 # Create the final annotation
@@ -487,6 +486,9 @@ class SAMTool(Tool):
                     final_annotation.update_machine_confidence(
                         self.temp_annotation.machine_confidence
                     )
+                    
+                    # Create the graphics item for the final annotation
+                    final_annotation.create_graphics_item(self.annotation_window.scene)
                     
                     # Add the annotation to the scene
                     self.annotation_window.add_annotation_from_tool(final_annotation)
