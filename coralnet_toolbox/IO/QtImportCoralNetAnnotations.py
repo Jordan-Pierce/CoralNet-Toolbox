@@ -127,30 +127,16 @@ class ImportCoralNetAnnotations:
                     # Get the label codes
                     short_label_code = label_code
                     # If the user previously exported from the Toolbox, the 'Long Label' column will be present
-                    long_label_code = row['Long Label'] if 'Long Label' in row else label_code
+                    long_label_code = row['Long Label'] if 'Long Label' in row and pd.notna(row['Long Label']) else None
                     
-                    # The label should already exist from the previous loop?
-                    existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
-                    
-                    if existing_label:
-                        # Use the existing label's color and ID
-                        color = existing_label.color
-                        label_id = existing_label.id
-                        
-                    else:
-                        # Create a new label
-                        label_id = str(uuid.uuid4())
-                            
-                        # Generate a random color for the label    
-                        color = QColor(random.randint(0, 255),
-                                       random.randint(0, 255),
-                                       random.randint(0, 255))
-                        
-                        # Create the label
-                        self.label_window.add_label_if_not_exists(short_label_code,
-                                                                  long_label_code,
-                                                                  color,
-                                                                  label_id)
+                    # Check if the label already exists, create it if not
+                    label = self.label_window.add_label_if_not_exists(short_label_code, 
+                                                                      long_label_code,
+                                                                      color=None,
+                                                                      label_id=None)
+                    # Get the label color and ID
+                    color = label.color
+                    label_id = label.id
                             
                     # Create the annotation
                     annotation = PatchAnnotation(QPointF(col_coord, row_coord),
@@ -181,12 +167,8 @@ class ImportCoralNetAnnotations:
                     # Process all valid pairs at once
                     for suggestion, confidence in valid_pairs:
                         # Get the label object using the short code (because that's all that's available)
-                        suggested_label = self.label_window.get_label_by_short_code(suggestion)
-                        
-                        if not suggested_label:
-                            color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-                            self.label_window.add_label_if_not_exists(suggestion, suggestion, color)
-                            suggested_label = self.label_window.get_label_by_short_code(suggestion)
+                        suggested_label = self.label_window.add_label_if_not_exists(short_label_code=suggestion, 
+                                                                                    long_label_code=suggestion)
                             
                         machine_confidence[suggested_label] = confidence
 

@@ -113,12 +113,13 @@ class ImportAnnotations:
                     color = QColor(*annotation['annotation_color'])
                     label_id = annotation['label_id']
 
-                    # Add label and handle color matching
-                    self.label_window.add_label_if_not_exists(short_label, long_label, color, label_id)
-                    existing_color = self.label_window.get_label_color(label_id)
-
-                    if existing_color != color:
-                        annotation['annotation_color'] = existing_color.getRgb()
+                    # Add label if it doesn't exist
+                    label = self.label_window.add_label_if_not_exists(short_label, 
+                                                                      long_label, 
+                                                                      color,
+                                                                      label_id)
+                    if label.color != color:
+                        annotation['annotation_color'] = label.color.getRgb()
                         updated_annotations = True
 
                     # Update progress

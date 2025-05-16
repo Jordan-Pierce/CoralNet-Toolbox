@@ -598,10 +598,43 @@ class LabelWindow(QWidget):
                 return True
         return False
 
-    def add_label_if_not_exists(self, short_label_code, long_label_code, color, label_id=None):
-        """Add a label only if it doesn't already exist."""
-        if not self.label_exists(short_label_code, long_label_code, label_id):
-            self.add_label(short_label_code, long_label_code, color, label_id)
+    def add_label_if_not_exists(self, short_label_code, long_label_code=None, color=None, label_id=None):
+        """Add a label if it doesn't exist and return it, or return existing matching label.
+        
+        Args:
+            short_label_code: Short code for the label
+            long_label_code: Long description for the label (defaults to short_label_code if None)
+            color: QColor object for the label (will be randomly generated if None)
+            label_id: Unique ID for the label (will be generated if None)
+            
+        Returns:
+            Label: Either an existing matching label or a newly created one
+        """
+        # If long_label_code is None, use the short_label_code
+        if long_label_code is None:
+            long_label_code = short_label_code
+        
+        # First check if a label with the ID exists
+        if label_id is not None:
+            for label in self.labels:
+                if label.id == label_id:
+                    return label
+        
+        # Check if a label with matching short and long codes exists
+        for label in self.labels:
+            if label.short_label_code == short_label_code and label.long_label_code == long_label_code:
+                return label
+        
+        # Create default values if not provided
+        if color is None:
+            color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        
+        if label_id is None:
+            label_id = str(uuid.uuid4())
+        
+        # Create a new label and return it
+        new_label = self.add_label(short_label_code, long_label_code, color, label_id)
+        return new_label
 
     def set_selected_label(self, label_id):
         """Set the active label based on the provided label ID."""

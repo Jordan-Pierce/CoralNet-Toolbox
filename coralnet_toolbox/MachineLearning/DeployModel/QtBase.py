@@ -333,22 +333,16 @@ class Base(QDialog):
         if reply == QMessageBox.Yes:
             self.create_generic_labels()
 
-
     def create_generic_labels(self):
         """
         Create generic labels for the given class names
         """
         for class_name in self.class_names:
-            r = random.randint(0, 255)
-            g = random.randint(0, 255)
-            b = random.randint(0, 255)
             # Create the label in the label window
-            self.label_window.add_label_if_not_exists(
+            label = self.label_window.add_label_if_not_exists(
                 class_name,
                 class_name,
-                QColor(r, g, b)
             )
-            label = self.label_window.get_label_by_short_code(class_name)
             self.class_mapping[class_name] = label.to_dict()
 
     def predict(self, inputs):

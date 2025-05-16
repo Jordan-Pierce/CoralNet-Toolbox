@@ -259,17 +259,13 @@ class ImportViscoreAnnotations(QDialog):
 
             for label_code in df['Label'].unique():
                 if pd.notna(label_code):
-                    short_code = long_code = str(label_code)
-                    if not self.label_window.get_label_by_codes(short_code, long_code):
-                        label_id = str(uuid.uuid4())
-                        color = QColor(random.randint(0, 255),
-                                       random.randint(0, 255),
-                                       random.randint(0, 255))
-
-                        self.label_window.add_label_if_not_exists(short_code,
-                                                                  long_code,
-                                                                  color,
-                                                                  label_id)
+                    # Get the label information
+                    short_code = str(label_code)
+                    # Create the label if it does not exist
+                    label = self.label_window.add_label_if_not_exists(short_code,
+                                                                      long_code=None,
+                                                                      color=None,
+                                                                      label_id=None)
                 progress_bar.update_progress()
 
             # Import annotations

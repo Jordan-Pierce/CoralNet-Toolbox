@@ -83,11 +83,14 @@ class ProgressBar(QDialog):
         elif value > self.max_value:
             pass  # Silently ignore values exceeding the maximum
         
-    def update_progress(self):
+    def update_progress(self, new_title=None):
         """
         Increment the progress by one step.
         Updates the UI and checks if progress is complete.
         """
+        if new_title is not None:
+            self.setWindowTitle(new_title)
+            
         if not self.canceled:
             self.value += 1
             self.progress_bar.setValue(self.value)

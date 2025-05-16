@@ -1,5 +1,4 @@
 import os
-import io
 import time
 import traceback
 import ujson as json
@@ -239,64 +238,177 @@ class DownloadDialog(QDialog):
             return False
         return True
 
+    # def initialize_driver(self):
+    #     """
+    #     Check if Chrome browser is installed.
+    #     """
+    #     success = False
+
+    #     options = Options()
+    #     # Silence, please.
+    #     options.add_argument("--log-level=3")
+
+    #     if self.headless:
+    #         # Add headless argument
+    #         options.add_argument('headless')
+    #         # Needed to avoid timeouts when running in headless mode
+    #         options.add_experimental_option('extensionLoadTimeout', 3600000)
+
+    #     # Modify where the downloads go
+    #     prefs = {
+    #         "download.default_directory": self.source_dir,
+    #         "download.prompt_for_download": False,
+    #         "download.directory_upgrade": True,
+    #         "safebrowsing.enabled": False,
+    #         "profile.managed_default_content_settings.images": 2,
+    #         "profile.managed_default_content_settings.stylesheet": 2,
+    #         "profile.managed_default_content_settings.fonts": 2,
+    #     }
+    #     options.add_experimental_option("prefs", prefs)
+
+    #     # Initialize progress bar
+    #     self.progress_bar.set_title("Checking for Google Chrome")
+    #     self.progress_bar.start_progress(100)
+
+    #     try:
+    #         # Check if ChromeDriver path is already in PATH
+    #         chrome_driver_path = "chromedriver.exe"  # Adjust the name if needed
+    #         if not any(
+    #             os.path.exists(os.path.join(directory, chrome_driver_path))
+    #             for directory in os.environ["PATH"].split(os.pathsep)
+    #         ):
+    #             # If it's not in PATH, attempt to install it
+    #             chrome_driver_path = ChromeDriverManager().install()
+
+    #             if not chrome_driver_path:
+    #                 raise Exception("ERROR: ChromeDriver installation failed.")
+    #             else:
+    #                 # Add the ChromeDriver directory to the PATH environment variable
+    #                 os.environ["PATH"] += os.pathsep + os.path.dirname(chrome_driver_path)
+
+    #         # Attempt to open a browser
+    #         self.driver = webdriver.Chrome(options=options)
+    #         success = True
+
+    #     except Exception as e:
+    #         print(f"WARNING: Google Chrome could not be used\n{str(e)}")
+
+    #     finally:
+    #         self.progress_bar.finish_progress()
+
+    #     return success
+                    
     def initialize_driver(self):
         """
-        Check if Chrome browser is installed.
+        Initialize Chrome WebDriver with proper version handling and cross-platform support.
+        Returns True if successful, False otherwise.
         """
         success = False
 
-        options = Options()
-        # Silence, please.
-        options.add_argument("--log-level=3")
-
-        if self.headless:
-            # Add headless argument
-            options.add_argument('headless')
-            # Needed to avoid timeouts when running in headless mode
-            options.add_experimental_option('extensionLoadTimeout', 3600000)
-
-        # Modify where the downloads go
-        prefs = {
-            "download.default_directory": self.source_dir,
-            "download.prompt_for_download": False,
-            "download.directory_upgrade": True,
-            "safebrowsing.enabled": False,
-            "profile.managed_default_content_settings.images": 2,
-            "profile.managed_default_content_settings.stylesheet": 2,
-            "profile.managed_default_content_settings.fonts": 2,
-        }
-        options.add_experimental_option("prefs", prefs)
-
         # Initialize progress bar
-        self.progress_bar.set_title("Checking for Google Chrome")
+        self.progress_bar.set_title("Initializing Chrome WebDriver")
         self.progress_bar.start_progress(100)
 
         try:
-            # Check if ChromeDriver path is already in PATH
-            chrome_driver_path = "chromedriver.exe"  # Adjust the name if needed
-            if not any(
-                os.path.exists(os.path.join(directory, chrome_driver_path))
-                for directory in os.environ["PATH"].split(os.pathsep)
-            ):
-                # If it's not in PATH, attempt to install it
-                chrome_driver_path = ChromeDriverManager().install()
-
-                if not chrome_driver_path:
-                    raise Exception("ERROR: ChromeDriver installation failed.")
-                else:
-                    # Add the ChromeDriver directory to the PATH environment variable
-                    os.environ["PATH"] += os.pathsep + os.path.dirname(chrome_driver_path)
-
-            # Attempt to open a browser
-            self.driver = webdriver.Chrome(options=options)
-            success = True
-
+            # Create Chrome options with updated configurations
+            options = webdriver.ChromeOptions()
+            
+            # Minimal logging but not complete silence for better diagnostics
+            options.add_argument("--log-level=2")
+            
+            # Set download preferences
+            prefs = {
+                "download.default_directory": self.source_dir,
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+                "safebrowsing.enabled": True,  # Keep security features enabled
+                "profile.managed_default_content_settings.images": 2,
+                "profile.managed_default_content_settings.stylesheet": 2,
+                "profile.managed_default_content_settings.fonts": 2,
+            }
+            # Add preferences to options
+            options.add_experimental_option("prefs", prefs)
+            
+            # Modern headless mode configuration
+            if self.headless:
+                # Use modern headless flag for Chrome v109+
+                options.add_argument("--headless=new")
+                # Prevent timeouts in headless mode
+                options.add_argument("--disable-gpu")
+                options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
+                
+            # Use Selenium 4.x Service approach for better driver management
+            try:
+                # Try Chrome for driver service with Selenium 4's improved manager
+                from selenium.webdriver.chrome.service import Service as ChromeService
+                
+                # First try with the new Chrome Driver method (post Chrome v115)
+                try:
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    
+                    # Try modern Chrome manager approach first (for Chrome v115+)
+                    try:
+                        from selenium.webdriver.chrome.service import Service as ChromeService
+                        from webdriver_manager.core.os_manager import ChromeType
+                        from webdriver_manager.chrome import ChromeDriverManager
+                        
+                        service = ChromeService(
+                            ChromeDriverManager(chrome_type=ChromeType.GOOGLE).install()
+                        )
+                        self.driver = webdriver.Chrome(service=service, options=options)
+                        success = True
+                        
+                    # Fall back to traditional ChromeDriverManager for older versions
+                    except (ImportError, Exception) as e:
+                        self.progress_bar.update_progress(50, f"Trying alternative driver setup: {e}")
+                        service = ChromeService(ChromeDriverManager().install())
+                        self.driver = webdriver.Chrome(service=service, options=options)
+                        success = True
+                        
+                # Last resort: try finding local chromedriver in PATH
+                except Exception as e:
+                    self.progress_bar.update_progress(75, f"Trying default driver: {e}")
+                    self.driver = webdriver.Chrome(options=options)
+                    success = True
+                    
+            # Handle older Selenium versions as fallback
+            except ImportError:
+                self.progress_bar.update_progress(85, "Using legacy driver setup")
+                # Fall back to the old-style initialization
+                try:
+                    # Cross-platform driver name handling
+                    import platform
+                    chrome_driver_name = "chromedriver.exe" if platform.system() == "Windows" else "chromedriver"
+                    
+                    # Try to find the driver in PATH first
+                    from shutil import which
+                    chrome_driver_path = which(chrome_driver_name)
+                    
+                    # If not found in PATH, use ChromeDriverManager
+                    if not chrome_driver_path:
+                        chrome_driver_path = ChromeDriverManager().install()
+                    
+                    self.driver = webdriver.Chrome(executable_path=chrome_driver_path, options=options)
+                    success = True
+                except Exception as local_e:
+                    print(f"WARNING: Legacy driver setup failed: {str(local_e)}")
+                    
         except Exception as e:
-            print(f"WARNING: Google Chrome could not be used\n{str(e)}")
-
+            error_message = f"ERROR: Could not initialize Chrome WebDriver: {str(e)}"
+            print(error_message)
+            traceback.print_exc()
+            
         finally:
             self.progress_bar.finish_progress()
-
+            
+        if not success:
+            print("\nTROUBLESHOOTING TIPS:")
+            print("1. Ensure Google Chrome is installed and up-to-date")
+            print("2. Check your internet connection (required for driver download)")
+            print("3. Try running without headless mode for debugging")
+            print("4. Check for corporate proxies or security software blocking WebDriver")
+            
         return success
 
     def check_permissions(self):
