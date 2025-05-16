@@ -8,6 +8,7 @@ This guide provides instructions on how to use the application, including key fu
 - **PatchAnnotation**: Represents a patch annotation.
 - **RectangleAnnotation**: Represents a rectangular annotation.
 - **PolygonAnnotation**: Represents a polygonal annotation.
+- **MultiPolygonAnnotation**: Represents multiple, non-overlapping polygonal annotations.
 
 ## Computer Vision Tasks
 - **Classification**: Assign a label to an image (Patch).
@@ -63,13 +64,13 @@ The main window consists of several components:
     - **Sampling Method**: Choose between Random, Stratified Random, or Uniform distribution.
     - **Number of Annotations**: Specify how many annotations to generate.
     - **Annotation Size**: Set the size of the generated patch annotations.
-    - **Label Selection**: Choose which label to assign to generated annotations.
+    - **Label As**: Choose which label to assign to generated annotations.
+    - **Apply Options**: Apply sampling to current image, filtered images, previous/next images, or all images.
     - **Exclude Regions**: Option to prevent sampling in areas with existing annotations.
     - **Margins**: Define image boundary constraints for sampling:
       - Set margins in pixels or percentage
       - Configure different values for top, right, bottom, and left edges
       - Annotations will only be placed within these margins
-    - **Apply Options**: Apply sampling to current image, filtered images, previous/next images, or all images.
 
 - **Tile**:
   - **Tile Dataset**: Tile existing Classification, Detection or Segmention datasets using `yolo-tiling`.
@@ -112,7 +113,7 @@ The main window consists of several components:
 
 - **AutoDistill**:
   - **Deploy Model**: Deploy a foundational model
-    - Models Available: `Grounding DINO`, `OWLViT`, `OmDetTurbo`
+    - Models Available: `Grounding DINO`, `OWLViT`
   - **Batch Inference**: Perform batch inferences.
 
 ## Tool Bar Tools
@@ -124,15 +125,17 @@ The main window consists of several components:
   - **Ctrl + Shift**: Show resize handles for the selected annotation.
   - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
   - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
-  - **Ctrl + C**: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.
+  - **Ctrl + X**: Enter cutting mode; left-click to start, draw line, left-click to end.
+  - **Backspace/Ctrl + X**: Cancel cutting mode.
+    - MultiPolygonAnnotations: Break apart each PolygonAnnotation.    
+  - **Ctrl + C**: Combine multiple selected annotations (if same type and label).
     - **Combining Rules**: 
-      - All selected annotations must have the same label
-      - All selected annotations must be verified (not machine predictions)
-      - Patch annotations can be combined with other patches or polygons
-      - Rectangle annotations can only be combined with other rectangles
-      - Polygon annotations can be combined with other polygons
-    - **Cutting Mode**: Left-click to start drawing a cut line, click again to complete the cut.
-  - **Backspace/Ctrl + C**: Cancel cutting mode.
+      - All selected annotations must have the same label.
+      - All selected annotations must be verified (not machine predictions).
+      - RectangleAnnotations can only be combined with other rectangles.
+      - PatchAnnotations can be combined with other patches or polygons to create polygons.
+      - PolygonAnnotations can be combined with other overlapping polygons to create a polygon.
+      - MultiPolygonAnnotations can be made with multiple non-overlapping polygons.
 
 - **Patch Tool**: After selecting the tool
   - **Left-Click**: Add a patch annotation at the clicked position.
@@ -246,7 +249,6 @@ The main window consists of several components:
 
 ### Secret Hotkeys
 - **Escape**: Exit the program.
-
 - **Alt + Up/Down**: Cycle through images.
 - **Ctrl + W/A/S/D**: Cycle through labels.
 - **Ctrl + Left/Right**: Cycle through annotations.
