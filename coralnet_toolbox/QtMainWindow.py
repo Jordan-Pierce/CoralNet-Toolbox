@@ -1889,18 +1889,24 @@ class MainWindow(QMainWindow):
             needs_update = version.parse(latest_version) > version.parse(self.version)
             
             if needs_update:
-                pip_command = "pip install -U coralnet-toolbox=={}".format(latest_version)
+                pip_command = "\npip install -U coralnet-toolbox=={}".format(latest_version)
                 # Create a QMessageBox instance
                 msg_box = QMessageBox(self)
                 msg_box.setIcon(QMessageBox.Information)
                 msg_box.setWindowTitle("Hey, there's an update available!")
-                # Set the main message text
-                msg_box.setText(f"A new version ({latest_version}) is available.\n\n"
-                                f"To update, run the following command in your terminal:")
-                # Set the command as informative text
-                msg_box.setInformativeText(pip_command)
-                # Enable text selection flags for the message box; this often makes the informative text selectable
-                msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+                # Set the main message text with hyperlink to usage page
+                usage_link = '<a href="https://jordan-pierce.github.io/CoralNet-Toolbox/usage">usage page</a>'
+                msg_box.setText(
+                    f"A new version ({latest_version}) is available.<br><br>"
+                    f"To update, run the following command in your terminal:<br>"
+                    f"<b>{pip_command}</b><br><br>"
+                    f'Be sure to check out the {usage_link} for any changes!'
+                )
+                msg_box.setTextFormat(Qt.RichText)
+                msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | 
+                                                Qt.TextSelectableByKeyboard | 
+                                                Qt.LinksAccessibleByMouse)
+                
                 msg_box.setStandardButtons(QMessageBox.Ok)
                 # Execute the dialog
                 msg_box.exec_()
