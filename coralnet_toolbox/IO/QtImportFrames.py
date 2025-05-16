@@ -3,6 +3,8 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
+from concurrent.futures import ThreadPoolExecutor
+import gc
 
 import cv2
 
@@ -31,7 +33,7 @@ class ImportFrames(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Import Frames from Video")
-        self.resize(800, 600)
+        self.resize(1000, 600)
 
         self.video_file = ""
         self.output_dir = ""
@@ -281,7 +283,6 @@ class ImportFrames(QDialog):
         self.frame_number_spinbox = QSpinBox()
         self.frame_number_spinbox.setAlignment(Qt.AlignCenter)
         self.frame_number_spinbox.setFixedWidth(80)
-        self.frame_number_spinbox.valueChanged.connect(self.frame_number_changed)
 
         self.frame_number_reload = QPushButton()
         self.frame_number_reload.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
@@ -334,48 +335,52 @@ class ImportFrames(QDialog):
         self.frame_slider.setValue(frame_num)
 
     def update_preview(self, frame_idx):
-        """Update the preview with the specified frame"""
+        """Update the preview with the specified frame, using caching."""
         if self.cap is None:
             return
 
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = self.cap.read()
+        # Cache frame indices to avoid repeated seeking
+        if not hasattr(self, '_last_preview_idx') or self._last_preview_idx != frame_idx:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = self.cap.read()
+            self._last_preview_idx = frame_idx
 
-        if ret:
-            # Update frame number spinbox
-            self.frame_number_spinbox.setValue(frame_idx)
-
-            # Convert frame to RGB
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-            # Scale frame to fit preview area while maintaining aspect ratio
-            preview_size = self.preview_label.size()
-            h, w = rgb_frame.shape[:2]
-            aspect = w / h
-
-            if preview_size.width() / preview_size.height() > aspect:
-                new_h = preview_size.height()
-                new_w = int(new_h * aspect)
+            if ret:
+                self._cached_frame = frame
             else:
-                new_w = preview_size.width()
-                new_h = int(new_w / aspect)
+                print(f"Failed to read frame {frame_idx}")
+                return
+        else:
+            # Use cached frame
+            frame = self._cached_frame
 
-            scaled_frame = cv2.resize(rgb_frame, (new_w, new_h))
+        # Process frame in the background
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Convert to QImage and display
-            h, w = scaled_frame.shape[:2]
-            q_img = QImage(scaled_frame.data, w, h, scaled_frame.strides[0], QImage.Format_RGB888)
-            self.preview_label.setPixmap(QPixmap.fromImage(q_img))
+        # Update UI elements
+        self.frame_number_spinbox.setValue(frame_idx)
 
-            # Update counter and timestamp
-            total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = self.cap.get(cv2.CAP_PROP_FPS)
-            time_in_seconds = frame_idx / fps
-            minutes = int(time_in_seconds // 60)
-            seconds = int(time_in_seconds % 60)
+        # Use smaller size for processing to improve performance
+        target_size = (640, 480)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        scaled_frame = cv2.resize(rgb_frame, target_size)
 
-            self.frame_counter.setText(f"Frame: {frame_idx} / {total_frames}")
-            self.frame_timestamp.setText(f"Time: {minutes:02d}:{seconds:02d}")
+        # Create QImage and update UI
+        h, w = scaled_frame.shape[:2]
+        q_img = QImage(scaled_frame.data, w, h, scaled_frame.strides[0], QImage.Format_RGB888)
+        self.preview_label.setPixmap(QPixmap.fromImage(q_img))
+
+        # Update frame information
+        total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        time_in_seconds = frame_idx / fps
+        minutes = int(time_in_seconds // 60)
+        seconds = int(time_in_seconds % 60)
+
+        self.frame_counter.setText(f"Frame: {frame_idx} / {total_frames}")
+        self.frame_timestamp.setText(f"Time: {minutes:02d}:{seconds:02d}")
+
+        QApplication.restoreOverrideCursor()
 
     def slider_changed(self, value):
         """Handle frame slider value changes"""
@@ -429,8 +434,9 @@ class ImportFrames(QDialog):
                 # Show first frame
                 self.update_preview(0)
             else:
-                QMessageBox.warning(self, "Invalid Video File",
-                                  "Please select a valid video file.")
+                QMessageBox.warning(self,
+                                    "Invalid Video File",
+                                    "Please select a valid video file.")
 
     def browse_output_dir(self):
         options = QFileDialog.Options()
@@ -644,7 +650,7 @@ class ImportFrames(QDialog):
         return sorted(frame_indices)
 
     def save_frames(self, cap, frame_indices):
-        """Save the frames to the output directory."""
+        """Save the frames to the output directory using parallel processing."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.image_window, title="Extracting Frames")
@@ -655,21 +661,18 @@ class ImportFrames(QDialog):
         self.frame_paths = []
 
         try:
-            for idx, frame_index in enumerate(frame_indices):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-                ret, frame = cap.read()
+            # Use ThreadPoolExecutor for parallel frame extraction
+            with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
+                futures = []
+                # Submit tasks to the executor
+                for frame_index in frame_indices:
+                    futures.append(executor.submit(self.extract_single_frame, cap, frame_index))
 
-                if not ret:
-                    print(f"Failed to read frame {frame_index}")
-                    continue
-
-                frame_name = f"{self.output_dir}/{self.frame_prefix}_{frame_index}.{self.ext}"
-                if not cv2.imwrite(frame_name, frame):
-                    print(f"Failed to write frame to {frame_name}")
-                    continue
-
-                self.frame_paths.append(frame_name)
-                progress_bar.update_progress()
+                for future in futures:
+                    frame_path = future.result()
+                    if frame_path:
+                        self.frame_paths.append(frame_path)
+                        progress_bar.update_progress()
 
             QMessageBox.information(self,
                                     "Success",
@@ -686,6 +689,25 @@ class ImportFrames(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
 
+    def extract_single_frame(self, cap, frame_index):
+        """Extract a single frame and save it to the output directory."""
+        # Thread safety with a local copy of the video capture
+        local_cap = cv2.VideoCapture(self.video_file)
+        local_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        ret, frame = local_cap.read()
+        local_cap.release()
+
+        if not ret:
+            print(f"Failed to read frame {frame_index}")
+            return None
+
+        frame_name = f"{self.output_dir}/{self.frame_prefix}_{frame_index}.{self.ext}"
+        if not cv2.imwrite(frame_name, frame):
+            print(f"Failed to write frame to {frame_name}")
+            return None
+
+        return frame_name
+
     def import_images(self):
         """Import the extracted frames into the application."""
         if not self.frame_paths:
@@ -695,7 +717,7 @@ class ImportFrames(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         try:
-            progress_bar = ProgressBar(self.annotation_window, title="Importing Frames")
+            progress_bar = ProgressBar(self.main_window.annotation_window, title="Importing Frames")
             progress_bar.show()
             progress_bar.start_progress(len(self.frame_paths))
             
@@ -714,7 +736,7 @@ class ImportFrames(QDialog):
                 pass
                 
         except Exception as e:
-            QMessageBox.warning(self.annotation_window,
+            QMessageBox.warning(self.main_window.annotation_window,
                                 "Error Importing Frames",
                                 f"An error occurred while importing frames: {str(e)}")
                                 
