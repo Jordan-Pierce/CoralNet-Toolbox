@@ -55,7 +55,9 @@ class MultiPolygonAnnotation(Annotation):
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
         # Store the PolygonAnnotation objects
+        
         self.polygons = polygons
+        
         self.graphics_items = []
         self.set_centroid()
         self.set_cropped_bbox()
@@ -200,14 +202,17 @@ class MultiPolygonAnnotation(Annotation):
             self.center_graphics_item = None
             self.bounding_box_graphics_item = None
             self.polygon_graphics_item = None
+            
         # Create a new group to hold all polygon items
         self.graphics_item_group = QGraphicsItemGroup()
+        
         # Add each polygon as a QGraphicsPolygonItem to the group
         for poly in self.polygons:
             item = QGraphicsPolygonItem(QPolygonF(poly.points))
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
             pen = QPen(color, 4, Qt.SolidLine)
+            
             # If selected, use an inverse color and dotted line
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
@@ -216,6 +221,7 @@ class MultiPolygonAnnotation(Annotation):
             item.setBrush(QBrush(color))
             item.setData(0, self.id)  # <-- Enable selection by id
             self.graphics_item_group.addToGroup(item)
+            
         # Add centroid and bounding box helper graphics to the group
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         self.create_bounding_box_graphics_item(
@@ -246,10 +252,12 @@ class MultiPolygonAnnotation(Annotation):
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
             pen = QPen(color, 4, Qt.SolidLine)
+            
             # If selected, use an inverse color and dotted line
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
                 pen = QPen(inverse_color, 6, Qt.DotLine)
+                
             item.setPen(pen)
             item.setBrush(QBrush(color))
             item.setData(0, self.id)  # <-- Enable selection by id

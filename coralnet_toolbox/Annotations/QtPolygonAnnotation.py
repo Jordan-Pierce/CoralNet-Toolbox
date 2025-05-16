@@ -7,6 +7,8 @@ import math
 import numpy as np
 
 from rasterio.windows import Window
+
+from shapely.ops import split
 from shapely.geometry import Point, Polygon, LineString
 
 from PyQt5.QtCore import Qt, QPointF
@@ -676,7 +678,6 @@ class PolygonAnnotation(Annotation):
         # Cut the polygon with the extended line
         try:
             # Split the polygon along the cutting line
-            from shapely.ops import split
             split_polygons = split(polygon, extended_line)
             
             # Convert the split geometries back to polygons

@@ -199,12 +199,18 @@ class Annotation(QObject):
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
     
         color = QColor(self.label.color)
-        if self.is_selected:
-            color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
         color.setAlpha(self.transparency)
-    
+        
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
+        
+        # Set pen with inverse color when selected
+        if self.is_selected:
+            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+            self.center_graphics_item.setPen(QPen(inverse_color, 2, Qt.DotLine))
+        else:
+            self.center_graphics_item.setPen(QPen(color, 1, Qt.SolidLine))
+            
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
         else:
@@ -251,13 +257,19 @@ class Annotation(QObject):
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
     
         color = QColor(self.label.color)
-        if self.is_selected:
-            color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
         color.setAlpha(self.transparency)
     
         polygon = QPolygonF(points)
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
+        
+        # Only invert pen color when selected
+        if self.is_selected:
+            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+            self.polygon_graphics_item.setPen(QPen(inverse_color, 3, Qt.DotLine))
+        else:
+            self.polygon_graphics_item.setPen(QPen(color, 2, Qt.SolidLine))
+            
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.polygon_graphics_item)
         else:
@@ -311,6 +323,7 @@ class Annotation(QObject):
             scene = None
             if self.graphics_item_group is None:
                 self.graphics_item_group = QGraphicsItemGroup()
+                
         # Get the polygon representation
         polygon = self.get_polygon()
         self.graphics_item = QGraphicsPolygonItem(polygon)
@@ -325,6 +338,7 @@ class Annotation(QObject):
         self.graphics_item.setBrush(QBrush(color))
         self.graphics_item.setData(0, self.id)
         self.graphics_item_group.addToGroup(self.graphics_item)
+        
         # Update separate graphics items
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         self.create_bounding_box_graphics_item(
@@ -333,6 +347,7 @@ class Annotation(QObject):
             scene, add_to_group=True)
         points = [polygon.at(i) for i in range(polygon.count())]
         self.create_polygon_graphics_item(points, scene, add_to_group=True)
+        
         # Add the group back to the scene
         if scene:
             scene.addItem(self.graphics_item_group)
@@ -341,12 +356,17 @@ class Annotation(QObject):
         """Update the position and appearance of the center graphics item."""
         if self.center_graphics_item:
             color = QColor(self.label.color)
-            if self.is_selected:
-                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
             color.setAlpha(self.transparency)
-
+    
             self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
             self.center_graphics_item.setBrush(color)
+            
+            # Only invert pen color when selected
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                self.center_graphics_item.setPen(QPen(inverse_color, 2, Qt.DotLine))
+            else:
+                self.center_graphics_item.setPen(QPen(color, 1, Qt.SolidLine))
 
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""
@@ -366,13 +386,18 @@ class Annotation(QObject):
         """Update the shape and appearance of the polygon graphics item."""
         if self.polygon_graphics_item:
             color = QColor(self.label.color)
-            if self.is_selected:
-                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
             color.setAlpha(self.transparency)
-
+    
             polygon = QPolygonF(points)
             self.polygon_graphics_item.setPolygon(polygon)
             self.polygon_graphics_item.setBrush(color)
+            
+            # Only invert pen color when selected
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                self.polygon_graphics_item.setPen(QPen(inverse_color, 3, Qt.DotLine))
+            else:
+                self.polygon_graphics_item.setPen(QPen(color, 2, Qt.SolidLine))
 
     def update_transparency(self, transparency: int):
         """Update the transparency value of the annotation's graphical representation."""
