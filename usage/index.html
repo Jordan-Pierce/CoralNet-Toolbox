@@ -717,6 +717,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>PatchAnnotation</strong>: Represents a patch annotation.</li>
 <li><strong>RectangleAnnotation</strong>: Represents a rectangular annotation.</li>
 <li><strong>PolygonAnnotation</strong>: Represents a polygonal annotation.</li>
+<li><strong>MultiPolygonAnnotation</strong>: Represents multiple, non-overlapping polygonal annotations.</li>
 </ul>
 <h2 id="computer-vision-tasks">Computer Vision Tasks<a class="headerlink" href="#computer-vision-tasks" title="Permanent link">&para;</a></h2>
 <ul>
@@ -785,13 +786,13 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Sampling Method</strong>: Choose between Random, Stratified Random, or Uniform distribution.</li>
 <li><strong>Number of Annotations</strong>: Specify how many annotations to generate.</li>
 <li><strong>Annotation Size</strong>: Set the size of the generated patch annotations.</li>
-<li><strong>Label Selection</strong>: Choose which label to assign to generated annotations.</li>
+<li><strong>Label As</strong>: Choose which label to assign to generated annotations.</li>
+<li><strong>Apply Options</strong>: Apply sampling to current image, filtered images, previous/next images, or all images.</li>
 <li><strong>Exclude Regions</strong>: Option to prevent sampling in areas with existing annotations.</li>
 <li><strong>Margins</strong>: Define image boundary constraints for sampling:</li>
 <li>Set margins in pixels or percentage</li>
 <li>Configure different values for top, right, bottom, and left edges</li>
 <li>Annotations will only be placed within these margins</li>
-<li><strong>Apply Options</strong>: Apply sampling to current image, filtered images, previous/next images, or all images.</li>
 </ul>
 </li>
 <li>
@@ -856,7 +857,7 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>AutoDistill</strong>:</p>
 </li>
 <li><strong>Deploy Model</strong>: Deploy a foundational model<ul>
-<li>Models Available: <code>Grounding DINO</code>, <code>OWLViT</code>, <code>OmDetTurbo</code></li>
+<li>Models Available: <code>Grounding DINO</code>, <code>OWLViT</code></li>
 </ul>
 </li>
 <li><strong>Batch Inference</strong>: Perform batch inferences.</li>
@@ -871,18 +872,22 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Ctrl + Shift</strong>: Show resize handles for the selected annotation.</li>
 <li><strong>Ctrl + Mouse Wheel</strong>: Change size of the selected annotation.</li>
 <li><strong>Ctrl + Space</strong>: Confirm prediction for selected annotation with top machine confidence.</li>
-<li><strong>Ctrl + C</strong>: Combine multiple selected annotations (if same type and label) or enter cutting mode for single annotation.<ul>
-<li><strong>Combining Rules</strong>: </li>
-<li>All selected annotations must have the same label</li>
-<li>All selected annotations must be verified (not machine predictions)</li>
-<li>Patch annotations can be combined with other patches or polygons</li>
-<li>Rectangle annotations can only be combined with other rectangles</li>
-<li>Polygon annotations can be combined with other polygons</li>
-<li><strong>Cutting Mode</strong>: Left-click to start drawing a cut line, click again to complete the cut.</li>
+<li><strong>Ctrl + X</strong>: Enter cutting mode; left-click to start, draw line, left-click to end.</li>
+<li><strong>Backspace/Ctrl + X</strong>: Cancel cutting mode.<ul>
+<li>MultiPolygonAnnotations: Break apart each PolygonAnnotation.    </li>
 </ul>
 </li>
 <li>
-<p><strong>Backspace/Ctrl + C</strong>: Cancel cutting mode.</p>
+<p><strong>Ctrl + C</strong>: Combine multiple selected annotations (if same type and label).</p>
+<ul>
+<li><strong>Combining Rules</strong>: </li>
+<li>All selected annotations must have the same label.</li>
+<li>All selected annotations must be verified (not machine predictions).</li>
+<li>RectangleAnnotations can only be combined with other rectangles.</li>
+<li>PatchAnnotations can be combined with other patches or polygons to create polygons.</li>
+<li>PolygonAnnotations can be combined with other overlapping polygons to create a polygon.</li>
+<li>MultiPolygonAnnotations can be made with multiple non-overlapping polygons.</li>
+</ul>
 </li>
 <li>
 <p><strong>Patch Tool</strong>: After selecting the tool</p>
@@ -1020,19 +1025,13 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h3 id="secret-hotkeys">Secret Hotkeys<a class="headerlink" href="#secret-hotkeys" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Escape</strong>: Exit the program.</li>
 <li><strong>Alt + Up/Down</strong>: Cycle through images.</li>
 <li><strong>Ctrl + W/A/S/D</strong>: Cycle through labels.</li>
-<li>
-<p><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</p>
-</li>
-<li>
-<p><strong>Ctrl + Shift + &lt;</strong>: Select all annotations.</p>
-</li>
+<li><strong>Ctrl + Left/Right</strong>: Cycle through annotations.</li>
+<li><strong>Ctrl + Shift + &lt;</strong>: Select all annotations.</li>
 <li>
 <p><strong>Ctrl + Shift + &gt;</strong>: Unselect all annotations.</p>
-</li>
-<li>
-<p><strong>Escape</strong>: Exit the program.</p>
 </li>
 <li>
 <p><strong>Machine Learning, SAM, and AutoDistill</strong>: After a model is loaded</p>
@@ -1065,7 +1064,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 15, 2025 15:46:10"><span class="timeago" datetime="2025-05-15T15:46:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 15, 2025 15:46:10">2025-05-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 16, 2025 14:53:58"><span class="timeago" datetime="2025-05-16T14:53:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 16, 2025 14:53:58">2025-05-16</span>
   </span>
 
     
