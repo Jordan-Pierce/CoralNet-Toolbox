@@ -62,16 +62,13 @@ class ImportCoralNetLabels:
                 for i, r in data.iterrows():
                     try:
                         # CoralNet is inconsistent with label names in Labeset vs Annotations; drop Name
-                        short_label_code = long_label_code = r['Short Code'].strip()
-                        
-                        # Generate a random UUID for the label ID
-                        label_id = str(uuid.uuid4())
-
-                        # Generate a random color for the label, using rand
-                        color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+                        short_label_code = r['Short Code'].strip()
                         
                         # Create a QtColor object from the color string
-                        self.label_window.add_label_if_not_exists(short_label_code, long_label_code, color, label_id)
+                        label = self.label_window.add_label_if_not_exists(short_label_code,
+                                                                          long_label_code=None,
+                                                                          color=None,
+                                                                          label_id=None)
 
                     except Exception as e:
                         print(f"Warning: Could not import label {r}: {str(e)}")

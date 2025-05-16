@@ -179,16 +179,11 @@ class ImportTagLabAnnotations:
                         # Convert contour string to points
                         points = self.parse_contour(annotation['contour'])
 
-                        existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
-
-                        if existing_label:
-                            label_id = existing_label.id
-                        else:
-                            label_id = str(uuid.uuid4())
-                            self.label_window.add_label_if_not_exists(short_label_code,
-                                                                      long_label_code,
-                                                                      color,
-                                                                      label_id)
+                        # Create the label if it doesn't exist
+                        label = self.label_window.add_label_if_not_exists(short_label_code,
+                                                                          long_label_code,
+                                                                          color,
+                                                                          label_id)
                         # Create the polygon annotation
                         polygon_annotation = PolygonAnnotation(
                             points=points,
@@ -225,16 +220,11 @@ class ImportTagLabAnnotations:
                         note = annotation['Note']
                         data = annotation['Data']
 
-                        existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
-
-                        if existing_label:
-                            label_id = existing_label.id
-                        else:
-                            label_id = str(uuid.uuid4())
-                            self.label_window.add_label_if_not_exists(short_label_code,
-                                                                      long_label_code,
-                                                                      color,
-                                                                      label_id)
+                        # Create the label if it doesn't exist
+                        label = self.label_window.add_label_if_not_exists(short_label_code,
+                                                                          long_label_code,
+                                                                          color,
+                                                                          label_id)
                         # Create the patch annotation
                         patch_annotation = PatchAnnotation(
                             center_xy=QPointF(x, y),

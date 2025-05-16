@@ -62,13 +62,14 @@ class ImportTagLabLabels:
                     try:
                         short_label_code = label_info['name'].strip()
                         long_label_code = label_info['name'].strip()
-                        color = label_info['fill']
-
-                        # Create a QtColor object from the color string
-                        color = QColor(color[0], color[1], color[2])
+                        color = QColor(label_info['fill'][0], 
+                                       label_info['fill'][1], 
+                                       label_info['fill'][2])
 
                         # Add label if it does not exist
-                        self.label_window.add_label_if_not_exists(short_label_code, long_label_code, color)
+                        label = self.label_window.add_label_if_not_exists(short_label_code, 
+                                                                          long_label_code, 
+                                                                          color)
 
                     except Exception as e:
                         print(f"Warning: Could not import label {label_info['name']}: {str(e)}")

@@ -256,64 +256,44 @@ class Base(QDialog):
                                                              width * image_width,
                                                              height * image_height)
 
+                        # Calculate the top-left and bottom-right corners
                         top_left = QPointF(x_center - width / 2, y_center - height / 2)
                         bottom_right = QPointF(x_center + width / 2, y_center + height / 2)
 
+                        # Get the label ID and color
                         class_name = class_names[int(class_id)]
-                        short_label_code = long_label_code = class_name
-                        existing_label = self.main_window.label_window.get_label_by_short_code(short_label_code)
-
-                        if existing_label:
-                            color = existing_label.color
-                            label_id = existing_label.id
-                        else:
-                            label_id = str(uuid.uuid4())
-                            color = QColor(random.randint(0, 255),
-                                           random.randint(0, 255),
-                                           random.randint(0, 255))
-
-                            self.main_window.label_window.add_label_if_not_exists(short_label_code,
-                                                                                  long_label_code,
-                                                                                  color,
-                                                                                  label_id)
+                        short_label_code = class_name
+                        
+                        # Create a label if it doesn't exist
+                        label = self.main_window.label_window.add_label_if_not_exists(short_label_code)
 
                         annotation = RectangleAnnotation(top_left,
                                                          bottom_right,
                                                          short_label_code,
-                                                         long_label_code,
-                                                         color,
+                                                         label.long_label_code,
+                                                         label.color,
                                                          image_path,
-                                                         label_id,
+                                                         label.id,
                                                          self.main_window.get_transparency_value())
 
                     else:
+                        # For PolygonAnnotation, read the points and create the annotation
                         class_id, *points = map(float, line.split())
                         points = [QPointF(x * image_width, y * image_height) for x, y in zip(points[::2], points[1::2])]
 
+                        # Get the label ID and color
                         class_name = class_names[int(class_id)]
-                        short_label_code = long_label_code = class_name
-                        existing_label = self.main_window.label_window.get_label_by_short_code(short_label_code)
-
-                        if existing_label:
-                            color = existing_label.color
-                            label_id = existing_label.id
-                        else:
-                            label_id = str(uuid.uuid4())
-                            color = QColor(random.randint(0, 255),
-                                           random.randint(0, 255),
-                                           random.randint(0, 255))
-
-                            self.main_window.label_window.add_label_if_not_exists(short_label_code,
-                                                                                  long_label_code,
-                                                                                  color,
-                                                                                  label_id)
+                        short_label_code = class_name
+                        
+                        # Create a label if it doesn't exist
+                        label = self.main_window.label_window.add_label_if_not_exists(short_label_code)
 
                         annotation = PolygonAnnotation(points,
                                                        short_label_code,
-                                                       long_label_code,
-                                                       color,
+                                                       label.long_label_code,
+                                                       label.color,
                                                        image_path,
-                                                       label_id,
+                                                       label.id,
                                                        self.main_window.get_transparency_value())
 
                     # Add the annotation to the list for export

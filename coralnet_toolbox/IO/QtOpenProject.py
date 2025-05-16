@@ -210,10 +210,10 @@ class OpenProject(QDialog):
                 label = Label.from_dict(label)
                 
                 # Create a new label if it doesn't already exist
-                self.label_window.add_label_if_not_exists(label.short_label_code,
-                                                          label.long_label_code,
-                                                          label.color,
-                                                          label.id)
+                label = self.label_window.add_label_if_not_exists(label.short_label_code,
+                                                                  label.long_label_code,
+                                                                  label.color,
+                                                                  label.id)
                 # Update the progress bar
                 progress_bar.update_progress()
                 
