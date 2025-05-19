@@ -165,6 +165,12 @@ class TrainModelWorker(QThread):
         Evaluate the model after training.
         """
         try:
+            # Check that there is a test folder
+            test_folder = f"{os.path.dirname(self.params['data'])}/test"
+            if not os.path.exists(test_folder):
+                print("Warning: No test folder found. Skipping evaluation.")
+                return
+            
             # Create an instance of EvaluateModelWorker and start it
             eval_params = {
                 'data': self.params['data'],
