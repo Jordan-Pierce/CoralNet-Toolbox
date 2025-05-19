@@ -330,9 +330,15 @@ class ImportFrames(QDialog):
         if self.cap is None:
             return
 
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
         frame_num = self.frame_number_spinbox.value()
         self.current_frame_idx = frame_num
         self.frame_slider.setValue(frame_num)
+        
+        # Make cursor normal
+        QApplication.restoreOverrideCursor()
 
     def update_preview(self, frame_idx):
         """Update the preview with the specified frame, using caching."""
@@ -360,10 +366,27 @@ class ImportFrames(QDialog):
         # Update UI elements
         self.frame_number_spinbox.setValue(frame_idx)
 
-        # Use smaller size for processing to improve performance
-        target_size = (640, 480)
+        # Get original frame dimensions
+        original_height, original_width = frame.shape[:2]
+        aspect_ratio = original_width / original_height
+
+        # Get available space in preview label
+        preview_width = self.preview_label.width()
+        preview_height = self.preview_label.height()
+        
+        # Calculate target size maintaining aspect ratio
+        if preview_width / preview_height > aspect_ratio:
+            # Preview area is wider than the video
+            target_height = preview_height
+            target_width = int(target_height * aspect_ratio)
+        else:
+            # Preview area is taller than the video
+            target_width = preview_width
+            target_height = int(target_width / aspect_ratio)
+            
+        # Resize respecting aspect ratio
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        scaled_frame = cv2.resize(rgb_frame, target_size)
+        scaled_frame = cv2.resize(rgb_frame, (target_width, target_height))
 
         # Create QImage and update UI
         h, w = scaled_frame.shape[:2]
@@ -409,6 +432,10 @@ class ImportFrames(QDialog):
 
         if file_name:
             if os.path.exists(file_name):
+                # Make cursor busy
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                
+                # Set the video file path in the edit box
                 self.video_file_edit.setText(file_name)
 
                 # Close previous capture if exists
@@ -433,6 +460,10 @@ class ImportFrames(QDialog):
 
                 # Show first frame
                 self.update_preview(0)
+                
+                # Make cursor normal
+                QApplication.restoreOverrideCursor()
+                
             else:
                 QMessageBox.warning(self,
                                     "Invalid Video File",
