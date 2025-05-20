@@ -1,22 +1,16 @@
 import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import os
 import math
 import gc
 import time
 from concurrent.futures import ThreadPoolExecutor
-
 import cv2
-
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QTimer, QSize
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit,
-                             QDialog, QApplication, QMessageBox, QCheckBox, QGroupBox,
+                             QDialog, QApplication, QMessageBox, QGroupBox,
                              QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider,
                              QStyle, QFrame, QTabWidget, QWidget)
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
 
@@ -65,7 +59,7 @@ class VideoPlayerThread(QThread):
                     self.running = False
                     
                 # Control playback speed
-                time.sleep(1/self.fps)
+                time.sleep(1 / self.fps)
             else:
                 # If paused, just sleep a bit to avoid CPU overuse
                 time.sleep(0.1)
@@ -102,6 +96,7 @@ class VideoPlayerThread(QThread):
 # Frame Extraction Worker
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class FrameExtractorThread(QThread):
     """Thread for extracting frames without blocking the UI"""
     progress_updated = pyqtSignal(int)
@@ -116,70 +111,135 @@ class FrameExtractorThread(QThread):
         self.ext = ext
         self.frame_indices = frame_indices
         self.frame_paths = []
-        
+    
     def run(self):
+        """
+        Extracts video frames either in linear mode, emitting progress and completion signals.
+        """
         try:
-            # Use ThreadPoolExecutor for parallel frame extraction
-            with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 4, 16)) as executor:
+            # Linear extraction (single-threaded)
+            extracted_paths = []
+            progress_count = 0
+            if self.frame_indices == sorted(self.frame_indices):
+                # Use a single VideoCapture for ordered extraction
                 cap = cv2.VideoCapture(self.video_file)
-                batch_size = min(100, len(self.frame_indices))
-                num_batches = math.ceil(len(self.frame_indices) / batch_size)
-                extracted_paths = []
-                progress_count = 0
-                for batch_idx in range(num_batches):
-                    start_idx = batch_idx * batch_size
-                    end_idx = min((batch_idx + 1) * batch_size, len(self.frame_indices))
-                    batch_indices = self.frame_indices[start_idx:end_idx]
-                    futures = []
-                    for frame_idx in batch_indices:
-                        frame_path = f"{self.output_dir}/{self.frame_prefix}_{frame_idx}.{self.ext}"
-                        futures.append(executor.submit(
-                            self.extract_single_frame, 
-                            self.video_file, 
-                            frame_idx, 
-                            frame_path
-                        ))
-                    for future in futures:
-                        frame_path = future.result()
-                        if frame_path:
-                            extracted_paths.append(frame_path)
-                        progress_count += 1
-                        self.progress_updated.emit(progress_count)
+                if not cap.isOpened():
+                    self.extraction_error.emit(f"Failed to open video file: {self.video_file}")
+                    return
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                last_pos = None
+                for frame_idx in self.frame_indices:
+                    if frame_idx < 0 or frame_idx >= total_frames:
+                        print(f"[ERROR] Frame index {frame_idx} is out of range (0, {total_frames-1})")
+                        continue
+                    if last_pos is None or frame_idx != last_pos + 1:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                    ret, frame = cap.read()
+                    last_pos = frame_idx
+                    if not ret or frame is None:
+                        print(f"[ERROR] Failed to read frame {frame_idx}")
+                        continue
+                    output_path = f"{self.output_dir}/{self.frame_prefix}_{frame_idx}.{self.ext}"
+                    output_dir = os.path.dirname(output_path)
+                    if output_dir and not os.path.exists(output_dir):
+                        try:
+                            os.makedirs(output_dir, exist_ok=True)
+                        except Exception as e:
+                            print(f"[ERROR] Could not create output directory {output_dir}: {e}")
+                            continue
+                    if output_path.lower().endswith(('.jpg', '.jpeg')):
+                        success = cv2.imwrite(output_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    elif output_path.lower().endswith('.png'):
+                        success = cv2.imwrite(output_path, frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+                    else:
+                        success = cv2.imwrite(output_path, frame)
+                    if not success:
+                        print(f"[ERROR] Failed to write frame to {output_path}")
+                        continue
+                    extracted_paths.append(output_path)
+                    progress_count += 1
+                    self.progress_updated.emit(progress_count)
                 cap.release()
                 self.frame_paths = extracted_paths
                 self.extraction_completed.emit(extracted_paths)
+            else:
+                # Fallback: open/close per frame (existing logic)
+                for frame_idx in self.frame_indices:
+                    frame_path = f"{self.output_dir}/{self.frame_prefix}_{frame_idx}.{self.ext}"
+                    result = self.extract_single_frame(self.video_file, frame_idx, frame_path)
+                    if result:
+                        extracted_paths.append(result)
+                    progress_count += 1
+                    self.progress_updated.emit(progress_count)
+                self.frame_paths = extracted_paths
+                self.extraction_completed.emit(extracted_paths)
         except Exception as e:
+            # Emit error signal if any exception occurs
             self.extraction_error.emit(str(e))
     
     @staticmethod
     def extract_single_frame(video_file, frame_index, output_path):
-        """Extract a single frame and save it to the output path."""
-        # Thread safety with a local copy of the video capture
+        """Extract a single frame and save it to the output path, with debug checks."""
+        print(f"[DEBUG] Attempting to extract frame {frame_index} from {video_file} to {output_path}")
+    
+        if not os.path.exists(video_file):
+            print(f"[ERROR] Video file does not exist: {video_file}")
+            return None
+    
         local_cap = cv2.VideoCapture(video_file)
-        
-        # Set position and read frame
+        if not local_cap.isOpened():
+            print(f"[ERROR] Failed to open video file: {video_file}")
+            return None
+    
+        total_frames = int(local_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        print(f"[DEBUG] Video has {total_frames} frames")
+    
+        if frame_index < 0 or frame_index >= total_frames:
+            print(f"[ERROR] Frame index {frame_index} is out of range (0, {total_frames-1})")
+            local_cap.release()
+            return None
+    
         local_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
         ret, frame = local_cap.read()
         local_cap.release()
-        
-        if not ret:
-            print(f"Failed to read frame {frame_index}")
+    
+        if not ret or frame is None:
+            print(f"[ERROR] Failed to read frame {frame_index}")
             return None
-        
-        # Use IMWRITE_JPEG_QUALITY for jpg/jpeg or other appropriate params for different formats
+    
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+                print(f"[DEBUG] Created output directory: {output_dir}")
+            except Exception as e:
+                print(f"[ERROR] Could not create output directory {output_dir}: {e}")
+                return None
+    
+        # Write frame to file
         if output_path.lower().endswith(('.jpg', '.jpeg')):
-            cv2.imwrite(output_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            success = cv2.imwrite(output_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            print(f"[DEBUG] Writing JPEG frame to {output_path}: {'Success' if success else 'Failed'}")
         elif output_path.lower().endswith('.png'):
-            cv2.imwrite(output_path, frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+            success = cv2.imwrite(output_path, frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+            print(f"[DEBUG] Writing PNG frame to {output_path}: {'Success' if success else 'Failed'}")
         else:
-            cv2.imwrite(output_path, frame)
-            
+            success = cv2.imwrite(output_path, frame)
+            print(f"[DEBUG] Writing frame to {output_path}: {'Success' if success else 'Failed'}")
+    
+        if not success:
+            print(f"[ERROR] Failed to write frame to {output_path}")
+            return None
+    
+        print(f"[DEBUG] Successfully extracted frame {frame_index} to {output_path}")
         return output_path
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Frame Cache Manager
 # ----------------------------------------------------------------------------------------------------------------------
+
 
 class FrameCache:
     """Cache for storing video frames to avoid repeated disk reads"""
@@ -832,9 +892,11 @@ class ImportFrames(QDialog):
                 start_frame = self.range_start_slider.value()
                 end_frame = self.range_end_slider.value()
                 step = self.every_n_frames_spinbox.value()
-                
                 frame_indices = list(range(start_frame, end_frame + 1, step))
-            
+                # Always include end_frame if not already present and in range
+                if end_frame not in frame_indices and 0 <= end_frame < self.total_frames:
+                    frame_indices.append(end_frame)
+                    frame_indices = sorted(frame_indices)
             elif self.current_tab == "specific":
                 # Extract specific frames
                 frame_str = self.specific_frames_edit.text().strip()
@@ -916,6 +978,10 @@ class ImportFrames(QDialog):
             end_frame = self.range_end_slider.value()
             step = self.every_n_frames_spinbox.value()
             frame_indices = list(range(start_frame, end_frame + 1, step))
+            # Always include end_frame if not already present and in range
+            if end_frame not in frame_indices and 0 <= end_frame < self.total_frames:
+                frame_indices.append(end_frame)
+                frame_indices = sorted(frame_indices)
         else:  # specific frames
             frame_str = self.specific_frames_edit.text().strip()
             if frame_str:
@@ -952,8 +1018,7 @@ class ImportFrames(QDialog):
             self,
             "Confirm Extraction",
             f"Extract {len(frame_indices)} frames from the video?\n\n"
-            f"This will save files to: {output_dir}\n"
-            f"With naming pattern: {frame_prefix}_[frame_number].{frame_ext}",
+            f"This will save files with naming the pattern: {frame_prefix}_[frame_number].{frame_ext}",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
         )
