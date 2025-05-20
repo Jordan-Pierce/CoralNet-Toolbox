@@ -3,12 +3,14 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import os
-from concurrent.futures import ThreadPoolExecutor
+import math
 import gc
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QTimer, QSize
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit,
                              QDialog, QApplication, QMessageBox, QCheckBox, QGroupBox,
@@ -16,14 +18,205 @@ from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLin
                              QStyle, QFrame, QTabWidget, QWidget)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
 from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Classes
+# Video Player Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
+class VideoPlayerThread(QThread):
+    """Thread for playing video frames without blocking the UI"""
+    update_frame = pyqtSignal(object, int)
+    
+    def __init__(self, video_path, fps=30):
+        super().__init__()
+        self.video_path = video_path
+        self.fps = fps
+        self.running = False
+        self.paused = False
+        self.mutex = QMutex()
+        self.current_frame_number = 0
+        self.cap = None
+        self.total_frames = 0
+        
+    def run(self):
+        self.cap = cv2.VideoCapture(self.video_path)
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.running = True
+        
+        while self.running:
+            if not self.paused:
+                self.mutex.lock()
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_number)
+                ret, frame = self.cap.read()
+                self.mutex.unlock()
+                
+                if ret:
+                    # Convert frame to RGB (from BGR)
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    self.update_frame.emit(frame_rgb, self.current_frame_number)
+                    
+                    # Move to next frame
+                    self.current_frame_number = (self.current_frame_number + 1) % self.total_frames
+                else:
+                    # Could not read frame, maybe end of video
+                    self.running = False
+                    
+                # Control playback speed
+                time.sleep(1/self.fps)
+            else:
+                # If paused, just sleep a bit to avoid CPU overuse
+                time.sleep(0.1)
+                
+        # Clean up
+        if self.cap:
+            self.cap.release()
+    
+    def seek(self, frame_number):
+        """Seek to a specific frame"""
+        self.mutex.lock()
+        self.current_frame_number = min(max(0, frame_number), self.total_frames - 1)
+        self.mutex.unlock()
+        
+        # If paused, immediately show the frame
+        if self.paused:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_number)
+            ret, frame = self.cap.read()
+            if ret:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.update_frame.emit(frame_rgb, self.current_frame_number)
+    
+    def toggle_pause(self):
+        """Toggle pause state"""
+        self.paused = not self.paused
+        
+    def stop(self):
+        """Stop the thread"""
+        self.running = False
+        self.wait()
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Frame Extraction Worker
+# ----------------------------------------------------------------------------------------------------------------------
+
+class FrameExtractorThread(QThread):
+    """Thread for extracting frames without blocking the UI"""
+    progress_updated = pyqtSignal(int)
+    extraction_completed = pyqtSignal(list)
+    extraction_error = pyqtSignal(str)
+    
+    def __init__(self, video_file, output_dir, frame_prefix, ext, frame_indices):
+        super().__init__()
+        self.video_file = video_file
+        self.output_dir = output_dir
+        self.frame_prefix = frame_prefix
+        self.ext = ext
+        self.frame_indices = frame_indices
+        self.frame_paths = []
+        
+    def run(self):
+        try:
+            # Use ThreadPoolExecutor for parallel frame extraction
+            with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 4, 16)) as executor:
+                cap = cv2.VideoCapture(self.video_file)
+                batch_size = min(100, len(self.frame_indices))
+                num_batches = math.ceil(len(self.frame_indices) / batch_size)
+                extracted_paths = []
+                progress_count = 0
+                for batch_idx in range(num_batches):
+                    start_idx = batch_idx * batch_size
+                    end_idx = min((batch_idx + 1) * batch_size, len(self.frame_indices))
+                    batch_indices = self.frame_indices[start_idx:end_idx]
+                    futures = []
+                    for frame_idx in batch_indices:
+                        frame_path = f"{self.output_dir}/{self.frame_prefix}_{frame_idx}.{self.ext}"
+                        futures.append(executor.submit(
+                            self.extract_single_frame, 
+                            self.video_file, 
+                            frame_idx, 
+                            frame_path
+                        ))
+                    for future in futures:
+                        frame_path = future.result()
+                        if frame_path:
+                            extracted_paths.append(frame_path)
+                        progress_count += 1
+                        self.progress_updated.emit(progress_count)
+                cap.release()
+                self.frame_paths = extracted_paths
+                self.extraction_completed.emit(extracted_paths)
+        except Exception as e:
+            self.extraction_error.emit(str(e))
+    
+    @staticmethod
+    def extract_single_frame(video_file, frame_index, output_path):
+        """Extract a single frame and save it to the output path."""
+        # Thread safety with a local copy of the video capture
+        local_cap = cv2.VideoCapture(video_file)
+        
+        # Set position and read frame
+        local_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        ret, frame = local_cap.read()
+        local_cap.release()
+        
+        if not ret:
+            print(f"Failed to read frame {frame_index}")
+            return None
+        
+        # Use IMWRITE_JPEG_QUALITY for jpg/jpeg or other appropriate params for different formats
+        if output_path.lower().endswith(('.jpg', '.jpeg')):
+            cv2.imwrite(output_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        elif output_path.lower().endswith('.png'):
+            cv2.imwrite(output_path, frame, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+        else:
+            cv2.imwrite(output_path, frame)
+            
+        return output_path
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Frame Cache Manager
+# ----------------------------------------------------------------------------------------------------------------------
+
+class FrameCache:
+    """Cache for storing video frames to avoid repeated disk reads"""
+    def __init__(self, max_size=30):
+        self.cache = {}  # frame_idx -> frame data
+        self.max_size = max_size
+        self.access_order = []  # LRU tracking
+        
+    def get(self, frame_idx):
+        """Get a frame from the cache or None if not present"""
+        if frame_idx in self.cache:
+            # Update access order (move to end as most recently used)
+            self.access_order.remove(frame_idx)
+            self.access_order.append(frame_idx)
+            return self.cache[frame_idx]
+        return None
+        
+    def put(self, frame_idx, frame):
+        """Add a frame to the cache"""
+        # If cache is full, remove least recently used item
+        if len(self.cache) >= self.max_size and self.access_order:
+            lru_key = self.access_order.pop(0)
+            del self.cache[lru_key]
+            
+        # Add new item
+        self.cache[frame_idx] = frame
+        self.access_order.append(frame_idx)
+        
+    def clear(self):
+        """Clear the cache"""
+        self.cache.clear()
+        self.access_order.clear()
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Main Import Frames Dialog
+# ----------------------------------------------------------------------------------------------------------------------
 
 class ImportFrames(QDialog):
     def __init__(self, main_window, parent=None):
@@ -42,6 +235,12 @@ class ImportFrames(QDialog):
         self.end_frame = 0
 
         self.frame_paths = []
+        self.frame_cache = FrameCache(max_size=30)  # Cache 30 frames max
+        
+        # Video player elements
+        self.player_thread = None
+        self.is_playing = False
+        self.playback_timer = None
 
         # Main horizontal layout to hold controls and preview
         main_layout = QHBoxLayout()
@@ -67,6 +266,11 @@ class ImportFrames(QDialog):
 
         self.cap = None
         self.current_frame_idx = 0
+        
+        # Initialize timer for UI updates
+        self.ui_update_timer = QTimer(self)
+        self.ui_update_timer.timeout.connect(self.update_ui_elements)
+        self.ui_update_timer.start(500)  # Update UI every 500ms
 
     def create_info_group(self):
         group_box = QGroupBox("Information")
@@ -252,7 +456,7 @@ class ImportFrames(QDialog):
         return buttons_layout
 
     def setup_preview_layout(self):
-        """Set up the video preview panel"""
+        """Set up the video preview panel with video player capabilities"""
         preview_layout = QVBoxLayout()
 
         # Preview group box
@@ -266,34 +470,50 @@ class ImportFrames(QDialog):
         self.preview_label.setStyleSheet("QLabel { background-color: black; }")
         preview_inner_layout.addWidget(self.preview_label)
 
-        # Frame navigation
-        nav_layout = QHBoxLayout()
-
+        # Video control layout
+        vc_layout = QHBoxLayout()
+        
+        # Add play/pause button
+        self.play_pause_btn = QPushButton()
+        self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.play_pause_btn.clicked.connect(self.toggle_playback)
+        self.play_pause_btn.setEnabled(False)
+        
+        # Add previous/next frame buttons
         self.prev_frame_btn = QPushButton("←")
         self.prev_frame_btn.clicked.connect(self.prev_frame)
-
-        self.frame_slider = QSlider(Qt.Horizontal)
-        self.frame_slider.setEnabled(False)
-        self.frame_slider.valueChanged.connect(self.slider_changed)
+        self.prev_frame_btn.setEnabled(False)
 
         self.next_frame_btn = QPushButton("→")
         self.next_frame_btn.clicked.connect(self.next_frame)
-
-        # Add frame number spinbox and reload button
+        self.next_frame_btn.setEnabled(False)
+        
+        # Add frame number input
         self.frame_number_spinbox = QSpinBox()
-        self.frame_number_spinbox.setAlignment(Qt.AlignCenter)
         self.frame_number_spinbox.setFixedWidth(80)
-
-        self.frame_number_reload = QPushButton()
-        self.frame_number_reload.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.frame_number_reload.clicked.connect(self.frame_number_changed)
-
-        nav_layout.addWidget(self.prev_frame_btn)
-        nav_layout.addWidget(self.next_frame_btn)
-        nav_layout.addWidget(self.frame_number_spinbox)
-        nav_layout.addWidget(self.frame_number_reload)
-
-        preview_inner_layout.addLayout(nav_layout)
+        self.frame_number_spinbox.setAlignment(Qt.AlignCenter)
+        self.frame_number_spinbox.setEnabled(False)
+        
+        # Add go-to-frame button
+        self.goto_frame_btn = QPushButton()
+        self.goto_frame_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self.goto_frame_btn.clicked.connect(self.goto_frame)
+        self.goto_frame_btn.setEnabled(False)
+        
+        # Add controls to layout
+        vc_layout.addWidget(self.play_pause_btn)
+        vc_layout.addWidget(self.prev_frame_btn)
+        vc_layout.addWidget(self.next_frame_btn)
+        vc_layout.addWidget(self.frame_number_spinbox)
+        vc_layout.addWidget(self.goto_frame_btn)
+        
+        # Frame slider
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setEnabled(False)
+        self.frame_slider.valueChanged.connect(self.slider_changed)
+        
+        # Add layouts to preview group
+        preview_inner_layout.addLayout(vc_layout)
         preview_inner_layout.addWidget(self.frame_slider)
         preview_group.setLayout(preview_inner_layout)
         preview_layout.addWidget(preview_group)
@@ -325,102 +545,113 @@ class ImportFrames(QDialog):
 
         return preview_layout
 
-    def frame_number_changed(self):
-        """Handle manual frame number input"""
-        if self.cap is None:
+    def goto_frame(self):
+        """Go to the frame specified in the frame number spinbox"""
+        if not self.player_thread:
             return
-
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+            
         frame_num = self.frame_number_spinbox.value()
         self.current_frame_idx = frame_num
         self.frame_slider.setValue(frame_num)
         
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
+        # If player exists, tell it to seek to this frame
+        if self.player_thread and self.player_thread.isRunning():
+            self.player_thread.seek(frame_num)
 
-    def update_preview(self, frame_idx):
-        """Update the preview with the specified frame, using caching."""
-        if self.cap is None:
+    def toggle_playback(self):
+        """Toggle video playback state"""
+        if not self.player_thread:
             return
-
-        # Cache frame indices to avoid repeated seeking
-        if not hasattr(self, '_last_preview_idx') or self._last_preview_idx != frame_idx:
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = self.cap.read()
-            self._last_preview_idx = frame_idx
-
-            if ret:
-                self._cached_frame = frame
-            else:
-                print(f"Failed to read frame {frame_idx}")
-                return
-        else:
-            # Use cached frame
-            frame = self._cached_frame
-
-        # Process frame in the background
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        # Update UI elements
-        self.frame_number_spinbox.setValue(frame_idx)
-
-        # Get original frame dimensions
-        original_height, original_width = frame.shape[:2]
-        aspect_ratio = original_width / original_height
-
-        # Get available space in preview label
-        preview_width = self.preview_label.width()
-        preview_height = self.preview_label.height()
-        
-        # Calculate target size maintaining aspect ratio
-        if preview_width / preview_height > aspect_ratio:
-            # Preview area is wider than the video
-            target_height = preview_height
-            target_width = int(target_height * aspect_ratio)
-        else:
-            # Preview area is taller than the video
-            target_width = preview_width
-            target_height = int(target_width / aspect_ratio)
             
-        # Resize respecting aspect ratio
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        scaled_frame = cv2.resize(rgb_frame, (target_width, target_height))
+        if self.is_playing:
+            # Pause the video
+            self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+            self.player_thread.toggle_pause()
+        else:
+            # Play the video
+            self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
+            self.player_thread.toggle_pause()
+            
+        self.is_playing = not self.is_playing
 
-        # Create QImage and update UI
-        h, w = scaled_frame.shape[:2]
-        q_img = QImage(scaled_frame.data, w, h, scaled_frame.strides[0], QImage.Format_RGB888)
-        self.preview_label.setPixmap(QPixmap.fromImage(q_img))
+    def update_ui_elements(self):
+        """Update UI elements periodically"""
+        if self.player_thread and self.player_thread.isRunning() and self.is_playing:
+            # Update slider position with current frame
+            current_frame = self.player_thread.current_frame_number
+            self.frame_slider.setValue(current_frame)
+            
+            # Update displayed frame number and time
+            if hasattr(self.player_thread, 'fps') and self.player_thread.fps > 0:
+                total_frames = self.player_thread.total_frames
+                self.frame_counter.setText(f"Frame: {current_frame} / {total_frames}")
+                
+                time_in_seconds = current_frame / self.player_thread.fps
+                minutes = int(time_in_seconds // 60)
+                seconds = int(time_in_seconds % 60)
+                self.frame_timestamp.setText(f"Time: {minutes:02d}:{seconds:02d}")
 
+    def on_frame_update(self, frame, frame_number):
+        """Handle frame updates from the video player thread"""
+        # Update the UI with the new frame
+        if frame is None:
+            return
+            
+        # Create QImage from numpy array
+        h, w, c = frame.shape
+        q_img = QImage(frame.data, w, h, frame.strides[0], QImage.Format_RGB888)
+        
+        # Calculate scale to fit the preview area while maintaining aspect ratio
+        label_size = self.preview_label.size()
+        img_ratio = w / h
+        label_ratio = label_size.width() / label_size.height()
+        
+        if img_ratio > label_ratio:  # Image is wider than label
+            scaled_size = QSize(label_size.width(), int(label_size.width() / img_ratio))
+        else:  # Image is taller than label
+            scaled_size = QSize(int(label_size.height() * img_ratio), label_size.height())
+            
+        # Set the pixmap
+        pixmap = QPixmap.fromImage(q_img)
+        self.preview_label.setPixmap(pixmap.scaled(
+            scaled_size.width(), scaled_size.height(), 
+            Qt.KeepAspectRatio, Qt.SmoothTransformation
+        ))
+        
         # Update frame information
-        total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = self.cap.get(cv2.CAP_PROP_FPS)
-        time_in_seconds = frame_idx / fps
-        minutes = int(time_in_seconds // 60)
-        seconds = int(time_in_seconds % 60)
-
-        self.frame_counter.setText(f"Frame: {frame_idx} / {total_frames}")
-        self.frame_timestamp.setText(f"Time: {minutes:02d}:{seconds:02d}")
-
-        QApplication.restoreOverrideCursor()
+        self.current_frame_idx = frame_number
+        
+        # Update frame number without triggering value changed event
+        self.frame_number_spinbox.blockSignals(True)
+        self.frame_number_spinbox.setValue(frame_number)
+        self.frame_number_spinbox.blockSignals(False)
 
     def slider_changed(self, value):
         """Handle frame slider value changes"""
         self.current_frame_idx = value
-        self.update_preview(value)
+        
+        # If player exists, tell it to seek to this frame
+        if self.player_thread and self.player_thread.isRunning():
+            self.player_thread.seek(value)
+        
+        # Update frame number without triggering value changed event
+        self.frame_number_spinbox.blockSignals(True)
+        self.frame_number_spinbox.setValue(value)
+        self.frame_number_spinbox.blockSignals(False)
 
     def next_frame(self):
         """Show next frame"""
-        if self.cap is not None:
-            self.current_frame_idx = min(self.current_frame_idx + 1, int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1))
-            self.frame_slider.setValue(self.current_frame_idx)
+        if self.player_thread and self.player_thread.isRunning():
+            next_frame = min(self.current_frame_idx + 1, self.player_thread.total_frames - 1)
+            self.player_thread.seek(next_frame)
+            self.frame_slider.setValue(next_frame)
 
     def prev_frame(self):
         """Show previous frame"""
-        if self.cap is not None:
-            self.current_frame_idx = max(self.current_frame_idx - 1, 0)
-            self.frame_slider.setValue(self.current_frame_idx)
+        if self.player_thread and self.player_thread.isRunning():
+            prev_frame = max(self.current_frame_idx - 1, 0)
+            self.player_thread.seek(prev_frame)
+            self.frame_slider.setValue(prev_frame)
 
     def browse_video_file(self):
         options = QFileDialog.Options()
@@ -431,354 +662,373 @@ class ImportFrames(QDialog):
                                                    options=options)
 
         if file_name:
-            if os.path.exists(file_name):
-                # Make cursor busy
-                QApplication.setOverrideCursor(Qt.WaitCursor)
+            if not os.path.exists(file_name):
+                QMessageBox.warning(self,
+                                    "Invalid Video File",
+                                    "Please select a valid video file.")
+                return
                 
-                # Set the video file path in the edit box
-                self.video_file_edit.setText(file_name)
-
-                # Close previous capture if exists
-                if self.cap is not None:
-                    self.cap.release()
-
-                # Open new video capture
-                self.cap = cv2.VideoCapture(file_name)
-                total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
+            # Set the video file path in the edit box
+            self.video_file_edit.setText(file_name)
+            
+            # Make cursor busy
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            
+            # Stop any existing player
+            self.stop_video_player()
+            
+            try:
+                # Open video to get basic info
+                cap = cv2.VideoCapture(file_name)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                
+                # Set video properties
+                self.fps = fps
+                self.total_frames = total_frames
+                
+                # Initialize the video player
+                self.init_video_player(file_name, fps)
+                
+                # Update the range slider
+                self.update_range_slider()
+                
                 # Update frame slider
                 self.frame_slider.setEnabled(True)
                 self.frame_slider.setRange(0, total_frames - 1)
                 self.frame_slider.setValue(0)
-                self.current_frame_idx = 0
-
-                # Set initial frame number in input
+                
+                # Enable controls
+                self.play_pause_btn.setEnabled(True)
+                self.prev_frame_btn.setEnabled(True)
+                self.next_frame_btn.setEnabled(True)
+                self.frame_number_spinbox.setEnabled(True)
+                self.goto_frame_btn.setEnabled(True)
+                
+                # Update frame number spinbox
+                self.frame_number_spinbox.setRange(0, total_frames - 1)
                 self.frame_number_spinbox.setValue(0)
-
-                # Update the range slider
-                self.update_range_slider()
-
-                # Show first frame
-                self.update_preview(0)
                 
-                # Make cursor normal
-                QApplication.restoreOverrideCursor()
+                # Clean up
+                cap.release()
                 
-            else:
+            except Exception as e:
                 QMessageBox.warning(self,
-                                    "Invalid Video File",
-                                    "Please select a valid video file.")
+                                    "Error Loading Video",
+                                    f"Error: {str(e)}")
+            finally:
+                QApplication.restoreOverrideCursor()
+
+    def init_video_player(self, video_path, fps):
+        """Initialize the video player thread"""
+        # Create and start the video player thread
+        self.player_thread = VideoPlayerThread(video_path, fps)
+        self.player_thread.update_frame.connect(self.on_frame_update)
+        self.player_thread.start()
+        
+        # Set initial state to paused
+        self.is_playing = False
+        self.player_thread.paused = True
+        
+        # Set file name as window title prefix
+        file_name = os.path.basename(video_path)
+        self.setWindowTitle(f"Import Frames - {file_name}")
+
+    def stop_video_player(self):
+        """Stop the video player thread if it's running"""
+        if self.player_thread and self.player_thread.isRunning():
+            self.player_thread.stop()
+            self.player_thread = None
+            self.is_playing = False
+            self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
 
     def browse_output_dir(self):
-        options = QFileDialog.Options()
-        dir_name = QFileDialog.getExistingDirectory(self,
-                                                    "Select Output Directory",
-                                                    options=options)
-
-        if dir_name:
-            if os.path.exists(dir_name):
-                self.output_dir_edit.setText(dir_name)
-
-    def update_range_slider_label(self):
-        """Update the range spinboxes with current values."""
-        start = self.range_start_slider.value()
-        end = self.range_end_slider.value()
-        self.range_start_spinbox.setValue(start)
-        self.range_end_spinbox.setValue(end)
-        self.update_time_label()
+        """Browse for output directory"""
+        directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if directory:
+            self.output_dir_edit.setText(directory)
 
     def update_range_slider(self):
-        """Update the range slider based on the selected video file."""
-        if self.video_file_edit.text():
-            try:
-                cap = cv2.VideoCapture(self.video_file_edit.text())
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                self.fps = cap.get(cv2.CAP_PROP_FPS)
+        """Update the range slider after loading a video"""
+        if not hasattr(self, 'total_frames') or not self.total_frames:
+            return
+            
+        # Enable sliders
+        self.range_start_slider.setEnabled(True)
+        self.range_end_slider.setEnabled(True)
+        
+        # Set range for all sliders
+        self.range_start_slider.setRange(0, self.total_frames - 1)
+        self.range_end_slider.setRange(0, self.total_frames - 1)
+        
+        # Set initial values
+        self.range_start_slider.setValue(0)
+        self.range_end_slider.setValue(self.total_frames - 1)
+        
+        # Update spinboxes
+        self.range_start_spinbox.setRange(0, self.total_frames - 1)
+        self.range_end_spinbox.setRange(0, self.total_frames - 1)
+        self.range_start_spinbox.setValue(0)
+        self.range_end_spinbox.setValue(self.total_frames - 1)
+        
+        # Update time range label
+        duration = self.total_frames / self.fps
+        minutes = int(duration // 60)
+        seconds = int(duration % 60)
+        self.time_range_label.setText(
+            f"Video duration: {minutes}m {seconds}s ({self.total_frames} frames @ {self.fps:.2f} fps)"
+        )
 
-                # Enable the slider and set its range
-                self.range_start_slider.setEnabled(True)
-                self.range_end_slider.setEnabled(True)
-                self.range_start_spinbox.setEnabled(True)
-                self.range_end_spinbox.setEnabled(True)
-
-                # Set ranges for spinboxes
-                self.range_start_spinbox.setRange(0, total_frames)
-                self.range_end_spinbox.setRange(0, total_frames)
-                self.frame_number_spinbox.setRange(0, total_frames - 1)
-
-                tick_interval = max(1, total_frames // 10)
-                self.range_start_slider.setRange(0, total_frames)
-                self.range_end_slider.setRange(0, total_frames)
-                self.range_start_slider.setTickInterval(tick_interval)
-                self.range_end_slider.setTickInterval(tick_interval)
-                self.range_start_slider.setValue(0)
-                self.range_end_slider.setValue(total_frames)
-
-                # Update the spinbox values
-                self.range_start_spinbox.setValue(0)
-                self.range_end_spinbox.setValue(total_frames)
-
-                self.update_time_label()
-                self.update_calculated_frames()
-
-                cap.release()
-
-            except Exception as e:
-                # Handle potential errors
-                print(f"Error reading video file: {e}")
-                self.range_start_slider.setValue(0)
-                self.range_end_slider.setValue(0)
-                self.range_start_slider.setEnabled(False)
-                self.range_end_slider.setEnabled(False)
-                self.range_start_spinbox.setEnabled(False)
-                self.range_end_spinbox.setEnabled(False)
-                self.range_start_spinbox.setValue(0)
-                self.range_end_spinbox.setValue(0)
-                self.time_range_label.setText("Time Range: Unable to read video file")
-                self.calculated_frames_edit.setText("Invalid video file")
+    def update_range_slider_label(self):
+        """Update labels when range sliders change"""
+        start_frame = self.range_start_slider.value()
+        end_frame = self.range_end_slider.value()
+        
+        # Ensure end frame is not before start frame
+        if end_frame < start_frame:
+            self.range_end_slider.setValue(start_frame)
+            end_frame = start_frame
+        
+        # Update spinboxes without triggering their signals
+        self.range_start_spinbox.blockSignals(True)
+        self.range_end_spinbox.blockSignals(True)
+        self.range_start_spinbox.setValue(start_frame)
+        self.range_end_spinbox.setValue(end_frame)
+        self.range_start_spinbox.blockSignals(False)
+        self.range_end_spinbox.blockSignals(False)
 
     def range_spinbox_changed(self):
-        """Handle manual frame range spinbox changes"""
-        if not self.range_start_slider.isEnabled() or not self.range_end_slider.isEnabled():
-            return
-
-        # Get current values
-        start = self.range_start_spinbox.value()
-        end = self.range_end_spinbox.value()
-
-        # Ensure start doesn't exceed end
-        if start > end:
-            if self.sender() == self.range_start_spinbox:
-                start = end
-                self.range_start_spinbox.setValue(start)
-            else:
-                end = start
-                self.range_end_spinbox.setValue(end)
-
-        # Update the slider with new values
-        self.range_start_slider.setValue(start)
-        self.range_end_slider.setValue(end)
-
-    def update_time_label(self):
-        """Update the time range label based on fps and selected range."""
-        try:
-            start = self.range_start_slider.value()
-            end = self.range_end_slider.value()
-            start_time = start / self.fps
-            end_time = end / self.fps
-
-            start_min = int(start_time // 60)
-            start_sec = int(start_time % 60)
-            end_min = int(end_time // 60)
-            end_sec = int(end_time % 60)
-
-            time_text = f"Time Range: {start_min:02d}:{start_sec:02d} - {end_min:02d}:{end_sec:02d}"
-            self.time_range_label.setText(time_text)
-        except:
-            self.time_range_label.setText("Time Range: Unable to calculate")
+        """Handle changes to range spinboxes"""
+        start_frame = self.range_start_spinbox.value()
+        end_frame = self.range_end_spinbox.value()
+        
+        # Ensure end frame is not before start frame
+        if end_frame < start_frame:
+            self.range_end_spinbox.setValue(start_frame)
+            end_frame = start_frame
+        
+        # Update sliders without triggering their signals
+        self.range_start_slider.blockSignals(True)
+        self.range_end_slider.blockSignals(True)
+        self.range_start_slider.setValue(start_frame)
+        self.range_end_slider.setValue(end_frame)
+        self.range_start_slider.blockSignals(False)
+        self.range_end_slider.blockSignals(False)
+        
+        # Update calculated frames
+        self.update_calculated_frames()
 
     def update_calculated_frames(self):
-        """Calculate and display the number of frames that will be extracted."""
-        try:
-            frame_count = 0
-
-            if self.current_tab == "range":
-                if self.range_start_slider.isEnabled() and self.range_end_slider.isEnabled():
-                    # Get range slider frames
-                    start = self.range_start_slider.value()
-                    end = self.range_end_slider.value()
-                    every_n = self.every_n_frames_spinbox.value()
-                    frame_count = len(range(start, end, every_n))
-            else:  # specific frames tab
-                if self.specific_frames_edit.text().strip():
-                    frame_count = len(self.parse_specific_frames())
-
-            self.calculated_frames_edit.setText(f"{frame_count} frames will be extracted")
-
-        except Exception as e:
-            self.calculated_frames_edit.setText("Unable to calculate frames")
-
-    def parse_specific_frames(self):
-        """
-        Parse the frame ranges string into a list of frame numbers.
-
-        :param frame_ranges_str:
-        """
-        frames = []
-        # Get the specific frames as a list of integers
-        ranges = self.specific_frames_edit.text().split(',')
-        for r in ranges:
-            r = r.strip()
-            if not r:
-                continue
-            if '-' in r:
-                start, end = map(int, r.split('-'))
-                frames.extend(range(start, end + 1))
-            else:
-                frames.append(int(r))
-
-        return sorted(set(frames))
-
-    def import_frames(self, import_after=False):
-        """Import frames from the video file."""
-        # Get the video file
-        self.video_file = self.video_file_edit.text()
-
-        # Create a directory for the frames
-        self.output_dir = f"{self.output_dir_edit.text()}/{os.path.basename(self.video_file).split('.')[0]}"
-        self.output_dir = self.output_dir.replace("\\", "/")
-        os.makedirs(self.output_dir, exist_ok=True)
-
-        # Get the frame prefix
-        self.frame_prefix = self.frame_prefix_edit.text()
-        self.frame_prefix = "frame" if not self.frame_prefix else self.frame_prefix
-
-        # Get the frame extension, and other values
-        self.ext = self.frame_ext_combo.currentText().replace(".", "").lower()
-        self.every_n_frames = self.every_n_frames_spinbox.value()
-        self.start_frame = self.range_start_slider.value()
-        self.end_frame = self.range_end_slider.value()
-
-        if not self.video_file or not self.output_dir:
-            QMessageBox.warning(self,
-                                "Input Error",
-                                "Please select a video file, output directory, and specify the number of frames.")
+        """Calculate and display the frames that will be extracted"""
+        if not hasattr(self, 'total_frames') or not self.total_frames:
+            self.calculated_frames_edit.setText("Load a video to calculate frames")
             return
-
-        cap = cv2.VideoCapture(self.video_file)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        if self.start_frame >= total_frames or self.end_frame > total_frames or self.start_frame >= self.end_frame:
-            QMessageBox.warning(self,
-                                "Range Error",
-                                "Invalid frame range selected.")
-            return
-
-        frame_indices = self.get_frame_indices(total_frames)
-        self.save_frames(cap, frame_indices)
-        cap.release()
-
-        if import_after:
-            self.import_images()
-
-        self.accept()
-
-    def get_frame_indices(self, total_frames):
-        """Get the frame indices based on the active tab selection"""
-        frame_indices = set()
-
-        if self.current_tab == "range":
-            # Use range slider and every_n_frames
-            for i in range(self.start_frame, self.end_frame, self.every_n_frames_spinbox.value()):
-                frame_indices.add(i)
-        else:
-            # Use specific frames
-            specific_frames = self.parse_specific_frames()
-            for f in specific_frames:
-                if 0 <= f < total_frames:
-                    frame_indices.add(f)
-
-        return sorted(frame_indices)
-
-    def save_frames(self, cap, frame_indices):
-        """Save the frames to the output directory using parallel processing."""
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.image_window, title="Extracting Frames")
-        progress_bar.show()
-        progress_bar.start_progress(len(frame_indices))
-
-        # Clear the frame paths
-        self.frame_paths = []
-
-        try:
-            # Use ThreadPoolExecutor for parallel frame extraction
-            with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as executor:
-                futures = []
-                # Submit tasks to the executor
-                for frame_index in frame_indices:
-                    futures.append(executor.submit(self.extract_single_frame, cap, frame_index))
-
-                for future in futures:
-                    frame_path = future.result()
-                    if frame_path:
-                        self.frame_paths.append(frame_path)
-                        progress_bar.update_progress()
-
-            QMessageBox.information(self,
-                                    "Success",
-                                    f"Successfully extracted {len(self.frame_paths)} frames")
-
-        except Exception as e:
-            QMessageBox.critical(self,
-                                 "Unexpected Error",
-                                 f"An unexpected error occurred: {str(e)}")
-            self.frame_paths = []
-
-        finally:
-            QApplication.restoreOverrideCursor()
-            progress_bar.stop_progress()
-            progress_bar.close()
-
-    def extract_single_frame(self, cap, frame_index):
-        """Extract a single frame and save it to the output directory."""
-        # Thread safety with a local copy of the video capture
-        local_cap = cv2.VideoCapture(self.video_file)
-        local_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-        ret, frame = local_cap.read()
-        local_cap.release()
-
-        if not ret:
-            print(f"Failed to read frame {frame_index}")
-            return None
-
-        frame_name = f"{self.output_dir}/{self.frame_prefix}_{frame_index}.{self.ext}"
-        if not cv2.imwrite(frame_name, frame):
-            print(f"Failed to write frame to {frame_name}")
-            return None
-
-        return frame_name
-
-    def import_images(self):
-        """Import the extracted frames into the application."""
-        if not self.frame_paths:
-            return
-            
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         
         try:
-            progress_bar = ProgressBar(self.main_window.annotation_window, title="Importing Frames")
-            progress_bar.show()
-            progress_bar.start_progress(len(self.frame_paths))
+            frame_indices = []
             
-            # Import each frame
-            for frame_path in self.frame_paths:
-                # Add the image to the window
-                self.image_window.add_image(frame_path)
+            if self.current_tab == "range":
+                # Extract frames from range
+                start_frame = self.range_start_slider.value()
+                end_frame = self.range_end_slider.value()
+                step = self.every_n_frames_spinbox.value()
                 
-                # Update the progress bar
-                progress_bar.update_progress()
-                
-            # Load the first image
-            if self.frame_paths:
-                # The add_image call already triggers a refresh of the image display
-                # so we don't need any additional logic here to select an image
-                pass
+                frame_indices = list(range(start_frame, end_frame + 1, step))
+            
+            elif self.current_tab == "specific":
+                # Extract specific frames
+                frame_str = self.specific_frames_edit.text().strip()
+                if frame_str:
+                    parts = frame_str.split(',')
+                    for part in parts:
+                        part = part.strip()
+                        if '-' in part:
+                            # Handle range (e.g., "5-10")
+                            range_parts = part.split('-')
+                            if len(range_parts) == 2:
+                                try:
+                                    start = int(range_parts[0].strip())
+                                    end = int(range_parts[1].strip())
+                                    frame_indices.extend(range(start, end + 1))
+                                except ValueError:
+                                    pass
+                        else:
+                            # Handle single frame number
+                            try:
+                                frame_indices.append(int(part))
+                            except ValueError:
+                                pass
+                                
+                    # Remove duplicates and sort
+                    frame_indices = sorted(list(set(frame_indices)))
+                    
+                    # Filter out-of-range frames
+                    frame_indices = [idx for idx in frame_indices if 0 <= idx < self.total_frames]
+            
+            if frame_indices:
+                # Show preview of calculated frames
+                if len(frame_indices) <= 10:
+                    # Show all frame numbers if there are <= 10
+                    preview_text = ", ".join(str(idx) for idx in frame_indices)
+                else:
+                    # Show first 5, last 5, and count in between
+                    first_five = ", ".join(str(idx) for idx in frame_indices[:5])
+                    last_five = ", ".join(str(idx) for idx in frame_indices[-5:])
+                    middle_count = len(frame_indices) - 10
+                    preview_text = f"{first_five}, ... ({middle_count} more) ..., {last_five}"
+                    
+                self.calculated_frames_edit.setText(f"{len(frame_indices)} frames: {preview_text}")
+            else:
+                self.calculated_frames_edit.setText("No frames selected")
                 
         except Exception as e:
-            QMessageBox.warning(self.main_window.annotation_window,
-                                "Error Importing Frames",
-                                f"An error occurred while importing frames: {str(e)}")
-                                
-        finally:
-            # Restore the cursor
-            QApplication.restoreOverrideCursor()
-            progress_bar.stop_progress()
-            progress_bar.close()
+            self.calculated_frames_edit.setText(f"Error: {str(e)}")
+
+    def import_frames(self, import_after=False):
+        """Extract frames from video and optionally import them"""
+        video_file = self.video_file_edit.text()
+        frame_prefix = self.frame_prefix_edit.text()
+        frame_ext = self.frame_ext_combo.currentText()
+        
+        output_dir = self.output_dir_edit.text()
+        output_dir = f"{output_dir}/{os.path.basename(video_file).split('.')[0]}"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Validate inputs
+        if not video_file or not os.path.exists(video_file):
+            QMessageBox.warning(self, "Invalid Input", "Please select a valid video file.")
+            return
+            
+        if not output_dir or not os.path.exists(output_dir):
+            QMessageBox.warning(self, "Invalid Input", "Please select a valid output directory.")
+            return
+            
+        if not frame_prefix:
+            # Use video filename as default prefix
+            frame_prefix = os.path.splitext(os.path.basename(video_file))[0]
+            self.frame_prefix_edit.setText(frame_prefix)
+        
+        # Determine frames to extract
+        frame_indices = []
+        
+        if self.current_tab == "range":
+            start_frame = self.range_start_slider.value()
+            end_frame = self.range_end_slider.value()
+            step = self.every_n_frames_spinbox.value()
+            frame_indices = list(range(start_frame, end_frame + 1, step))
+        else:  # specific frames
+            frame_str = self.specific_frames_edit.text().strip()
+            if frame_str:
+                parts = frame_str.split(',')
+                for part in parts:
+                    part = part.strip()
+                    if '-' in part:
+                        range_parts = part.split('-')
+                        if len(range_parts) == 2:
+                            try:
+                                start = int(range_parts[0].strip())
+                                end = int(range_parts[1].strip())
+                                frame_indices.extend(range(start, end + 1))
+                            except ValueError:
+                                pass
+                    else:
+                        try:
+                            frame_indices.append(int(part))
+                        except ValueError:
+                            pass
+                            
+        # Remove duplicates and sort
+        frame_indices = sorted(list(set(frame_indices)))
+        
+        # Filter out-of-range frames
+        frame_indices = [idx for idx in frame_indices if 0 <= idx < self.total_frames]
+        
+        if not frame_indices:
+            QMessageBox.warning(self, "No Frames", "No valid frames selected for extraction.")
+            return
+        
+        # Confirm extraction
+        confirmation = QMessageBox.question(
+            self,
+            "Confirm Extraction",
+            f"Extract {len(frame_indices)} frames from the video?\n\n"
+            f"This will save files to: {output_dir}\n"
+            f"With naming pattern: {frame_prefix}_[frame_number].{frame_ext}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if confirmation != QMessageBox.Yes:
+            return
+            
+        # Create progress dialog
+        progress = ProgressBar(self.main_window.annotation_window, "Extracting Frames")
+        progress.show()
+        progress.start_progress(len(frame_indices))
+        
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        # Create frame extractor thread
+        self.extractor_thread = FrameExtractorThread(
+            video_file, output_dir, frame_prefix, frame_ext, frame_indices
+        )
+        self.extractor_thread.progress_updated.connect(progress.set_value)
+        self.extractor_thread.extraction_completed.connect(
+            lambda paths: self.extraction_completed(paths, import_after)
+        )
+        self.extractor_thread.extraction_error.connect(self.extraction_error)
+        
+        # Start extraction
+        self.extractor_thread.start()
+        
+        # Close the progress bar
+        QApplication.restoreOverrideCursor()
+        progress.finish_progress()
+        progress.stop_progress()
+        progress.close()
+
+    def extraction_completed(self, frame_paths, import_after):
+        """Handle completion of frame extraction"""
+        QMessageBox.information(
+            self,
+            "Extraction Complete",
+            f"Successfully extracted {len(frame_paths)} frames."
+        )
+        
+        # Store frame paths
+        self.frame_paths = frame_paths
+        
+        if import_after and frame_paths:
+            # Close dialog and import frames
+            self.accept()
+            
+            # Tell main window to import these frames using IO.ImportImages
+            self.main_window.import_images._process_image_files(frame_paths)
+        
+    def extraction_error(self, error_msg):
+        """Handle errors during frame extraction"""
+        QMessageBox.critical(
+            self,
+            "Extraction Error",
+            f"An error occurred during frame extraction:\n{error_msg}"
+        )
 
     def closeEvent(self, event):
-        """Clean up resources when dialog is closed"""
-        if self.cap is not None:
+        """Handle window close event"""
+        # Stop video player when window is closed
+        self.stop_video_player()
+        
+        # Free video resources
+        if hasattr(self, 'cap') and self.cap:
             self.cap.release()
-        super().closeEvent(event)
+            self.cap = None
+        
+        # Clear frame cache
+        self.frame_cache.clear()
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Accept the event
+        event.accept()
