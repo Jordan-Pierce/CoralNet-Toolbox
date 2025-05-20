@@ -1026,19 +1026,19 @@ class ImportFrames(QDialog):
         if confirmation != QMessageBox.Yes:
             return
             
-        # Create progress dialog
-        progress = ProgressBar(self.main_window.annotation_window, "Extracting Frames")
-        progress.show()
-        progress.start_progress(len(frame_indices))
+        # Create progress dialog and store as instance variable
+        self.progress = ProgressBar(self.main_window.annotation_window, "Extracting Frames")
+        self.progress.show()
+        self.progress.start_progress(len(frame_indices))
         
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # Create frame extractor thread
         self.extractor_thread = FrameExtractorThread(
-            video_file, output_dir, frame_prefix, frame_ext, frame_indices
+            video_file, output_dir, frame_prefix, frame_ext, frame_indices,
         )
-        self.extractor_thread.progress_updated.connect(progress.set_value)
+        self.extractor_thread.progress_updated.connect(self.progress.set_value)
         self.extractor_thread.extraction_completed.connect(
             lambda paths: self.extraction_completed(paths, import_after)
         )
@@ -1046,15 +1046,18 @@ class ImportFrames(QDialog):
         
         # Start extraction
         self.extractor_thread.start()
-        
-        # Close the progress bar
-        QApplication.restoreOverrideCursor()
-        progress.finish_progress()
-        progress.stop_progress()
-        progress.close()
+        # (Do not close progress bar or restore cursor here)
 
     def extraction_completed(self, frame_paths, import_after):
         """Handle completion of frame extraction"""
+        # Finish and close progress bar, restore cursor
+        if hasattr(self, 'progress') and self.progress:
+            self.progress.finish_progress()
+            self.progress.stop_progress()
+            self.progress.close()
+            self.progress = None
+        QApplication.restoreOverrideCursor()
+        
         QMessageBox.information(
             self,
             "Extraction Complete",
@@ -1070,30 +1073,19 @@ class ImportFrames(QDialog):
             
             # Tell main window to import these frames using IO.ImportImages
             self.main_window.import_images._process_image_files(frame_paths)
-        
+
     def extraction_error(self, error_msg):
         """Handle errors during frame extraction"""
+        # Finish and close progress bar, restore cursor
+        if hasattr(self, 'progress') and self.progress:
+            self.progress.finish_progress()
+            self.progress.stop_progress()
+            self.progress.close()
+            self.progress = None
+        QApplication.restoreOverrideCursor()
+        
         QMessageBox.critical(
             self,
             "Extraction Error",
             f"An error occurred during frame extraction:\n{error_msg}"
         )
-
-    def closeEvent(self, event):
-        """Handle window close event"""
-        # Stop video player when window is closed
-        self.stop_video_player()
-        
-        # Free video resources
-        if hasattr(self, 'cap') and self.cap:
-            self.cap.release()
-            self.cap = None
-        
-        # Clear frame cache
-        self.frame_cache.clear()
-        
-        # Force garbage collection
-        gc.collect()
-        
-        # Accept the event
-        event.accept()
