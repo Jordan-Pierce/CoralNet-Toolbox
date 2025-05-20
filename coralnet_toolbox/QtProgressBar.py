@@ -55,6 +55,21 @@ class ProgressBar(QDialog):
 
         # Connect signal
         self.progress_updated.connect(self.update_progress)
+        
+    def set_title(self, title):
+        """
+        Update the window title of the progress bar and reset the progress.
+        
+        Args:
+            title: The new window title
+        """
+        self.setWindowTitle(title)
+        # Reset progress when title changes
+        self.value = 0
+        self.canceled = False
+        self.progress_bar.setValue(0)
+        QApplication.processEvents()
+        
 
     def start_progress(self, max_value):
         """
@@ -157,20 +172,6 @@ class ProgressBar(QDialog):
         # Make cursor not busy
         QApplication.restoreOverrideCursor()
 
-    def set_title(self, title):
-        """
-        Update the window title of the progress bar and reset the progress.
-        
-        Args:
-            title: The new window title
-        """
-        self.setWindowTitle(title)
-        # Reset progress when title changes
-        self.value = 0
-        self.canceled = False
-        self.progress_bar.setValue(0)
-        QApplication.processEvents()
-        
     def wasCanceled(self):
         """
         Check if the progress operation was canceled by the user.
