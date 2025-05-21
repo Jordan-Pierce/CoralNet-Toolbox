@@ -323,48 +323,46 @@ class PolygonAnnotation(Annotation):
         self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
-
+    
     def update_annotation_size(self, delta: float):
-        """Update the size of the annotation by a given delta value."""
-        # Clear the machine confidence
+        """
+        Grow/shrink the polygon by scaling each vertex radially from the centroid.
+        delta > 1: grow, 0 < delta < 1: shrink.
+        The amount of change is reduced for smoother interaction.
+        """
         self.update_user_confidence(self.label)
-
-        # Calculate the new points for erosion or dilation
+    
+        if len(self.points) < 3:
+            return
+    
+        # Calculate centroid
+        centroid_x = sum(p.x() for p in self.points) / len(self.points)
+        centroid_y = sum(p.y() for p in self.points) / len(self.points)
+    
+        # Determine scale factor: small step for each call
+        # If delta > 1, grow; if delta < 1, shrink; if delta == 1, no change
+        step = 0.01  # You can adjust this value for finer or coarser changes
+        if delta > 1.0:
+            scale = 1.0 + step
+        elif delta < 1.0:
+            scale = 1.0 - step
+        else:
+            scale = 1.0
+    
+        # Move each point radially using the scale factor
         new_points = []
-        num_points = len(self.points)
-
-        for i in range(num_points):
-            p1 = self.points[i]
-            p2 = self.points[(i + 1) % num_points]
-
-            # Calculate the vector from p1 to p2
-            edge_vector = QPointF(p2.x() - p1.x(), p2.y() - p1.y())
-
-            # Calculate the normal vector (perpendicular to the edge)
-            normal_vector = QPointF(-edge_vector.y(), edge_vector.x())
-
-            # Normalize the normal vector
-            length = math.sqrt(normal_vector.x() ** 2 + normal_vector.y() ** 2)
-            if length != 0:
-                normal_vector = QPointF(normal_vector.x() / length, normal_vector.y() / length)
-            else:
-                normal_vector = QPointF(0, 0)
-
-            # Move the point along the normal vector by the delta amount
-            if delta < 1:
-                new_point = QPointF(p1.x() - normal_vector.x() * (1 - delta),
-                                    p1.y() - normal_vector.y() * (1 - delta))
-            else:
-                new_point = QPointF(p1.x() + normal_vector.x() * (delta - 1),
-                                    p1.y() + normal_vector.y() * (delta - 1))
-            new_points.append(new_point)
-
-        # Update the points
+        for p in self.points:
+            dx = p.x() - centroid_x
+            dy = p.y() - centroid_y
+            new_x = centroid_x + dx * scale
+            new_y = centroid_y + dy * scale
+            new_points.append(QPointF(new_x, new_y))
+    
         self.set_precision(new_points)
         self.set_centroid()
         self.set_cropped_bbox()
         self.update_graphics_item()
-        self.annotationUpdated.emit(self)  # Notify update
+        self.annotationUpdated.emit(self)
 
     def resize(self, handle, new_pos):
         """Resize the annotation by moving a specific handle to a new position."""
