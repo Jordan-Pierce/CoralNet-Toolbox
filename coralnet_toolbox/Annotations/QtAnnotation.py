@@ -49,9 +49,10 @@ class Annotation(QObject):
         self.cropped_image = None
 
         self.show_message = show_msg
-
+    
         self.center_xy = None
         self.annotation_size = None
+        self.tolerance = 0.1  # Default detail level for simplification/densification
 
         # Attributes to store the graphics items for center/centroid, bounding box, and polygon
         self.center_graphics_item = None
@@ -60,7 +61,7 @@ class Annotation(QObject):
 
         # New: group for all graphics items
         self.graphics_item_group = None
-
+        
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -93,6 +94,10 @@ class Annotation(QObject):
         """Get graphical representation of the cropped image area."""
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def update_polygon(self, delta):
+        """Update the polygon representation of the annotation."""
+        raise NotImplementedError("Subclasses must implement this method.")
+    
     def update_location(self, new_center_xy: QPointF):
         """Update the location of the annotation to a new center point."""
         raise NotImplementedError("Subclasses must implement this method.")

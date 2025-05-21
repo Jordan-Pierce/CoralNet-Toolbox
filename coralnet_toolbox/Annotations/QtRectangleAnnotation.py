@@ -36,7 +36,7 @@ class RectangleAnnotation(Annotation):
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
-
+        
         self.set_precision(top_left, bottom_right, False)
         self.set_centroid()
         self.set_cropped_bbox()
@@ -213,6 +213,15 @@ class RectangleAnnotation(Annotation):
         self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
         # Call parent to handle group and helpers
         super().update_graphics_item()
+        
+    def update_polygon(self, delta):
+        """
+        For rectangles, the polygon is always defined by top_left and bottom_right.
+        This method can be used to update centroid and bounding box if needed.
+        """
+        self.set_precision(self.top_left, self.bottom_right)
+        self.set_centroid()
+        self.set_cropped_bbox()
 
     def update_location(self, new_center_xy: QPointF):
         """# Update the location of the annotation"""

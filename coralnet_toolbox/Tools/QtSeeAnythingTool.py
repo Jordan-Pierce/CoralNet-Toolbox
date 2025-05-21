@@ -27,7 +27,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.QtWorkArea import WorkArea
 
 from coralnet_toolbox.utilities import pixmap_to_numpy
-from coralnet_toolbox.utilities import clean_polygon
+from coralnet_toolbox.utilities import simplify_polygon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -466,7 +466,7 @@ class SeeAnythingTool(Tool):
                 polygon[:, 0] = polygon[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
                 polygon[:, 1] = polygon[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
 
-                polygon = clean_polygon(polygon)
+                polygon = simplify_polygon(polygon, 0.1)
 
                 # Create the polygon annotation and add it to self.annotations
                 self.create_polygon_annotation(polygon, confidence)
@@ -602,7 +602,7 @@ class SeeAnythingTool(Tool):
 
         # Process the results with the SAM predictor using the new
         results = self.see_anything_dialog.sam_dialog.predict_from_results([results], self.image_path)
-        
+
         # Get SAM resizing dimensions
         original_h, original_w = self.work_area_image.shape[:2]
         resized_h, resized_w = self.see_anything_dialog.sam_dialog.resized_image.shape[:2]
@@ -618,7 +618,7 @@ class SeeAnythingTool(Tool):
                 mask[:, 0] *= scale_x
                 mask[:, 1] *= scale_y
                 results[0].masks.xy[i] = mask
-        
+
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
 

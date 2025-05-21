@@ -14,8 +14,9 @@ import numpy as np
 
 import rasterio
 from rasterio.windows import Window
+
 from shapely.validation import make_valid
-from shapely.geometry import Polygon, MultiPolygon, GeometryCollection
+from shapely.geometry import Polygon, MultiPolygon, LineString, GeometryCollection
 
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton
@@ -111,52 +112,52 @@ def rasterio_to_qimage(rasterio_src, longest_edge=None):
                                       window=window,
                                       out_shape=(scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-            
+
             # Get the colormap
             colormap = rasterio_src.colormap(1)
-            
+
             # Create a lookup table for the colormap
             max_idx = max(colormap.keys()) + 1
             lut = np.zeros((max_idx, 3), dtype=np.uint8)
-            
+
             # Fill the lookup table with RGB values
             for idx, color in colormap.items():
                 if idx < max_idx:  # Safety check
                     lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
-            
+
             # Clip image indices to valid range for the LUT
             image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
-            
+
             # Use the image as indices into the lookup table
             # This is a vectorized operation that maps each pixel to its RGB value
             rgb_image = lut[image_indices]
-            
+
             # Use RGB format for colormap images
             qimage_format = QImage.Format_RGB888
             image = rgb_image
             num_bands = 3
-            
+
         elif rasterio_src.count < 3:
             # Grayscale image without colormap
             num_bands = 1
             qimage_format = QImage.Format_Grayscale8
-            
+
             # Read a single band
             image = rasterio_src.read(1,
                                       window=window,
                                       out_shape=(scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-            
+
         else:
             # Read RGB bands
             num_bands = 3
             qimage_format = QImage.Format_RGB888
-            
+
             image = rasterio_src.read([1, 2, 3],
                                       window=window,
                                       out_shape=(3, scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-            
+
             # Transpose to height, width, channels format
             image = np.transpose(image, (1, 2, 0))
 
@@ -195,22 +196,22 @@ def rasterio_to_cropped_image(rasterio_src, window):
         if rasterio_src.count == 1 and rasterio_src.colormap(1):
             # Read only the first band
             image = rasterio_src.read(1, window=window)
-            
+
             # Get the colormap
             colormap = rasterio_src.colormap(1)
-            
+
             # Create a lookup table for the colormap
             max_idx = max(colormap.keys()) + 1
             lut = np.zeros((max_idx, 3), dtype=np.uint8)
-            
+
             # Fill the lookup table with RGB values
             for idx, color in colormap.items():
                 if idx < max_idx:  # Safety check
                     lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
-            
+
             # Clip image indices to valid range for the LUT
             image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
-            
+
             # Use the image as indices into the lookup table
             # This is a vectorized operation that maps each pixel to its RGB value
             rgb_image = lut[image_indices]
@@ -239,7 +240,7 @@ def rasterio_to_cropped_image(rasterio_src, window):
         if image.dtype != np.uint8:
             image = image.astype(float) * (255.0 / image.max())
             image = image.astype(np.uint8)
-        
+
         # Convert the numpy array to QImage
         qimage = QImage(image.data.tobytes(),
                         int(window.width),
@@ -253,7 +254,7 @@ def rasterio_to_cropped_image(rasterio_src, window):
         print(f"Error loading cropped image: {str(e)}")
         traceback.print_exc()
         return QImage()  # Return an empty QImage if there's an error
-    
+
 
 def rasterio_to_numpy(rasterio_src, longest_edge=None):
     """
@@ -292,39 +293,39 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
                                       window=window,
                                       out_shape=(scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-            
+
             # Get the colormap
             colormap = rasterio_src.colormap(1)
-            
+
             # Create a lookup table for the colormap
             max_idx = max(colormap.keys()) + 1
             lut = np.zeros((max_idx, 3), dtype=np.uint8)
-            
+
             # Fill the lookup table with RGB values
             for idx, color in colormap.items():
                 if idx < max_idx:  # Safety check
                     lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
-            
+
             # Clip image indices to valid range for the LUT
             image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
-            
+
             # Use the image as indices into the lookup table
             # This is a vectorized operation that maps each pixel to its RGB value
             rgb_image = lut[image_indices]
-            
+
             # Use the colorized RGB version of the image
             image = rgb_image
-            
+
         elif rasterio_src.count == 1:
             # Single-band image without colormap (grayscale)
             image = rasterio_src.read(1,
                                       window=window,
                                       out_shape=(scaled_height, scaled_width),
                                       resampling=rasterio.enums.Resampling.bilinear)
-            
+
             # Convert to 3-channel grayscale image
             image = np.stack([image] * 3, axis=-1)  # Stack the single band to create 3 channels
-            
+
         elif rasterio_src.count >= 3:
             # Multi-band image (RGB)
             image = rasterio_src.read([1, 2, 3],
@@ -334,7 +335,7 @@ def rasterio_to_numpy(rasterio_src, longest_edge=None):
 
             # Transpose to height, width, channels format
             image = np.transpose(image, (1, 2, 0))
-            
+
         else:
             raise ValueError(f"Unsupported number of bands: {rasterio_src.count}")
 
@@ -356,23 +357,23 @@ def work_area_to_numpy(rasterio_src, work_area):
     """
     Extract image data from a work area as a numpy array.
     Properly handles colormaps and different band types.
-    
+
     Args:
         rasterio_src: rasterio DatasetReader object
         work_area: WorkArea object or QRectF
-            
+
     Returns:
         numpy.ndarray: Image data from the work area as numpy array (h, w, 3) for RGB, (h, w) for grayscale
     """
     if not rasterio_src:
         return None
-    
+
     # If we got a WorkArea object, use its rect
     if hasattr(work_area, 'rect'):
         rect = work_area.rect
     else:
         rect = work_area
-        
+
     # Create a rasterio window from the rect
     window = Window(
         col_off=int(rect.x()),
@@ -380,47 +381,47 @@ def work_area_to_numpy(rasterio_src, work_area):
         width=int(rect.width()),
         height=int(rect.height())
     )
-    
+
     try:
         if rasterio_src.count == 1 and rasterio_src.colormap(1):
             # Read the single band
             image = rasterio_src.read(1, window=window)
             # Get the colormap
             colormap = rasterio_src.colormap(1)
-            
+
             # Create a lookup table for the colormap
             max_idx = max(colormap.keys()) + 1
             lut = np.zeros((max_idx, 3), dtype=np.uint8)
-            
+
             # Fill the lookup table with RGB values
             for idx, color in colormap.items():
                 if idx < max_idx:  # Safety check
                     lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
-            
+
             # Clip image indices to valid range for the LUT
             image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
-            
+
             # Use the image as indices into the lookup table
             # This is a vectorized operation that maps each pixel to its RGB value
             rgb_image = lut[image_indices]
-            
+
             # Use the colorized RGB version of the image
             image = rgb_image
-            
+
         elif rasterio_src.count < 3:
             # Grayscale image without colormap
             image = rasterio_src.read(1, window=window)
-            
+
             # Convert to 3-channel grayscale image
             image = np.stack([image] * 3, axis=-1)
-                
+
         else:
             # Read RGB bands
             image = rasterio_src.read([1, 2, 3], window=window)
-            
+
             # Transpose to height, width, channels format
             image = np.transpose(image, (1, 2, 0))
-        
+
         # Convert to uint8 if not already
         if image.dtype != np.uint8:
             if image.max() > 0:  # Avoid division by zero
@@ -428,11 +429,11 @@ def work_area_to_numpy(rasterio_src, work_area):
             image = image.astype(np.uint8)
 
         return image
-        
+
     except Exception as e:
         traceback.print_exc()
         return None
-    
+
 
 def pixmap_to_numpy(pixmap):
     """
@@ -443,7 +444,7 @@ def pixmap_to_numpy(pixmap):
     """
     try:
         image = pixmap.toImage()
-        
+
         # Get image dimensions
         width = image.width()
         height = image.height()
@@ -455,14 +456,14 @@ def pixmap_to_numpy(pixmap):
         # If the image format is ARGB32, swap the first and last channels (A and B)
         if format == QImage.Format_ARGB32:
             numpy_array = numpy_array[:, :, [2, 1, 0, 3]]
-            
+
         numpy_array = numpy_array[:, :, :3]  # Remove the alpha channel if present
-        
+
     except Exception as e:
         print(f"Error converting QImage to numpy: {e}")
         # Return a small empty array if conversion fails
-        numpy_array = np.zeros((256, 256, 3), dtype=np.uint8)  
-        
+        numpy_array = np.zeros((256, 256, 3), dtype=np.uint8)
+
     return numpy_array
 
 
@@ -510,10 +511,10 @@ def attempt_download_asset(app, asset_name, asset_url):
     progress_dialog.close()
 
 
-def clean_polygon(xy_points, simplify_tolerance=0.1):
+def simplify_polygon(xy_points, simplify_tolerance=0.1):
     """
     Filter a list of points to keep only the largest polygon and simplify it.
-    
+
     :param xy_points: List of (x, y) coordinates that might form multiple polygons
     :param simplify_tolerance: Tolerance parameter for polygon simplification (higher values = more simplification)
     :return: List of (x, y) coordinates for the largest, simplified polygon
@@ -521,16 +522,16 @@ def clean_polygon(xy_points, simplify_tolerance=0.1):
     # Convert input points to a numpy array if not already
     if not isinstance(xy_points, np.ndarray):
         xy_points = np.array(xy_points)
-    
+
     try:
         # Create a polygon from the points
         polygon = Polygon(xy_points)
-        
+
         # If we have an invalid polygon, handle it
         if not polygon.is_valid:
             # Buffer(0) is a common trick to fix invalid polygons
             polygon = polygon.buffer(0)
-        
+
         # Get all polygons (in case we have a MultiPolygon)
         if polygon.geom_type == 'MultiPolygon':
             # Find the polygon with the largest area
@@ -538,25 +539,55 @@ def clean_polygon(xy_points, simplify_tolerance=0.1):
             largest_polygon = max(polygons, key=lambda p: p.area)
         else:
             largest_polygon = polygon
-        
+
         # Simplify the largest polygon to reduce the number of vertices
         # preserve_topology=True ensures the simplified polygon doesn't self-intersect
         simplified_polygon = largest_polygon.simplify(tolerance=simplify_tolerance, preserve_topology=True)
-        
+
         # In rare cases, simplification could create a MultiPolygon
         # If that happens, take only the largest part
         if simplified_polygon.geom_type == 'MultiPolygon':
             simplified_polygon = max(list(simplified_polygon.geoms), key=lambda p: p.area)
-            
+
         # Extract the exterior coordinates from the simplified polygon
         simplified_coords = list(simplified_polygon.exterior.coords)
-        
+
         # Return all points except the last one (Shapely adds a duplicate point at the end)
         return simplified_coords[:-1]
-    
+
     except Exception as e:
         print(f"Error filtering/simplifying polygon: {e}")
         # Return original points if something went wrong
+        return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
+
+
+def densify_polygon(xy_points):
+    """
+    Densify a polygon by adding one vertex between each pair of consecutive vertices.
+    :param xy_points: List of (x, y) coordinates
+    :return: List of (x, y) coordinates with more points
+    """
+    if not isinstance(xy_points, np.ndarray):
+        xy_points = np.array(xy_points)
+
+    try:
+        # Remove duplicate last point if present (Shapely convention)
+        if np.allclose(xy_points[0], xy_points[-1]):
+            xy_points = xy_points[:-1]
+
+        densified = []
+        n = len(xy_points)
+        for i in range(n):
+            p1 = xy_points[i]
+            p2 = xy_points[(i + 1) % n]  # wrap around for closed polygon
+            densified.append(tuple(p1))
+            # Insert midpoint
+            midpoint = (p1 + p2) / 2
+            densified.append(tuple(midpoint))
+        return densified
+
+    except Exception as e:
+        print(f"Error densifying polygon: {e}")
         return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
 
 
@@ -670,7 +701,7 @@ def except_hook(cls, exception, traceback_obj, main_window=None):
 def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):
     """Convert a PyTorch model to Ultralytics format"""
     src_state_dict = ultralytics_model.model.model.state_dict()
-    
+
     temp_model = torch.load(weights, map_location='cpu')
     dst_state_dict = temp_model['net']
 
@@ -687,7 +718,7 @@ def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_mo
 
     ultralytics_model.model.model.load_state_dict(src_state_dict)
     ultralytics_model.model.model.eval()
-    
+
     ultralytics_model.task = 'classify'
     ultralytics_model.save(output_path)
     print(f"Model saved to {output_path}")

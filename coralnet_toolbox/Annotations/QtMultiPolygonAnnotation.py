@@ -54,18 +54,12 @@ class MultiPolygonAnnotation(Annotation):
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
-        # Store the PolygonAnnotation objects
 
+        # Store the PolygonAnnotation objects
         self.polygons = polygons
 
         self.graphics_items = []
         self.set_centroid()
-        self.set_cropped_bbox()
-
-    def simplify_polygons(self, epsilon: float):
-        """Apply polygon simplification to each sub-polygon."""
-        for polygon in self.polygons:
-            polygon.simplify_polygon(epsilon)
         self.set_cropped_bbox()
 
     def set_precision(self, reduce: bool = True):
@@ -275,6 +269,10 @@ class MultiPolygonAnnotation(Annotation):
         # Add the updated group back to the scene if available
         if scene:
             scene.addItem(self.graphics_item_group)
+            
+    def update_polygon(self):
+        """Show a warning that MultiPolygonAnnotations should be cut before updating."""
+        pass  # No operation; this is a placeholder for future functionality
 
     def update_location(self, new_center_xy: QPointF):
         """Show a warning that MultiPolygonAnnotations should be cut before moving."""

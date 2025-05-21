@@ -19,6 +19,8 @@ from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF,
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
+from coralnet_toolbox.utilities import densify_polygon
+from coralnet_toolbox.utilities import simplify_polygon
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
 
@@ -38,91 +40,14 @@ class PolygonAnnotation(Annotation):
                  transparency: int = 128,
                  show_msg: bool = False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
+
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
-        self.epsilon = 1.0
+
         self.set_precision(points, True)
         self.set_centroid()
         self.set_cropped_bbox()
-
-    @staticmethod
-    def simplify_polygon(points, epsilon):
-        """
-        Simplify polygon vertices using the Ramer-Douglas-Peucker algorithm.
-
-        Args:
-            points: List of QPointF vertices defining the polygon
-            epsilon: Maximum distance for a point to be considered close enough to the simplified line
-                   Higher values = more simplification, lower values = less simplification
-
-        Returns:
-            List of QPointF vertices defining the simplified polygon
-        """
-        if len(points) < 3:
-            return points
-
-        # Convert QPointF to numpy array for processing
-        points_array = [(point.x(), point.y()) for point in points]
-
-        def rdp(points_array, epsilon):
-            """Recursive implementation of the Ramer-Douglas-Peucker algorithm"""
-            if len(points_array) <= 2:
-                return points_array
-
-            # Find the point with the maximum distance from the line between first and last points
-            line_start = points_array[0]
-            line_end = points_array[-1]
-
-            # Check if start and end points are the same (or very close)
-            if (abs(line_start[0] - line_end[0]) < 1e-6 and
-                abs(line_start[1] - line_end[1]) < 1e-6):
-                # If start and end are essentially the same point, keep only one
-                return [line_start]
-
-            # Calculate the distance of all points to the line
-            max_dist = 0
-            max_idx = 0
-
-            for i in range(1, len(points_array) - 1):
-                # Line equation: ax + by + c = 0
-                # Where a = y2-y1, b = x1-x2, c = x2*y1 - x1*y2
-                a = line_end[1] - line_start[1]
-                b = line_start[0] - line_end[0]
-                c = line_end[0] * line_start[1] - line_start[0] * line_end[1]
-
-                # Check for division by zero (if denominator is zero, line is a point)
-                denominator = (a * a + b * b) ** 0.5
-                if denominator < 1e-6:
-                    # The line is essentially a point, so distance is just standard distance to that point
-                    dx = points_array[i][0] - line_start[0]
-                    dy = points_array[i][1] - line_start[1]
-                    dist = (dx * dx + dy * dy) ** 0.5
-                else:
-                    # Distance from point to line = |ax + by + c| / sqrt(a² + b²)
-                    dist = abs(a * points_array[i][0] + b * points_array[i][1] + c) / denominator
-
-                if dist > max_dist:
-                    max_dist = dist
-                    max_idx = i
-
-            # If the maximum distance is greater than epsilon, recursively simplify
-            if max_dist > epsilon:
-                # Recursive call
-                first_half = rdp(points_array[:max_idx + 1], epsilon)
-                second_half = rdp(points_array[max_idx:], epsilon)
-
-                # Build the result (avoiding duplicate points)
-                return first_half[:-1] + second_half
-            else:
-                # All points are close to the line, keep only endpoints
-                return [points_array[0], points_array[-1]]
-
-        # Run the algorithm
-        simplified_array = rdp(points_array, epsilon)
-
-        # Convert back to QPointF
-        return [QPointF(x, y) for x, y in simplified_array]
 
     def set_precision(self, points: list, reduce: bool = True):
         """
@@ -132,11 +57,6 @@ class PolygonAnnotation(Annotation):
             points: List of QPointF vertices defining the polygon
             reduce: Whether to round coordinates to 3 decimal places
         """
-        # First apply the polygon simplification if there are enough points
-        if len(points) > 3:
-            # points = self.simplify_polygon(points, self.epsilon)
-            pass  # Simplification is not applied here, yet.
-
         # Then round the coordinates if requested
         if reduce:
             points = [QPointF(round(point.x(), 6), round(point.y(), 6)) for point in points]
@@ -299,13 +219,35 @@ class PolygonAnnotation(Annotation):
         self.graphics_item = QGraphicsPolygonItem(QPolygonF(self.points))
         # Call parent to handle group and helpers
         super().create_graphics_item(scene)
-    
+
     def update_graphics_item(self):
         """Update the graphical representation of the polygon annotation."""
         # Use a QGraphicsPolygonItem as the main graphics item
         self.graphics_item = QGraphicsPolygonItem(QPolygonF(self.points))
         # Call parent to handle group and helpers
         super().update_graphics_item()
+    
+    def update_polygon(self, delta):
+        """
+        Simplify or densify the polygon based on wheel movement.
+        """
+        xy_points = [(p.x(), p.y()) for p in self.points]
+
+        # Adjust tolerance based on wheel direction
+        if delta < 0:
+            # Simplify: increase tolerance (less detail)
+            self.tolerance = min(self.tolerance + 0.05, 2.0)
+            updated_coords = simplify_polygon(xy_points, self.tolerance)
+        elif delta > 0:
+            # Densify: decrease segment length (more detail)
+            updated_coords = densify_polygon(xy_points)
+        else:
+            updated_coords = xy_points
+
+        updated_coords = [QPointF(x, y) for x, y in updated_coords]
+        self.set_precision(updated_coords)
+        self.set_centroid()
+        self.set_cropped_bbox()
 
     def update_location(self, new_center_xy: QPointF):
         """Update the location of the annotation by moving it to a new center point."""
@@ -323,7 +265,7 @@ class PolygonAnnotation(Annotation):
         self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)  # Notify update
-    
+
     def update_annotation_size(self, delta: float):
         """
         Grow/shrink the polygon by scaling each vertex radially from the centroid.
@@ -331,14 +273,14 @@ class PolygonAnnotation(Annotation):
         The amount of change is reduced for smoother interaction.
         """
         self.update_user_confidence(self.label)
-    
+
         if len(self.points) < 3:
             return
-    
+
         # Calculate centroid
         centroid_x = sum(p.x() for p in self.points) / len(self.points)
         centroid_y = sum(p.y() for p in self.points) / len(self.points)
-    
+
         # Determine scale factor: small step for each call
         # If delta > 1, grow; if delta < 1, shrink; if delta == 1, no change
         step = 0.01  # You can adjust this value for finer or coarser changes
@@ -348,7 +290,7 @@ class PolygonAnnotation(Annotation):
             scale = 1.0 - step
         else:
             scale = 1.0
-    
+
         # Move each point radially using the scale factor
         new_points = []
         for p in self.points:
@@ -357,7 +299,7 @@ class PolygonAnnotation(Annotation):
             new_x = centroid_x + dx * scale
             new_y = centroid_y + dy * scale
             new_points.append(QPointF(new_x, new_y))
-    
+
         self.set_precision(new_points)
         self.set_centroid()
         self.set_cropped_bbox()
@@ -368,21 +310,21 @@ class PolygonAnnotation(Annotation):
         """Resize the annotation by moving a specific handle (vertex) to a new position."""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-    
+
         # Extract the point index from the handle string (e.g., "point_0" -> 0)
         if handle.startswith("point_"):
             new_points = self.points.copy()
             point_index = int(handle.split("_")[1])
-    
+
             # Move only the selected point
             new_points[point_index] = new_pos
-    
+
             # Recalculate centroid and bounding box
             self.set_precision(new_points)
             self.set_centroid()
             self.set_cropped_bbox()
             self.update_graphics_item()
-    
+
             # Notify that the annotation has been updated
             self.annotationUpdated.emit(self)
 

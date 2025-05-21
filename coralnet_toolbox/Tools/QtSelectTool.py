@@ -112,9 +112,20 @@ class SelectTool(Tool):
         super().deactivate()
     
     def wheelEvent(self, event: QMouseEvent):
-        """Handle zoom using the mouse wheel."""
-        if event.modifiers() & Qt.ControlModifier:
-            delta = event.angleDelta().y()
+        """Handle zoom using the mouse wheel or update polygon with Ctrl+Shift+wheel."""
+        if not len(self.annotation_window.selected_annotations) == 1:
+            return
+        
+        # Get the delta of the wheel event
+        delta = event.angleDelta().y()
+
+        if (event.modifiers() & Qt.ControlModifier) and (event.modifiers() & Qt.ShiftModifier):
+            # Ctrl+Shift+Wheel: update polygon if a single polygon annotation is selected            
+            annotation = self.annotation_window.selected_annotations[0]
+            annotation.update_polygon(delta=1 if delta > 0 else -1)
+            self.display_resize_handles(annotation)
+        elif event.modifiers() & Qt.ControlModifier:
+            # Ctrl+Wheel: change annotation size
             self.annotation_window.set_annotation_size(delta=16 if delta > 0 else -16)
 
     def mousePressEvent(self, event: QMouseEvent):
