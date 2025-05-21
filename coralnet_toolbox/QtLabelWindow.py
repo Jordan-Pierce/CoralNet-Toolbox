@@ -483,32 +483,42 @@ class LabelWindow(QWidget):
         """Set the transparency for the active label and its associated annotations."""
         if not self.active_label:
             return
-
+    
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+    
         if self.active_label.transparency != transparency:
-            # Update the active label's transparency
-            self.active_label.update_transparency(transparency)
-            # Update the transparency of all annotations with the active label
-            for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id == self.active_label.id:
-                    annotation.update_transparency(transparency)
-
+            # Block signals for batch update
+            self.annotation_window.blockSignals(True)
+            try:
+                # Update the active label's transparency
+                self.active_label.update_transparency(transparency)
+                # Update the transparency of all annotations with the active label
+                for annotation in self.annotation_window.annotations_dict.values():
+                    if annotation.label.id == self.active_label.id:
+                        annotation.update_transparency(transparency)
+            finally:
+                self.annotation_window.blockSignals(False)
+    
             self.annotation_window.scene.update()
             self.annotation_window.viewport().update()
-
+    
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
-
+    
     def set_all_labels_transparency(self, transparency):
         """Set the transparency for all labels and annotations."""
-        for label in self.labels:
-            label.update_transparency(transparency)
-
-        for annotation in self.annotation_window.annotations_dict.values():
-            annotation.update_transparency(transparency)
-
+        # Block signals for batch update
+        self.annotation_window.blockSignals(True)
+        try:
+            for label in self.labels:
+                label.update_transparency(transparency)
+    
+            for annotation in self.annotation_window.annotations_dict.values():
+                annotation.update_transparency(transparency)
+        finally:
+            self.annotation_window.blockSignals(False)
+    
         self.annotation_window.scene.update()
         self.annotation_window.viewport().update()
 
