@@ -19,6 +19,7 @@ class PolygonTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.cursor = Qt.CrossCursor
+        self.default_cursor = Qt.ArrowCursor  # Explicitly set, if needed
         self.points = []
         self.drawing_continuous = False  # Flag to indicate continuous drawing mode
         self.epsilon = 1.0  # Default epsilon value for polygon simplification (in pixels)
@@ -27,7 +28,7 @@ class PolygonTool(Tool):
 
     def activate(self):
         self.active = True
-        self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.setCursor(self.cursor)
 
     def deactivate(self):
         self.active = False

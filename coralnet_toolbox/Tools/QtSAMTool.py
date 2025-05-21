@@ -26,10 +26,10 @@ class SAMTool(Tool):
         self.annotation_window = annotation_window
         self.main_window = annotation_window.main_window
         self.sam_dialog = None
-        
-        # Set cursor type
+
         self.cursor = Qt.CrossCursor
-        
+        self.default_cursor = Qt.ArrowCursor  # Add this for clarity
+
         # Store polygon points from SAM prediction
         self.points = []
         
@@ -69,7 +69,7 @@ class SAMTool(Tool):
         Activates the tool.
         """
         self.active = True
-        self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.setCursor(self.cursor)
         self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
     def deactivate(self):
@@ -77,7 +77,7 @@ class SAMTool(Tool):
         Deactivates the tool.
         """
         self.active = False
-        self.annotation_window.setCursor(Qt.ArrowCursor)
+        self.annotation_window.setCursor(self.default_cursor)
         self.sam_dialog = None
         self.cancel_working_area()
         self.has_active_prompts = False

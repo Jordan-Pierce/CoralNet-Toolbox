@@ -22,7 +22,8 @@ class WorkAreaTool(Tool):
         """Initialize the work area tool with the annotation window."""
         super().__init__(annotation_window)
         self.cursor = Qt.CrossCursor
-        
+        self.default_cursor = Qt.ArrowCursor  # Add this for clarity
+
         # State for drawing work areas
         self.drawing = False
         self.start_pos = None
@@ -44,12 +45,10 @@ class WorkAreaTool(Tool):
         
     def activate(self):
         """Activate the work area tool and set the appropriate cursor."""
-        super().activate()
+        self.active = True
         self.annotation_window.viewport().setCursor(self.cursor)
-        
-        # Load existing work areas for the current image
         self.load_work_areas()
-        
+
     def deactivate(self):
         """Deactivate the work area tool and clean up."""
         if self.drawing:
@@ -57,8 +56,8 @@ class WorkAreaTool(Tool):
             
         # Remove all work area graphics from the scene without clearing the raster data
         self.clear_work_area_graphics()
-            
-        super().deactivate()
+        self.annotation_window.viewport().setCursor(self.default_cursor)
+        self.active = False
         
     def clear_work_area_graphics(self):
         """Remove all work area graphics from the scene without clearing the data in the raster."""

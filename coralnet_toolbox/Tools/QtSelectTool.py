@@ -26,6 +26,7 @@ class SelectTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.cursor = Qt.PointingHandCursor
+        self.default_cursor = Qt.ArrowCursor  # Add this line for clarity
         
         # State flags
         self.resizing = False
@@ -106,7 +107,8 @@ class SelectTool(Tool):
         if self.cutting_path:
             self.annotation_window.scene.removeItem(self.cutting_path)
             self.cutting_path = None
-            
+
+        self.annotation_window.viewport().setCursor(self.default_cursor)  # Add this line
         super().deactivate()
     
     def wheelEvent(self, event: QMouseEvent):

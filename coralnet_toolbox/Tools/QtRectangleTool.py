@@ -19,13 +19,14 @@ class RectangleTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.cursor = Qt.CrossCursor
+        self.default_cursor = Qt.ArrowCursor  # Explicitly set, if needed
         self.start_point = None
         self.end_point = None
         self.drawing_continuous = False
 
     def activate(self):
         self.active = True
-        self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.setCursor(self.cursor)
 
     def deactivate(self):
         self.active = False

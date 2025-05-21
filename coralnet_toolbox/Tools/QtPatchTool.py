@@ -19,15 +19,16 @@ class PatchTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.cursor = Qt.CrossCursor
+        self.default_cursor = Qt.ArrowCursor  # Explicitly set, if needed
 
     def activate(self):
         self.active = True
-        self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.setCursor(self.cursor)
         self.annotation_window.main_window.annotation_size_spinbox.setEnabled(True)
 
     def deactivate(self):
         self.active = False
-        self.annotation_window.setCursor(Qt.ArrowCursor)
+        self.annotation_window.setCursor(self.default_cursor)
         self.annotation_window.main_window.annotation_size_spinbox.setEnabled(False)
         self.clear_cursor_annotation()
 

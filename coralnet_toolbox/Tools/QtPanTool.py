@@ -17,6 +17,7 @@ class PanTool(Tool):
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         self.cursor = Qt.ClosedHandCursor
+        self.default_cursor = Qt.ArrowCursor  # Explicitly set
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.RightButton:
@@ -31,7 +32,7 @@ class PanTool(Tool):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.RightButton:
             self.annotation_window.pan_active = False
-            self.annotation_window.setCursor(Qt.ArrowCursor)
+            self.annotation_window.setCursor(self.default_cursor)
 
     def pan(self, pos):
         """Pan the view with boundary constraints to keep image in view"""

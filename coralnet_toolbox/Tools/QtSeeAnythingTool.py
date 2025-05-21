@@ -47,6 +47,7 @@ class SeeAnythingTool(Tool):
         self.top_left = None
 
         self.cursor = Qt.CrossCursor
+        self.default_cursor = Qt.ArrowCursor  # Add this for clarity
         self.annotation_graphics = None
 
         self.work_area_image = None
@@ -78,7 +79,7 @@ class SeeAnythingTool(Tool):
         Activates the tool.
         """
         self.active = True
-        self.annotation_window.setCursor(Qt.CrossCursor)
+        self.annotation_window.setCursor(self.cursor)
         self.see_anything_dialog = self.main_window.see_anything_deploy_predictor_dialog
 
     def deactivate(self):
@@ -86,7 +87,7 @@ class SeeAnythingTool(Tool):
         Deactivates the tool and cleans up all resources.
         """
         self.active = False
-        self.annotation_window.setCursor(Qt.ArrowCursor)
+        self.annotation_window.setCursor(self.default_cursor)
 
         # Clear annotations that haven't been confirmed
         if self.annotations:
