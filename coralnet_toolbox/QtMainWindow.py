@@ -872,10 +872,12 @@ class MainWindow(QMainWindow):
         self.open_check_for_updates_dialog(on_open=True)
 
     def showEvent(self, event):
+        """Show the main window maximized."""
         super().showEvent(event)
         self.showMaximized()
 
     def changeEvent(self, event):
+        """Handle window state changes (minimize, maximize, restore)."""
         super().changeEvent(event)
         if (event.type() == QEvent.WindowStateChange):
             if self.windowState() & Qt.WindowMinimized:
@@ -889,6 +891,7 @@ class MainWindow(QMainWindow):
                 pass  # Do nothing, let the OS handle the restore
 
     def dragEnterEvent(self, event):
+        """Handle drag enter event for drag-and-drop."""
         self.untoggle_all_tools()
 
         if event.mimeData().hasUrls():
@@ -902,6 +905,7 @@ class MainWindow(QMainWindow):
                 self.import_images.dragEnterEvent(event)
 
     def dropEvent(self, event):
+        """Handle drop event for drag-and-drop."""
         self.untoggle_all_tools()
 
         urls = event.mimeData().urls()
@@ -921,6 +925,7 @@ class MainWindow(QMainWindow):
                 self.import_images.dropEvent(event)
 
     def dragMoveEvent(self, event):
+        """Handle drag move event for drag-and-drop."""
         self.untoggle_all_tools()
 
         if event.mimeData().hasUrls():
@@ -932,7 +937,48 @@ class MainWindow(QMainWindow):
                 event.acceptProposedAction()
             else:
                 self.import_images.dragMoveEvent(event)
-
+                
+    def switch_back_to_tool(self):
+        """Switches back to the tool used to create the currently selected annotation."""        
+        # Get the currently selected tool from AnnotationWindow
+        selected_tool = self.annotation_window.get_selected_tool()
+        
+        if selected_tool != "select":
+            self.choose_specific_tool("select")
+            return
+        
+        # Get the currently selected annotation type
+        annotation_type = self.annotation_window.get_selected_annotation_type()
+        
+        if annotation_type is None:
+            return
+        
+        # Convert the annotation type to a string
+        annotation_type = str(annotation_type.__name__)
+        
+        if annotation_type == "PatchAnnotation":
+            self.choose_specific_tool("patch")
+        elif annotation_type == "RectangleAnnotation":
+            self.choose_specific_tool("rectangle")
+        elif annotation_type == "PolygonAnnotation":
+            self.choose_specific_tool("polygon")
+        elif annotation_type == "MultiPolygonAnnotation":
+            self.choose_specific_tool("polygon")
+        else:
+            # Multiple annotations selected
+            pass
+        
+    def choose_specific_tool(self, tool):
+        """Choose a specific tool based on the provided tool name."""
+        # Untoggle all tools first (clear buttons)
+        self.untoggle_all_tools()
+        # Trigger the select tool action in the main window to set the button
+        self.select_tool_action.trigger()
+        # Switch to select tool in main window (sets button)
+        self.handle_tool_changed(tool)
+        # Set the select tool in the annotation window (sets tool)
+        self.annotation_window.set_selected_tool(tool)
+        
     def toggle_tool(self, state):
         """Toggle the selected tool and emit the toolChanged signal."""
         if not self.image_window.raster_manager.image_paths:
@@ -1050,6 +1096,7 @@ class MainWindow(QMainWindow):
                 self.toolChanged.emit(None)
 
     def untoggle_all_tools(self):
+        """Untoggle all tool actions and unlock the label lock."""
         # Unlock the label lock
         self.label_window.unlock_label_lock()
 
@@ -1066,6 +1113,7 @@ class MainWindow(QMainWindow):
         self.toolChanged.emit(None)
 
     def handle_tool_changed(self, tool):
+        """Update the toolbar UI to reflect the currently selected tool."""
         # Unlock the label lock
         self.label_window.unlock_label_lock()
 

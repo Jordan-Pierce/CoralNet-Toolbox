@@ -485,6 +485,12 @@ class AnnotationWindow(QGraphicsView):
                 self.select_annotation(annotations[new_index])
                 # Center the view on the new annotation
                 self.center_on_annotation(annotations[new_index])
+                
+    def get_selected_annotation_type(self):
+        """Get the type of the currently selected annotation."""
+        if len(self.selected_annotations) == 1:
+            return type(self.selected_annotations[0])
+        return None
 
     def select_annotation(self, annotation, ctrl_pressed=False):
         """Select an annotation and update the UI accordingly."""

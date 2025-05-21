@@ -28,7 +28,12 @@ class GlobalEventFilter(QObject):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
             if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
-
+                
+                # Handle Tab key for switching between Select and Annotation tools
+                if event.key() == Qt.Key_Tab:
+                    self.main_window.switch_back_to_tool()
+                    return True
+                
                 # Handle WASD keys for selecting Label
                 if event.key() in [Qt.Key_W, Qt.Key_A, Qt.Key_S, Qt.Key_D]:
                     self.label_window.handle_wasd_key(event.key())
@@ -90,14 +95,8 @@ class GlobalEventFilter(QObject):
             # Select all annotations on < key press with Shift+Ctrl
             if event.key() == Qt.Key_Less and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
                 if not self.main_window.select_tool_action.isChecked():
-                    # Untoggle all tools first (clear buttons)
-                    self.main_window.untoggle_all_tools()
-                    # Trigger the select tool action in the main window to set the button
-                    self.main_window.select_tool_action.trigger()
-                    # Switch to select tool in main window (sets button)
-                    self.main_window.handle_tool_changed("select")
-                    # Set the select tool in the annotation window (sets tool)
-                    self.annotation_window.set_selected_tool("select")
+                    # Untoggle all tools then select the select tool
+                    self.main_window.choose_specific_tool("select")
                 
                 self.annotation_window.select_annotations()
                 return True
@@ -105,14 +104,8 @@ class GlobalEventFilter(QObject):
             # Unselect all annotations on > key press with Shift+Ctrl
             if event.key() == Qt.Key_Greater and event.modifiers() == (Qt.ShiftModifier | Qt.ControlModifier):
                 if not self.main_window.select_tool_action.isChecked():
-                    # Untoggle all tools first (clear buttons)
-                    self.main_window.untoggle_all_tools()
-                    # Trigger the select tool action in the main window to set the button
-                    self.main_window.select_tool_action.trigger()
-                    # Switch to select tool in main window (sets button)
-                    self.main_window.handle_tool_changed("select")
-                    # Set the select tool in the annotation window (sets tool)
-                    self.annotation_window.set_selected_tool("select")
+                    # Untoggle all tools then select the select tool
+                    self.main_window.choose_specific_tool("select")
                 
                 self.annotation_window.unselect_annotations()
                 return True

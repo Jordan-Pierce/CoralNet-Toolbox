@@ -254,6 +254,9 @@ The main window consists of several components:
 - **Ctrl + Left/Right**: Cycle through annotations.
 - **Ctrl + Shift + <**: Select all annotations.
 - **Ctrl + Shift + >**: Unselect all annotations.
+- **Ctrl + Tab**: Switch from SelectTool to the Annotation tool that matches the currently selected (1) Annotation
+  - When a PatchAnnotation is selected, switches back to the PatchTool
+  - When the PatchTool is active, switches to the SelectTool
 
 - **Machine Learning, SAM, and AutoDistill**: After a model is loaded
   - **Ctrl + 1**: Make prediction on selected Patch annotation, else all in the image with Review label.
