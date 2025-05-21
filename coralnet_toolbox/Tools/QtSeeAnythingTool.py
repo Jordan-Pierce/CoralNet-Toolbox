@@ -397,9 +397,6 @@ class SeeAnythingTool(Tool):
         # Move the points back to the original image space
         working_area_top_left = self.working_area.rect.topLeft()
 
-        # Get the current transparency
-        transparency = self.main_window.label_window.active_label.transparency
-
         # Predict the mask provided prompts (using only the current user-drawn rectangles)
         results = self.see_anything_dialog.predict_from_prompts(self.rectangles)[0]
 
@@ -471,23 +468,23 @@ class SeeAnythingTool(Tool):
                 polygon = clean_polygon(polygon)
 
                 # Create the polygon annotation and add it to self.annotations
-                self.create_polygon_annotation(polygon, confidence, transparency)
+                self.create_polygon_annotation(polygon, confidence)
             else:
                 # Create the rectangle annotation and add it to self.annotations
-                self.create_rectangle_annotation(box_abs, confidence, transparency)
+                self.create_rectangle_annotation(box_abs, confidence)
 
         self.annotation_window.scene.update()
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()
 
-    def create_rectangle_annotation(self, box, confidence, transparency):
+    def create_rectangle_annotation(self, box, confidence):
         """
         Create rectangle annotations based on the given box coordinates.
 
         Args:
             box (np.ndarray): The bounding box coordinates.
-            transparency (int): The transparency level for the annotation.
+            confidence (float): The confidence score for the annotation.
         """
         if len(box):
             # Convert to QPointF
@@ -502,7 +499,7 @@ class SeeAnythingTool(Tool):
                                              self.annotation_window.selected_label.color,
                                              self.annotation_window.current_image_path,
                                              self.annotation_window.selected_label.id,
-                                             transparency)
+                                             self.main_window.label_window.active_label.transparency)
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
@@ -511,14 +508,13 @@ class SeeAnythingTool(Tool):
             annotation.create_graphics_item(self.annotation_window.scene)
             self.annotations.append(annotation)
 
-    def create_polygon_annotation(self, points, confidence, transparency):
+    def create_polygon_annotation(self, points, confidence):
         """
         Create polygon annotations based on the given points.
 
         Args:
             points (np.ndarray): The polygon points.
             confidence (float): The confidence score for the annotation.
-            transparency (int): The transparency level for the annotation.
         """
         if len(points) > 3:
             # Convert to QPointF
@@ -530,7 +526,7 @@ class SeeAnythingTool(Tool):
                                            self.annotation_window.selected_label.color,
                                            self.annotation_window.current_image_path,
                                            self.annotation_window.selected_label.id,
-                                           transparency)
+                                           self.main_window.label_window.active_label.transparency)
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})

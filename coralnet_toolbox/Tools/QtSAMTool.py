@@ -211,9 +211,6 @@ class SAMTool(Tool):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Get the current transparency (use half for temporary annotations)
-        transparency = self.main_window.label_window.active_label.transparency // 2
-        
         # Prepare points and bounding box for SAM
         positive = [[point.x(), point.y()] for point in self.positive_points]
         negative = [[point.x(), point.y()] for point in self.negative_points]
@@ -289,7 +286,7 @@ class SAMTool(Tool):
             self.annotation_window.selected_label.color,
             self.annotation_window.current_image_path,
             self.annotation_window.selected_label.id,
-            transparency
+            max(self.main_window.label_window.active_label.transparency, 32)
         )
         
         # Update confidence score
@@ -560,9 +557,6 @@ class SAMTool(Tool):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Get transparency for final annotation
-        transparency = self.main_window.label_window.active_label.transparency
-        
         # Get positive and negative points
         positive = [[point.x(), point.y()] for point in self.positive_points]
         negative = [[point.x(), point.y()] for point in self.negative_points]
@@ -622,7 +616,7 @@ class SAMTool(Tool):
             self.annotation_window.selected_label.color,
             self.annotation_window.current_image_path,
             self.annotation_window.selected_label.id,
-            transparency
+            self.main_window.label_window.active_label.transparency
         )
         
         # Update confidence

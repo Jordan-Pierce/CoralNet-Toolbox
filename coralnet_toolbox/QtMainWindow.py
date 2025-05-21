@@ -93,7 +93,7 @@ from coralnet_toolbox.AutoDistill import (
     BatchInferenceDialog as AutoDistillBatchInferenceDialog
 )
 
-from coralnet_toolbox.CoralNet import ( 
+from coralnet_toolbox.CoralNet import (
     AuthenticateDialog as CoralNetAuthenticateDialog,
     DownloadDialog as CoralNetDownloadDialog
 )
@@ -146,13 +146,13 @@ class MainWindow(QMainWindow):
 
         # Set the version
         self.version = __version__
-        
-        # Project path 
+
+        # Project path
         self.current_project_path = ""
-        
+
         # Update the project label
         self.update_project_label()
-        
+
         # Set icon
         self.setWindowIcon(self.coral_icon)
 
@@ -162,10 +162,7 @@ class MainWindow(QMainWindow):
                             Qt.WindowMinimizeButtonHint |
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
-        
-        # Start maximized by default
-        self.showMaximized()
-        
+
         # Set the default uncertainty threshold and IoU threshold
         self.iou_thresh = 0.50
         self.uncertainty_thresh = 0.20
@@ -202,11 +199,11 @@ class MainWindow(QMainWindow):
 
         # Create dialogs (Sample)
         self.patch_annotation_sampling_dialog = PatchSamplingDialog(self)
-        
+
         # Create dialogs (CoralNet)
         self.coralnet_authenticate_dialog = CoralNetAuthenticateDialog(self)
         self.coralnet_download_dialog = CoralNetDownloadDialog(self)
-        
+
         # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
@@ -227,27 +224,27 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
-        
+
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
         self.sam_batch_inference_dialog = SAMBatchInferenceDialog(self)
-        
+
         # Create dialogs (See Anything)
         self.see_anything_train_model_dialog = SeeAnythingTrainModelDialog(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_batch_inference_dialog = SeeAnythingBatchInferenceDialog(self)
-        
+
         # Create dialogs (AutoDistill)
         self.auto_distill_deploy_model_dialog = AutoDistillDeployModelDialog(self)
         self.auto_distill_batch_inference_dialog = AutoDistillBatchInferenceDialog(self)
-        
+
         # Create dialogs (Tile)
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.tile_inference_dialog = TileInferenceDialog(self)
-        
+
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
 
@@ -286,10 +283,10 @@ class MainWindow(QMainWindow):
         # Create the menu bar
         # ----------------------------------------
         self.menu_bar = self.menuBar()
-        
+
         # File menu
         self.file_menu = self.menu_bar.addMenu("File")
-        
+
         # Import menu
         self.import_menu = self.file_menu.addMenu("Import")
 
@@ -407,7 +404,7 @@ class MainWindow(QMainWindow):
 
         # Add a separator
         self.file_menu.addSeparator()
-        
+
         # New Project
         self.new_project_action = QAction("New Project", self)
         self.new_project_action.triggered.connect(self.open_new_project)
@@ -426,7 +423,7 @@ class MainWindow(QMainWindow):
         self.annotation_sampling_action = QAction("Sample", self)
         self.annotation_sampling_action.triggered.connect(self.open_patch_annotation_sampling_dialog)
         self.menu_bar.addAction(self.annotation_sampling_action)
-        
+
         # Tile menu
         self.tile_menu = self.menu_bar.addMenu("Tile")
 
@@ -455,7 +452,7 @@ class MainWindow(QMainWindow):
         self.coralnet_authenticate_action = QAction("Authenticate", self)
         self.coralnet_authenticate_action.triggered.connect(self.open_coralnet_authenticate_dialog)
         self.coralnet_menu.addAction(self.coralnet_authenticate_action)
-        # CoralNet Download 
+        # CoralNet Download
         self.coralnet_download_action = QAction("Download", self)
         self.coralnet_download_action.triggered.connect(self.open_coralnet_download_dialog)
         self.coralnet_menu.addAction(self.coralnet_download_action)
@@ -550,7 +547,7 @@ class MainWindow(QMainWindow):
         self.sam_batch_inference_action = QAction("Batch Inference", self)
         self.sam_batch_inference_action.triggered.connect(self.open_sam_batch_inference_dialog)
         self.sam_menu.addAction(self.sam_batch_inference_action)
-        
+
         # See Anything menu
         self.see_anything_menu = self.menu_bar.addMenu("See Anything")
         # Train Model
@@ -576,10 +573,10 @@ class MainWindow(QMainWindow):
         self.auto_distill_batch_inference_action = QAction("Batch Inference", self)
         self.auto_distill_batch_inference_action.triggered.connect(self.open_auto_distill_batch_inference_dialog)
         self.auto_distill_menu.addAction(self.auto_distill_batch_inference_action)
-        
+
         # Help menu
         self.help_menu = self.menu_bar.addMenu("Help")
-        
+
         # Check for updates
         self.check_for_updates_action = QAction("Check for Updates", self)
         self.check_for_updates_action.triggered.connect(self.open_check_for_updates_dialog)
@@ -646,19 +643,19 @@ class MainWindow(QMainWindow):
         self.sam_tool_action.setCheckable(True)
         self.sam_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.sam_tool_action)
-        
+
         self.see_anything_tool_action = QAction(self.see_anything_icon, "See Anything (YOLOE)", self)
         self.see_anything_tool_action.setCheckable(True)
         self.see_anything_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.see_anything_tool_action)
 
         self.toolbar.addSeparator()
-        
+
         self.work_area_tool_action = QAction(self.workarea_icon, "Work Area", self)
         self.work_area_tool_action.setCheckable(True)
         self.work_area_tool_action.triggered.connect(self.toggle_tool)
         self.toolbar.addAction(self.work_area_tool_action)
-        
+
         self.toolbar.addSeparator()
 
         # Add a spacer to push the device label to the bottom
@@ -707,11 +704,11 @@ class MainWindow(QMainWindow):
         self.image_dimensions_label.setFixedWidth(150)
         self.mouse_position_label.setFixedWidth(150)
         self.view_dimensions_label.setFixedWidth(150)
-        
+
         # Slider
         transparency_layout = QHBoxLayout()
         self.transparency_slider = QSlider(Qt.Horizontal)
-        self.transparency_slider.setRange(0, 128)
+        self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.setTickPosition(QSlider.TicksBelow)
         self.transparency_slider.setTickInterval(16)  # Add tick marks every 16 units
@@ -731,11 +728,11 @@ class MainWindow(QMainWindow):
         self.all_labels_action = QAction(self.all_icon, "", self)
         self.all_labels_action.setCheckable(True)
         self.all_labels_action.setChecked(True)
-        self.all_labels_action.triggered.connect(self.update_all_labels_transparency)
-
+        self.all_labels_action.triggered.connect(self.update_label_transparency)
+        
         # Create button to hold the action
         self.all_labels_button = QToolButton()
-        
+
         # Set tooltip on both the action and button to ensure it shows
         self.all_labels_action.setToolTip("Select All Labels")
         self.all_labels_button.setToolTip("Select All Labels")
@@ -750,21 +747,21 @@ class MainWindow(QMainWindow):
         # Create widget to hold the layout
         self.transparency_widget = QWidget()
         self.transparency_widget.setLayout(transparency_layout)
-        
+
         # Patch Annotation Size
         annotation_size_label = QLabel("Patch Size")
         self.annotation_size_spinbox = QSpinBox()
         self.annotation_size_spinbox.setMinimum(1)
-        self.annotation_size_spinbox.setMaximum(5000) 
+        self.annotation_size_spinbox.setMaximum(5000)
         self.annotation_size_spinbox.setEnabled(False)
         self.annotation_size_spinbox.setValue(self.annotation_window.annotation_size)
         self.annotation_size_spinbox.valueChanged.connect(self.annotation_window.set_annotation_size)
         self.annotation_window.annotationSizeChanged.connect(self.annotation_size_spinbox.setValue)
-        
+
         annotation_size_layout = QHBoxLayout()
         annotation_size_layout.addWidget(annotation_size_label)
         annotation_size_layout.addWidget(self.annotation_size_spinbox)
-        
+
         self.annotation_size_widget = QWidget()
         self.annotation_size_widget.setLayout(annotation_size_layout)
 
@@ -772,7 +769,7 @@ class MainWindow(QMainWindow):
         # Create collapsible Parameters section
         # --------------------------------------------------
         self.parameters_section = CollapsibleSection("Parameters")
-        
+
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
@@ -868,7 +865,7 @@ class MainWindow(QMainWindow):
 
         # Enable drag and drop
         self.setAcceptDrops(True)
-        
+
         # -----------------------------------------
         # Check for updates on opening
         # -----------------------------------------
@@ -876,6 +873,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.showMaximized()
 
     def changeEvent(self, event):
         super().changeEvent(event)
@@ -889,14 +887,14 @@ class MainWindow(QMainWindow):
             else:
                 # Restore to normal state
                 pass  # Do nothing, let the OS handle the restore
-            
+
     def dragEnterEvent(self, event):
         self.untoggle_all_tools()
 
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
-            
+
             # Accept if any of the files is a JSON file
             if any(file_name.lower().endswith('.json') for file_name in file_names):
                 event.acceptProposedAction()
@@ -924,11 +922,11 @@ class MainWindow(QMainWindow):
 
     def dragMoveEvent(self, event):
         self.untoggle_all_tools()
-        
+
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             file_names = [url.toLocalFile() for url in urls if url.isLocalFile()]
-            
+
             # Accept if any of the files is a JSON file
             if any(file_name.lower().endswith('.json') for file_name in file_names):
                 event.acceptProposedAction()
@@ -943,10 +941,10 @@ class MainWindow(QMainWindow):
                                 "Please load an image before using the tools.")
             self.untoggle_all_tools()
             return
-        
+
         # Unlock the label lock
         self.label_window.unlock_label_lock()
-        
+
         action = self.sender()
         if action == self.select_tool_action:
             if state:
@@ -956,11 +954,11 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                
+
                 self.toolChanged.emit("select")
             else:
                 self.toolChanged.emit(None)
-                
+
         elif action == self.patch_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
@@ -969,11 +967,11 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                
+
                 self.toolChanged.emit("patch")
             else:
                 self.toolChanged.emit(None)
-                
+
         elif action == self.rectangle_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
@@ -982,11 +980,11 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                
+
                 self.toolChanged.emit("rectangle")
             else:
                 self.toolChanged.emit(None)
-                
+
         elif action == self.polygon_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
@@ -995,11 +993,11 @@ class MainWindow(QMainWindow):
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                
+
                 self.toolChanged.emit("polygon")
             else:
                 self.toolChanged.emit(None)
-                
+
         elif action == self.sam_tool_action:
             if not self.sam_deploy_predictor_dialog.loaded_model:
                 self.sam_tool_action.setChecked(False)
@@ -1014,11 +1012,11 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-        
+
                 self.toolChanged.emit("sam")
             else:
                 self.toolChanged.emit(None)
-                
+
         elif action == self.see_anything_tool_action:
             if not self.see_anything_deploy_predictor_dialog.loaded_model:
                 self.see_anything_tool_action.setChecked(False)
@@ -1033,11 +1031,11 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.work_area_tool_action.setChecked(False)
-                
+
                 self.toolChanged.emit("see_anything")
             else:
                 self.toolChanged.emit(None)
-        
+
         elif action == self.work_area_tool_action:
             if state:
                 self.select_tool_action.setChecked(False)
@@ -1046,7 +1044,7 @@ class MainWindow(QMainWindow):
                 self.polygon_tool_action.setChecked(False)
                 self.sam_tool_action.setChecked(False)
                 self.see_anything_tool_action.setChecked(False)
-                
+
                 self.toolChanged.emit("work_area")
             else:
                 self.toolChanged.emit(None)
@@ -1063,14 +1061,14 @@ class MainWindow(QMainWindow):
         self.sam_tool_action.setChecked(False)
         self.see_anything_tool_action.setChecked(False)
         self.work_area_tool_action.setChecked(False)
-        
+
         # Emit to reset the tool
         self.toolChanged.emit(None)
-        
+
     def handle_tool_changed(self, tool):
         # Unlock the label lock
         self.label_window.unlock_label_lock()
-        
+
         if tool == "select":
             self.select_tool_action.setChecked(True)
             self.patch_tool_action.setChecked(False)
@@ -1079,7 +1077,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            
+
         elif tool == "patch":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(True)
@@ -1088,7 +1086,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            
+
         elif tool == "rectangle":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1097,7 +1095,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            
+
         elif tool == "polygon":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1106,7 +1104,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            
+
         elif tool == "sam":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1115,7 +1113,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(True)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            
+
         elif tool == "see_anything":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1124,7 +1122,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(True)
             self.work_area_tool_action.setChecked(False)
-            
+
         elif tool == "work_area":
             self.select_tool_action.setChecked(False)
             self.patch_tool_action.setChecked(False)
@@ -1142,7 +1140,7 @@ class MainWindow(QMainWindow):
             self.sam_tool_action.setChecked(False)
             self.see_anything_tool_action.setChecked(False)
             self.work_area_tool_action.setChecked(False)
-            
+
     def toggle_device(self):
         dialog = DeviceSelectionDialog(self.devices, self)
         if dialog.exec_() == QDialog.Accepted:
@@ -1191,14 +1189,14 @@ class MainWindow(QMainWindow):
 
     def update_project_label(self):
         """Update the project label in the status bar"""
-        
+
         text = f"CoralNet-Toolbox v{self.version} "
         if self.current_project_path:
             text += f"[Project: {self.current_project_path}]"
-            
+
         # Update the window title
         self.setWindowTitle(text)
-        
+
     def update_image_dimensions(self, width, height):
         self.image_dimensions_label.setText(f"Image: {height} x {width}")
 
@@ -1234,23 +1232,23 @@ class MainWindow(QMainWindow):
         self.view_dimensions_label.setText(f"View: {height} x {width}")
 
     def get_transparency_value(self):
+        """Get the current transparency value from the slider"""
         return self.transparency_slider.value()
 
     def update_transparency_slider(self, transparency):
+        """"Update the transparency slider value"""
         self.transparency_slider.setValue(transparency)
 
     def update_label_transparency(self, value):
+        """Update the label transparency value in LabelWindow, AnnotationWindow and the Slider"""
         if self.all_labels_button.isChecked():
+            # Set transparency for all labels in LabelWindow, AnnotationWindow
             self.label_window.set_all_labels_transparency(value)
         else:
-            self.label_window.set_label_transparency(value)
+            # Set transparency for the active label in LabelWindow, AnnotationWindow
+            self.label_window.set_active_label_transparency(value)
+        # Update the slider value
         self.update_transparency_slider(value)
-
-    def update_all_labels_transparency(self, state):
-        if state == Qt.Checked:
-            self.label_window.set_all_labels_transparency(self.transparency_slider.value())
-        else:
-            self.label_window.set_label_transparency(self.transparency_slider.value())
 
     def get_uncertainty_thresh(self):
         """Get the current uncertainty threshold value"""
@@ -1315,7 +1313,7 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        
+
     def open_new_project(self):
         """Confirm user wants to create a new project before closing window."""
         reply = QMessageBox.question(self, "New Project",
@@ -1329,19 +1327,19 @@ class MainWindow(QMainWindow):
             self.close()
             new_window = MainWindow(self.version)
             new_window.show()
-            
+
     def open_open_project_dialog(self):
         """Open the Open Project dialog to select a project directory"""
         try:
             self.untoggle_all_tools()
             self.open_project_dialog.exec_()
-            
+
             # Update the current project path
             path = self.open_project_dialog.get_project_path()
             if path:
                 self.current_project_path = path
                 self.update_project_label()
-                
+
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
@@ -1350,16 +1348,16 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.save_project_dialog.exec_()
-            
+
             # Update the current project path
             path = self.save_project_dialog.get_project_path()
             if path:
                 self.current_project_path = path
                 self.update_project_label()
-                
+
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-        
+
     def save_project_as(self):
         """Save the project data to a new directory"""
         if self.current_project_path == "":
@@ -1375,7 +1373,7 @@ class MainWindow(QMainWindow):
             self.import_frames_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_import_viscore_annotations_dialog(self):
         """Open the Import Viscore Annotations dialog to import annotations"""
         if not self.image_window.raster_manager.image_paths:
@@ -1383,13 +1381,13 @@ class MainWindow(QMainWindow):
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
             return
-        
+
         try:
             self.untoggle_all_tools()
             self.import_viscore_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_export_viscore_annotations_dialog(self):
         """Open the Export Viscore Annotations dialog to export annotations"""
         # Check if there are any images in the project
@@ -1398,20 +1396,20 @@ class MainWindow(QMainWindow):
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
             return
-        
+
         # Check if there are annotations
         if not self.annotation_window.annotations_dict:
             QMessageBox.warning(self,
                                 "Export Annotations",
                                 "No annotations are present in the project.")
             return
-        
+
         try:
             self.untoggle_all_tools()
             self.export_viscore_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_export_geojson_annotations_dialog(self):
         """Open the Export GeoJSON dialog to export annotations as GeoJSON files"""
         # Check if there are any images in the project
@@ -1420,20 +1418,20 @@ class MainWindow(QMainWindow):
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
             return
-        
+
         # Check if there are annotations
         if not self.annotation_window.annotations_dict:
             QMessageBox.warning(self,
                                 "Export Annotations",
                                 "No annotations are present in the project.")
             return
-        
+
         try:
             self.untoggle_all_tools()
             self.export_geojson_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_export_mask_annotations_dialog(self):
         """Open the Export Mask Annotations dialog to export segmentation masks"""
         # Check if there are any images in the project
@@ -1442,14 +1440,14 @@ class MainWindow(QMainWindow):
                                 "No Images Loaded",
                                 "Please load images into the project before sampling annotations.")
             return
-        
+
         # Check if there are any annotations
         if not self.annotation_window.annotations_dict:
             QMessageBox.warning(self,
                                 "Export Segmentation Masks",
                                 "No annotations are present in the project.")
             return
-        
+
         try:
             self.untoggle_all_tools()
             self.export_mask_annotations_dialog.exec_()
@@ -1470,7 +1468,7 @@ class MainWindow(QMainWindow):
             self.patch_annotation_sampling_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-    
+
     def open_coralnet_authenticate_dialog(self):
         """Open the CoralNet Authenticate dialog to authenticate with CoralNet"""
         try:
@@ -1478,7 +1476,7 @@ class MainWindow(QMainWindow):
             self.coralnet_authenticate_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_coralnet_download_dialog(self):
         """Open the CoralNet Download dialog to download datasets from CoralNet"""
         if not self.coralnet_authenticate_dialog.authenticated:
@@ -1568,14 +1566,14 @@ class MainWindow(QMainWindow):
             self.classify_merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-    
+
     def open_classify_tile_dataset_dialog(self):
         try:
             self.untoggle_all_tools()
             self.classify_tile_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-    
+
     def open_detect_tile_dataset_dialog(self):
         try:
             self.untoggle_all_tools()
@@ -1589,7 +1587,7 @@ class MainWindow(QMainWindow):
             self.segment_tile_dataset_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_tile_inference_dialog(self):
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
@@ -1799,14 +1797,14 @@ class MainWindow(QMainWindow):
             self.sam_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_see_anything_train_model_dialog(self):
         try:
             self.untoggle_all_tools()
             self.see_anything_train_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_see_anything_deploy_predictor_dialog(self):
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -1819,20 +1817,20 @@ class MainWindow(QMainWindow):
             self.see_anything_deploy_predictor_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_see_anything_batch_inference_dialog(self):
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE) Batch Inference",
                                 "No images are present in the project.")
             return
-        
+
         if not self.see_anything_deploy_predictor_dialog.loaded_model:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE) Batch Inference",
                                 "Please deploy a model before running batch inference.")
             return
-        
+
         try:
             self.untoggle_all_tools()
             if self.see_anything_batch_inference_dialog.has_valid_sources():
@@ -1871,7 +1869,7 @@ class MainWindow(QMainWindow):
             self.auto_distill_batch_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-            
+
     def open_check_for_updates_dialog(self, on_open=False):
         """
         Checks if package version is up to date with PyPI.
@@ -1880,14 +1878,14 @@ class MainWindow(QMainWindow):
             # Get package info from PyPI
             response = requests.get("https://pypi.org/pypi/coralnet-toolbox/json", timeout=5)
             response.raise_for_status()
-            
+
             # Extract latest version
             package_info = response.json()
             latest_version = package_info["info"]["version"]
-            
+
             # Compare versions
             needs_update = version.parse(latest_version) > version.parse(self.version)
-            
+
             if needs_update:
                 pip_command = "\npip install -U coralnet-toolbox=={}".format(latest_version)
                 # Create a QMessageBox instance
@@ -1903,10 +1901,10 @@ class MainWindow(QMainWindow):
                     f'Be sure to check out the {usage_link} for any changes!'
                 )
                 msg_box.setTextFormat(Qt.RichText)
-                msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse | 
-                                                Qt.TextSelectableByKeyboard | 
+                msg_box.setTextInteractionFlags(Qt.TextSelectableByMouse |
+                                                Qt.TextSelectableByKeyboard |
                                                 Qt.LinksAccessibleByMouse)
-                
+
                 msg_box.setStandardButtons(QMessageBox.Ok)
                 # Execute the dialog
                 msg_box.exec_()
@@ -1915,13 +1913,13 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(self,
                                             "Nope, you're good!",
                                             f"You are using the most current version ({self.version}).")
-            
+
         except (requests.RequestException, KeyError, ValueError) as e:
             if not on_open:
                 QMessageBox.warning(self,
                                     "Update Check Failed",
                                     f"Could not check for updates.\nError: {e}")
-                
+
     def open_create_new_issue_dialog(self):
         """Display QMessageBox with link to create new issue on GitHub."""
         try:
@@ -1937,7 +1935,7 @@ class MainWindow(QMainWindow):
             msg.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
-        
+
     def open_snake_game_dialog(self):
         """
         Open the QtSnakeGame in a new window.
@@ -1948,7 +1946,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    
+
 class CollapsibleSection(QWidget):
     def __init__(self, title, parent=None):
         super().__init__(parent)
@@ -2047,4 +2045,3 @@ class ClickableAction(QAction):
         if event.button() == Qt.LeftButton:
             self.trigger()
         super().mousePressEvent(event)
-

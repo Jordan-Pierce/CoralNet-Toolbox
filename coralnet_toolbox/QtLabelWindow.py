@@ -33,7 +33,7 @@ class Label(QWidget):
         self.short_label_code = short_label_code
         self.long_label_code = long_label_code
         self.color = color
-        self.transparency = 64
+        self.transparency = 128
         self.is_selected = False
 
         # Set the fixed width and height
@@ -159,8 +159,8 @@ class Label(QWidget):
     @classmethod
     def from_dict(cls, data):
         """Create a Label instance from a dictionary."""
-        return cls(data['short_label_code'], 
-                   data['long_label_code'], 
+        return cls(data['short_label_code'],
+                   data['long_label_code'],
                    QColor(*data['color']),
                    data['id'])
 
@@ -220,7 +220,7 @@ class LabelWindow(QWidget):
         self.edit_label_button.setFixedSize(self.label_width, self.label_height)
         self.edit_label_button.setEnabled(False)  # Initially disabled
         self.top_bar.addWidget(self.edit_label_button)
-        
+
         # Lock button
         self.label_lock_button = QPushButton()
         self.label_lock_button.setIcon(self.main_window.unlock_icon)
@@ -229,7 +229,7 @@ class LabelWindow(QWidget):
         self.label_lock_button.toggled.connect(self.toggle_label_lock)
         self.label_lock_button.setFixedSize(self.label_height, self.label_height)
         self.top_bar.addWidget(self.label_lock_button)
-        
+
         # Filter bar for labels
         self.filter_bar = QLineEdit()
         self.filter_bar.setPlaceholderText("Filter Labels")
@@ -238,14 +238,14 @@ class LabelWindow(QWidget):
         self.top_bar.addWidget(self.filter_bar)
 
         self.top_bar.addStretch()  # Add stretch to the right side
-        
+
         # Add label count display
         self.label_count_display = QLineEdit("")
         self.label_count_display.setReadOnly(True)  # Make it uneditable
         self.label_count_display.setStyleSheet("background-color: #F0F0F0;")
         self.label_count_display.setFixedWidth(100)  # Set a reasonable fixed width
         self.top_bar.addWidget(self.label_count_display)
-        
+
         # Add annotation count display
         self.annotation_count_display = QLineEdit("Annotations: 0")
         self.annotation_count_display.setReadOnly(True)  # Make it uneditable
@@ -282,7 +282,7 @@ class LabelWindow(QWidget):
 
         # Add default label
         self.add_review_label()
-        
+
         # Deselect at first
         self.active_label.deselect()
 
@@ -294,7 +294,7 @@ class LabelWindow(QWidget):
         super().resizeEvent(event)
         self.update_labels_per_row()
         self.reorganize_labels()
-        
+
     def dragEnterEvent(self, event):
         """Accept drag events if they contain text."""
         if event.mimeData().hasText():
@@ -314,7 +314,7 @@ class LabelWindow(QWidget):
         row = pos.y() // self.label_width
         col = pos.x() // self.label_width
         return row * self.labels_per_row + col
-    
+
     def update_annotation_count_state(self):
         """Update the annotation count display based on the current selection."""
         if self.annotation_window.selected_tool == "select":
@@ -323,10 +323,10 @@ class LabelWindow(QWidget):
         else:
             self.annotation_count_display.setReadOnly(True)  # Make it uneditable
             self.annotation_count_display.setStyleSheet("background-color: #F0F0F0;")
-            
+
         # Update the annotation count display after a tool is switched
         self.update_annotation_count()
-    
+
     def update_annotation_count(self):
         """Update the annotation count display with current selection and total count."""
         annotations = self.annotation_window.get_image_annotations()
@@ -345,39 +345,39 @@ class LabelWindow(QWidget):
                 text = "Annotations: ???"
 
         self.annotation_count_display.setText(text)
-        
+
     def update_annotation_count_index(self):
         """Allow the user to manually update the annotation count index
         by directly editing the annotation_count_display field."""
         user_input = self.annotation_count_display.text().strip()
-        
+
         # Try to extract a number from the user input
         number_match = re.search(r"(\d+)", user_input)
         if number_match:
             try:
                 new_index = int(number_match.group(1))
-                
+
                 # Get all annotations to check range
                 annotations = self.annotation_window.get_image_annotations()
                 total_count = len(annotations)
-                
+
                 # Validate the index is within range
                 if 1 <= new_index <= total_count:
                     # Convert to zero-based index
                     zero_based_index = new_index - 1
-                    
+
                     # First unselect any currently selected annotations
                     self.annotation_window.unselect_annotations()
-                    
+
                     # Select the annotation at the specified index
                     self.annotation_window.select_annotation(annotations[zero_based_index])
-                    
+
                     # Center on the selected annotation
                     self.annotation_window.center_on_annotation(annotations[zero_based_index])
             except (ValueError, IndexError):
                 # In case of parsing error or index out of range
                 pass
-        
+
         # Update the display to show the current state (after changes)
         self.update_annotation_count()
         self.annotation_count_display.clearFocus()
@@ -406,7 +406,7 @@ class LabelWindow(QWidget):
         if dialog.exec_() == QDialog.Accepted:
             short_label_code, long_label_code, color = dialog.get_label_details()
             if self.label_exists(short_label_code, long_label_code):
-                QMessageBox.warning(self, 
+                QMessageBox.warning(self,
                                     "Label Exists",
                                     "A label with the same short and long name already exists.")
             else:
@@ -422,7 +422,7 @@ class LabelWindow(QWidget):
                 self.active_label.setToolTip(self.active_label.long_label_code)
                 self.update_labels_per_row()
                 self.reorganize_labels()
-                
+
     def add_review_label(self):
         """Add a review label to the window and place it at the front of the label list."""
         # Create the label
@@ -461,7 +461,7 @@ class LabelWindow(QWidget):
         if self.active_label and self.active_label != selected_label:
             # Deselect the active label
             self.deselect_active_label()
-    
+
         # Make the selected label active
         self.active_label = selected_label
         self.active_label.select()
@@ -476,39 +476,49 @@ class LabelWindow(QWidget):
         if not self.label_locked:
             self.delete_label_button.setEnabled(self.active_label is not None)
             self.edit_label_button.setEnabled(self.active_label is not None)
- 
+
         self.scroll_area.ensureWidgetVisible(self.active_label)
 
-    def set_label_transparency(self, transparency):
+    def set_active_label_transparency(self, transparency):
         """Set the transparency for the active label and its associated annotations."""
         if not self.active_label:
             return
-        
+    
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-
+    
         if self.active_label.transparency != transparency:
-            # Update the active label's transparency
-            self.active_label.update_transparency(transparency)
-            # Update the transparency of all annotations with the active label
-            for annotation in self.annotation_window.annotations_dict.values():
-                if annotation.label.id == self.active_label.id:
-                    annotation.update_transparency(transparency)
-
+            # Block signals for batch update
+            self.annotation_window.blockSignals(True)
+            try:
+                # Update the active label's transparency
+                self.active_label.update_transparency(transparency)
+                # Update the transparency of all annotations with the active label
+                for annotation in self.annotation_window.annotations_dict.values():
+                    if annotation.label.id == self.active_label.id:
+                        annotation.update_transparency(transparency)
+            finally:
+                self.annotation_window.blockSignals(False)
+    
             self.annotation_window.scene.update()
             self.annotation_window.viewport().update()
-            
+    
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
-
+    
     def set_all_labels_transparency(self, transparency):
         """Set the transparency for all labels and annotations."""
-        for label in self.labels:
-            label.update_transparency(transparency)
-
-        for annotation in self.annotation_window.annotations_dict.values():
-            annotation.update_transparency(transparency)
-
+        # Block signals for batch update
+        self.annotation_window.blockSignals(True)
+        try:
+            for label in self.labels:
+                label.update_transparency(transparency)
+    
+            for annotation in self.annotation_window.annotations_dict.values():
+                annotation.update_transparency(transparency)
+        finally:
+            self.annotation_window.blockSignals(False)
+    
         self.annotation_window.scene.update()
         self.annotation_window.viewport().update()
 
@@ -526,14 +536,14 @@ class LabelWindow(QWidget):
         """Update selected annotations based on the properties of the given label."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        
+
         for annotation in self.annotation_window.selected_annotations:
             if annotation.label.id == label.id:
                 # Get the transparency of the label
                 transparency = self.get_label_transparency(label.id)
                 # Update the annotation transparency
                 annotation.update_transparency(transparency)
-        
+
         # Make cursor normal again
         QApplication.restoreOverrideCursor()
 
@@ -550,7 +560,7 @@ class LabelWindow(QWidget):
             if label.id == label_id:
                 return label.transparency
         return None
-    
+
     def get_review_label(self):
         """Get the review label."""
         return self.labels[0]
@@ -562,7 +572,7 @@ class LabelWindow(QWidget):
                 return label
         print(f"Warning: Label with ID '{label_id}' not found.")
         return self.get_review_label()
-    
+
     def get_label_by_codes(self, short_label_code, long_label_code):
         """Find and return a label by its short and long codes."""
         for label in self.labels:
@@ -570,7 +580,7 @@ class LabelWindow(QWidget):
                 return label
         print(f"Warning: Label with short code '{short_label_code}' and long code '{long_label_code}' not found.")
         return self.get_review_label()
-    
+
     def get_label_by_short_code(self, short_label_code):
         """Find and return a label by its short code."""
         for label in self.labels:
@@ -578,7 +588,7 @@ class LabelWindow(QWidget):
                 return label
         print(f"Warning: Label with short code '{short_label_code}' not found.")
         return self.get_review_label()
-    
+
     def get_label_by_long_code(self, long_label_code):
         """Find and return a label by its long code."""
         for label in self.labels:
@@ -600,38 +610,38 @@ class LabelWindow(QWidget):
 
     def add_label_if_not_exists(self, short_label_code, long_label_code=None, color=None, label_id=None):
         """Add a label if it doesn't exist and return it, or return existing matching label.
-        
+
         Args:
             short_label_code: Short code for the label
             long_label_code: Long description for the label (defaults to short_label_code if None)
             color: QColor object for the label (will be randomly generated if None)
             label_id: Unique ID for the label (will be generated if None)
-            
+
         Returns:
             Label: Either an existing matching label or a newly created one
         """
         # If long_label_code is None, use the short_label_code
         if long_label_code is None:
             long_label_code = short_label_code
-        
+
         # First check if a label with the ID exists
         if label_id is not None:
             for label in self.labels:
                 if label.id == label_id:
                     return label
-        
+
         # Check if a label with matching short and long codes exists
         for label in self.labels:
             if label.short_label_code == short_label_code and label.long_label_code == long_label_code:
                 return label
-        
+
         # Create default values if not provided
         if color is None:
             color = QColor(random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-        
+
         if label_id is None:
             label_id = str(uuid.uuid4())
-        
+
         # Create a new label and return it
         new_label = self.add_label(short_label_code, long_label_code, color, label_id)
         return new_label
@@ -673,11 +683,11 @@ class LabelWindow(QWidget):
         if (label.short_label_code == "Review" and
                 label.long_label_code == "Review" and
                 label.color == QColor(255, 255, 255)):
-            QMessageBox.warning(self, 
-                                "Cannot Delete Label", 
+            QMessageBox.warning(self,
+                                "Cannot Delete Label",
                                 "The 'Review' label cannot be deleted.")
             return
-    
+
         if self.show_confirmation_dialog:
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Question)
@@ -685,42 +695,42 @@ class LabelWindow(QWidget):
             msg_box.setText("Are you sure you want to delete this label?\n"
                             "This will delete all associated annotations.")
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-    
+
             checkbox = QCheckBox("Do not show this message again")
             msg_box.setCheckBox(checkbox)
-    
+
             result = msg_box.exec_()
-    
+
             if checkbox.isChecked():
                 self.show_confirmation_dialog = False
-    
+
             if result == QMessageBox.No:
                 return
-    
+
         # Store affected image paths before deletion to update them later
         affected_images = set()
         for annotation in self.annotation_window.annotations_dict.values():
             if annotation.label.id == label.id:
                 affected_images.add(annotation.image_path)
-    
+
         # Remove from the LabelWindow
         self.labels.remove(label)
         label.deleteLater()
-    
+
         # Delete annotations associated with the label
         self.annotation_window.delete_label_annotations(label)
-    
+
         # Reset active label if it was deleted
         if self.active_label == label:
             self.active_label = None
             if self.labels:
                 self.set_active_label(self.labels[0])
-    
+
         # Update the LabelWindow
         self.update_labels_per_row()
         self.reorganize_labels()
         self.update_label_count()
-        
+
         # Explicitly update affected images in the image window
         for image_path in affected_images:
             self.main_window.image_window.update_image_annotations(image_path)
@@ -747,7 +757,7 @@ class LabelWindow(QWidget):
             if grid_labels:
                 self.set_active_label(grid_labels[0])
             return
-        
+
         if key == Qt.Key_W:
             new_index = current_index - self.labels_per_row
         elif key == Qt.Key_S:
@@ -795,37 +805,37 @@ class LabelWindow(QWidget):
         """Unlock the label lock by unchecking the lock button."""
         # Triggers the signal to toggle_label_lock method
         self.label_lock_button.setChecked(False)
-        
+
     def filter_labels(self, filter_text):
         """Filter labels based on the filter text and rebuild the grid with matching labels"""
         # Unselect the selected annotation
         self.annotation_window.unselect_annotations()
         # Unselect the active label
         self.deselect_active_label()
-        
+
         # Get the filter text in lowercase
         filter_text = filter_text.lower()
-        
+
         # Clear all widgets from the grid layout
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
-        
+
         # Filter labels that match the filter criteria
         filtered_labels = [
-            label for label in self.labels 
-            if filter_text in label.short_label_code.lower() 
+            label for label in self.labels
+            if filter_text in label.short_label_code.lower()
             or filter_text in label.long_label_code.lower()
         ]
-        
+
         # Add matching labels to the grid
         for i, label in enumerate(filtered_labels):
             row = i // self.labels_per_row
             col = i % self.labels_per_row
             self.grid_layout.addWidget(label, row, col)
             label.show()
-        
+
         # If we have an active label that's no longer visible, select first visible label
         if self.active_label and self.active_label not in filtered_labels:
             if filtered_labels:
@@ -967,8 +977,8 @@ class EditLabelDialog(QDialog):
         """Validate the input fields, handle potential merges, and accept the dialog."""
         # Cannot edit Review
         if self.label.short_label_code == 'Review' and self.label.long_label_code == 'Review':
-            QMessageBox.warning(self, 
-                                "Cannot Edit Label", 
+            QMessageBox.warning(self,
+                                "Cannot Edit Label",
                                 "The 'Review' label cannot be edited.")
             return
 
@@ -977,8 +987,8 @@ class EditLabelDialog(QDialog):
         long_label_code = self.long_label_input.text().strip()
 
         if not short_label_code or not long_label_code:
-            QMessageBox.warning(self, 
-                                "Input Error", 
+            QMessageBox.warning(self,
+                                "Input Error",
                                 "Both short and long label codes are required.")
             return
 
@@ -1015,5 +1025,5 @@ class EditLabelDialog(QDialog):
 
             # Update annotation window
             self.label_window.edit_labels(self.label, self.label, delete_old=False)
-            
+
             self.accept()

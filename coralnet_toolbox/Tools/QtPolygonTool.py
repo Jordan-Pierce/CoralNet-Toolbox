@@ -167,7 +167,7 @@ class PolygonTool(Tool):
                 self.annotation_window.selected_label.color,
                 self.annotation_window.current_image_path,
                 self.annotation_window.selected_label.id,
-                min(self.annotation_window.selected_label.transparency + 100, 200) # Increased transparency for preview
+                max(self.annotation_window.selected_label.transparency, 32)  
             )
             annotation.create_graphics_item(self.annotation_window.scene)
             self.cursor_annotation = annotation
