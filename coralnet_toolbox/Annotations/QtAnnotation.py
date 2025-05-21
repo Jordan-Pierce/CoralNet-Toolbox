@@ -192,85 +192,81 @@ class Annotation(QObject):
         try:
             has_scene = self.center_graphics_item and self.center_graphics_item.scene()
         except RuntimeError:
-            # The C++ object has been deleted, so set it to None
             self.center_graphics_item = None
             has_scene = False
-
+    
         if has_scene:
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
-
+    
         color = QColor(self.label.color)
         color.setAlpha(self.transparency)
-
+    
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
-
-        # Set pen with inverse color when selected
+    
+        # By default, no pen unless selected
         if self.is_selected:
             inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.center_graphics_item.setPen(QPen(inverse_color, 2, Qt.DotLine))
-        else:
-            self.center_graphics_item.setPen(QPen(color, 1, Qt.SolidLine))
-
+            self.center_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+    
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
         else:
             scene.addItem(self.center_graphics_item)
-
+    
     def create_bounding_box_graphics_item(self, top_left, bottom_right, scene, add_to_group=False):
         """Create a graphical item representing the annotation's bounding box."""
-        # Safely check if the bounding_box_graphics_item is still valid
         try:
             has_scene = self.bounding_box_graphics_item and self.bounding_box_graphics_item.scene()
         except RuntimeError:
-            # The C++ object has been deleted, so set it to None
             self.bounding_box_graphics_item = None
             has_scene = False
-
+    
         if has_scene:
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
-
+    
         color = QColor(self.label.color)
-        if self.is_selected:
-            color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
         color.setAlpha(self.transparency)
-
-        self.bounding_box_graphics_item = QGraphicsRectItem(top_left.x(), top_left.y(),
-                                                            bottom_right.x() - top_left.x(),
-                                                            bottom_right.y() - top_left.y())
-        self.bounding_box_graphics_item.setPen(color)
+    
+        self.bounding_box_graphics_item = QGraphicsRectItem(
+            top_left.x(), top_left.y(),
+            bottom_right.x() - top_left.x(),
+            bottom_right.y() - top_left.y()
+        )
+    
+        # By default, no pen unless selected
+        if self.is_selected:
+            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+            self.bounding_box_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+    
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
         else:
             scene.addItem(self.bounding_box_graphics_item)
-
+    
     def create_polygon_graphics_item(self, points, scene, add_to_group=False):
         """Create a graphical item representing the annotation's polygon outline."""
-        # Safely check if the polygon_graphics_item is still valid
         try:
             has_scene = self.polygon_graphics_item and self.polygon_graphics_item.scene()
         except RuntimeError:
-            # The C++ object has been deleted, so set it to None
             self.polygon_graphics_item = None
             has_scene = False
-
+    
         if has_scene:
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
-
+    
         color = QColor(self.label.color)
         color.setAlpha(self.transparency)
-
+    
         polygon = QPolygonF(points)
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
-
-        # Only invert pen color when selected
+    
+        # By default, no pen unless selected
         if self.is_selected:
             inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.polygon_graphics_item.setPen(QPen(inverse_color, 3, Qt.DotLine))
-        else:
-            self.polygon_graphics_item.setPen(QPen(color, 2, Qt.SolidLine))
-
+            self.polygon_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+    
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.polygon_graphics_item)
         else:
@@ -304,101 +300,64 @@ class Annotation(QObject):
 
     def update_graphics_item(self):
         """Update the graphical representation of the annotation."""
-        # Safely check if the graphics_item_group is still valid
+        # Try to get the scene from the current group, else do nothing
+        scene = None
         try:
-            has_scene = self.graphics_item_group and self.graphics_item_group.scene()
+            if self.graphics_item_group and self.graphics_item_group.scene():
+                scene = self.graphics_item_group.scene()
         except RuntimeError:
-            # The C++ object has been deleted, so set it to None
             self.graphics_item_group = None
-            has_scene = False
-
-        if has_scene:
-            scene = self.graphics_item_group.scene()
-            scene.removeItem(self.graphics_item_group)
-            self.graphics_item_group = QGraphicsItemGroup()
-            # Clear references to deleted items
-            self.center_graphics_item = None
-            self.bounding_box_graphics_item = None
-            self.polygon_graphics_item = None
-        else:
             scene = None
-            if self.graphics_item_group is None:
-                self.graphics_item_group = QGraphicsItemGroup()
-
-        # Get the polygon representation
-        polygon = self.get_polygon()
-        self.graphics_item = QGraphicsPolygonItem(polygon)
-        color = QColor(self.label.color)
-        color.setAlpha(self.transparency)
-        if self.is_selected:
-            inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            pen = QPen(inverse_color, 6, Qt.DotLine)
-        else:
-            pen = QPen(color, 4, Qt.SolidLine)
-        self.graphics_item.setPen(pen)
-        self.graphics_item.setBrush(QBrush(color))
-        self.graphics_item.setData(0, self.id)
-        self.graphics_item_group.addToGroup(self.graphics_item)
-
-        # Update separate graphics items
-        self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
-        self.create_bounding_box_graphics_item(
-            self.get_bounding_box_top_left(),
-            self.get_bounding_box_bottom_right(),
-            scene, add_to_group=True)
-        points = [polygon.at(i) for i in range(polygon.count())]
-        self.create_polygon_graphics_item(points, scene, add_to_group=True)
-
-        # Add the group back to the scene
-        if scene:
-            scene.addItem(self.graphics_item_group)
+        if scene is not None:
+            # Remove the old group from the scene
+            scene.removeItem(self.graphics_item_group)
+            self.graphics_item_group = None
+            # Re-create all graphics using the existing scene
+            self.create_graphics_item(scene)
 
     def update_center_graphics_item(self, center_xy):
         """Update the position and appearance of the center graphics item."""
         if self.center_graphics_item:
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-
+    
             self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
             self.center_graphics_item.setBrush(color)
-
-            # Only invert pen color when selected
+    
+            # By default, no pen unless selected
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                self.center_graphics_item.setPen(QPen(inverse_color, 2, Qt.DotLine))
-            else:
-                self.center_graphics_item.setPen(QPen(color, 1, Qt.SolidLine))
-
+                self.center_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+    
     def update_bounding_box_graphics_item(self, top_left, bottom_right):
         """Update the position and appearance of the bounding box graphics item."""
         if self.bounding_box_graphics_item:
             color = QColor(self.label.color)
-            if self.is_selected:
-                color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
             color.setAlpha(self.transparency)
-
+    
             self.bounding_box_graphics_item.setRect(top_left.x(), top_left.y(),
                                                     bottom_right.x() - top_left.x(),
                                                     bottom_right.y() - top_left.y())
-
-            self.bounding_box_graphics_item.setPen(color)
-
+    
+            # By default, no pen unless selected
+            if self.is_selected:
+                inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+                self.bounding_box_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+    
     def update_polygon_graphics_item(self, points):
         """Update the shape and appearance of the polygon graphics item."""
         if self.polygon_graphics_item:
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-
+    
             polygon = QPolygonF(points)
             self.polygon_graphics_item.setPolygon(polygon)
             self.polygon_graphics_item.setBrush(color)
-
-            # Only invert pen color when selected
+    
+            # By default, no pen unless selected
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-                self.polygon_graphics_item.setPen(QPen(inverse_color, 3, Qt.DotLine))
-            else:
-                self.polygon_graphics_item.setPen(QPen(color, 2, Qt.SolidLine))
+                self.polygon_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
 
     def update_transparency(self, transparency: int):
         """Update the transparency value of the annotation's graphical representation."""

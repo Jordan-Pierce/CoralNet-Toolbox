@@ -479,7 +479,7 @@ class LabelWindow(QWidget):
 
         self.scroll_area.ensureWidgetVisible(self.active_label)
 
-    def set_label_transparency(self, transparency):
+    def set_active_label_transparency(self, transparency):
         """Set the transparency for the active label and its associated annotations."""
         if not self.active_label:
             return
