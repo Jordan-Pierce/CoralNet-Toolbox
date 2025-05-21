@@ -6,7 +6,7 @@ from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
-from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPainter, 
+from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPainter,
                          QPolygonF, QImage, QRegion)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
@@ -31,13 +31,13 @@ class PatchAnnotation(Annotation):
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg=False):
+                 show_msg: bool = False):
         super().__init__(short_label_code, long_label_code, color, image_path, label_id, transparency, show_msg)
-        
+
         self.center_xy = QPointF(0, 0)
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = annotation_size
-        
+
         self.set_precision(center_xy, False)
         self.set_centroid()
         self.set_cropped_bbox()
@@ -52,7 +52,7 @@ class PatchAnnotation(Annotation):
     def set_centroid(self):
         """Calculate the centroid of the annotation (for patch, this is the center_xy)."""
         self.center_xy = self.center_xy
-        
+
     def set_cropped_bbox(self):
         """Set the cropped bounding box coordinates based on center and size."""
         half_size = self.annotation_size / 2
@@ -61,7 +61,7 @@ class PatchAnnotation(Annotation):
         max_x = self.center_xy.x() + half_size
         max_y = self.center_xy.y() + half_size
         self.cropped_bbox = (min_x, min_y, max_x, max_y)
-        
+
     def contains_point(self, point: QPointF):
         """Check if the point is within the annotation's bounding box."""
         half_size = self.annotation_size / 2
@@ -70,7 +70,7 @@ class PatchAnnotation(Annotation):
                       self.annotation_size,
                       self.annotation_size)
         return rect.contains(point)
-    
+
     def get_centroid(self):
         """Get the centroid of the annotation."""
         return (float(self.center_xy.x()), float(self.center_xy.y()))
@@ -112,7 +112,7 @@ class PatchAnnotation(Annotation):
         # Create a QImage with transparent background for the mask
         masked_image = QImage(self.cropped_image.size(), QImage.Format_ARGB32)
         masked_image.fill(Qt.transparent)  # Transparent background
-        
+
         # Create a QPainter to draw the polygon onto the mask
         painter = QPainter(masked_image)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -129,7 +129,7 @@ class PatchAnnotation(Annotation):
 
         # Create a polygon from the cropped points
         polygon = QPolygonF(cropped_points)
-        
+
         # Draw the polygon onto the mask
         painter.drawPolygon(polygon)
         painter.end()
@@ -138,24 +138,24 @@ class PatchAnnotation(Annotation):
         # We want the inside of the polygon to show the image, so we DON'T use MaskInColor
         mask_pixmap = QPixmap.fromImage(masked_image)
         mask_bitmap = mask_pixmap.createMaskFromColor(Qt.white, Qt.MaskOutColor)
-        
+
         # Convert bitmap to region for clipping
         mask_region = QRegion(mask_bitmap)
-        
+
         # Create the result image
         cropped_image_graphic = QPixmap(self.cropped_image.size())
-        
+
         # First draw the entire original image at 50% opacity (for area outside polygon)
         result_painter = QPainter(cropped_image_graphic)
         result_painter.setRenderHint(QPainter.Antialiasing)
         result_painter.setOpacity(0.5)  # 50% opacity for outside the polygon
         result_painter.drawPixmap(0, 0, self.cropped_image)
-        
+
         # Then draw the full opacity image only in the masked area (inside the polygon)
         result_painter.setOpacity(1.0)  # Reset to full opacity
         result_painter.setClipRegion(mask_region)
         result_painter.drawPixmap(0, 0, self.cropped_image)
-        
+
         # Draw the dotted line outline on top
         pen = QPen(self.label.color)
         pen.setStyle(Qt.DashLine)  # Creates a dotted/dashed line
@@ -163,9 +163,9 @@ class PatchAnnotation(Annotation):
         result_painter.setPen(pen)
         result_painter.setClipping(False)  # Disable clipping for the outline
         result_painter.drawPolygon(polygon)
-        
+
         result_painter.end()
-        
+
         return cropped_image_graphic
 
     def create_cropped_image(self, rasterio_src):
@@ -198,25 +198,25 @@ class PatchAnnotation(Annotation):
         """Create all graphics items for the patch annotation and add them to the scene as a group."""
         # Use a rectangle as the main graphics item
         half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size, 
+        rect = QRectF(self.center_xy.x() - half_size,
                       self.center_xy.y() - half_size,
-                      self.annotation_size, 
+                      self.annotation_size,
                       self.annotation_size)
         self.graphics_item = QGraphicsRectItem(rect)
         # Call parent to handle group and helpers
         super().create_graphics_item(scene)
 
-    def update_graphics_item(self, crop_image=True):
+    def update_graphics_item(self):
         """Update the graphical representation of the patch annotation."""
         # Use a rectangle as the main graphics item
         half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size, 
+        rect = QRectF(self.center_xy.x() - half_size,
                       self.center_xy.y() - half_size,
-                      self.annotation_size, 
+                      self.annotation_size,
                       self.annotation_size)
         self.graphics_item = QGraphicsRectItem(rect)
         # Call parent to handle group and helpers
-        super().update_graphics_item(crop_image)
+        super().update_graphics_item()
 
     def update_location(self, new_center_xy: QPointF):
         """Update the location of the annotation."""
@@ -242,7 +242,7 @@ class PatchAnnotation(Annotation):
     def resize(self, handle: str, new_pos: QPointF):
         """Resize the annotation based on the handle position."""
         pass
-    
+
     @classmethod
     def combine(cls, annotations: list):
         """
@@ -251,16 +251,16 @@ class PatchAnnotation(Annotation):
         """
         if not annotations:
             return None
-        
+
         # Check that all annotations have the same label
         first_annotation = annotations[0]
         if not all(annotation.label.id == first_annotation.label.id for annotation in annotations):
             return None  # Can't combine annotations with different labels
-        
+
         # Separate patches and polygons
         patches = [annotation for annotation in annotations if isinstance(annotation, cls)]
         polygons = [annotation for annotation in annotations if not isinstance(annotation, cls)]
-        
+
         # --- TOUCHING CHECK ---
         # For each annotation, check if it touches at least one other
         def patch_touches(a, b):
@@ -303,10 +303,10 @@ class PatchAnnotation(Annotation):
                         break
             if not has_touch:
                 return None  # Cancel combine if any annotation is not touching another
-        
+
         # Separate patches and polygons
         result_polygons = []
-        
+
         # If we have patches, combine them into a polygon
         if patches:
             # Determine the bounds for creating a combined mask
@@ -314,23 +314,23 @@ class PatchAnnotation(Annotation):
             min_y = min(anno.get_bounding_box_top_left().y() for anno in patches)
             max_x = max(anno.get_bounding_box_bottom_right().x() for anno in patches)
             max_y = max(anno.get_bounding_box_bottom_right().y() for anno in patches)
-            
+
             # Add padding for safety
             padding = 20
             min_x -= padding
             min_y -= padding
             max_x += padding
             max_y += padding
-            
+
             # Create a mask for the combined shape
             width = int(max_x - min_x)
             height = int(max_y - min_y)
             if width <= 0 or height <= 0:
                 width = max(1, width)
                 height = max(1, height)
-            
+
             combined_mask = np.zeros((height, width), dtype=np.uint8)
-            
+
             # Draw all patches on the mask
             for annotation in patches:
                 half_size = annotation.annotation_size / 2
@@ -338,31 +338,31 @@ class PatchAnnotation(Annotation):
                 rect_y = int(annotation.center_xy.y() - half_size - min_y)
                 rect_width = int(annotation.annotation_size)
                 rect_height = int(annotation.annotation_size)
-                
+
                 # Make sure the rectangle is within the mask bounds
                 rect_x = max(0, rect_x)
                 rect_y = max(0, rect_y)
                 rect_width = min(width - rect_x, rect_width)
                 rect_height = min(height - rect_y, rect_height)
-                
+
                 # Draw the rectangle on the mask
                 if rect_width > 0 and rect_height > 0:
                     combined_mask[rect_y: rect_y + rect_height, rect_x: rect_x + rect_width] = 255
-            
+
             # Find contours of the combined shape
             contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
+
             if contours:
                 # Get the largest contour
                 largest_contour = max(contours, key=cv2.contourArea)
-                
+
                 # Simplify the contour slightly to reduce point count
                 epsilon = 0.0005 * cv2.arcLength(largest_contour, True)
                 approx_contour = cv2.approxPolyDP(largest_contour, epsilon, True)
-                
+
                 # Convert back to original coordinate system and to QPointF
                 points = [QPointF(point[0][0] + min_x, point[0][1] + min_y) for point in approx_contour]
-                
+
                 # Create a new polygon annotation
                 patches_polygon = PolygonAnnotation(
                     points=points,
@@ -372,28 +372,28 @@ class PatchAnnotation(Annotation):
                     image_path=first_annotation.image_path,
                     label_id=first_annotation.label.id
                 )
-                
+
                 # Copy rasterio source if available
                 if hasattr(first_annotation, 'rasterio_src') and first_annotation.rasterio_src is not None:
                     patches_polygon.rasterio_src = first_annotation.rasterio_src
                     patches_polygon.create_cropped_image(patches_polygon.rasterio_src)
-                
+
                 result_polygons.append(patches_polygon)
-        
+
         # Add existing polygons to the result list
         result_polygons.extend(polygons)
-        
+
         # If we only have one result polygon, return it
         if len(result_polygons) == 1:
             return result_polygons[0]
-        
+
         # If we have multiple polygons, combine them using PolygonAnnotation.combine
         elif len(result_polygons) > 1:
             return PolygonAnnotation.combine(result_polygons)
-        
+
         # Otherwise return None
         return None
-    
+
     @classmethod
     def cut(cls, annotations: list, cutting_points: list):
         """Cut the annotations based on the provided cutting points."""
@@ -418,7 +418,7 @@ class PatchAnnotation(Annotation):
                          QColor(*data['annotation_color']),
                          data['image_path'],
                          data['label_id'])
-        
+
         # Add any additional data from the dictionary
         annotation.data = data.get('data', {})
 
@@ -431,7 +431,7 @@ class PatchAnnotation(Annotation):
 
         # Set the machine confidence
         annotation.update_machine_confidence(machine_confidence, from_import=True)
-        
+
         # Override the verified attribute if it exists in the data
         if 'verified' in data:
             annotation.set_verified(data['verified'])

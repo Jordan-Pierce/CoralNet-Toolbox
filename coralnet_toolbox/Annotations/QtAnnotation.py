@@ -6,7 +6,7 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF
 from PyQt5.QtGui import QColor, QImage, QPolygonF, QPen, QBrush
-from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem, 
+from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
                              QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup)
 
 from coralnet_toolbox.QtLabelWindow import Label
@@ -25,13 +25,14 @@ class Annotation(QObject):
     annotationDeleted = pyqtSignal(object)
     annotationUpdated = pyqtSignal(object)
 
-    def __init__(self, short_label_code: str,
+    def __init__(self,
+                 short_label_code: str,
                  long_label_code: str,
                  color: QColor,
                  image_path: str,
                  label_id: str,
                  transparency: int = 128,
-                 show_msg=False):
+                 show_msg: bool = False):
         """Initialize an annotation object with label and display properties."""
         super().__init__()
         self.id = str(uuid.uuid4())
@@ -59,15 +60,15 @@ class Annotation(QObject):
 
         # New: group for all graphics items
         self.graphics_item_group = None
-        
+
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")
-    
+
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the annotation area."""
         raise NotImplementedError("Subclasses must implement this method.")
-    
+
     def get_area(self):
         """Calculate the area of the annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -75,7 +76,7 @@ class Annotation(QObject):
     def get_perimeter(self):
         """Calculate the perimeter of the annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
-    
+
     def get_polygon(self):
         """Get the polygon representation of this annotation."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -87,7 +88,7 @@ class Annotation(QObject):
     def get_bounding_box_bottom_right(self):
         """Get the bottom-right corner of the annotation's bounding box."""
         raise NotImplementedError("Subclasses must implement this method.")
-    
+
     def get_cropped_image_graphic(self):
         """Get graphical representation of the cropped image area."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -99,7 +100,7 @@ class Annotation(QObject):
     def update_annotation_size(self, size_or_scale_factor):
         """Update the size of the annotation using a size or scale factor."""
         raise NotImplementedError("Subclasses must implement this method.")
-    
+
     def resize(self, handle: str, new_pos: QPointF):
         """Resize the annotation based on handle position."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -108,7 +109,7 @@ class Annotation(QObject):
     def combine(cls, annotations: list):
         """Combine multiple annotations into one."""
         raise NotImplementedError("Subclasses must implement this method.")
-    
+
     @classmethod
     def cut(cls, annotations: list, cutting_points: list):
         """Cut multiple annotations using specified cutting points."""
@@ -153,7 +154,7 @@ class Annotation(QObject):
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
         self.polygon_graphics_item = None
-            
+
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the annotation and add them to the scene as a group."""
         # Remove old group if it exists
@@ -175,7 +176,7 @@ class Annotation(QObject):
         # Create the center graphics item
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         # Create the bounding box graphics item
-        self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(), 
+        self.create_bounding_box_graphics_item(self.get_bounding_box_top_left(),
                                                self.get_bounding_box_bottom_right(),
                                                scene, add_to_group=True)
         # Create the polygon graphics item
@@ -194,23 +195,23 @@ class Annotation(QObject):
             # The C++ object has been deleted, so set it to None
             self.center_graphics_item = None
             has_scene = False
-            
+
         if has_scene:
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
-    
+
         color = QColor(self.label.color)
         color.setAlpha(self.transparency)
-        
+
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
-        
+
         # Set pen with inverse color when selected
         if self.is_selected:
             inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
             self.center_graphics_item.setPen(QPen(inverse_color, 2, Qt.DotLine))
         else:
             self.center_graphics_item.setPen(QPen(color, 1, Qt.SolidLine))
-            
+
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
         else:
@@ -225,15 +226,15 @@ class Annotation(QObject):
             # The C++ object has been deleted, so set it to None
             self.bounding_box_graphics_item = None
             has_scene = False
-            
+
         if has_scene:
             self.bounding_box_graphics_item.scene().removeItem(self.bounding_box_graphics_item)
-    
+
         color = QColor(self.label.color)
         if self.is_selected:
             color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
         color.setAlpha(self.transparency)
-    
+
         self.bounding_box_graphics_item = QGraphicsRectItem(top_left.x(), top_left.y(),
                                                             bottom_right.x() - top_left.x(),
                                                             bottom_right.y() - top_left.y())
@@ -242,7 +243,7 @@ class Annotation(QObject):
             self.graphics_item_group.addToGroup(self.bounding_box_graphics_item)
         else:
             scene.addItem(self.bounding_box_graphics_item)
-    
+
     def create_polygon_graphics_item(self, points, scene, add_to_group=False):
         """Create a graphical item representing the annotation's polygon outline."""
         # Safely check if the polygon_graphics_item is still valid
@@ -252,29 +253,29 @@ class Annotation(QObject):
             # The C++ object has been deleted, so set it to None
             self.polygon_graphics_item = None
             has_scene = False
-            
+
         if has_scene:
             self.polygon_graphics_item.scene().removeItem(self.polygon_graphics_item)
-    
+
         color = QColor(self.label.color)
         color.setAlpha(self.transparency)
-    
+
         polygon = QPolygonF(points)
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
-        
+
         # Only invert pen color when selected
         if self.is_selected:
             inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
             self.polygon_graphics_item.setPen(QPen(inverse_color, 3, Qt.DotLine))
         else:
             self.polygon_graphics_item.setPen(QPen(color, 2, Qt.SolidLine))
-            
+
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.polygon_graphics_item)
         else:
             scene.addItem(self.polygon_graphics_item)
-            
+
     def get_center_xy(self):
         """Get the center coordinates of the annotation."""
         return self.center_xy
@@ -301,7 +302,7 @@ class Annotation(QObject):
 
         return self.cropped_image
 
-    def update_graphics_item(self, crop_image=True):
+    def update_graphics_item(self):
         """Update the graphical representation of the annotation."""
         # Safely check if the graphics_item_group is still valid
         try:
@@ -310,7 +311,7 @@ class Annotation(QObject):
             # The C++ object has been deleted, so set it to None
             self.graphics_item_group = None
             has_scene = False
-            
+
         if has_scene:
             scene = self.graphics_item_group.scene()
             scene.removeItem(self.graphics_item_group)
@@ -323,7 +324,7 @@ class Annotation(QObject):
             scene = None
             if self.graphics_item_group is None:
                 self.graphics_item_group = QGraphicsItemGroup()
-                
+
         # Get the polygon representation
         polygon = self.get_polygon()
         self.graphics_item = QGraphicsPolygonItem(polygon)
@@ -338,7 +339,7 @@ class Annotation(QObject):
         self.graphics_item.setBrush(QBrush(color))
         self.graphics_item.setData(0, self.id)
         self.graphics_item_group.addToGroup(self.graphics_item)
-        
+
         # Update separate graphics items
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         self.create_bounding_box_graphics_item(
@@ -347,7 +348,7 @@ class Annotation(QObject):
             scene, add_to_group=True)
         points = [polygon.at(i) for i in range(polygon.count())]
         self.create_polygon_graphics_item(points, scene, add_to_group=True)
-        
+
         # Add the group back to the scene
         if scene:
             scene.addItem(self.graphics_item_group)
@@ -357,10 +358,10 @@ class Annotation(QObject):
         if self.center_graphics_item:
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-    
+
             self.center_graphics_item.setRect(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
             self.center_graphics_item.setBrush(color)
-            
+
             # Only invert pen color when selected
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
@@ -387,11 +388,11 @@ class Annotation(QObject):
         if self.polygon_graphics_item:
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-    
+
             polygon = QPolygonF(points)
             self.polygon_graphics_item.setPolygon(polygon)
             self.polygon_graphics_item.setBrush(color)
-            
+
             # Only invert pen color when selected
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
@@ -403,7 +404,7 @@ class Annotation(QObject):
         """Update the transparency value of the annotation's graphical representation."""
         if self.transparency != transparency:
             self.transparency = transparency
-            self.update_graphics_item(crop_image=False)
+            self.update_graphics_item()
 
     def update_label(self, new_label: 'Label', set_review=False):
         """Update the annotation's label while preserving confidence values."""
@@ -437,7 +438,7 @@ class Annotation(QObject):
 
         # Always update the graphics item
         self.update_graphics_item()
-        
+
     def update_user_confidence(self, new_label: 'Label'):
         """Update annotation with user-defined label and confidence."""
         # Mark as verified, keep machine confidence
@@ -446,7 +447,7 @@ class Annotation(QObject):
         self.user_confidence = {new_label: 1.0}
         # Pass the label with the largest confidence as the label
         self.label = new_label
-        
+
         # Create the graphic
         self.update_graphics_item()
         self.show_message = False
@@ -462,7 +463,7 @@ class Annotation(QObject):
         prediction = {k: v for k, v in sorted(prediction.items(), key=lambda item: item[1], reverse=True)}
         # Update machine confidence
         self.machine_confidence = prediction
-        
+
         if not from_import:
             # Set user confidence to None
             self.user_confidence = {}
@@ -474,13 +475,13 @@ class Annotation(QObject):
             # Create the graphic
             self.update_graphics_item()
             self.show_message = True
-            
+
     def set_verified(self, verified: bool):
         """Set the verified status of the annotation.
         This method is called on importing annotations to set the verified status."""
         # Update the verified status
         self.verified = verified
-        
+
     def update_verified(self, verified: bool):
         """Update the verified status of the annotation, and update user confidence if necessary.
         This method is called when the user verifies or un-verifies an annotation."""
@@ -558,7 +559,7 @@ class Annotation(QObject):
             'label_id': self.label.id,
             'data': self.data,
             'machine_confidence': machine_confidence,
-            'verified': self.verified,  
+            'verified': self.verified,
             'area': self.get_area(),
             'perimeter': self.get_perimeter(),
         }

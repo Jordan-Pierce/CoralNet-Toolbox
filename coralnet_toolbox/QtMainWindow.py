@@ -711,11 +711,17 @@ class MainWindow(QMainWindow):
         # Slider
         transparency_layout = QHBoxLayout()
         self.transparency_slider = QSlider(Qt.Horizontal)
-        self.transparency_slider.setRange(0, 128)
+        self.transparency_slider.setRange(0, 255)
         self.transparency_slider.setValue(128)  # Default transparency
         self.transparency_slider.setTickPosition(QSlider.TicksBelow)
         self.transparency_slider.setTickInterval(16)  # Add tick marks every 16 units
         self.transparency_slider.valueChanged.connect(self.update_label_transparency)
+
+        # Add a label to show the current value - Debugging purposes
+        self.transparency_value_label = QLabel(str(self.transparency_slider.value()))
+        self.transparency_slider.valueChanged.connect(
+            lambda value: self.transparency_value_label.setText(str(value))
+        )
 
         # Left icon (transparent)
         transparent_icon = QLabel()
@@ -746,6 +752,7 @@ class MainWindow(QMainWindow):
         transparency_layout.addWidget(self.transparency_slider)
         transparency_layout.addWidget(opaque_icon)
         transparency_layout.addWidget(self.all_labels_button)
+        transparency_layout.addWidget(self.transparency_value_label)
 
         # Create widget to hold the layout
         self.transparency_widget = QWidget()

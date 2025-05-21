@@ -12,10 +12,10 @@ from shapely.geometry import Polygon, LineString
 
 from PyQt5.QtCore import Qt, QPointF
 
-from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsPolygonItem, QGraphicsPathItem, 
+from PyQt5.QtWidgets import (QGraphicsScene, QGraphicsPolygonItem, QGraphicsPathItem,
                              QGraphicsItem, QGraphicsItemGroup, QMessageBox)
 
-from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF, 
+from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF,
                          QPainter, QRegion, QImage, QPainterPath)
 
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
@@ -29,15 +29,15 @@ from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
 
 class MultiPolygonAnnotation(Annotation):
-    def __init__(self, 
-                 polygons,  # Now a list of PolygonAnnotation objects
-                 short_label_code=None, 
-                 long_label_code=None, 
-                 color=None, 
-                 image_path=None, 
-                 label_id=None, 
-                 transparency=128, 
-                 show_msg=False):
+    def __init__(self,
+                 polygons: list,  # Now a list of PolygonAnnotation objects
+                 short_label_code: str,
+                 long_label_code: str,
+                 color: QColor,
+                 image_path: str,
+                 label_id: str,
+                 transparency: int = 128,
+                 show_msg: bool = False):
         """Initialize a MultiPolygonAnnotation from a list of PolygonAnnotation objects."""
         # Use properties from the first polygon if not provided
         if polygons and hasattr(polygons[0], 'label'):
@@ -55,9 +55,9 @@ class MultiPolygonAnnotation(Annotation):
         self.cropped_bbox = (0, 0, 0, 0)
         self.annotation_size = 0
         # Store the PolygonAnnotation objects
-        
+
         self.polygons = polygons
-        
+
         self.graphics_items = []
         self.set_centroid()
         self.set_cropped_bbox()
@@ -67,7 +67,7 @@ class MultiPolygonAnnotation(Annotation):
         for polygon in self.polygons:
             polygon.simplify_polygon(epsilon)
         self.set_cropped_bbox()
-        
+
     def set_precision(self, reduce: bool = True):
         """Round coordinates of all polygons to 3 decimal places."""
         for polygon in self.polygons:
@@ -115,7 +115,7 @@ class MultiPolygonAnnotation(Annotation):
     def get_bounding_box_top_left(self):
         """Return the top-left corner of the bounding box."""
         return QPointF(self.cropped_bbox[0], self.cropped_bbox[1])
-    
+
     def get_bounding_box_bottom_right(self):
         """Get the bottom-right corner of the annotation's bounding box."""
         return QPointF(self.cropped_bbox[2], self.cropped_bbox[3])
@@ -169,7 +169,7 @@ class MultiPolygonAnnotation(Annotation):
         result_painter.end()
 
         return cropped_image_graphic
-    
+
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the rasterio source based on the polygon points."""
         # Set the rasterio source for the annotation
@@ -202,17 +202,17 @@ class MultiPolygonAnnotation(Annotation):
             self.center_graphics_item = None
             self.bounding_box_graphics_item = None
             self.polygon_graphics_item = None
-            
+
         # Create a new group to hold all polygon items
         self.graphics_item_group = QGraphicsItemGroup()
-        
+
         # Add each polygon as a QGraphicsPolygonItem to the group
         for poly in self.polygons:
             item = QGraphicsPolygonItem(QPolygonF(poly.points))
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
             pen = QPen(color, 4, Qt.SolidLine)
-            
+
             # If selected, use an inverse color and dotted line
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
@@ -221,7 +221,7 @@ class MultiPolygonAnnotation(Annotation):
             item.setBrush(QBrush(color))
             item.setData(0, self.id)  # <-- Enable selection by id
             self.graphics_item_group.addToGroup(item)
-            
+
         # Add centroid and bounding box helper graphics to the group
         self.create_center_graphics_item(self.center_xy, scene, add_to_group=True)
         self.create_bounding_box_graphics_item(
@@ -233,7 +233,7 @@ class MultiPolygonAnnotation(Annotation):
         # Add the group to the scene
         scene.addItem(self.graphics_item_group)
 
-    def update_graphics_item(self, crop_image=True):
+    def update_graphics_item(self):
         """Update the QGraphicsItems for all polygons and helper graphics."""
         # If a graphics item group exists and is in a scene, remove it before updating
         if self.graphics_item_group and self.graphics_item_group.scene():
@@ -252,12 +252,12 @@ class MultiPolygonAnnotation(Annotation):
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
             pen = QPen(color, 4, Qt.SolidLine)
-            
+
             # If selected, use an inverse color and dotted line
             if self.is_selected:
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
                 pen = QPen(inverse_color, 6, Qt.DotLine)
-                
+
             item.setPen(pen)
             item.setBrush(QBrush(color))
             item.setData(0, self.id)  # <-- Enable selection by id
@@ -279,11 +279,11 @@ class MultiPolygonAnnotation(Annotation):
     def update_location(self, new_center_xy: QPointF):
         """Show a warning that MultiPolygonAnnotations should be cut before moving."""
         pass  # No operation; this is a placeholder for future functionality
-    
+
     def update_annotation_size(self, delta: float):
         """Show a warning that MultiPolygonAnnotations should be cut before resizing."""
         pass  # No operation; this is a placeholder for future functionality
-        
+
     def cut(self, cutting_points: list = None):
         """Break apart the MultiPolygonAnnotation into individual PolygonAnnotations."""
         return [poly for poly in self.polygons]
@@ -298,10 +298,10 @@ class MultiPolygonAnnotation(Annotation):
     def from_dict(cls, data, label_window):
         """Instantiate from a dictionary representation."""
         from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
-        
+
         # Convert polygon dictionaries to PolygonAnnotation objects
         polygons = [PolygonAnnotation.from_dict(poly_dict, label_window) for poly_dict in data['polygons']]
-        
+
         # Create a new MultiPolygonAnnotation instance
         multi_polygon = cls(
             polygons=polygons,
@@ -311,26 +311,26 @@ class MultiPolygonAnnotation(Annotation):
             image_path=data.get('image_path'),
             label_id=data.get('label_id')
         )
-        
+
         # Restore additional properties from the dict
         multi_polygon.data = data.get('data', {})
-        
+
         # Convert machine_confidence keys back to Label objects
         machine_confidence = {}
         for short_label_code, confidence in data.get('machine_confidence', {}).items():
             label = label_window.get_label_by_short_code(short_label_code)
             if label:
                 machine_confidence[label] = confidence
-        
+
         # Set the machine confidence
         multi_polygon.update_machine_confidence(machine_confidence, from_import=True)
-        
+
         # Override the verified attribute if it exists in the data
         if 'verified' in data:
             multi_polygon.set_verified(data['verified'])
-        
+
         return multi_polygon
-    
+
     def to_yolo_segmentation(self, image_width, image_height):
         """Return YOLO segmentation format for the annotation.
         Each polygon is output as a separate line, with normalized coordinates.
