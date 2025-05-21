@@ -295,15 +295,15 @@ class PolygonAnnotation(Annotation):
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the polygon annotation and add them to the scene as a group."""
-        # Use a polygon as the main graphics item
-        self.graphics_item = QPolygonF(self.points)
+        # Use a QGraphicsPolygonItem as the main graphics item
+        self.graphics_item = QGraphicsPolygonItem(QPolygonF(self.points))
         # Call parent to handle group and helpers
         super().create_graphics_item(scene)
-
+    
     def update_graphics_item(self):
         """Update the graphical representation of the polygon annotation."""
-        # Use a polygon as the main graphics item
-        self.graphics_item = QPolygonF(self.points)
+        # Use a QGraphicsPolygonItem as the main graphics item
+        self.graphics_item = QGraphicsPolygonItem(QPolygonF(self.points))
         # Call parent to handle group and helpers
         super().update_graphics_item()
 

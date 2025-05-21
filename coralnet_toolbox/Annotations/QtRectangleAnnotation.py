@@ -6,7 +6,7 @@ from shapely.ops import split
 from shapely.geometry import Polygon, LineString, box
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
 from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPolygonF, QPainter,
                          QImage, QRegion)
 
@@ -190,27 +190,27 @@ class RectangleAnnotation(Annotation):
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the rectangle annotation and add them to the scene as a group."""
-        # Use a rectangle as the main graphics item
-        rect = QPolygonF([
+        # Use a polygon (rectangle) as the main graphics item for consistency
+        points = [
             self.top_left,
             QPointF(self.bottom_right.x(), self.top_left.y()),
             self.bottom_right,
             QPointF(self.top_left.x(), self.bottom_right.y())
-        ]).boundingRect()
-        self.graphics_item = QGraphicsRectItem(rect)
+        ]
+        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
         # Call parent to handle group and helpers
         super().create_graphics_item(scene)
-
+    
     def update_graphics_item(self):
         """Update the graphical representation of the rectangle annotation."""
-        # Use a rectangle as the main graphics item
-        rect = QPolygonF([
+        # Use a polygon (rectangle) as the main graphics item for consistency
+        points = [
             self.top_left,
             QPointF(self.bottom_right.x(), self.top_left.y()),
             self.bottom_right,
             QPointF(self.top_left.x(), self.bottom_right.y())
-        ]).boundingRect()
-        self.graphics_item = QGraphicsRectItem(rect)
+        ]
+        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
         # Call parent to handle group and helpers
         super().update_graphics_item()
 

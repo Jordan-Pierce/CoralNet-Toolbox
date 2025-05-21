@@ -5,7 +5,7 @@ import numpy as np
 from rasterio.windows import Window
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
-from PyQt5.QtWidgets import QGraphicsScene, QGraphicsRectItem
+from PyQt5.QtWidgets import QGraphicsScene, QGraphicsPolygonItem
 from PyQt5.QtGui import (QPixmap, QColor, QPen, QBrush, QPainter,
                          QPolygonF, QImage, QRegion)
 
@@ -196,25 +196,29 @@ class PatchAnnotation(Annotation):
 
     def create_graphics_item(self, scene: QGraphicsScene):
         """Create all graphics items for the patch annotation and add them to the scene as a group."""
-        # Use a rectangle as the main graphics item
+        # Use a polygon (square) as the main graphics item
         half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size)
-        self.graphics_item = QGraphicsRectItem(rect)
+        points = [
+            QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),  # Top-left
+            QPointF(self.center_xy.x() + half_size, self.center_xy.y() - half_size),  # Top-right
+            QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),  # Bottom-right
+            QPointF(self.center_xy.x() - half_size, self.center_xy.y() + half_size),  # Bottom-left
+        ]
+        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
         # Call parent to handle group and helpers
         super().create_graphics_item(scene)
-
+    
     def update_graphics_item(self):
         """Update the graphical representation of the patch annotation."""
-        # Use a rectangle as the main graphics item
+        # Use a polygon (square) as the main graphics item
         half_size = self.annotation_size / 2
-        rect = QRectF(self.center_xy.x() - half_size,
-                      self.center_xy.y() - half_size,
-                      self.annotation_size,
-                      self.annotation_size)
-        self.graphics_item = QGraphicsRectItem(rect)
+        points = [
+            QPointF(self.center_xy.x() - half_size, self.center_xy.y() - half_size),  # Top-left
+            QPointF(self.center_xy.x() + half_size, self.center_xy.y() - half_size),  # Top-right
+            QPointF(self.center_xy.x() + half_size, self.center_xy.y() + half_size),  # Bottom-right
+            QPointF(self.center_xy.x() - half_size, self.center_xy.y() + half_size),  # Bottom-left
+        ]
+        self.graphics_item = QGraphicsPolygonItem(QPolygonF(points))
         # Call parent to handle group and helpers
         super().update_graphics_item()
 
