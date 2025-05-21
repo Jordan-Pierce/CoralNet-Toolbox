@@ -365,44 +365,24 @@ class PolygonAnnotation(Annotation):
         self.annotationUpdated.emit(self)
 
     def resize(self, handle, new_pos):
-        """Resize the annotation by moving a specific handle to a new position."""
+        """Resize the annotation by moving a specific handle (vertex) to a new position."""
         # Clear the machine confidence
         self.update_user_confidence(self.label)
-
+    
         # Extract the point index from the handle string (e.g., "point_0" -> 0)
         if handle.startswith("point_"):
             new_points = self.points.copy()
             point_index = int(handle.split("_")[1])
-            num_points = len(new_points)
-
-            # Update the selected point
-            delta = new_pos - new_points[point_index]
+    
+            # Move only the selected point
             new_points[point_index] = new_pos
-
-            # Define decay factor (controls how quickly influence diminishes)
-            # Higher values mean faster decay
-            decay_factor = 0.1
-
-            # Update all other points with exponentially decreasing influence
-            for i in range(num_points):
-                if i != point_index:
-                    # Calculate minimum distance considering the circular nature
-                    dist_clockwise = (i - point_index) % num_points
-                    dist_counterclockwise = (point_index - i) % num_points
-                    distance = min(dist_clockwise, dist_counterclockwise)
-
-                    # Calculate influence using exponential decay
-                    influence = math.exp(-decay_factor * distance)
-
-                    # Update point position
-                    new_points[i] += delta * influence
-
+    
             # Recalculate centroid and bounding box
             self.set_precision(new_points)
             self.set_centroid()
             self.set_cropped_bbox()
             self.update_graphics_item()
-
+    
             # Notify that the annotation has been updated
             self.annotationUpdated.emit(self)
 
