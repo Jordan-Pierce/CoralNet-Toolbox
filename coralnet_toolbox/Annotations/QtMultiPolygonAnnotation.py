@@ -270,7 +270,7 @@ class MultiPolygonAnnotation(Annotation):
         if scene:
             scene.addItem(self.graphics_item_group)
             
-    def update_polygon(self):
+    def update_polygon(self, delta):
         """Show a warning that MultiPolygonAnnotations should be cut before updating."""
         pass  # No operation; this is a placeholder for future functionality
 
