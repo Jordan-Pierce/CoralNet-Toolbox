@@ -476,7 +476,7 @@ class SAMTool(Tool):
                         self.annotation_window.selected_label.color,
                         self.annotation_window.current_image_path,
                         self.annotation_window.selected_label.id,
-                        self.main_window.label_window.active_label.transparency
+                        self.annotation_window.main_window.get_transparency_value()
                     )
                     
                     # Copy confidence data
@@ -616,7 +616,7 @@ class SAMTool(Tool):
             self.annotation_window.selected_label.color,
             self.annotation_window.current_image_path,
             self.annotation_window.selected_label.id,
-            self.main_window.label_window.active_label.transparency
+            self.annotation_window.main_window.get_transparency_value()
         )
         
         # Update confidence

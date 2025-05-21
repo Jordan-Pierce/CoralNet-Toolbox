@@ -499,7 +499,7 @@ class SeeAnythingTool(Tool):
                                              self.annotation_window.selected_label.color,
                                              self.annotation_window.current_image_path,
                                              self.annotation_window.selected_label.id,
-                                             self.main_window.label_window.active_label.transparency)
+                                             self.annotation_window.main_window.get_transparency_value())
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
@@ -526,7 +526,7 @@ class SeeAnythingTool(Tool):
                                            self.annotation_window.selected_label.color,
                                            self.annotation_window.current_image_path,
                                            self.annotation_window.selected_label.id,
-                                           self.main_window.label_window.active_label.transparency)
+                                           self.annotation_window.main_window.get_transparency_value())
 
             # Update the confidence score of annotation
             annotation.update_machine_confidence({self.annotation_window.selected_label: confidence})
