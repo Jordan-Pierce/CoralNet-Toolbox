@@ -124,6 +124,7 @@ The main window consists of several components:
   - **Delete / Backspace**: Remove selected annotation(s).
   - **Ctrl + Shift**: Show resize handles for the selected annotation.
   - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
+  - **Ctrl + Shift + Mouse Wheel**: Change the number of vertices for a polygon annotation.
   - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
   - **Ctrl + X**: Enter cutting mode; left-click to start, draw line, left-click to end.
   - **Backspace/Ctrl + X**: Cancel cutting mode.
