@@ -166,18 +166,14 @@ class BatchInferenceDialog(QDialog):
         :return: True if valid sources exist, False otherwise
         """
         # Check if there are any images
-        if not self.image_window.image_dict:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.information(None,
                                     "No Images",
                                     "No images available for batch inference.")
             return False
 
         # Check for images with valid annotations
-        for image_path, image_info in self.image_window.image_dict.items():
-            # Skip images with no labels
-            if not image_info.get('labels'):
-                continue
-
+        for image_path in self.image_window.raster_manager.image_paths:
             # Get annotations for this image
             annotations = self.annotation_window.get_image_annotations(image_path)
 
@@ -198,18 +194,14 @@ class BatchInferenceDialog(QDialog):
         :return: True if valid sources exist, False otherwise
         """
         # Check if there are any images
-        if not self.image_window.image_dict:
+        if not self.image_window.raster_manager.image_paths:
             QMessageBox.information(self,
                                     "No Images",
                                     "No images available for batch inference.")
             return False
 
         # Check for images with valid annotations
-        for image_path, image_info in self.image_window.image_dict.items():
-            # Skip images with no labels
-            if not image_info.get('labels'):
-                continue
-
+        for image_path in self.image_window.raster_manager.image_paths:
             # Get annotations for this image
             annotations = self.annotation_window.get_image_annotations(image_path)
 
@@ -233,12 +225,8 @@ class BatchInferenceDialog(QDialog):
         self.source_image_combo_box.clear()
         valid_images_found = False
 
-        # Get all image paths from the image_dict
-        for image_path, image_info in self.image_window.image_dict.items():
-            # Skip images with no labels (quick early check)
-            if not image_info.get('labels'):
-                continue
-
+        # Get all image paths from the raster_manager
+        for image_path in self.image_window.raster_manager.image_paths:
             # Get annotations for this image
             annotations = self.annotation_window.get_image_annotations(image_path)
 
@@ -266,7 +254,7 @@ class BatchInferenceDialog(QDialog):
             return False
 
         # Update the combo box to have the selected image first
-        if self.annotation_window.current_image_path in self.image_window.image_dict:
+        if self.annotation_window.current_image_path in self.image_window.raster_manager.image_paths:
             self.source_image_combo_box.setCurrentText(os.path.basename(self.annotation_window.current_image_path))
 
         # Update the source labels given changes in the source images
