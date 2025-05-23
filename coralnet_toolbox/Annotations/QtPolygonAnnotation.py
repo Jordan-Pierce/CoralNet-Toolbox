@@ -541,7 +541,7 @@ class PolygonAnnotation(Annotation):
         # Create shapely polygon
         polygon = Polygon(polygon_points)
 
-        # Create cutting line
+        # Create cutting line (do NOT extend)
         line_points = [(point.x(), point.y()) for point in cutting_points]
         cutting_line = LineString(line_points)
 
@@ -549,56 +549,9 @@ class PolygonAnnotation(Annotation):
         if not polygon.intersects(cutting_line):
             return [annotation]  # No intersection, return original
 
-        # Extend the cutting line to ensure it fully cuts through the polygon
-        # This extends the cutting line by calculating its bearing and extending beyond the polygon bounds
-        def extend_line(line, distance=1000):
-            """Extend line in both directions by the given distance."""
-            # Get the coordinates of the first and last points
-            coords = list(line.coords)
-
-            # Calculate direction vectors for start and end
-            if len(coords) >= 2:
-                # For start point (extend backwards)
-                start_x, start_y = coords[0]
-                next_x, next_y = coords[1]
-                start_dx = start_x - next_x
-                start_dy = start_y - next_y
-
-                # Normalize and scale the direction vector
-                start_length = (start_dx**2 + start_dy**2)**0.5
-                if start_length > 0:
-                    start_dx = start_dx / start_length * distance
-                    start_dy = start_dy / start_length * distance
-
-                # For end point (extend forwards)
-                end_x, end_y = coords[-1]
-                prev_x, prev_y = coords[-2]
-                end_dx = end_x - prev_x
-                end_dy = end_y - prev_y
-
-                # Normalize and scale the direction vector
-                end_length = (end_dx**2 + end_dy**2)**0.5
-                if end_length > 0:
-                    end_dx = end_dx / end_length * distance
-                    end_dy = end_dy / end_length * distance
-
-                # Create new extended points
-                new_start = (start_x + start_dx, start_y + start_dy)
-                new_end = (end_x + end_dx, end_y + end_dy)
-
-                # Create new extended line with all points
-                new_coords = [new_start] + coords + [new_end]
-                return LineString(new_coords)
-
-            return line
-
-        # Extend the cutting line
-        extended_line = extend_line(cutting_line)
-
-        # Cut the polygon with the extended line
         try:
-            # Split the polygon along the cutting line
-            split_polygons = split(polygon, extended_line)
+            # Split the polygon along the cutting line (no extension)
+            split_polygons = split(polygon, cutting_line)
 
             # Convert the split geometries back to polygons
             result_annotations = []

@@ -375,7 +375,7 @@ class RectangleAnnotation(Annotation):
         # Create a shapely box from rectangle coordinates
         rect_shapely = box(x1, y1, x2, y2)
 
-        # Create a line from the cutting points
+        # Create a line from the cutting points (do NOT extend)
         line_points = [(point.x(), point.y()) for point in cutting_points]
         cutting_line = LineString(line_points)
 
@@ -383,38 +383,9 @@ class RectangleAnnotation(Annotation):
         if not rect_shapely.intersects(cutting_line):
             return [annotation]  # No intersection, return original
 
-        # Extend the cutting line to ensure it fully cuts through the rectangle
-        def extend_line(line, distance=1000):
-            """Extend line segments at both ends to ensure complete cutting."""
-            coords = list(line.coords)
-            if len(coords) < 2:
-                return line
-
-            # Extend the first segment
-            first, second = coords[0], coords[1]
-            dx, dy = first[0] - second[0], first[1] - second[1]
-            length = (dx**2 + dy**2)**0.5
-            if length > 0:
-                dx, dy = dx / length * distance, dy / length * distance
-            extended_first = (first[0] + dx, first[1] + dy)
-
-            # Extend the last segment
-            last, second_last = coords[-1], coords[-2]
-            dx, dy = last[0] - second_last[0], last[1] - second_last[1]
-            length = (dx**2 + dy**2)**0.5
-            if length > 0:
-                dx, dy = dx / length * distance, dy / length * distance
-            extended_last = (last[0] + dx, last[1] + dy)
-
-            # Create new line with extended endpoints
-            return LineString([extended_first] + coords[1:-1] + [extended_last])
-
-        # Extend the cutting line
-        extended_line = extend_line(cutting_line)
-
         try:
-            # Split the rectangle with the extended line
-            split_result = split(rect_shapely, extended_line)
+            # Split the rectangle with the user-supplied line only (no extension)
+            split_result = split(rect_shapely, cutting_line)
 
             result_annotations = []
             min_area = 10  # Minimum area threshold
