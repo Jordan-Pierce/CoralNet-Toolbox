@@ -902,7 +902,6 @@ class Base(QDialog):
         self.inference_thread.quit()
         
         
-
 class InferenceEngine:
     """Handles model loading, inference, and class filtering."""
     def __init__(self):
@@ -990,11 +989,10 @@ class InferenceThread(QThread):
 
             # Process frame
             results = self.inference_engine.infer(frame,
-                self.thresholds['conf'],
-                self.thresholds['iou'])
+                                                  self.thresholds['conf'],
+                                                  self.thresholds['iou'])
            
-            region_counts = self.inference_engine.count_objects_in_regions(
-                results, self.region_polygons)
+            region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
            
             # Emit processed frame with results
             self.frame_processed.emit(frame, region_counts, results)
