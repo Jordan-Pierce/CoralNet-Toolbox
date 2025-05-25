@@ -1,4 +1,5 @@
 import os 
+from datetime import datetime
 
 import cv2
 import numpy as np
@@ -41,13 +42,15 @@ class RegionManager:
 
 class VideoRegionWidget(QWidget):
     """Widget for displaying video, playback controls, and drawing/editing rectangular regions only."""
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
         
+        # Video frame and display
         self.frame = None
         self.pixmap = None
-        self.regions = []  # List of QRect (or 4-point polygons)
+        self.regions = []  # List of QRect
         self.drawing = False
         self.rect_start = None  # QPoint
         self.rect_end = None    # QPoint
@@ -75,64 +78,67 @@ class VideoRegionWidget(QWidget):
         self.playback_speed = 1.0
 
         # Inference
-        self.inference_enabled = False  # New: flag for inference
-        self.inference_engine = None    # Set by parent/Base
-        self.region_polygons = []       # Set by parent/Base
+        self.inference_enabled = False
+        self.inference_engine = None
+        self.region_polygons = []
         self.conf = 0.3
         self.iou = 0.2
 
-        # VideoSink
-        self.video_sink = None  # VideoSink instance for writing output video
+        # Video output handling - simplified and fixed
+        self.video_sink = None
         self.video_path = None
         self.output_dir = None
+        self.output_path = None
+        self.should_write_video = False
 
-        # Layout: video area (fills widget), controls at bottom
+        self._setup_ui()
+        self.disable_video_region()
+
+    def _setup_ui(self):
+        """Setup the user interface components."""
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
         self.layout.addStretch(1)  # Video area will be drawn in paintEvent
+        
         controls = QHBoxLayout()
         
-        # Step Backward Button
+        # Control buttons
         self.step_back_btn = QPushButton()
         self.step_back_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekBackward))
         self.step_back_btn.clicked.connect(self.step_backward)
-        self.step_back_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.step_back_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.step_back_btn)
 
-        # Play button with icon 
         self.play_btn = QPushButton()
         self.play_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
         self.play_btn.setToolTip("Play")
         self.play_btn.clicked.connect(self.play_video)
-        self.play_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.play_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.play_btn)
         
-        # Pause button with icon
         self.pause_btn = QPushButton()
         self.pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPause))
         self.pause_btn.setToolTip("Pause")
         self.pause_btn.clicked.connect(self.pause_video)
-        self.pause_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.pause_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.pause_btn)
 
-        # Step Forward Button 
         self.step_fwd_btn = QPushButton()
         self.step_fwd_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekForward))
         self.step_fwd_btn.setToolTip("Step Forward")
         self.step_fwd_btn.clicked.connect(self.step_forward)
-        self.step_fwd_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.step_fwd_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.step_fwd_btn)
 
-        # Stop (reset to first frame) button
         self.stop_btn = QPushButton()
         self.stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
         self.stop_btn.setToolTip("Stop")
-        self.stop_btn.clicked.connect(self.reset_to_first_frame)
-        self.stop_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.stop_btn.clicked.connect(self.stop_video)
+        self.stop_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.stop_btn)
 
-        # Slider for seeking through video
+        # Seek slider
         controls.addSpacing(8)
         controls.addStretch(1)
         self.seek_slider = QSlider(Qt.Horizontal)
@@ -143,16 +149,15 @@ class VideoRegionWidget(QWidget):
         controls.addStretch(1)
         controls.addSpacing(8)
 
-        # Set maximum size for buttons
+        # Set button sizes
         max_btn_size = 32
         for btn in [self.step_back_btn, self.play_btn, self.pause_btn, self.step_fwd_btn, self.stop_btn]:
             btn.setMaximumSize(max_btn_size, max_btn_size)
 
-        # Frame Label
+        # Frame label and speed control
         self.frame_label = QLabel("Frame: 0 / 0")
         controls.addWidget(self.frame_label)
 
-        # Playback Speed Dropdown
         self.speed_dropdown = QComboBox()
         self.speed_dropdown.addItems(["0.5x", "1x", "2x"])
         self.speed_dropdown.setCurrentIndex(1)
@@ -162,165 +167,245 @@ class VideoRegionWidget(QWidget):
 
         self.layout.addLayout(controls)
 
-        # At the end of __init__, disable controls by default
-        self.disable_video_region()
-
     def enable_video_region(self):
         """Enable all controls in the video region widget."""
         self.setEnabled(True)
-        self.step_back_btn.setEnabled(True)
-        self.play_btn.setEnabled(True)
-        self.pause_btn.setEnabled(True)
-        self.step_fwd_btn.setEnabled(True)
-        self.stop_btn.setEnabled(True)
-        self.seek_slider.setEnabled(True)
-        self.speed_dropdown.setEnabled(True)
-        self.frame_label.setEnabled(True)
+        for widget in [self.step_back_btn, self.play_btn, self.pause_btn, 
+                       self.step_fwd_btn, self.stop_btn, self.seek_slider, 
+                       self.speed_dropdown, self.frame_label]:
+            widget.setEnabled(True)
 
     def disable_video_region(self):
         """Disable all controls in the video region widget."""
         self.setEnabled(False)
-        self.step_back_btn.setEnabled(False)
-        self.play_btn.setEnabled(False)
-        self.pause_btn.setEnabled(False)
-        self.step_fwd_btn.setEnabled(False)
-        self.stop_btn.setEnabled(False)
-        self.seek_slider.setEnabled(False)
-        self.speed_dropdown.setEnabled(False)
-        self.frame_label.setEnabled(False)
+        for widget in [self.step_back_btn, self.play_btn, self.pause_btn, 
+                       self.step_fwd_btn, self.stop_btn, self.seek_slider, 
+                       self.speed_dropdown, self.frame_label]:
+            widget.setEnabled(False)
 
     def load_video(self, video_path, output_dir=None):
         """Load a video file and prepare for playback and region drawing."""
+        # Clean up existing video capture
         if self.cap:
             self.cap.release()
+        
+        # Clean up existing video sink
+        self._cleanup_video_sink()
             
+        # Load new video
         self.cap = cv2.VideoCapture(video_path)
+        if not self.cap.isOpened():
+            raise Exception(f"Could not open video at {video_path}")
+            
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
         self.seek_slider.setMaximum(self.total_frames - 1)
         self.current_frame_number = 0
         self.is_playing = False
+        self.video_path = video_path
+        self.output_dir = output_dir
+        
+        # Setup output video if output directory is provided
+        if output_dir and os.path.exists(output_dir):
+            self._setup_video_output(video_path, output_dir)
+        else:
+            self.should_write_video = False
+        
+        # Load first frame
         self.seek(0)
         self.update()
         self.update_frame_label()
-        self.video_path = video_path
-        self.output_dir = output_dir
-
-        # Always initialize when loading video
-        if self.video_sink is not None:
-            self.video_sink.__exit__(None, None, None)
-            self.video_sink = None
-            
-        # If output directory is set, initialize VideoSink
-        if output_dir:
-            video_info = sv.VideoInfo.from_video_path(video_path=video_path)
-            out_path = os.path.join(output_dir, os.path.basename(video_path))
-            self.video_sink = sv.VideoSink(target_path=out_path, video_info=video_info)
-            self.video_sink.__enter__()
-            
         self.enable_video_region()
 
-    def close_video_sink(self):
-        if self.video_sink is not None:
-            self.video_sink.__exit__(None, None, None)
+    def _setup_video_output(self, video_path, output_dir):
+        """Setup video output with timestamp in filename."""
+        try:
+            video_info = sv.VideoInfo.from_video_path(video_path=video_path)
+            
+            # Create timestamped filename
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_filename = f"{base_name}_{timestamp}.mp4"
+            self.output_path = os.path.join(output_dir, output_filename)
+            
+            # Initialize VideoSink
+            self.video_sink = sv.VideoSink(target_path=self.output_path, video_info=video_info)
+            self.video_sink.__enter__()
+            self.should_write_video = True
+            
+        except Exception as e:
+            print(f"Failed to setup video output: {e}")
+            self.should_write_video = False
             self.video_sink = None
+
+    def _cleanup_video_sink(self):
+        """Properly cleanup the video sink and prepare for potential new recording."""
+        if self.video_sink is not None:
+            try:
+                self.video_sink.__exit__(None, None, None)
+                print(f"Video saved to: {self.output_path}")
+            except Exception as e:
+                print(f"Error closing video sink: {e}")
+            finally:
+                self.video_sink = None
+                self.should_write_video = False
+                self.output_path = None
+
+    def _prepare_new_video_output(self):
+        """Prepare a new video output with fresh timestamp if output directory exists."""
+        if self.output_dir and os.path.exists(self.output_dir) and self.video_path:
+            self._setup_video_output(self.video_path, self.output_dir)
+
+    def _write_frame_to_sink(self, frame):
+        """Write a frame to the video sink if enabled."""
+        if not self.should_write_video or self.video_sink is None:
+            return
+            
+        try:
+            # Ensure frame matches expected output size
+            expected_shape = (self.video_sink.video_info.height, self.video_sink.video_info.width)
+            if frame.shape[:2] != expected_shape:
+                frame = cv2.resize(frame, (expected_shape[1], expected_shape[0]))
+            self.video_sink.write_frame(frame)
+        except Exception as e:
+            print(f"Error writing frame to video sink: {e}")
 
     def draw_inference_results(self, frame, region_counts, results):
         """Draw inference results on the video frame using supervision's BoxAnnotator."""
-        if results and len(results) > 0:
+        if not results or len(results) == 0:
+            return frame
+            
+        try:
             result = results[0]
-            try:
-                detections = sv.Detections.from_ultralytics(result)
-                # Prepare labels for each detection
-                class_names = []
-                for cls in detections.class_id:
-                    idx = int(cls)
+            detections = sv.Detections.from_ultralytics(result)
+            
+            # Prepare labels for each detection
+            class_names = []
+            for cls in detections.class_id:
+                idx = int(cls)
+                if hasattr(self.parent, 'inference_engine') and self.parent.inference_engine:
                     if idx < len(self.parent.inference_engine.class_names):
                         class_names.append(self.parent.inference_engine.class_names[idx])
                     else:
                         class_names.append(str(idx))
-                confidences = detections.confidence
-                labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-                label_annotator = sv.LabelAnnotator(text_position=sv.Position.TOP_CENTER)
-                annotators = []
-                for key in self.parent.get_selected_annotators():
-                    if key == "BoxAnnotator":
-                        annotators.append(sv.BoxAnnotator())
-                    elif key == "BoxCornerAnnotator":
-                        annotators.append(sv.BoxCornerAnnotator())
-                    elif key == "DotAnnotator":
-                        annotators.append(sv.DotAnnotator())
-                    elif key == "HaloAnnotator":
-                        annotators.append(sv.HaloAnnotator())
-                    elif key == "PercentageBarAnnotator":
-                        annotators.append(sv.PercentageBarAnnotator())
-                    elif key == "MaskAnnotator":
-                        annotators.append(sv.MaskAnnotator())
-                    elif key == "PolygonAnnotator":
-                        annotators.append(sv.PolygonAnnotator())
-                for annotator in annotators:
-                    frame = annotator.annotate(scene=frame, detections=detections)
-                frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
-            except Exception as e:
-                print(f"supervision annotate failed: {e}")
-        for idx, poly in enumerate(self.parent.region_polygons if hasattr(self.parent, 'region_polygons') else []):
-            pts = np.array(list(poly.exterior.coords), np.int32)
-            cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-            centroid = poly.centroid
-            cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                else:
+                    class_names.append(str(idx))
+                    
+            confidences = detections.confidence
+            labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
+            
+            # Apply annotations
+            label_annotator = sv.LabelAnnotator(text_position=sv.Position.TOP_CENTER)
+            
+            # Get selected annotators from parent if available
+            selected_annotators = []
+            if hasattr(self.parent, 'get_selected_annotators'):
+                selected_annotators = self.parent.get_selected_annotators()
+            else:
+                selected_annotators = ["BoxAnnotator"]  # Default
+                
+            annotators = []
+            for key in selected_annotators:
+                if key == "BoxAnnotator":
+                    annotators.append(sv.BoxAnnotator())
+                elif key == "BoxCornerAnnotator":
+                    annotators.append(sv.BoxCornerAnnotator())
+                elif key == "DotAnnotator":
+                    annotators.append(sv.DotAnnotator())
+                elif key == "HaloAnnotator":
+                    annotators.append(sv.HaloAnnotator())
+                elif key == "PercentageBarAnnotator":
+                    annotators.append(sv.PercentageBarAnnotator())
+                elif key == "MaskAnnotator":
+                    annotators.append(sv.MaskAnnotator())
+                elif key == "PolygonAnnotator":
+                    annotators.append(sv.PolygonAnnotator())
+                    
+            for annotator in annotators:
+                frame = annotator.annotate(scene=frame, detections=detections)
+            frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
+            
+        except Exception as e:
+            print(f"Supervision annotate failed: {e}")
+        
+        # Draw region polygons
+        region_polygons = getattr(self.parent, 'region_polygons', []) if self.parent else self.region_polygons
+        for idx, poly in enumerate(region_polygons):
+            if idx < len(region_counts):
+                pts = np.array(list(poly.exterior.coords), np.int32)
+                cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
+                centroid = poly.centroid
+                cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        
+        return frame
+
+    def _process_frame_for_inference(self, frame):
+        """Process frame for inference if enabled."""
+        if not self.inference_enabled or not self.inference_engine:
+            return frame
+            
+        try:
+            # Run inference on the current frame
+            results = self.inference_engine.infer(frame, self.conf, self.iou)
+            # Count objects in defined regions
+            region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
+            # Draw results on the frame
+            frame = self.draw_inference_results(frame, region_counts, results)
+        except Exception as e:
+            print(f"Inference processing failed: {e}")
+            
         return frame
 
     def next_frame(self):
         """Advance to the next frame in the video and update the display."""
-        if self.cap and self.is_playing:
-            #  Use playback speed
-            step = int(self.playback_speed)
-            for _ in range(step):
-                ret, frame = self.cap.read()
-                if not ret:
-                    self.timer.stop()
-                    self.is_playing = False
-                    return
-            if ret:
-                # Process the frame for inference if enabled
-                if self.inference_enabled and self.inference_engine:
-                    # Run inference on the current frame
-                    results = self.inference_engine.infer(frame, self.conf, self.iou)
-                    # Count objects in defined regions (if there are any regions)
-                    region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
-                    # Draw results on the frame
-                    frame = self.draw_inference_results(frame, region_counts, results)
-                    
-                self.current_frame = frame
-                self.current_frame_number = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
-                self.update()
-                self.seek_slider.blockSignals(True)
-                self.seek_slider.setValue(self.current_frame_number)
-                self.seek_slider.blockSignals(False)
-                self.update_frame_label()
-
-                if self.video_sink is not None:
-                    try:
-                        # Ensure frame matches expected output size
-                        expected_shape = (self.video_sink.video_info.height, self.video_sink.video_info.width)
-                        if frame.shape[0:2] != expected_shape:
-                            frame = cv2.resize(frame, (expected_shape[1], expected_shape[0]))
-                        self.video_sink.write_frame(frame)
-                    except Exception as e:
-                        print(f"VideoSink write_frame error: {e}")
-            else:
-                self.timer.stop()
-                self.is_playing = False
+        if not self.cap or not self.is_playing:
+            return
+            
+        # Use playback speed
+        step = max(1, int(self.playback_speed))
+        
+        # Read frames according to playback speed
+        frame = None
+        for _ in range(step):
+            ret, frame = self.cap.read()
+            if not ret:
+                self._handle_video_end()
+                return
                 
-                # Close when video finishes
-                if self.video_sink is not None:
-                    self.video_sink.__exit__(None, None, None)
-                    self.video_sink = None
+        if frame is not None:
+            # Process the frame for inference if enabled
+            processed_frame = self._process_frame_for_inference(frame.copy())
+            
+            # Write to video sink
+            self._write_frame_to_sink(processed_frame)
+            
+            # Update display
+            self.current_frame = processed_frame
+            self.current_frame_number = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            self.update()
+            self.seek_slider.blockSignals(True)
+            self.seek_slider.setValue(self.current_frame_number)
+            self.seek_slider.blockSignals(False)
+            self.update_frame_label()
+
+    def _handle_video_end(self):
+        """Handle when video reaches the end."""
+        self.timer.stop()
+        self.is_playing = False
+        self.play_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        # Finalize current video output
+        self._cleanup_video_sink()
+        print("Video recording ended - ready for new recording on next play")
 
     def play_video(self):
         """Play the video from the current position."""
-        if not self.is_playing:
+        if not self.is_playing and self.cap:
+            # If we don't have an active video sink but should be recording, create a new one
+            if self.output_dir and not self.should_write_video:
+                self._prepare_new_video_output()
+                
             self.is_playing = True
             self.timer.start(int(1000 / (self.fps * self.playback_speed)))
             self.play_btn.setEnabled(False)
@@ -334,35 +419,83 @@ class VideoRegionWidget(QWidget):
             self.play_btn.setEnabled(True)
             self.pause_btn.setEnabled(False)
 
+    def stop_video(self):
+        """Stop the video playback and finalize output."""
+        if self.is_playing:
+            self.is_playing = False
+            self.timer.stop()
+            
+        # Finalize current video output when stopped
+        self._cleanup_video_sink()
+        print("Video recording stopped - ready for new recording on next play")
+        
+        # Reset to first frame
+        if self.cap:
+            self.seek(0)
+            self.play_btn.setEnabled(True)
+            self.pause_btn.setEnabled(False)
+            self.seek_slider.setValue(0)
+            self.update_frame_label()
+
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
+        if not self.cap:
+            return
+            
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        ret, frame = self.cap.read()
+        
+        if ret:
+            # Process the frame for inference if enabled
+            processed_frame = self._process_frame_for_inference(frame.copy())
+            
+            self.current_frame = processed_frame
+            self.current_frame_number = frame_number
+            self.update()
+            self.update_frame_label()
+
+    def step_forward(self):
+        """Step forward one frame in the video."""
         if self.cap:
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            ret, frame = self.cap.read()
-            if ret:
-                # Process the frame for inference if enabled
-                if self.inference_enabled and self.inference_engine:
-                    # Run inference on the current frame
-                    results = self.inference_engine.infer(frame, self.conf, self.iou)
-                    # Count objects in defined regions (if there are any regions)
-                    region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
-                    # Draw results on the frame
-                    frame = self.draw_inference_results(frame, region_counts, results)
-                    
-                self.current_frame = frame
-                self.current_frame_number = frame_number
-                self.update()
-                self.update_frame_label()
+            next_frame = min(self.current_frame_number + 1, self.total_frames - 1)
+            self.seek(next_frame)
 
-    def display_frame(self, frame):
-        """Display a processed frame in the video widget."""
-        self.current_frame = frame
+    def step_backward(self):
+        """Step backward one frame in the video."""
+        if self.cap:
+            prev_frame = max(self.current_frame_number - 1, 0)
+            self.seek(prev_frame)
+
+    def change_speed(self, idx):
+        """Change the playback speed based on the selected index."""
+        speeds = [0.5, 1.0, 2.0]
+        self.playback_speed = speeds[idx]
+        if self.is_playing:
+            # Restart timer with new speed
+            self.timer.stop()
+            self.timer.start(int(1000 / (self.fps * self.playback_speed)))
+
+    def update_frame_label(self):
+        """Update the frame label with current frame number and total frames."""
+        self.frame_label.setText(f"Frame: {self.current_frame_number + 1} / {self.total_frames}")
+
+    def set_region_visibility(self, visible: bool):
+        """Set the visibility of regions in the video."""
+        self.show_regions = visible
         self.update()
-        self.update_frame_label()
 
-    def update_pixmap(self):
-        pass  # No longer needed
+    def set_inference_params(self, inference_engine, region_polygons, conf, iou):
+        """Set inference parameters for the video region."""
+        self.inference_engine = inference_engine
+        self.region_polygons = region_polygons
+        self.conf = conf
+        self.iou = iou
 
+    def enable_inference(self, enable: bool):
+        """Enable or disable inference in the video region."""
+        self.inference_enabled = enable
+
+    # Region drawing methods
     def paintEvent(self, event):
         """Draw the video frame centered, and rectangular regions."""
         painter = QPainter(self)
@@ -400,9 +533,9 @@ class VideoRegionWidget(QWidget):
 
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
-        # Adjust for centering offset
         offset_x, offset_y = self._get_video_offset()
         pos = event.pos() - QPoint(offset_x, offset_y)
+        
         if event.button() == Qt.LeftButton:
             if not self.drawing:
                 self.drawing = True
@@ -413,7 +546,6 @@ class VideoRegionWidget(QWidget):
                 self.drawing = False
                 if self.rect_start and self.rect_end and self.rect_start != self.rect_end:
                     rect = self._make_rect(self.rect_start, self.rect_end)
-                    # Push to undo stack
                     self.undo_stack.append(list(self.regions))
                     self.redo_stack.clear()
                     self.regions.append(rect)
@@ -445,10 +577,6 @@ class VideoRegionWidget(QWidget):
             return x, y
         return 0, 0
 
-    def mouseDoubleClickEvent(self, event):
-        """Ignore double click for rectangle creation."""
-        pass
-
     def _make_rect(self, p1, p2):
         """Return a QRect from two points."""
         x1, y1 = p1.x(), p1.y()
@@ -457,58 +585,6 @@ class VideoRegionWidget(QWidget):
         top, bottom = min(y1, y2), max(y1, y2)
         return QRect(left, top, right - left, bottom - top)
 
-    # Step Forward/Backward
-    def step_forward(self):
-        """Step forward in the video."""
-        if self.cap:
-            next_frame = min(self.current_frame_number + 1, self.total_frames - 1)
-            self.seek(next_frame)
-
-    def step_backward(self):
-        """Step backward in the video."""
-        if self.cap:
-            prev_frame = max(self.current_frame_number - 1, 0)
-            self.seek(prev_frame)
-
-    # Playback Speed
-    def change_speed(self, idx):
-        """Change the playback speed based on the selected index."""
-        speeds = [0.5, 1.0, 2.0]
-        self.playback_speed = speeds[idx]
-        if self.is_playing:
-            self.toggle_pause()
-            self.toggle_play()
-
-    # Region Visibility
-    def set_region_visibility(self, visible: bool):
-        """Set the visibility of regions in the video."""
-        self.show_regions = visible
-        self.update()
-
-    # Reset to First Frame
-    def reset_to_first_frame(self):
-        """Reset the video to the first frame and stop playback."""
-        self.close_video_sink()
-        # Close on stop
-        if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
-            self.parent.video_sink.__exit__(None, None, None)
-            self.parent.video_sink = None
-                
-        if self.cap:
-            self.seek(0)
-            self.is_playing = False
-            self.timer.stop()
-            self.play_btn.setEnabled(True)
-            self.pause_btn.setEnabled(False)
-            self.seek_slider.setValue(0)  # Update slider to first frame
-            self.update_frame_label()     # Update frame count label
-
-    # Frame Label
-    def update_frame_label(self):
-        """Update the frame label with current frame number and total frames."""
-        self.frame_label.setText(f"Frame: {self.current_frame_number + 1} / {self.total_frames}")
-
-    # Undo/Redo for regions
     def undo_region(self):
         """Undo the last region action."""
         if self.undo_stack:
@@ -523,17 +599,19 @@ class VideoRegionWidget(QWidget):
             self.regions = self.redo_stack.pop()
             self.update()
 
-    def set_inference_params(self, inference_engine, region_polygons, conf, iou):
-        """Set inference parameters for the video region."""
-        self.inference_engine = inference_engine
-        self.region_polygons = region_polygons
-        self.conf = conf
-        self.iou = iou
+    def closeEvent(self, event):
+        """Handle widget close event."""
+        self._cleanup_video_sink()
+        if self.cap:
+            self.cap.release()
+        super().closeEvent(event)
 
-    def enable_inference(self, enable: bool):
-        """Enable or disable inference in the video region."""
-        self.inference_enabled = enable
-
+    def __del__(self):
+        """Destructor to ensure proper cleanup."""
+        self._cleanup_video_sink()
+        if self.cap:
+            self.cap.release()
+            
 
 class Base(QDialog):
     """Dialog for video inference with region selection and parameter controls."""
