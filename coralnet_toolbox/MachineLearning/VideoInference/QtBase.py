@@ -1,3 +1,5 @@
+import os 
+
 import cv2
 import numpy as np
 import supervision as sv
@@ -7,7 +9,7 @@ from shapely.geometry import Polygon, Point
 from ultralytics import YOLO
 
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
-from PyQt5.QtCore import Qt, QTimer, QPoint, QThread, pyqtSignal, QMutex, QWaitCondition
+from PyQt5.QtCore import Qt, QTimer, QPoint, QThread, pyqtSignal, QMutex, QWaitCondition, QRect
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
                              QWidget, QGridLayout, QListWidget, QListWidgetItem, 
@@ -195,6 +197,18 @@ class VideoRegionWidget(QWidget):
         self.update()
         self.update_frame_label()
 
+        # Always initialize when loading video
+        if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
+            self.parent.video_sink.__exit__(None, None, None)
+            self.parent.video_sink = None
+            
+        # If output directory is set, initialize VideoSink
+        if hasattr(self.parent, 'output_dir') and self.parent.output_dir:
+            video_info = sv.VideoInfo.from_video_path(video_path=video_path)
+            out_path = os.path.join(self.parent.output_dir, os.path.basename(video_path))
+            self.parent.video_sink = sv.VideoSink(target_path=out_path, video_info=video_info)
+            self.parent.video_sink.__enter__()
+
         # Enable controls when video is loaded
         self.enable_video_region()
 
@@ -226,9 +240,24 @@ class VideoRegionWidget(QWidget):
                 self.seek_slider.setValue(self.current_frame_number)
                 self.seek_slider.blockSignals(False)
                 self.update_frame_label()
+
+                if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
+                    expected_shape = (self.parent.video_sink.video_info.height, self.parent.video_sink.video_info.width)
+                    if frame.shape[0:2] == expected_shape:
+                        try:
+                            self.parent.video_sink.write_frame(frame)
+                        except Exception as e:
+                            print(f"VideoSink write_frame error: {e}")
+                    else:
+                        print(f"Warning: Frame shape {frame.shape} does not match expected shape {expected_shape}.")
             else:
                 self.timer.stop()
                 self.is_playing = False
+                
+                # Close when video finishes ---
+                if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
+                    self.parent.video_sink.__exit__(None, None, None)
+                    self.parent.video_sink = None
 
     def play_video(self):
         """Play the video from the current position."""
@@ -367,7 +396,6 @@ class VideoRegionWidget(QWidget):
         x2, y2 = p2.x(), p2.y()
         left, right = min(x1, x2), max(x1, x2)
         top, bottom = min(y1, y2), max(y1, y2)
-        from PyQt5.QtCore import QRect
         return QRect(left, top, right - left, bottom - top)
 
     # Step Forward/Backward
@@ -401,6 +429,11 @@ class VideoRegionWidget(QWidget):
     # Reset to First Frame
     def reset_to_first_frame(self):
         """Reset the video to the first frame and stop playback."""
+        # Close on stop
+        if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
+            self.parent.video_sink.__exit__(None, None, None)
+            self.parent.video_sink = None
+                
         if self.cap:
             self.seek(0)
             self.is_playing = False
@@ -457,6 +490,8 @@ class Base(QDialog):
         # Initialize parameters
         self.video_path = ""
         self.output_dir = ""
+        self.video_sink = None  # VideoSink instance for writing output video
+        
         self.model_path = ""
         
         self.task = None  # Task parameter, default is None
@@ -480,9 +515,9 @@ class Base(QDialog):
         self.layout.addLayout(self.video_layout, 70)
 
         # Setup the input layout
-        self.setup_input_group()
+        self.setup_input_layout()
         # Setup the output layout
-        self.setup_output_group()
+        self.setup_output_layout()
         # Setup the model layout
         self.setup_model_layout()
         # Setup the parameters layout
@@ -500,7 +535,7 @@ class Base(QDialog):
         # Setup Run/Cancel buttons
         self.setup_buttons_layout()
 
-    def setup_input_group(self):
+    def setup_input_layout(self):
         """Setup the input video group with a file browser."""
         group_box = QGroupBox("Input Parameters")
         layout = QHBoxLayout()
@@ -515,7 +550,7 @@ class Base(QDialog):
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
 
-    def setup_output_group(self):
+    def setup_output_layout(self):
         """Setup the output directory group with a file browser."""
         group_box = QGroupBox("Output Parameters")
         layout = QHBoxLayout()
@@ -598,9 +633,11 @@ class Base(QDialog):
         
     def closeEvent(self, event):
         """Ensure inference thread is stopped before closing the dialog."""
-        if hasattr(self, 'video_writer') and self.video_writer is not None:
-            self.video_writer.release()
-            self.video_writer = None
+        # Close on exit
+        if hasattr(self, 'video_sink') and self.video_sink is not None:
+            self.video_sink.__exit__(None, None, None)
+            self.video_sink = None
+            
         super().closeEvent(event)
 
     def setup_class_layout(self):
@@ -876,6 +913,15 @@ class Base(QDialog):
             item.setCheckState(Qt.Unchecked)
         self.update_selected_classes()
         
+    def update_video_sink(self):
+        """Update the video sink with the current output directory."""
+        if self.output_dir and self.video_path:
+            # Set up the video sink if output directory is provided
+            video_info = sv.VideoInfo.from_video_path(video_path=self.video_path)
+            out_path = os.path.join(self.output_dir, os.path.basename(self.video_path))
+            self.video_sink = sv.VideoSink(target_path=out_path, video_info=video_info)
+            self.video_sink.__enter__()  # Manually enter context
+        
     def update_inference_state(self, state):
         """Update the inference state and adjust UI elements accordingly."""
         self.inference_state = state
@@ -904,21 +950,6 @@ class Base(QDialog):
         self.inference_enabled = True
         self.enable_inference_btn.setEnabled(False)
         self.disable_inference_btn.setEnabled(True)
-        
-        # --- Begin: Save inferenced video logic ---
-        self.video_writer = None
-        if self.output_dir:
-            import os
-            import cv2
-            cap = cv2.VideoCapture(self.video_path)
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            out_path = os.path.join(self.output_dir, os.path.basename(self.video_path))
-            self.video_writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-            cap.release()
-        # --- End: Save inferenced video logic ---
 
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
@@ -930,15 +961,14 @@ class Base(QDialog):
         self.enable_inference_btn.setEnabled(True)
         self.disable_inference_btn.setEnabled(False)
         
-        if hasattr(self, 'video_writer') and self.video_writer is not None:
-            self.video_writer.release()
-            self.video_writer = None
-        
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
     def draw_inference_results(self, frame, region_counts, results):
         """Draw inference results on the video frame using supervision's BoxAnnotator."""
+        if not self.video_sink:
+            self.update_video_sink()
+            
         # Draw detection results using supervision
         if results and len(results) > 0:
             result = results[0]
@@ -989,9 +1019,11 @@ class Base(QDialog):
             centroid = poly.centroid
             cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-            
-        if hasattr(self, 'video_writer') and self.video_writer is not None:
-            self.video_writer.write(frame)
+        
+        try:
+            self.video_sink.write_frame(frame)
+        except Exception as e:
+            print(f"VideoSink write_frame error: {e}")
             
         return frame
 
