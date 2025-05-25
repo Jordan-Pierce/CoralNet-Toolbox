@@ -81,21 +81,30 @@ class VideoRegionWidget(QWidget):
         self.step_back_btn = QPushButton("⏮")
         self.step_back_btn.setToolTip("Step Backward")
         self.step_back_btn.clicked.connect(self.step_backward)
+        self.step_back_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         controls.addWidget(self.step_back_btn)
 
-        # Play/Pause toggle button with icon 
-        self.play_pause_btn = QPushButton()
-        self.play_pause_btn.setCheckable(True)
-        self.play_pause_btn.setChecked(False)
-        self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
-        self.play_pause_btn.setToolTip("Play/Pause")
-        self.play_pause_btn.clicked.connect(self.toggle_play_pause)
-        controls.addWidget(self.play_pause_btn)
+        # Play button with icon 
+        self.play_btn = QPushButton()
+        self.play_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
+        self.play_btn.setToolTip("Play")
+        self.play_btn.clicked.connect(self.play_video)
+        self.play_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        controls.addWidget(self.play_btn)
+        
+        # Pause button with icon
+        self.pause_btn = QPushButton()
+        self.pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPause))
+        self.pause_btn.setToolTip("Pause")
+        self.pause_btn.clicked.connect(self.pause_video)
+        self.pause_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        controls.addWidget(self.pause_btn)
 
         # Step Forward Button 
         self.step_fwd_btn = QPushButton("⏭")
         self.step_fwd_btn.setToolTip("Step Forward")
         self.step_fwd_btn.clicked.connect(self.step_forward)
+        self.step_fwd_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         controls.addWidget(self.step_fwd_btn)
 
         # Stop (reset to first frame) button
@@ -103,6 +112,7 @@ class VideoRegionWidget(QWidget):
         self.stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
         self.stop_btn.setToolTip("Stop")
         self.stop_btn.clicked.connect(self.reset_to_first_frame)
+        self.stop_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         controls.addWidget(self.stop_btn)
 
         # Slider for seeking through video
@@ -118,7 +128,7 @@ class VideoRegionWidget(QWidget):
 
         # Set maximum size for buttons
         max_btn_size = 32
-        for btn in [self.step_back_btn, self.play_pause_btn, self.step_fwd_btn, self.stop_btn]:
+        for btn in [self.step_back_btn, self.play_btn, self.pause_btn, self.step_fwd_btn, self.stop_btn]:
             btn.setMaximumSize(max_btn_size, max_btn_size)
 
         # Frame Label
@@ -142,7 +152,8 @@ class VideoRegionWidget(QWidget):
         """Enable all controls in the video region widget."""
         self.setEnabled(True)
         self.step_back_btn.setEnabled(True)
-        self.play_pause_btn.setEnabled(True)
+        self.play_btn.setEnabled(True)
+        self.pause_btn.setEnabled(True)
         self.step_fwd_btn.setEnabled(True)
         self.stop_btn.setEnabled(True)
         self.seek_slider.setEnabled(True)
@@ -153,7 +164,8 @@ class VideoRegionWidget(QWidget):
         """Disable all controls in the video region widget."""
         self.setEnabled(False)
         self.step_back_btn.setEnabled(False)
-        self.play_pause_btn.setEnabled(False)
+        self.play_btn.setEnabled(False)
+        self.pause_btn.setEnabled(False)
         self.step_fwd_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.seek_slider.setEnabled(False)
@@ -200,19 +212,21 @@ class VideoRegionWidget(QWidget):
                 self.timer.stop()
                 self.is_playing = False
 
-    def toggle_play_pause(self):
+    def play_video(self):
+        """Play the video from the current position."""
+        if not self.is_playing:
+            self.is_playing = True
+            self.timer.start(int(1000 / (self.fps * self.playback_speed)))
+            self.play_btn.setEnabled(False)
+            self.pause_btn.setEnabled(True)
+
+    def pause_video(self):
+        """Pause the video playback."""
         if self.is_playing:
             self.is_playing = False
             self.timer.stop()
-            self.play_pause_btn.setChecked(False)
-            self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
-        else:
-            if self.cap:
-                self.is_playing = True
-                interval = int(1000 / (self.fps * self.playback_speed))
-                self.timer.start(interval)
-                self.play_pause_btn.setChecked(True)
-                self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPause))
+            self.play_btn.setEnabled(True)
+            self.pause_btn.setEnabled(False)
 
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
@@ -356,8 +370,8 @@ class VideoRegionWidget(QWidget):
             self.seek(0)
             self.is_playing = False
             self.timer.stop()
-            self.play_pause_btn.setChecked(False)
-            self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
+            self.play_btn.setEnabled(True)
+            self.pause_btn.setEnabled(False)
             self.seek_slider.setValue(0)  # Update slider to first frame
             self.update_frame_label()     # Update frame count label
 
@@ -403,6 +417,9 @@ class Base(QDialog):
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
         
+        # Track inference state
+        self.inference_state = False  # False = disabled, True = enabled
+        
         self.region_manager = RegionManager()
         self.inference_engine = InferenceEngine()
 
@@ -427,6 +444,8 @@ class Base(QDialog):
         self.setup_video_layout()
         # Setup regions control layout
         self.setup_regions_layout()
+        # Setup inference controls layout
+        self.setup_inference_layout()
         # Setup Run/Cancel buttons
         self.setup_buttons_layout()
         
@@ -573,23 +592,9 @@ class Base(QDialog):
         self.video_layout.addWidget(group_box)
 
         # Connect video widget controls
-        self.video_region_widget.play_pause_btn.clicked.connect(self.toggle_inference)
+        self.video_region_widget.play_btn.clicked.connect(self.toggle_inference)
         self.video_region_widget.seek_slider.sliderMoved.connect(self.seek_inference)
         self.video_region_widget.speed_dropdown.currentIndexChanged.connect(self.update_playback_speed)
-
-    def setup_buttons_layout(self):
-        """Setup the Run and Cancel buttons at the bottom of the controls layout."""
-        btn_layout = QHBoxLayout()
-        
-        self.run_btn = QPushButton("Run")
-        self.run_btn.clicked.connect(self.run_inference_on_video)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(self.reject)
-        
-        btn_layout.addWidget(self.run_btn)
-        btn_layout.addWidget(self.cancel_btn)
-        
-        self.controls_layout.addLayout(btn_layout)
 
     def setup_regions_layout(self):
         """Setup the regions control group with a clear button."""
@@ -622,6 +627,37 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
+
+    def setup_inference_layout(self):
+        """Setup the inference control group with Enable/Disable buttons."""
+        group_box = QGroupBox("Inference Controls")
+        layout = QHBoxLayout()
+        
+        self.enable_inference_btn = QPushButton("Enable Inference")
+        self.enable_inference_btn.clicked.connect(self.run_inference_on_video)
+        self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        layout.addWidget(self.enable_inference_btn)
+        
+        self.disable_inference_btn = QPushButton("Disable Inference")
+        self.disable_inference_btn.clicked.connect(self.stop_inference)
+        self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.disable_inference_btn.setEnabled(False)  # Initially disabled
+        layout.addWidget(self.disable_inference_btn)
+        
+        group_box.setLayout(layout)
+        self.controls_layout.addWidget(group_box)
+
+    def setup_buttons_layout(self):
+        """Setup the Exit button at the bottom of the controls layout."""
+        btn_layout = QHBoxLayout()
+        
+        self.exit_btn = QPushButton("Exit")
+        self.exit_btn.clicked.connect(self.reject)
+        self.exit_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        
+        btn_layout.addWidget(self.exit_btn)
+        
+        self.controls_layout.addLayout(btn_layout)
 
     def clear_regions(self):
         """Clear all regions from the video region widget and update display."""
@@ -747,6 +783,10 @@ class Base(QDialog):
             item = self.class_filter_widget.item(i)
             item.setCheckState(Qt.Unchecked)
         self.update_selected_classes()
+        
+    def update_inference_state(self, state):
+        """Update the inference state and adjust UI elements accordingly."""
+        self.inference_state = state
 
     def toggle_inference(self):
         """Toggle inference thread between pause and resume states."""
@@ -841,12 +881,26 @@ class Base(QDialog):
         )
         # Start processing
         self.inference_thread.start()
-        self.video_region_widget.toggle_play_pause()
+        self.video_region_widget.play_video()
+        
+        # Update inference state
+        self.update_inference_state(True)
+
+    def stop_inference(self):
+        """Stop the inference thread if it is running."""
+        if self.inference_thread.isRunning():
+            self.inference_thread.stop()
+            self.inference_thread.wait()
+            self.video_region_widget.pause_video()
+            
+            # Update inference state
+            self.update_inference_state(False)
 
     def on_inference_finished(self):
         """Handle actions after inference thread finishes processing video."""
         self.video_region_widget.reset_to_first_frame()
         self.inference_thread.quit()
+        
         
 
 class InferenceEngine:
