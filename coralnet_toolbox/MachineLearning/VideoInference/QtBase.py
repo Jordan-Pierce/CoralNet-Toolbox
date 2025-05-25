@@ -5,8 +5,8 @@ from shapely.geometry import Polygon, Point
 
 from ultralytics import YOLO
 
-from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
+from PyQt5.QtCore import Qt, QTimer, QPoint, QThread, pyqtSignal, QMutex, QWaitCondition
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
                              QWidget, QGridLayout, QListWidget, QListWidgetItem, 
@@ -358,6 +358,8 @@ class VideoRegionWidget(QWidget):
             self.timer.stop()
             self.play_pause_btn.setChecked(False)
             self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
+            self.seek_slider.setValue(0)  # Update slider to first frame
+            self.update_frame_label()     # Update frame count label
 
     # Frame Label
     def update_frame_label(self):
@@ -430,6 +432,11 @@ class Base(QDialog):
         
         # Initialize thresholds
         self.initialize_thresholds()
+
+        # Add inference thread
+        self.inference_thread = InferenceThread()
+        self.inference_thread.frame_processed.connect(self.update_frame_with_results)
+        self.inference_thread.finished.connect(self.on_inference_finished)
 
     def setup_input_group(self):
         """Setup the input video group with a file browser."""
@@ -525,6 +532,13 @@ class Base(QDialog):
         
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
+        
+    def closeEvent(self, event):
+        """Ensure inference thread is stopped before closing the dialog."""
+        if self.inference_thread.isRunning():
+            self.inference_thread.stop()
+            self.inference_thread.wait()
+        super().closeEvent(event)
 
     def setup_class_layout(self):
         """Setup the class filter group box and controls."""
@@ -557,6 +571,11 @@ class Base(QDialog):
         
         group_box.setLayout(vbox)
         self.video_layout.addWidget(group_box)
+
+        # Connect video widget controls
+        self.video_region_widget.play_pause_btn.clicked.connect(self.toggle_inference)
+        self.video_region_widget.seek_slider.sliderMoved.connect(self.seek_inference)
+        self.video_region_widget.speed_dropdown.currentIndexChanged.connect(self.update_playback_speed)
 
     def setup_buttons_layout(self):
         """Setup the Run and Cancel buttons at the bottom of the controls layout."""
@@ -729,64 +748,72 @@ class Base(QDialog):
             item.setCheckState(Qt.Unchecked)
         self.update_selected_classes()
 
+    def toggle_inference(self):
+        """Toggle inference thread between pause and resume states."""
+        if self.inference_thread.isRunning():
+            if self.inference_thread._pause:
+                self.inference_thread.resume()
+                self.video_region_widget.toggle_play_pause()
+            else:
+                self.inference_thread.pause()
+                self.video_region_widget.toggle_play_pause()
+
+    def seek_inference(self, frame_num):
+        """Seek inference thread and video widget to a specific frame number."""
+        if self.inference_thread.isRunning():
+            self.inference_thread.seek(frame_num)
+            self.video_region_widget.seek(frame_num)
+
+    def update_playback_speed(self, idx):
+        """Update playback speed for video and resume inference if running."""
+        speeds = [0.5, 1.0, 2.0]
+        self.video_region_widget.playback_speed = speeds[idx]
+        if self.inference_thread.isRunning():
+            self.inference_thread.resume()
+
+    def update_frame_with_results(self, frame, region_counts):
+        """Draw region annotations and counts on the frame and display it."""
+        # Draw annotations on the frame
+        for idx, poly in enumerate(self.region_polygons):
+            pts = np.array(list(poly.exterior.coords), np.int32)
+            cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
+            centroid = poly.centroid
+            cv2.putText(frame, str(region_counts[idx]),
+                        (int(centroid.x), int(centroid.y)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        self.video_region_widget.display_frame(frame)
+
     def run_inference_on_video(self):
-        """Run YOLOv8 inference on the selected video, counting objects in user-defined regions."""
-        # Check if model and video paths are set
+        """Start threaded inference on the loaded video using selected regions and thresholds."""
         if not self.model_path or not self.video_path:
             return
-        
-        # Ensure model is loaded
-        if self.inference_engine.model is None:
-            self.inference_engine.load_model(self.model_path, task=self.task)
-            
-        # Open video
-        cap = cv2.VideoCapture(self.video_path)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        
-        # Prepare region polygons from the region widget
-        region_polygons = [
+        # Prepare regions
+        self.region_polygons = [
             Polygon([
                 (rect.left(), rect.top()),
                 (rect.right(), rect.top()),
                 (rect.right(), rect.bottom()),
                 (rect.left(), rect.bottom())
-            ])
-            for rect in self.video_region_widget.regions
+            ]) for rect in self.video_region_widget.regions
         ]
-        
-        # Iterate through frames
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            # Run inference using InferenceEngine
-            results = self.inference_engine.infer(frame, self.uncertainty_thresh, self.iou_thresh)
-            
-            # Count objects in regions
-            region_counts = self.inference_engine.count_objects_in_regions(results, region_polygons)
-            
-            # Draw bounding boxes if results exist
-            if results and hasattr(results[0].boxes, 'xyxy'):
-                boxes = results[0].boxes.xyxy.cpu().numpy()
-                for box in boxes:
-                    cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
-                    
-            # Draw regions and counts
-            for idx, poly in enumerate(region_polygons):
-                pts = np.array(list(poly.exterior.coords), np.int32)
-                cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-                centroid = poly.centroid
-                cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                
-            # Update video widget
-            self.video_region_widget.display_frame(frame)
-            
-            # Optional: add a delay for real-time display
-            cv2.waitKey(int(1000 / fps))
-            
-        cap.release()
+        # Configure thread
+        self.inference_thread.setup(
+            self.video_path,
+            self.inference_engine,
+            self.region_polygons,
+            {
+                'conf': self.uncertainty_thresh,
+                'iou': self.iou_thresh
+            }
+        )
+        # Start processing
+        self.inference_thread.start()
+        self.video_region_widget.toggle_play_pause()
+
+    def on_inference_finished(self):
+        """Handle actions after inference thread finishes processing video."""
+        self.video_region_widget.reset_to_first_frame()
+        self.inference_thread.quit()
         
 
 class InferenceEngine:
@@ -795,20 +822,31 @@ class InferenceEngine:
         self.model = None
         self.class_names = []
         self.selected_classes = []
+        self._thread_safe_infer = None
 
     def load_model(self, model_path, task):
+        """Load the YOLO model for inference."""
+        from ultralytics.utils import ThreadingLocked
         self.model = YOLO(model_path, task=task if task else None)
         self.class_names = list(self.model.names.values())
+        
+        # Decorate the infer method for thread safety
+        @ThreadingLocked()
+        def thread_safe_infer(frame, conf, iou, selected_classes):
+            return self.model.track(frame, persist=True, conf=conf, iou=iou, classes=selected_classes)
+        
+        self._thread_safe_infer = thread_safe_infer
 
     def set_selected_classes(self, class_indices):
+        """Set the selected classes for inference."""
         self.selected_classes = class_indices
 
     def infer(self, frame, conf, iou):
-        if self.model is None:
+        """Run inference on a single frame with the current model."""
+        if self.model is None or self._thread_safe_infer is None:
             return None
-        
-        # Run inference on the frame
-        return self.model.track(frame, persist=True, conf=conf, iou=iou, classes=self.selected_classes)
+        # Use the thread-safe decorated function
+        return self._thread_safe_infer(frame, conf, iou, self.selected_classes)
 
     def count_objects_in_regions(self, results, region_polygons):
         """Count objects in each region based on inference results."""
@@ -827,3 +865,74 @@ class InferenceEngine:
                         region_counts[idx] += 1
                         
         return region_counts
+    
+
+class InferenceThread(QThread):
+    frame_processed = pyqtSignal(np.ndarray, list)
+    finished = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.mutex = QMutex()
+        self.condition = QWaitCondition()
+        self._pause = False
+        self._stop = False
+        self.current_frame_num = 0
+        self.cap = None
+        self.inference_engine = None
+        self.region_polygons = []
+        self.thresholds = {}
+
+    def setup(self, video_path, inference_engine, regions, thresholds):
+        self.cap = cv2.VideoCapture(video_path)
+        self.inference_engine = inference_engine
+        self.region_polygons = regions
+        self.thresholds = thresholds
+        self.current_frame_num = 0
+
+    def run(self):
+        while not self._stop and self.cap.isOpened():
+            self.mutex.lock()
+            if self._pause:
+                self.condition.wait(self.mutex)
+            self.mutex.unlock()
+
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+
+            # Process frame
+            results = self.inference_engine.infer(frame,
+                self.thresholds['conf'],
+                self.thresholds['iou'])
+           
+            region_counts = self.inference_engine.count_objects_in_regions(
+                results, self.region_polygons)
+           
+            # Emit processed frame
+            self.frame_processed.emit(frame, region_counts)
+            self.current_frame_num += 1
+
+        self.cap.release()
+        self.finished.emit()
+
+    def pause(self):
+        self.mutex.lock()
+        self._pause = True
+        self.mutex.unlock()
+
+    def resume(self):
+        self.mutex.lock()
+        self._pause = False
+        self.condition.wakeAll()
+        self.mutex.unlock()
+
+    def stop(self):
+        self._stop = True
+        self.resume()
+
+    def seek(self, frame_num):
+        self.mutex.lock()
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        self.current_frame_num = frame_num
+        self.mutex.unlock()
