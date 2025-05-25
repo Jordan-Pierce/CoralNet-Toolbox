@@ -1118,7 +1118,9 @@ class InferenceEngine:
                                     persist=True, 
                                     conf=conf, 
                                     iou=iou, 
-                                    classes=selected_classes)
+                                    classes=selected_classes,
+                                    half=True,
+                                    retina_masks=task == "segment")
         
         self._thread_safe_infer = thread_safe_infer
 
