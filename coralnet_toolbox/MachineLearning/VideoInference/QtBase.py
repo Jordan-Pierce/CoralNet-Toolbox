@@ -70,6 +70,13 @@ class VideoRegionWidget(QWidget):
         self.fps = 30
         self.playback_speed = 1.0
 
+        # Inference
+        self.inference_enabled = False  # New: flag for inference
+        self.inference_engine = None    # Set by parent/Base
+        self.region_polygons = []       # Set by parent/Base
+        self.conf = 0.3
+        self.iou = 0.2
+
         # Layout: video area (fills widget), controls at bottom
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -201,6 +208,10 @@ class VideoRegionWidget(QWidget):
                     self.is_playing = False
                     return
             if ret:
+                if self.inference_enabled and self.inference_engine and self.region_polygons:
+                    results = self.inference_engine.infer(frame, self.conf, self.iou)
+                    region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
+                    frame = self.parent.draw_inference_results(frame, region_counts, results)
                 self.current_frame = frame
                 self.current_frame_number = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
                 self.update()
@@ -234,6 +245,10 @@ class VideoRegionWidget(QWidget):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             ret, frame = self.cap.read()
             if ret:
+                if self.inference_enabled and self.inference_engine and self.region_polygons:
+                    results = self.inference_engine.infer(frame, self.conf, self.iou)
+                    region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
+                    frame = self.parent.draw_inference_results(frame, region_counts, results)
                 self.current_frame = frame
                 self.current_frame_number = frame_number
                 self.update()
@@ -392,6 +407,18 @@ class VideoRegionWidget(QWidget):
             self.regions = self.redo_stack.pop()
             self.update()
 
+    def set_inference_params(self, inference_engine, region_polygons, conf, iou):
+        self.inference_engine = inference_engine
+        self.region_polygons = region_polygons
+        self.conf = conf
+        self.iou = iou
+
+    def enable_inference(self, enable: bool):
+        self.inference_enabled = enable
+
+    def disable_inference(self):
+        self.inference_enabled = False
+
 
 class Base(QDialog):
     """Dialog for video inference with region selection and parameter controls."""
@@ -451,11 +478,6 @@ class Base(QDialog):
         
         # Initialize thresholds
         self.initialize_thresholds()
-
-        # Add inference thread
-        self.inference_thread = InferenceThread()
-        self.inference_thread.frame_processed.connect(self.update_frame_with_results)
-        self.inference_thread.finished.connect(self.on_inference_finished)
 
     def setup_input_group(self):
         """Setup the input video group with a file browser."""
@@ -554,9 +576,6 @@ class Base(QDialog):
         
     def closeEvent(self, event):
         """Ensure inference thread is stopped before closing the dialog."""
-        if self.inference_thread.isRunning():
-            self.inference_thread.stop()
-            self.inference_thread.wait()
         super().closeEvent(event)
 
     def setup_class_layout(self):
@@ -592,9 +611,9 @@ class Base(QDialog):
         self.video_layout.addWidget(group_box)
 
         # Connect video widget controls
-        self.video_region_widget.play_btn.clicked.connect(self.toggle_inference)
-        self.video_region_widget.seek_slider.sliderMoved.connect(self.seek_inference)
-        self.video_region_widget.speed_dropdown.currentIndexChanged.connect(self.update_playback_speed)
+        # self.video_region_widget.play_btn.clicked.connect(self.toggle_inference)
+        # self.video_region_widget.seek_slider.sliderMoved.connect(self.seek_inference)
+        # self.video_region_widget.speed_dropdown.currentIndexChanged.connect(self.update_playback_speed)
 
     def setup_regions_layout(self):
         """Setup the regions control group with a clear button."""
@@ -634,12 +653,12 @@ class Base(QDialog):
         layout = QHBoxLayout()
         
         self.enable_inference_btn = QPushButton("Enable Inference")
-        self.enable_inference_btn.clicked.connect(self.run_inference_on_video)
+        self.enable_inference_btn.clicked.connect(self.enable_inference)
         self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         layout.addWidget(self.enable_inference_btn)
         
         self.disable_inference_btn = QPushButton("Disable Inference")
-        self.disable_inference_btn.clicked.connect(self.stop_inference)
+        self.disable_inference_btn.clicked.connect(self.disable_inference)
         self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         self.disable_inference_btn.setEnabled(False)  # Initially disabled
         layout.addWidget(self.disable_inference_btn)
@@ -788,79 +807,9 @@ class Base(QDialog):
         """Update the inference state and adjust UI elements accordingly."""
         self.inference_state = state
 
-    def toggle_inference(self):
-        """Toggle inference thread between pause and resume states."""
-        if self.inference_thread.isRunning():
-            if self.inference_thread._pause:
-                self.inference_thread.resume()
-                self.video_region_widget.toggle_play_pause()
-            else:
-                self.inference_thread.pause()
-                self.video_region_widget.toggle_play_pause()
-
-    def seek_inference(self, frame_num):
-        """Seek inference thread and video widget to a specific frame number."""
-        if self.inference_thread.isRunning():
-            self.inference_thread.seek(frame_num)
-            self.video_region_widget.seek(frame_num)
-
-    def update_playback_speed(self, idx):
-        """Update playback speed for video and resume inference if running."""
-        speeds = [0.5, 1.0, 2.0]
-        self.video_region_widget.playback_speed = speeds[idx]
-        if self.inference_thread.isRunning():
-            self.inference_thread.resume()
-
-    def update_frame_with_results(self, frame, region_counts, results):
-        """Draw region annotations and counts on the frame and display it."""
-        # First draw the detection results
-        if results and len(results) > 0:
-            result = results[0]  # Get the first result
-            
-            # Draw bounding boxes if they exist
-            if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
-                boxes = result.boxes.xyxy.cpu().numpy()
-                conf = result.boxes.conf.cpu().numpy()
-                cls = result.boxes.cls.cpu().numpy()
-                
-                for i, box in enumerate(boxes):
-                    x1, y1, x2, y2 = map(int, box)
-                    class_id = int(cls[i])
-                    confidence = conf[i]
-                    
-                    # Get class name
-                    class_name = self.inference_engine.class_names[class_id] if class_id < len(self.inference_engine.class_names) else str(class_id)
-                    
-                    # Assign different colors for different classes
-                    color_factor = (class_id * 50) % 255
-                    color = (color_factor, 255 - color_factor, 150)
-                    
-                    # Draw rectangle
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    
-                    # Add text with class name and confidence
-                    label = f"{class_name}: {confidence:.2f}"
-                    text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-                    cv2.rectangle(frame, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), color, -1)
-                    cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-        # Draw region annotations on the frame
-        for idx, poly in enumerate(self.region_polygons):
-            pts = np.array(list(poly.exterior.coords), np.int32)
-            cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-            centroid = poly.centroid
-            cv2.putText(frame, str(region_counts[idx]),
-                        (int(centroid.x), int(centroid.y)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                        
-        # Display the frame
-        self.video_region_widget.display_frame(frame)
-
-    def run_inference_on_video(self):
-        """Start threaded inference on the loaded video using selected regions and thresholds."""
+    def enable_inference(self):
         if not self.model_path or not self.video_path:
             return
-        # Prepare regions
         self.region_polygons = [
             Polygon([
                 (rect.left(), rect.top()),
@@ -869,39 +818,54 @@ class Base(QDialog):
                 (rect.left(), rect.bottom())
             ]) for rect in self.video_region_widget.regions
         ]
-        # Configure thread
-        self.inference_thread.setup(
-            self.video_path,
+        self.video_region_widget.set_inference_params(
             self.inference_engine,
             self.region_polygons,
-            {
-                'conf': self.uncertainty_thresh,
-                'iou': self.iou_thresh
-            }
+            self.uncertainty_thresh,
+            self.iou_thresh
         )
-        # Start processing
-        self.inference_thread.start()
+        self.video_region_widget.enable_inference(True)
+        self.inference_enabled = True
+        self.enable_inference_btn.setEnabled(False)
+        self.disable_inference_btn.setEnabled(True)
         self.video_region_widget.play_video()
-        
-        # Update inference state
-        self.update_inference_state(True)
 
-    def stop_inference(self):
-        """Stop the inference thread if it is running."""
-        if self.inference_thread.isRunning():
-            self.inference_thread.stop()
-            self.inference_thread.wait()
-            self.video_region_widget.pause_video()
-            
-            # Update inference state
-            self.update_inference_state(False)
+    def disable_inference(self):
+        self.video_region_widget.enable_inference(False)
+        self.inference_enabled = False
+        self.enable_inference_btn.setEnabled(True)
+        self.disable_inference_btn.setEnabled(False)
+        self.video_region_widget.pause_video()
 
-    def on_inference_finished(self):
-        """Handle actions after inference thread finishes processing video."""
-        self.video_region_widget.reset_to_first_frame()
-        self.inference_thread.quit()
-        
-        
+    def draw_inference_results(self, frame, region_counts, results):
+        # Draw detection results
+        if results and len(results) > 0:
+            result = results[0]
+            if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
+                boxes = result.boxes.xyxy.cpu().numpy()
+                conf = result.boxes.conf.cpu().numpy()
+                cls = result.boxes.cls.cpu().numpy()
+                for i, box in enumerate(boxes):
+                    x1, y1, x2, y2 = map(int, box)
+                    class_id = int(cls[i])
+                    confidence = conf[i]
+                    class_name = self.inference_engine.class_names[class_id] if class_id < len(self.inference_engine.class_names) else str(class_id)
+                    color_factor = (class_id * 50) % 255
+                    color = (color_factor, 255 - color_factor, 150)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    label = f"{class_name}: {confidence:.2f}"
+                    text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                    cv2.rectangle(frame, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), color, -1)
+                    cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        # Draw region annotations
+        for idx, poly in enumerate(self.region_polygons):
+            pts = np.array(list(poly.exterior.coords), np.int32)
+            cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
+            centroid = poly.centroid
+            cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        return frame
+
+
 class InferenceEngine:
     """Handles model loading, inference, and class filtering."""
     def __init__(self):
@@ -951,73 +915,3 @@ class InferenceEngine:
                         region_counts[idx] += 1
                         
         return region_counts
-    
-
-class InferenceThread(QThread):
-    frame_processed = pyqtSignal(np.ndarray, list, object)  # Add object parameter for results
-    finished = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.mutex = QMutex()
-        self.condition = QWaitCondition()
-        self._pause = False
-        self._stop = False
-        self.current_frame_num = 0
-        self.cap = None
-        self.inference_engine = None
-        self.region_polygons = []
-        self.thresholds = {}
-
-    def setup(self, video_path, inference_engine, regions, thresholds):
-        self.cap = cv2.VideoCapture(video_path)
-        self.inference_engine = inference_engine
-        self.region_polygons = regions
-        self.thresholds = thresholds
-        self.current_frame_num = 0
-
-    def run(self):
-        while not self._stop and self.cap.isOpened():
-            self.mutex.lock()
-            if self._pause:
-                self.condition.wait(self.mutex)
-            self.mutex.unlock()
-
-            ret, frame = self.cap.read()
-            if not ret:
-                break
-
-            # Process frame
-            results = self.inference_engine.infer(frame,
-                                                  self.thresholds['conf'],
-                                                  self.thresholds['iou'])
-           
-            region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
-           
-            # Emit processed frame with results
-            self.frame_processed.emit(frame, region_counts, results)
-            self.current_frame_num += 1
-
-        self.cap.release()
-        self.finished.emit()
-
-    def pause(self):
-        self.mutex.lock()
-        self._pause = True
-        self.mutex.unlock()
-
-    def resume(self):
-        self.mutex.lock()
-        self._pause = False
-        self.condition.wakeAll()
-        self.mutex.unlock()
-
-    def stop(self):
-        self._stop = True
-        self.resume()
-
-    def seek(self, frame_num):
-        self.mutex.lock()
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-        self.current_frame_num = frame_num
-        self.mutex.unlock()
