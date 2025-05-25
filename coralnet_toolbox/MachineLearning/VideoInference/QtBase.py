@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import supervision as sv
 
 from shapely.geometry import Polygon, Point
 
@@ -85,8 +86,8 @@ class VideoRegionWidget(QWidget):
         controls = QHBoxLayout()
         
         # Step Backward Button
-        self.step_back_btn = QPushButton("⏮")
-        self.step_back_btn.setToolTip("Step Backward")
+        self.step_back_btn = QPushButton()
+        self.step_back_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekBackward))
         self.step_back_btn.clicked.connect(self.step_backward)
         self.step_back_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         controls.addWidget(self.step_back_btn)
@@ -108,7 +109,8 @@ class VideoRegionWidget(QWidget):
         controls.addWidget(self.pause_btn)
 
         # Step Forward Button 
-        self.step_fwd_btn = QPushButton("⏭")
+        self.step_fwd_btn = QPushButton()
+        self.step_fwd_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekForward))
         self.step_fwd_btn.setToolTip("Step Forward")
         self.step_fwd_btn.clicked.connect(self.step_forward)
         self.step_fwd_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
@@ -465,7 +467,7 @@ class Base(QDialog):
         self.area_thresh_max = 0.40
         
         # Track inference state
-        self.inference_state = False  # False = disabled, True = enabled
+        self.inference_state = True  # False = disabled, True = enabled
         
         self.region_manager = RegionManager()
         self.inference_engine = InferenceEngine()
@@ -491,13 +493,12 @@ class Base(QDialog):
         self.setup_video_layout()
         # Setup regions control layout
         self.setup_regions_layout()
+        # Setup annotators control layout
+        self.setup_annotators_layout()
         # Setup inference controls layout
         self.setup_inference_layout()
         # Setup Run/Cancel buttons
         self.setup_buttons_layout()
-        
-        # Initialize thresholds
-        self.initialize_thresholds()
 
     def setup_input_group(self):
         """Setup the input video group with a file browser."""
@@ -520,6 +521,7 @@ class Base(QDialog):
         layout = QHBoxLayout()
         
         self.output_edit = QLineEdit()
+        self.output_edit.setPlaceholderText("Provide directory to write inferenced video...")
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self.browse_output)
         layout.addWidget(QLabel("Output Directory:"))
@@ -596,6 +598,9 @@ class Base(QDialog):
         
     def closeEvent(self, event):
         """Ensure inference thread is stopped before closing the dialog."""
+        if hasattr(self, 'video_writer') and self.video_writer is not None:
+            self.video_writer.release()
+            self.video_writer = None
         super().closeEvent(event)
 
     def setup_class_layout(self):
@@ -661,6 +666,38 @@ class Base(QDialog):
 
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
+
+    def setup_annotators_layout(self):
+        """Setup the annotator selection layout using a QListWidget with checkable items."""
+        group_box = QGroupBox("Annotators to Use")
+        layout = QVBoxLayout()
+
+        self.annotator_list_widget = QListWidget()
+        self.annotator_types = [
+            ("BoxAnnotator", "Box Annotator"),
+            ("BoxCornerAnnotator", "Box Corner Annotator"),
+            ("DotAnnotator", "Dot Annotator"),
+            ("PercentageBarAnnotator", "Percentage Bar Annotator"),
+        ]
+        for key, label in self.annotator_types:
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, key)
+            self.annotator_list_widget.addItem(item)
+        layout.addWidget(self.annotator_list_widget)
+
+        group_box.setLayout(layout)
+        self.controls_layout.addWidget(group_box)
+
+    def get_selected_annotators(self):
+        """Return a list of selected annotator class names from the QListWidget."""
+        selected = []
+        for i in range(self.annotator_list_widget.count()):
+            item = self.annotator_list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                selected.append(item.data(Qt.UserRole))
+        return selected
 
     def setup_inference_layout(self):
         """Setup the inference control group with Enable/Disable buttons."""
@@ -730,6 +767,13 @@ class Base(QDialog):
         self.uncertainty_thresh = value
         self.main_window.update_uncertainty_thresh(value)
         self.uncertainty_thresh_label.setText(f"{value:.2f}")
+        # Update inference params
+        self.video_region_widget.set_inference_params(
+            self.inference_engine,
+            getattr(self, 'region_polygons', []),
+            self.uncertainty_thresh,
+            self.iou_thresh
+        )
 
     def update_iou_label(self, value):
         """Update IoU threshold and label"""
@@ -737,6 +781,13 @@ class Base(QDialog):
         self.iou_thresh = value
         self.main_window.update_iou_thresh(value)
         self.iou_thresh_label.setText(f"{value:.2f}")
+        # Update inference params
+        self.video_region_widget.set_inference_params(
+            self.inference_engine,
+            getattr(self, 'region_polygons', []),
+            self.uncertainty_thresh,
+            self.iou_thresh
+        )
 
     def update_area_label(self):
         """Handle changes to area threshold range slider"""
@@ -749,7 +800,14 @@ class Base(QDialog):
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        
+        # Update inference params
+        self.video_region_widget.set_inference_params(
+            self.inference_engine,
+            getattr(self, 'region_polygons', []),
+            self.uncertainty_thresh,
+            self.iou_thresh
+        )
+
     def browse_video(self):
         """Open file dialog to select input video (filtered to common formats)."""
         file_name, _ = QFileDialog.getOpenFileName(
@@ -847,6 +905,21 @@ class Base(QDialog):
         self.enable_inference_btn.setEnabled(False)
         self.disable_inference_btn.setEnabled(True)
         
+        # --- Begin: Save inferenced video logic ---
+        self.video_writer = None
+        if self.output_dir:
+            import os
+            import cv2
+            cap = cv2.VideoCapture(self.video_path)
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            out_path = os.path.join(self.output_dir, os.path.basename(self.video_path))
+            self.video_writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+            cap.release()
+        # --- End: Save inferenced video logic ---
+
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
@@ -857,36 +930,69 @@ class Base(QDialog):
         self.enable_inference_btn.setEnabled(True)
         self.disable_inference_btn.setEnabled(False)
         
+        if hasattr(self, 'video_writer') and self.video_writer is not None:
+            self.video_writer.release()
+            self.video_writer = None
+        
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
     def draw_inference_results(self, frame, region_counts, results):
-        """Draw inference results on the video frame."""
-        # Draw detection results
+        """Draw inference results on the video frame using supervision's BoxAnnotator."""
+        # Draw detection results using supervision
         if results and len(results) > 0:
             result = results[0]
-            if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
-                boxes = result.boxes.xyxy.cpu().numpy()
-                conf = result.boxes.conf.cpu().numpy()
-                cls = result.boxes.cls.cpu().numpy()
-                for i, box in enumerate(boxes):
-                    x1, y1, x2, y2 = map(int, box)
-                    class_id = int(cls[i])
-                    confidence = conf[i]
-                    class_name = self.inference_engine.class_names[class_id] if class_id < len(self.inference_engine.class_names) else str(class_id)
-                    color_factor = (class_id * 50) % 255
-                    color = (color_factor, 255 - color_factor, 150)
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    label = f"{class_name}: {confidence:.2f}"
-                    text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-                    cv2.rectangle(frame, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), color, -1)
-                    cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        # Draw region annotations
+            try:
+                detections = sv.Detections.from_ultralytics(result)
+                # Prepare labels for each detection
+                class_names = []
+                for cls in detections.class_id:
+                    idx = int(cls)
+                    if idx < len(self.inference_engine.class_names):
+                        class_names.append(self.inference_engine.class_names[idx])
+                    else:
+                        class_names.append(str(idx))
+                        
+                confidences = detections.confidence
+                labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
+                # Always use label annotator (centered)
+                label_annotator = sv.LabelAnnotator(text_position=sv.Position.TOP_CENTER)
+                # Build annotators list based on user selection
+                annotators = []
+                for key in self.get_selected_annotators():
+                    if key == "BoxAnnotator":
+                        annotators.append(sv.BoxAnnotator())
+                    elif key == "BoxCornerAnnotator":
+                        annotators.append(sv.BoxCornerAnnotator())
+                    elif key == "DotAnnotator":
+                        annotators.append(sv.DotAnnotator())
+                    elif key == "HaloAnnotator":
+                        annotators.append(sv.HaloAnnotator())
+                    elif key == "PercentageBarAnnotator":
+                        annotators.append(sv.PercentageBarAnnotator())
+                    elif key == "MaskAnnotator":
+                        annotators.append(sv.MaskAnnotator())
+                    elif key == "PolygonAnnotator":
+                        annotators.append(sv.PolygonAnnotator())
+                # Apply annotators in order
+                for annotator in annotators:
+                    frame = annotator.annotate(scene=frame, detections=detections)
+                # Always apply label annotator last
+                frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
+            except Exception as e:
+                print(f"supervision annotate failed: {e}")
+                
+        # Draw region annotations as before
         for idx, poly in enumerate(self.region_polygons):
             pts = np.array(list(poly.exterior.coords), np.int32)
             cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
             centroid = poly.centroid
-            cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            
+        if hasattr(self, 'video_writer') and self.video_writer is not None:
+            self.video_writer.write(frame)
+            
         return frame
 
 
@@ -901,13 +1007,17 @@ class InferenceEngine:
     def load_model(self, model_path, task):
         """Load the YOLO model for inference."""
         from ultralytics.utils import ThreadingLocked
-        self.model = YOLO(model_path, task=task if task else None)
+        self.model = YOLO(model_path, task=task)
         self.class_names = list(self.model.names.values())
         
         # Decorate the infer method for thread safety
         @ThreadingLocked()
         def thread_safe_infer(frame, conf, iou, selected_classes):
-            return self.model.track(frame, persist=True, conf=conf, iou=iou, classes=selected_classes)
+            return self.model.track(frame, 
+                                    persist=True, 
+                                    conf=conf, 
+                                    iou=iou, 
+                                    classes=selected_classes)
         
         self._thread_safe_infer = thread_safe_infer
 
