@@ -771,9 +771,40 @@ class Base(QDialog):
         if self.inference_thread.isRunning():
             self.inference_thread.resume()
 
-    def update_frame_with_results(self, frame, region_counts):
+    def update_frame_with_results(self, frame, region_counts, results):
         """Draw region annotations and counts on the frame and display it."""
-        # Draw annotations on the frame
+        # First draw the detection results
+        if results and len(results) > 0:
+            result = results[0]  # Get the first result
+            
+            # Draw bounding boxes if they exist
+            if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
+                boxes = result.boxes.xyxy.cpu().numpy()
+                conf = result.boxes.conf.cpu().numpy()
+                cls = result.boxes.cls.cpu().numpy()
+                
+                for i, box in enumerate(boxes):
+                    x1, y1, x2, y2 = map(int, box)
+                    class_id = int(cls[i])
+                    confidence = conf[i]
+                    
+                    # Get class name
+                    class_name = self.inference_engine.class_names[class_id] if class_id < len(self.inference_engine.class_names) else str(class_id)
+                    
+                    # Assign different colors for different classes
+                    color_factor = (class_id * 50) % 255
+                    color = (color_factor, 255 - color_factor, 150)
+                    
+                    # Draw rectangle
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    
+                    # Add text with class name and confidence
+                    label = f"{class_name}: {confidence:.2f}"
+                    text_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                    cv2.rectangle(frame, (x1, y1 - text_size[1] - 5), (x1 + text_size[0], y1), color, -1)
+                    cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+        # Draw region annotations on the frame
         for idx, poly in enumerate(self.region_polygons):
             pts = np.array(list(poly.exterior.coords), np.int32)
             cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
@@ -781,6 +812,8 @@ class Base(QDialog):
             cv2.putText(frame, str(region_counts[idx]),
                         (int(centroid.x), int(centroid.y)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                        
+        # Display the frame
         self.video_region_widget.display_frame(frame)
 
     def run_inference_on_video(self):
@@ -868,7 +901,7 @@ class InferenceEngine:
     
 
 class InferenceThread(QThread):
-    frame_processed = pyqtSignal(np.ndarray, list)
+    frame_processed = pyqtSignal(np.ndarray, list, object)  # Add object parameter for results
     finished = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -909,8 +942,8 @@ class InferenceThread(QThread):
             region_counts = self.inference_engine.count_objects_in_regions(
                 results, self.region_polygons)
            
-            # Emit processed frame
-            self.frame_processed.emit(frame, region_counts)
+            # Emit processed frame with results
+            self.frame_processed.emit(frame, region_counts, results)
             self.current_frame_num += 1
 
         self.cap.release()
