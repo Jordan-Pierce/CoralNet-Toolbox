@@ -208,10 +208,15 @@ class VideoRegionWidget(QWidget):
                     self.is_playing = False
                     return
             if ret:
-                if self.inference_enabled and self.inference_engine and self.region_polygons:
+                # Process the frame for inference if enabled
+                if self.inference_enabled and self.inference_engine:
+                    # Run inference on the current frame
                     results = self.inference_engine.infer(frame, self.conf, self.iou)
+                    # Count objects in defined regions (if there are any regions)
                     region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
+                    # Draw results on the frame
                     frame = self.parent.draw_inference_results(frame, region_counts, results)
+                    
                 self.current_frame = frame
                 self.current_frame_number = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
                 self.update()
@@ -245,10 +250,15 @@ class VideoRegionWidget(QWidget):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             ret, frame = self.cap.read()
             if ret:
-                if self.inference_enabled and self.inference_engine and self.region_polygons:
+                # Process the frame for inference if enabled
+                if self.inference_enabled and self.inference_engine:
+                    # Run inference on the current frame
                     results = self.inference_engine.infer(frame, self.conf, self.iou)
+                    # Count objects in defined regions (if there are any regions)
                     region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
+                    # Draw results on the frame
                     frame = self.parent.draw_inference_results(frame, region_counts, results)
+                    
                 self.current_frame = frame
                 self.current_frame_number = frame_number
                 self.update()
@@ -266,6 +276,7 @@ class VideoRegionWidget(QWidget):
     def paintEvent(self, event):
         """Draw the video frame centered, and rectangular regions."""
         painter = QPainter(self)
+        
         if self.current_frame is not None:
             rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb.shape
@@ -281,6 +292,7 @@ class VideoRegionWidget(QWidget):
             offset_x, offset_y = x, y
         else:
             offset_x, offset_y = 0, 0
+            
         # Draw rectangles
         if self.show_regions:
             pen = QPen(Qt.red, 2)
@@ -288,6 +300,7 @@ class VideoRegionWidget(QWidget):
             for rect in self.regions:
                 r = rect.translated(offset_x, offset_y)
                 painter.drawRect(r)
+                
         # Draw current rectangle
         if self.drawing and self.current_rect:
             pen = QPen(Qt.green, 2, Qt.DashLine)
@@ -357,17 +370,20 @@ class VideoRegionWidget(QWidget):
 
     # Step Forward/Backward
     def step_forward(self):
+        """Step forward in the video."""
         if self.cap:
             next_frame = min(self.current_frame_number + 1, self.total_frames - 1)
             self.seek(next_frame)
 
     def step_backward(self):
+        """Step backward in the video."""
         if self.cap:
             prev_frame = max(self.current_frame_number - 1, 0)
             self.seek(prev_frame)
 
     # Playback Speed
     def change_speed(self, idx):
+        """Change the playback speed based on the selected index."""
         speeds = [0.5, 1.0, 2.0]
         self.playback_speed = speeds[idx]
         if self.is_playing:
@@ -376,11 +392,13 @@ class VideoRegionWidget(QWidget):
 
     # Region Visibility
     def set_region_visibility(self, visible: bool):
+        """Set the visibility of regions in the video."""
         self.show_regions = visible
         self.update()
 
     # Reset to First Frame
     def reset_to_first_frame(self):
+        """Reset the video to the first frame and stop playback."""
         if self.cap:
             self.seek(0)
             self.is_playing = False
@@ -392,32 +410,34 @@ class VideoRegionWidget(QWidget):
 
     # Frame Label
     def update_frame_label(self):
+        """Update the frame label with current frame number and total frames."""
         self.frame_label.setText(f"Frame: {self.current_frame_number + 1} / {self.total_frames}")
 
     # Undo/Redo for regions
     def undo_region(self):
+        """Undo the last region action."""
         if self.undo_stack:
             self.redo_stack.append(list(self.regions))
             self.regions = self.undo_stack.pop()
             self.update()
 
     def redo_region(self):
+        """Redo the last undone region action."""
         if self.redo_stack:
             self.undo_stack.append(list(self.regions))
             self.regions = self.redo_stack.pop()
             self.update()
 
     def set_inference_params(self, inference_engine, region_polygons, conf, iou):
+        """Set inference parameters for the video region."""
         self.inference_engine = inference_engine
         self.region_polygons = region_polygons
         self.conf = conf
         self.iou = iou
 
     def enable_inference(self, enable: bool):
+        """Enable or disable inference in the video region."""
         self.inference_enabled = enable
-
-    def disable_inference(self):
-        self.inference_enabled = False
 
 
 class Base(QDialog):
@@ -610,11 +630,6 @@ class Base(QDialog):
         group_box.setLayout(vbox)
         self.video_layout.addWidget(group_box)
 
-        # Connect video widget controls
-        # self.video_region_widget.play_btn.clicked.connect(self.toggle_inference)
-        # self.video_region_widget.seek_slider.sliderMoved.connect(self.seek_inference)
-        # self.video_region_widget.speed_dropdown.currentIndexChanged.connect(self.update_playback_speed)
-
     def setup_regions_layout(self):
         """Setup the regions control group with a clear button."""
         group_box = QGroupBox("Regions")
@@ -660,7 +675,7 @@ class Base(QDialog):
         self.disable_inference_btn = QPushButton("Disable Inference")
         self.disable_inference_btn.clicked.connect(self.disable_inference)
         self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
-        self.disable_inference_btn.setEnabled(False)  # Initially disabled
+        self.disable_inference_btn.setEnabled(False)           # Initially disabled
         layout.addWidget(self.disable_inference_btn)
         
         group_box.setLayout(layout)
@@ -672,7 +687,7 @@ class Base(QDialog):
         
         self.exit_btn = QPushButton("Exit")
         self.exit_btn.clicked.connect(self.reject)
-        self.exit_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.exit_btn.setFocusPolicy(Qt.NoFocus)                # Prevent focus/highlighting
         
         btn_layout.addWidget(self.exit_btn)
         
@@ -808,8 +823,10 @@ class Base(QDialog):
         self.inference_state = state
 
     def enable_inference(self):
+        """Enable inference on the video region."""
         if not self.model_path or not self.video_path:
             return
+        # Load the model and set inference parameters
         self.region_polygons = [
             Polygon([
                 (rect.left(), rect.top()),
@@ -824,20 +841,27 @@ class Base(QDialog):
             self.uncertainty_thresh,
             self.iou_thresh
         )
+        # Only set the flag and update UI, do not change video state
         self.video_region_widget.enable_inference(True)
         self.inference_enabled = True
         self.enable_inference_btn.setEnabled(False)
         self.disable_inference_btn.setEnabled(True)
-        self.video_region_widget.play_video()
+        
+        # Refresh the current frame without inference
+        self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
     def disable_inference(self):
+        """Disable inference on the video region."""
         self.video_region_widget.enable_inference(False)
         self.inference_enabled = False
         self.enable_inference_btn.setEnabled(True)
         self.disable_inference_btn.setEnabled(False)
-        self.video_region_widget.pause_video()
+        
+        # Refresh the current frame without inference
+        self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
     def draw_inference_results(self, frame, region_counts, results):
+        """Draw inference results on the video frame."""
         # Draw detection results
         if results and len(results) > 0:
             result = results[0]
@@ -900,6 +924,9 @@ class InferenceEngine:
 
     def count_objects_in_regions(self, results, region_polygons):
         """Count objects in each region based on inference results."""
+        if not region_polygons:
+            return []
+        
         # Get the region counts
         region_counts = [0 for _ in region_polygons]
         
