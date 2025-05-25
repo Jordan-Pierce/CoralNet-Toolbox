@@ -11,4 +11,9 @@ class Segment(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Segmentation Video Inference")
+
         self.task = "segment"
+        
+    def showEvent(self, event):
+        self.showMaximized()
+        super().showEvent(event)

@@ -11,4 +11,9 @@ class Classify(Base):
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Classification Video Inference")
+        
         self.task = "classify"
+    
+    def showEvent(self, event):
+        self.showMaximized()
+        super().showEvent(event)
