@@ -44,6 +44,7 @@ class VideoRegionWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        
         self.frame = None
         self.pixmap = None
         self.regions = []  # List of QRect (or 4-point polygons)
@@ -79,6 +80,11 @@ class VideoRegionWidget(QWidget):
         self.region_polygons = []       # Set by parent/Base
         self.conf = 0.3
         self.iou = 0.2
+
+        # VideoSink
+        self.video_sink = None  # VideoSink instance for writing output video
+        self.video_path = None
+        self.output_dir = None
 
         # Layout: video area (fills widget), controls at bottom
         self.layout = QVBoxLayout(self)
@@ -183,10 +189,11 @@ class VideoRegionWidget(QWidget):
         self.speed_dropdown.setEnabled(False)
         self.frame_label.setEnabled(False)
 
-    def load_video(self, video_path):
+    def load_video(self, video_path, output_dir=None):
         """Load a video file and prepare for playback and region drawing."""
         if self.cap:
             self.cap.release()
+            
         self.cap = cv2.VideoCapture(video_path)
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
@@ -196,21 +203,73 @@ class VideoRegionWidget(QWidget):
         self.seek(0)
         self.update()
         self.update_frame_label()
+        self.video_path = video_path
+        self.output_dir = output_dir
 
         # Always initialize when loading video
-        if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
-            self.parent.video_sink.__exit__(None, None, None)
-            self.parent.video_sink = None
+        if self.video_sink is not None:
+            self.video_sink.__exit__(None, None, None)
+            self.video_sink = None
             
         # If output directory is set, initialize VideoSink
-        if hasattr(self.parent, 'output_dir') and self.parent.output_dir:
+        if output_dir:
             video_info = sv.VideoInfo.from_video_path(video_path=video_path)
-            out_path = os.path.join(self.parent.output_dir, os.path.basename(video_path))
-            self.parent.video_sink = sv.VideoSink(target_path=out_path, video_info=video_info)
-            self.parent.video_sink.__enter__()
-
-        # Enable controls when video is loaded
+            out_path = os.path.join(output_dir, os.path.basename(video_path))
+            self.video_sink = sv.VideoSink(target_path=out_path, video_info=video_info)
+            self.video_sink.__enter__()
+            
         self.enable_video_region()
+
+    def close_video_sink(self):
+        if self.video_sink is not None:
+            self.video_sink.__exit__(None, None, None)
+            self.video_sink = None
+
+    def draw_inference_results(self, frame, region_counts, results):
+        """Draw inference results on the video frame using supervision's BoxAnnotator."""
+        if results and len(results) > 0:
+            result = results[0]
+            try:
+                detections = sv.Detections.from_ultralytics(result)
+                # Prepare labels for each detection
+                class_names = []
+                for cls in detections.class_id:
+                    idx = int(cls)
+                    if idx < len(self.parent.inference_engine.class_names):
+                        class_names.append(self.parent.inference_engine.class_names[idx])
+                    else:
+                        class_names.append(str(idx))
+                confidences = detections.confidence
+                labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
+                label_annotator = sv.LabelAnnotator(text_position=sv.Position.TOP_CENTER)
+                annotators = []
+                for key in self.parent.get_selected_annotators():
+                    if key == "BoxAnnotator":
+                        annotators.append(sv.BoxAnnotator())
+                    elif key == "BoxCornerAnnotator":
+                        annotators.append(sv.BoxCornerAnnotator())
+                    elif key == "DotAnnotator":
+                        annotators.append(sv.DotAnnotator())
+                    elif key == "HaloAnnotator":
+                        annotators.append(sv.HaloAnnotator())
+                    elif key == "PercentageBarAnnotator":
+                        annotators.append(sv.PercentageBarAnnotator())
+                    elif key == "MaskAnnotator":
+                        annotators.append(sv.MaskAnnotator())
+                    elif key == "PolygonAnnotator":
+                        annotators.append(sv.PolygonAnnotator())
+                for annotator in annotators:
+                    frame = annotator.annotate(scene=frame, detections=detections)
+                frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
+            except Exception as e:
+                print(f"supervision annotate failed: {e}")
+        for idx, poly in enumerate(self.parent.region_polygons if hasattr(self.parent, 'region_polygons') else []):
+            pts = np.array(list(poly.exterior.coords), np.int32)
+            cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
+            centroid = poly.centroid
+            cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        return frame
 
     def next_frame(self):
         """Advance to the next frame in the video and update the display."""
@@ -231,7 +290,7 @@ class VideoRegionWidget(QWidget):
                     # Count objects in defined regions (if there are any regions)
                     region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
                     # Draw results on the frame
-                    frame = self.parent.draw_inference_results(frame, region_counts, results)
+                    frame = self.draw_inference_results(frame, region_counts, results)
                     
                 self.current_frame = frame
                 self.current_frame_number = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
@@ -241,23 +300,23 @@ class VideoRegionWidget(QWidget):
                 self.seek_slider.blockSignals(False)
                 self.update_frame_label()
 
-                if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
-                    expected_shape = (self.parent.video_sink.video_info.height, self.parent.video_sink.video_info.width)
-                    if frame.shape[0:2] == expected_shape:
-                        try:
-                            self.parent.video_sink.write_frame(frame)
-                        except Exception as e:
-                            print(f"VideoSink write_frame error: {e}")
-                    else:
-                        print(f"Warning: Frame shape {frame.shape} does not match expected shape {expected_shape}.")
+                if self.video_sink is not None:
+                    try:
+                        # Ensure frame matches expected output size
+                        expected_shape = (self.video_sink.video_info.height, self.video_sink.video_info.width)
+                        if frame.shape[0:2] != expected_shape:
+                            frame = cv2.resize(frame, (expected_shape[1], expected_shape[0]))
+                        self.video_sink.write_frame(frame)
+                    except Exception as e:
+                        print(f"VideoSink write_frame error: {e}")
             else:
                 self.timer.stop()
                 self.is_playing = False
                 
-                # Close when video finishes ---
-                if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
-                    self.parent.video_sink.__exit__(None, None, None)
-                    self.parent.video_sink = None
+                # Close when video finishes
+                if self.video_sink is not None:
+                    self.video_sink.__exit__(None, None, None)
+                    self.video_sink = None
 
     def play_video(self):
         """Play the video from the current position."""
@@ -288,7 +347,7 @@ class VideoRegionWidget(QWidget):
                     # Count objects in defined regions (if there are any regions)
                     region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
                     # Draw results on the frame
-                    frame = self.parent.draw_inference_results(frame, region_counts, results)
+                    frame = self.draw_inference_results(frame, region_counts, results)
                     
                 self.current_frame = frame
                 self.current_frame_number = frame_number
@@ -429,6 +488,7 @@ class VideoRegionWidget(QWidget):
     # Reset to First Frame
     def reset_to_first_frame(self):
         """Reset the video to the first frame and stop playback."""
+        self.close_video_sink()
         # Close on stop
         if hasattr(self.parent, 'video_sink') and self.parent.video_sink is not None:
             self.parent.video_sink.__exit__(None, None, None)
@@ -490,7 +550,6 @@ class Base(QDialog):
         # Initialize parameters
         self.video_path = ""
         self.output_dir = ""
-        self.video_sink = None  # VideoSink instance for writing output video
         
         self.model_path = ""
         
@@ -633,11 +692,7 @@ class Base(QDialog):
         
     def closeEvent(self, event):
         """Ensure inference thread is stopped before closing the dialog."""
-        # Close on exit
-        if hasattr(self, 'video_sink') and self.video_sink is not None:
-            self.video_sink.__exit__(None, None, None)
-            self.video_sink = None
-            
+        self.close_video_sink()
         super().closeEvent(event)
 
     def setup_class_layout(self):
@@ -856,7 +911,7 @@ class Base(QDialog):
         if file_name:
             self.input_edit.setText(file_name)
             self.video_path = file_name
-            self.video_region_widget.load_video(file_name)
+            self.video_region_widget.load_video(file_name, self.output_dir)
 
     def browse_output(self):
         """Open directory dialog to select output directory."""
@@ -864,6 +919,9 @@ class Base(QDialog):
         if dir_name:
             self.output_edit.setText(dir_name)
             self.output_dir = dir_name
+            # If video already loaded, update output dir for widget
+            if self.video_path:
+                self.video_region_widget.load_video(self.video_path, dir_name)
 
     def browse_model(self):
         """Open file dialog to select model file (filtered to .pt, .pth)."""
@@ -913,15 +971,6 @@ class Base(QDialog):
             item.setCheckState(Qt.Unchecked)
         self.update_selected_classes()
         
-    def update_video_sink(self):
-        """Update the video sink with the current output directory."""
-        if self.output_dir and self.video_path:
-            # Set up the video sink if output directory is provided
-            video_info = sv.VideoInfo.from_video_path(video_path=self.video_path)
-            out_path = os.path.join(self.output_dir, os.path.basename(self.video_path))
-            self.video_sink = sv.VideoSink(target_path=out_path, video_info=video_info)
-            self.video_sink.__enter__()  # Manually enter context
-        
     def update_inference_state(self, state):
         """Update the inference state and adjust UI elements accordingly."""
         self.inference_state = state
@@ -964,68 +1013,10 @@ class Base(QDialog):
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
-    def draw_inference_results(self, frame, region_counts, results):
-        """Draw inference results on the video frame using supervision's BoxAnnotator."""
-        if not self.video_sink:
-            self.update_video_sink()
-            
-        # Draw detection results using supervision
-        if results and len(results) > 0:
-            result = results[0]
-            try:
-                detections = sv.Detections.from_ultralytics(result)
-                # Prepare labels for each detection
-                class_names = []
-                for cls in detections.class_id:
-                    idx = int(cls)
-                    if idx < len(self.inference_engine.class_names):
-                        class_names.append(self.inference_engine.class_names[idx])
-                    else:
-                        class_names.append(str(idx))
-                        
-                confidences = detections.confidence
-                labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-                # Always use label annotator (centered)
-                label_annotator = sv.LabelAnnotator(text_position=sv.Position.TOP_CENTER)
-                # Build annotators list based on user selection
-                annotators = []
-                for key in self.get_selected_annotators():
-                    if key == "BoxAnnotator":
-                        annotators.append(sv.BoxAnnotator())
-                    elif key == "BoxCornerAnnotator":
-                        annotators.append(sv.BoxCornerAnnotator())
-                    elif key == "DotAnnotator":
-                        annotators.append(sv.DotAnnotator())
-                    elif key == "HaloAnnotator":
-                        annotators.append(sv.HaloAnnotator())
-                    elif key == "PercentageBarAnnotator":
-                        annotators.append(sv.PercentageBarAnnotator())
-                    elif key == "MaskAnnotator":
-                        annotators.append(sv.MaskAnnotator())
-                    elif key == "PolygonAnnotator":
-                        annotators.append(sv.PolygonAnnotator())
-                # Apply annotators in order
-                for annotator in annotators:
-                    frame = annotator.annotate(scene=frame, detections=detections)
-                # Always apply label annotator last
-                frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
-            except Exception as e:
-                print(f"supervision annotate failed: {e}")
-                
-        # Draw region annotations as before
-        for idx, poly in enumerate(self.region_polygons):
-            pts = np.array(list(poly.exterior.coords), np.int32)
-            cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-            centroid = poly.centroid
-            cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        
-        try:
-            self.video_sink.write_frame(frame)
-        except Exception as e:
-            print(f"VideoSink write_frame error: {e}")
-            
-        return frame
+    def close_video_sink(self):
+        if self.video_sink is not None:
+            self.video_sink.__exit__(None, None, None)
+            self.video_sink = None
 
 
 class InferenceEngine:
