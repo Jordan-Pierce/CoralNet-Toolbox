@@ -14,6 +14,10 @@ from .BatchInference.QtClassify import Classify as BatchClassify
 from .BatchInference.QtDetect import Detect as BatchDetect
 from .BatchInference.QtSegment import Segment as BatchSegment
 
+from .InferenceVideo.QtClassify import Classify as VideoClassify
+from .InferenceVideo.QtDetect import Detect as VideoDetect
+from .InferenceVideo.QtSegment import Segment as VideoSegment
+
 from .ImportDataset.QtDetect import Detect as ImportDetect
 from .ImportDataset.QtSegment import Segment as ImportSegment
 
@@ -39,6 +43,9 @@ __all__ = [
     'BatchClassify',
     'BatchDetect', 
     'BatchSegment',
+    'VideoClassify',
+    'VideoDetect',
+    'VideoSegment',
     'ImportDetect', 
     'ImportSegment',
     'ExportClassify', 

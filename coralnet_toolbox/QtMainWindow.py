@@ -64,6 +64,9 @@ from coralnet_toolbox.MachineLearning import (
     BatchClassify as ClassifyBatchInferenceDialog,
     BatchDetect as DetectBatchInferenceDialog,
     BatchSegment as SegmentBatchInferenceDialog,
+    VideoClassify as ClassifyVideoInferenceDialog,
+    VideoDetect as DetectVideoInferenceDialog,
+    VideoSegment as SegmentVideoInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
     ImportSegment as SegmentImportDatasetDialog,
     ExportClassify as ClassifyExportDatasetDialog,
@@ -224,6 +227,9 @@ class MainWindow(QMainWindow):
         self.classify_batch_inference_dialog = ClassifyBatchInferenceDialog(self)
         self.detect_batch_inference_dialog = DetectBatchInferenceDialog(self)
         self.segment_batch_inference_dialog = SegmentBatchInferenceDialog(self)
+        self.classify_video_inference_dialog = ClassifyVideoInferenceDialog(self)
+        self.detect_video_inference_dialog = DetectVideoInferenceDialog(self)
+        self.segment_video_inference_dialog = SegmentVideoInferenceDialog(self)
 
         # Create dialogs (SAM)
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
@@ -530,6 +536,21 @@ class MainWindow(QMainWindow):
         self.ml_segment_batch_inference_action = QAction("Segment", self)
         self.ml_segment_batch_inference_action.triggered.connect(self.open_segment_batch_inference_dialog)
         self.ml_batch_inference_menu.addAction(self.ml_segment_batch_inference_action)
+        
+        # Video Inference submenu
+        self.ml_video_inference_menu = self.ml_menu.addMenu("Video Inference")
+        # Video Inference Classification
+        self.ml_classify_video_inference_action = QAction("Classify", self)
+        self.ml_classify_video_inference_action.triggered.connect(self.open_classify_video_inference_dialog)
+        self.ml_video_inference_menu.addAction(self.ml_classify_video_inference_action)
+        # Video Inference Detection
+        self.ml_detect_video_inference_action = QAction("Detect", self)
+        self.ml_detect_video_inference_action.triggered.connect(self.open_detect_video_inference_dialog)
+        self.ml_video_inference_menu.addAction(self.ml_detect_video_inference_action)
+        # Video Inference Segmentation
+        self.ml_segment_video_inference_action = QAction("Segment", self)
+        self.ml_segment_video_inference_action.triggered.connect(self.open_segment_video_inference_dialog)
+        self.ml_video_inference_menu.addAction(self.ml_segment_video_inference_action) 
 
         # SAM menu
         self.sam_menu = self.menu_bar.addMenu("SAM")
@@ -1798,6 +1819,27 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.segment_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_classify_video_inference_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.classify_video_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_detect_video_inference_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.detect_video_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_segment_video_inference_dialog(self):
+        try:
+            self.untoggle_all_tools()
+            self.segment_video_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
