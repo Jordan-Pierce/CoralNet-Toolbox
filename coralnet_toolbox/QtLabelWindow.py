@@ -565,37 +565,45 @@ class LabelWindow(QWidget):
         """Get the review label."""
         return self.labels[0]
 
-    def get_label_by_id(self, label_id):
+    def get_label_by_id(self, label_id, return_review=True):
         """Find and return a label by its ID."""
         for label in self.labels:
             if label.id == label_id:
                 return label
         print(f"Warning: Label with ID '{label_id}' not found.")
-        return self.get_review_label()
+        
+        if return_review:
+            return self.get_review_label()
 
-    def get_label_by_codes(self, short_label_code, long_label_code):
+    def get_label_by_codes(self, short_label_code, long_label_code, return_review=True):
         """Find and return a label by its short and long codes."""
         for label in self.labels:
             if short_label_code == label.short_label_code and long_label_code == label.long_label_code:
                 return label
         print(f"Warning: Label with short code '{short_label_code}' and long code '{long_label_code}' not found.")
-        return self.get_review_label()
+        
+        if return_review:
+            return self.get_review_label()
 
-    def get_label_by_short_code(self, short_label_code):
+    def get_label_by_short_code(self, short_label_code, return_review=True):
         """Find and return a label by its short code."""
         for label in self.labels:
             if short_label_code == label.short_label_code:
                 return label
         print(f"Warning: Label with short code '{short_label_code}' not found.")
-        return self.get_review_label()
+        
+        if return_review:
+            return self.get_review_label()
 
-    def get_label_by_long_code(self, long_label_code):
+    def get_label_by_long_code(self, long_label_code, return_review=True):
         """Find and return a label by its long code."""
         for label in self.labels:
             if long_label_code == label.long_label_code:
                 return label
         print(f"Warning: Label with long code '{long_label_code}' not found.")
-        return self.get_review_label()
+        
+        if return_review:
+            return self.get_review_label()
 
     def label_exists(self, short_label_code, long_label_code, label_id=None):
         """Check if a label with the given codes or ID already exists."""
@@ -992,7 +1000,8 @@ class EditLabelDialog(QDialog):
                                 "Both short and long label codes are required.")
             return
 
-        existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code)
+        # Check if the label already exists, will return review label if not found
+        existing_label = self.label_window.get_label_by_codes(short_label_code, long_label_code, return_review=False)
 
         if existing_label and existing_label != self.label:
             text = (f"A label with the short code '{short_label_code}' "
