@@ -5,7 +5,7 @@ from shapely.geometry import Polygon, Point
 
 from ultralytics import YOLO
 
-from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
@@ -38,13 +38,6 @@ class RegionManager:
 
 class VideoRegionWidget(QWidget):
     """Widget for displaying video, playback controls, and drawing/editing rectangular regions only."""
-    # Add signals for playback events
-    play_signal = pyqtSignal()
-    pause_signal = pyqtSignal()
-    seek_signal = pyqtSignal(int)
-    stop_signal = pyqtSignal()
-    frame_changed = pyqtSignal(int)  # Signal for frame change
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
@@ -203,7 +196,6 @@ class VideoRegionWidget(QWidget):
                 self.seek_slider.setValue(self.current_frame_number)
                 self.seek_slider.blockSignals(False)
                 self.update_frame_label()
-                self.frame_changed.emit(self.current_frame_number)
             else:
                 self.timer.stop()
                 self.is_playing = False
@@ -214,7 +206,6 @@ class VideoRegionWidget(QWidget):
             self.timer.stop()
             self.play_pause_btn.setChecked(False)
             self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
-            self.pause_signal.emit()
         else:
             if self.cap:
                 self.is_playing = True
@@ -222,7 +213,6 @@ class VideoRegionWidget(QWidget):
                 self.timer.start(interval)
                 self.play_pause_btn.setChecked(True)
                 self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPause))
-                self.play_signal.emit()
 
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
@@ -234,15 +224,12 @@ class VideoRegionWidget(QWidget):
                 self.current_frame_number = frame_number
                 self.update()
                 self.update_frame_label()
-                self.seek_signal.emit(frame_number)
-                self.frame_changed.emit(frame_number)
 
     def display_frame(self, frame):
         """Display a processed frame in the video widget."""
         self.current_frame = frame
         self.update()
         self.update_frame_label()
-        self.frame_changed.emit(self.current_frame_number)
 
     def update_pixmap(self):
         pass  # No longer needed
@@ -367,7 +354,10 @@ class VideoRegionWidget(QWidget):
     def reset_to_first_frame(self):
         if self.cap:
             self.seek(0)
-            self.stop_signal.emit()
+            self.is_playing = False
+            self.timer.stop()
+            self.play_pause_btn.setChecked(False)
+            self.play_pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
 
     # Frame Label
     def update_frame_label(self):
@@ -440,10 +430,6 @@ class Base(QDialog):
         
         # Initialize thresholds
         self.initialize_thresholds()
-        
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.connect_video_signals()
 
     def setup_input_group(self):
         """Setup the input video group with a file browser."""
@@ -743,55 +729,21 @@ class Base(QDialog):
             item.setCheckState(Qt.Unchecked)
         self.update_selected_classes()
 
-    def connect_video_signals(self):
-        self.video_region_widget.play_signal.connect(self.on_video_play)
-        self.video_region_widget.pause_signal.connect(self.on_video_pause)
-        self.video_region_widget.seek_signal.connect(self.on_video_seek)
-        self.video_region_widget.stop_signal.connect(self.on_video_stop)
-        
-        # Connect to frame_changed signal for per-frame inference
-        self.video_region_widget.frame_changed.connect(self.on_frame_changed)
-
-    def on_video_play(self):
-        self.inference_paused = False
-
-    def on_video_pause(self):
-        self.inference_paused = True
-
-    def on_video_seek(self, frame_number):
-        self.inference_seek_frame = frame_number
-        self.inference_paused = False
-        self.on_frame_changed(frame_number)
-
-    def on_video_stop(self):
-        self.inference_paused = True
-        self.inference_seek_frame = 0
-
-    def on_frame_changed(self, frame_number):
-        """Handle frame change event for inference."""
-        
-        if getattr(self, 'inference_paused', False):
+    def run_inference_on_video(self):
+        """Run YOLOv8 inference on the selected video, counting objects in user-defined regions."""
+        # Check if model and video paths are set
+        if not self.model_path or not self.video_path:
             return
         
-        cap = self.video_region_widget.cap
-        if not cap:
-            return
+        # Ensure model is loaded
+        if self.inference_engine.model is None:
+            self.inference_engine.load_model(self.model_path, task=self.task)
+            
+        # Open video
+        cap = cv2.VideoCapture(self.video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
         
-        # Validate frame number
-        if frame_number < 0 or frame_number >= self.video_region_widget.total_frames:
-            return
-        
-        try:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            ret, frame = cap.read()
-        except Exception as e:
-            print(f"OpenCV error during cap.read(): {e}")
-            return
-        
-        if not ret or frame is None:
-            return
-        
-        # Prepare region polygons
+        # Prepare region polygons from the region widget
         region_polygons = [
             Polygon([
                 (rect.left(), rect.top()),
@@ -801,30 +753,40 @@ class Base(QDialog):
             ])
             for rect in self.video_region_widget.regions
         ]
-        # Run inference
-        results = self.inference_engine.infer(frame, self.uncertainty_thresh, self.iou_thresh)
-        region_counts = self.inference_engine.count_objects_in_regions(results, region_polygons)
         
-        # Draw bounding boxes
-        if results and hasattr(results[0].boxes, 'xyxy'):
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            for box in boxes:
-                cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
-                
-        # Draw regions and counts
-        for idx, poly in enumerate(region_polygons):
-            pts = np.array(list(poly.exterior.coords), np.int32)
-            cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-            centroid = poly.centroid
-            cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        # Iterate through frames
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
             
-        self.video_region_widget.display_frame(frame)
-
-    def run_inference_on_video(self):
-        # Start inference from current frame
-        self.inference_paused = False
-        self.on_frame_changed(self.video_region_widget.current_frame_number)
+            # Run inference using InferenceEngine
+            results = self.inference_engine.infer(frame, self.uncertainty_thresh, self.iou_thresh)
+            
+            # Count objects in regions
+            region_counts = self.inference_engine.count_objects_in_regions(results, region_polygons)
+            
+            # Draw bounding boxes if results exist
+            if results and hasattr(results[0].boxes, 'xyxy'):
+                boxes = results[0].boxes.xyxy.cpu().numpy()
+                for box in boxes:
+                    cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
+                    
+            # Draw regions and counts
+            for idx, poly in enumerate(region_polygons):
+                pts = np.array(list(poly.exterior.coords), np.int32)
+                cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
+                centroid = poly.centroid
+                cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+            # Update video widget
+            self.video_region_widget.display_frame(frame)
+            
+            # Optional: add a delay for real-time display
+            cv2.waitKey(int(1000 / fps))
+            
+        cap.release()
         
 
 class InferenceEngine:
