@@ -87,9 +87,11 @@ class VideoRegionWidget(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
         self.layout.addStretch(1)  # Video area will be drawn in paintEvent
-        
+
+        # Media Controls GroupBox
+        controls_group = QGroupBox("Media Controls")
         controls = QHBoxLayout()
-        
+
         # Control buttons
         self.step_back_btn = QPushButton()
         self.step_back_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekBackward))
@@ -103,7 +105,7 @@ class VideoRegionWidget(QWidget):
         self.play_btn.clicked.connect(self.play_video)
         self.play_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.play_btn)
-        
+
         self.pause_btn = QPushButton()
         self.pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPause))
         self.pause_btn.setToolTip("Pause")
@@ -152,7 +154,8 @@ class VideoRegionWidget(QWidget):
         self.speed_dropdown.setMaximumWidth(80)
         controls.addWidget(self.speed_dropdown)
 
-        self.layout.addLayout(controls)
+        controls_group.setLayout(controls)
+        self.layout.addWidget(controls_group)
         
     def closeEvent(self, event):
         """Handle widget close event."""
@@ -289,50 +292,61 @@ class VideoRegionWidget(QWidget):
             self.update()
         
     def _update_region_polygons(self):
-        """Update self.region_polygons from self.regions (QRects to shapely Polygons), mapping from widget to video frame coordinates."""
+        """Update region polygons (QRects to shapely Polygons), mapping from widget to video frame coordinates."""
         self.region_polygons = []
-        if self.current_frame is not None:
-            # Get video frame and widget sizes
-            frame_h, frame_w = self.current_frame.shape[:2]
-            widget_w = self.width()
-            widget_h = self.height() - 50  # Reserve space for controls
-            # Compute scale and offset as in paintEvent
-            scale = min(widget_w / frame_w, widget_h / frame_h)
-            scaled_w = int(frame_w * scale)
-            scaled_h = int(frame_h * scale)
-            offset_x = (widget_w - scaled_w) // 2
-            offset_y = (widget_h - scaled_h) // 2
-        else:
-            # Fallback: no frame loaded
-            scale = 1.0
-            offset_x = 0
-            offset_y = 0
-            frame_w = 1
-            frame_h = 1
+        if self.current_frame is None or not self.regions:
+            return
             
+        # Get video frame dimensions
+        frame_h, frame_w = self.current_frame.shape[:2]
+        
+        # Get widget dimensions (excluding control area)
+        widget_w = self.width()
+        widget_h = self.height() - 50  # Reserve space for controls
+        
+        # Calculate scaling and positioning (same logic as paintEvent)
+        scale = min(widget_w / frame_w, widget_h / frame_h)
+        scaled_w = int(frame_w * scale)
+        scaled_h = int(frame_h * scale)
+        offset_x = (widget_w - scaled_w) // 2
+        offset_y = (widget_h - scaled_h) // 2
+        
         for rect in self.regions:
-            # Map QRect from widget to video frame coordinates
-            left = (rect.left() - offset_x) / scale
-            top = (rect.top() - offset_y) / scale
-            right = (rect.right() - offset_x) / scale
-            bottom = (rect.bottom() - offset_y) / scale
-            # Clamp to frame bounds
-            left = max(0, min(left, frame_w - 1))
-            right = max(0, min(right, frame_w - 1))
-            top = max(0, min(top, frame_h - 1))
-            bottom = max(0, min(bottom, frame_h - 1))
-            poly = Polygon([
-                (left, top),
-                (right, top),
-                (right, bottom),
-                (left, bottom)
-            ])
-            self.region_polygons.append(poly)
+            # Map QRect from widget coordinates to video frame coordinates
+            # First, subtract the offset to get coordinates relative to the scaled video
+            left_scaled = rect.left() - offset_x
+            top_scaled = rect.top() - offset_y
+            right_scaled = rect.right() - offset_x
+            bottom_scaled = rect.bottom() - offset_y
+            
+            # Then scale back to original video frame coordinates
+            left_frame = left_scaled / scale
+            top_frame = top_scaled / scale
+            right_frame = right_scaled / scale
+            bottom_frame = bottom_scaled / scale
+            
+            # Clamp to frame bounds and ensure valid rectangle
+            left_frame = max(0, min(left_frame, frame_w))
+            right_frame = max(0, min(right_frame, frame_w))
+            top_frame = max(0, min(top_frame, frame_h))
+            bottom_frame = max(0, min(bottom_frame, frame_h))
+            
+            # Ensure we have a valid rectangle after clamping
+            if left_frame < right_frame and top_frame < bottom_frame:
+                # Create polygon in video frame coordinates
+                poly = Polygon([
+                    (left_frame, top_frame),
+                    (right_frame, top_frame),
+                    (right_frame, bottom_frame),
+                    (left_frame, bottom_frame)
+                ])
+                self.region_polygons.append(poly)
 
-    # Region drawing methods
     def paintEvent(self, event):
         """Draw the video frame centered, and rectangular regions."""
         painter = QPainter(self)
+        
+        offset_x, offset_y = 0, 0
         
         if self.current_frame is not None:
             rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
@@ -340,37 +354,38 @@ class VideoRegionWidget(QWidget):
             bytes_per_line = ch * w
             qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qimg)
+            
             widget_width = self.width()
             widget_height = self.height() - 50  # Reserve space for controls
-            scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            x = (widget_width - scaled.width()) // 2
-            y = (widget_height - scaled.height()) // 2
-            painter.drawPixmap(x, y, scaled)
-            offset_x, offset_y = x, y
-        else:
-            offset_x, offset_y = 0, 0
             
-        # Draw rectangles
+            # Scale while maintaining aspect ratio
+            scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+            # Center the scaled image
+            offset_x = (widget_width - scaled.width()) // 2
+            offset_y = (widget_height - scaled.height()) // 2
+            
+            painter.drawPixmap(offset_x, offset_y, scaled)
+            
+        # Draw rectangles (these are in widget coordinates, no translation needed for display)
         if self.show_regions:
             pen = QPen(Qt.red, 2)
             painter.setPen(pen)
             for rect in self.regions:
-                r = rect.translated(offset_x, offset_y)
-                painter.drawRect(r)
+                painter.drawRect(rect)
                 
-        # Draw current rectangle
+        # Draw current rectangle being drawn
         if self.drawing and self.current_rect:
             pen = QPen(Qt.green, 2, Qt.DashLine)
             painter.setPen(pen)
-            r = self.current_rect.translated(offset_x, offset_y)
-            painter.drawRect(r)
+            painter.drawRect(self.current_rect)
 
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
-        offset_x, offset_y = self._get_video_offset()
-        pos = event.pos() - QPoint(offset_x, offset_y)
-        
         if event.button() == Qt.LeftButton:
+            # Use raw mouse coordinates (no offset adjustment needed)
+            pos = event.pos()
+            
             if not self.drawing:
                 self.drawing = True
                 self.rect_start = pos
@@ -380,10 +395,13 @@ class VideoRegionWidget(QWidget):
                 self.drawing = False
                 if self.rect_start and self.rect_end and self.rect_start != self.rect_end:
                     rect = self._make_rect(self.rect_start, self.rect_end)
+                    
+                    # Allow regions to extend outside video area - clamping happens in _update_region_polygons
                     self.undo_stack.append(list(self.regions))
                     self.redo_stack.clear()
                     self.regions.append(rect)
                     self._update_region_polygons()
+                    
                 self.rect_start = None
                 self.rect_end = None
                 self.current_rect = None
@@ -392,8 +410,8 @@ class VideoRegionWidget(QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse move events for updating region shape."""
         if self.drawing and self.rect_start:
-            offset_x, offset_y = self._get_video_offset()
-            pos = event.pos() - QPoint(offset_x, offset_y)
+            # Use raw mouse coordinates
+            pos = event.pos()
             self.rect_end = pos
             self.current_rect = self._make_rect(self.rect_start, self.rect_end)
             self.update()
@@ -407,17 +425,22 @@ class VideoRegionWidget(QWidget):
         return QRect(left, top, right - left, bottom - top)
         
     def _get_video_offset(self):
-        """Calculate the offset for centering the video in the widget."""
+        """Calculate the offset and scale for centering the video in the widget."""
         if self.current_frame is not None:
-            rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb.shape
+            frame_h, frame_w = self.current_frame.shape[:2]
             widget_width = self.width()
-            widget_height = self.height() - 50
-            pixmap = QPixmap.fromImage(QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888))
-            scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            x = (widget_width - scaled.width()) // 2
-            y = (widget_height - scaled.height()) // 2
-            return x, y
+            widget_height = self.height() - 50  # Reserve space for controls
+            
+            # Calculate scale to fit video while maintaining aspect ratio
+            scale = min(widget_width / frame_w, widget_height / frame_h)
+            scaled_w = int(frame_w * scale)
+            scaled_h = int(frame_h * scale)
+            
+            # Calculate offset to center the scaled video
+            offset_x = (widget_width - scaled_w) // 2
+            offset_y = (widget_height - scaled_h) // 2
+            
+            return offset_x, offset_y
         return 0, 0
 
     def _setup_video_output(self, video_path, output_dir):
@@ -603,13 +626,12 @@ class VideoRegionWidget(QWidget):
             class_names = []
             for cls in detections.class_id:
                 idx = int(cls)
-                if hasattr(self.parent, 'inference_engine') and self.parent.inference_engine:
-                    if idx < len(self.parent.inference_engine.class_names):
-                        class_names.append(self.parent.inference_engine.class_names[idx])
-                    else:
-                        class_names.append(str(idx))
+
+                if idx < len(self.parent.inference_engine.class_names):
+                    class_names.append(self.parent.inference_engine.class_names[idx])
                 else:
                     class_names.append(str(idx))
+
             confidences = detections.confidence
             labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
             t3 = time.time()
@@ -618,12 +640,8 @@ class VideoRegionWidget(QWidget):
             # Apply annotations
             label_annotator = sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER)
 
-            # Get selected annotators from parent if available
-            selected_annotators = []
-            if hasattr(self.parent, 'get_selected_annotators'):
-                selected_annotators = self.parent.get_selected_annotators()
-            else:
-                selected_annotators = ["BoxAnnotator"]  # Default
+            # Get selected annotators 
+            selected_annotators = self.parent.get_selected_annotators()
 
             annotators = []
             for key in selected_annotators:
