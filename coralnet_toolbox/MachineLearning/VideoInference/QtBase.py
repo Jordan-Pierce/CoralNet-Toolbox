@@ -257,10 +257,9 @@ class VideoRegionWidget(QWidget):
         """Update the frame label with current frame number and total frames."""
         self.frame_label.setText(f"Frame: {self.current_frame_number + 1} / {self.total_frames}")
         
-    def set_inference_params(self, inference_engine, region_polygons, conf, iou):
-        """Set inference parameters for the video region."""
+    def set_inference_params(self, inference_engine, conf, iou):
+        """Set inference parameters for the video region. Always gets polygons from current regions."""
         self.inference_engine = inference_engine
-        self.region_polygons = region_polygons
         self.conf = conf
         self.iou = iou
 
@@ -278,6 +277,7 @@ class VideoRegionWidget(QWidget):
         if self.undo_stack:
             self.redo_stack.append(list(self.regions))
             self.regions = self.undo_stack.pop()
+            self._update_region_polygons()
             self.update()
 
     def redo_region(self):
@@ -285,8 +285,50 @@ class VideoRegionWidget(QWidget):
         if self.redo_stack:
             self.undo_stack.append(list(self.regions))
             self.regions = self.redo_stack.pop()
+            self._update_region_polygons()
             self.update()
         
+    def _update_region_polygons(self):
+        """Update self.region_polygons from self.regions (QRects to shapely Polygons), mapping from widget to video frame coordinates."""
+        self.region_polygons = []
+        if self.current_frame is not None:
+            # Get video frame and widget sizes
+            frame_h, frame_w = self.current_frame.shape[:2]
+            widget_w = self.width()
+            widget_h = self.height() - 50  # Reserve space for controls
+            # Compute scale and offset as in paintEvent
+            scale = min(widget_w / frame_w, widget_h / frame_h)
+            scaled_w = int(frame_w * scale)
+            scaled_h = int(frame_h * scale)
+            offset_x = (widget_w - scaled_w) // 2
+            offset_y = (widget_h - scaled_h) // 2
+        else:
+            # Fallback: no frame loaded
+            scale = 1.0
+            offset_x = 0
+            offset_y = 0
+            frame_w = 1
+            frame_h = 1
+            
+        for rect in self.regions:
+            # Map QRect from widget to video frame coordinates
+            left = (rect.left() - offset_x) / scale
+            top = (rect.top() - offset_y) / scale
+            right = (rect.right() - offset_x) / scale
+            bottom = (rect.bottom() - offset_y) / scale
+            # Clamp to frame bounds
+            left = max(0, min(left, frame_w - 1))
+            right = max(0, min(right, frame_w - 1))
+            top = max(0, min(top, frame_h - 1))
+            bottom = max(0, min(bottom, frame_h - 1))
+            poly = Polygon([
+                (left, top),
+                (right, top),
+                (right, bottom),
+                (left, bottom)
+            ])
+            self.region_polygons.append(poly)
+
     # Region drawing methods
     def paintEvent(self, event):
         """Draw the video frame centered, and rectangular regions."""
@@ -341,6 +383,7 @@ class VideoRegionWidget(QWidget):
                     self.undo_stack.append(list(self.regions))
                     self.redo_stack.clear()
                     self.regions.append(rect)
+                    self._update_region_polygons()
                 self.rect_start = None
                 self.rect_end = None
                 self.current_rect = None
@@ -615,8 +658,7 @@ class VideoRegionWidget(QWidget):
 
         # Draw region polygons
         t7 = time.time()
-        region_polygons = getattr(self.parent, 'region_polygons', []) if self.parent else self.region_polygons
-        for idx, poly in enumerate(region_polygons):
+        for idx, poly in enumerate(self.region_polygons):
             if idx < len(region_counts):
                 pts = np.array(list(poly.exterior.coords), np.int32)
                 cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
@@ -730,9 +772,7 @@ class Base(QDialog):
         self.iou_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
-        
-        self.region_polygons = []                   # List of shapely Polygons for regions
-        
+                
         self.video_region_widget = None             # Initialized in setup_video_layout
         self.inference_engine = InferenceEngine()
 
@@ -1062,7 +1102,6 @@ class Base(QDialog):
         """Update inference parameters in the video region widget."""
         self.video_region_widget.set_inference_params(
             self.inference_engine,
-            self.region_polygons,
             self.uncertainty_thresh,
             self.iou_thresh
         )
@@ -1104,26 +1143,16 @@ class Base(QDialog):
     def clear_regions(self):
         """Clear all regions from the video region widget and update display."""
         self.video_region_widget.regions.clear()
+        self.video_region_widget._update_region_polygons()
         self.video_region_widget.update()
 
     def enable_inference(self):
         """Enable inference on the video region."""
         if not self.model_path or not self.video_path:
             return
-        
-        # Load the model and set inference parameters
-        self.region_polygons = [
-            Polygon([
-                (rect.left(), rect.top()),
-                (rect.right(), rect.top()),
-                (rect.right(), rect.bottom()),
-                (rect.left(), rect.bottom())
-            ]) for rect in self.video_region_widget.regions
-        ]
         # Set inference parameters in the video region widget
         self.video_region_widget.set_inference_params(
             self.inference_engine,
-            self.region_polygons,
             self.uncertainty_thresh,
             self.iou_thresh
         )
@@ -1131,7 +1160,6 @@ class Base(QDialog):
         self.video_region_widget.enable_inference(True)
         self.enable_inference_btn.setEnabled(False)
         self.disable_inference_btn.setEnabled(True)
-
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
