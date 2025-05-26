@@ -1,4 +1,5 @@
 import os 
+import time
 from datetime import datetime
 
 import cv2
@@ -10,12 +11,13 @@ from shapely.geometry import Polygon, Point
 from ultralytics import YOLO
 
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
-from PyQt5.QtCore import Qt, QTimer, QPoint, QThread, pyqtSignal, QMutex, QWaitCondition, QRect
+from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal, QMutex, QWaitCondition, QRect
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
                              QWidget, QGridLayout, QListWidget, QListWidgetItem, 
                              QAbstractItemView, QFormLayout, QTabWidget, 
-                             QComboBox, QCheckBox, QSpacerItem, QSizePolicy)
+                             QComboBox, QCheckBox, QSpacerItem, QSizePolicy,
+                             QMessageBox, QApplication)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -402,16 +404,21 @@ class VideoRegionWidget(QWidget):
             self._setup_video_output(self.video_path, self.output_dir)
 
     def _write_frame_to_sink(self, frame):
-        """Write a frame to the video sink if enabled."""
+        """Write a frame to the video sink if enabled, with ad-hoc profiling."""
         if not self.should_write_video or self.video_sink is None:
             return
-            
+
+        t0 = time.time()
         try:
             # Ensure frame matches expected output size
             expected_shape = (self.video_sink.video_info.height, self.video_sink.video_info.width)
+            t1 = time.time()
             if frame.shape[:2] != expected_shape:
                 frame = cv2.resize(frame, (expected_shape[1], expected_shape[0]))
+            t2 = time.time()
             self.video_sink.write_frame(frame)
+            t3 = time.time()
+            print(f"[Profiler] _write_frame_to_sink: shape_check={t1-t0:.4f}s, resize={t2-t1:.4f}s, write={t3-t2:.4f}s, total={t3-t0:.4f}s")
         except Exception as e:
             print(f"Error writing frame to video sink: {e}")
             
@@ -439,19 +446,20 @@ class VideoRegionWidget(QWidget):
         print("Video recording ended - ready for new recording on next play")
         
     def load_video(self, video_path, output_dir=None):
-        """Load a video file and prepare for playback and region drawing."""
+        """Load a video file and prepare for playback and region drawing, with ad-hoc profiling."""
+        t0 = __import__('time').time()
         # Clean up existing video capture
         if self.cap:
             self.cap.release()
-        
+        t1 = __import__('time').time()
         # Clean up existing video sink
         self._cleanup_video_sink()
-            
+        t2 = __import__('time').time()
         # Load new video
         self.cap = cv2.VideoCapture(video_path)
         if not self.cap.isOpened():
             raise Exception(f"Could not open video at {video_path}")
-            
+        t3 = __import__('time').time()
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
         self.seek_slider.setMaximum(self.total_frames - 1)
@@ -459,34 +467,48 @@ class VideoRegionWidget(QWidget):
         self.is_playing = False
         self.video_path = video_path
         self.output_dir = output_dir
-        
+        t4 = __import__('time').time()
         # Setup output video if output directory is provided
         if output_dir and os.path.exists(output_dir):
             self._setup_video_output(video_path, output_dir)
         else:
             self.should_write_video = False
-        
+        t5 = __import__('time').time()
         # Load first frame
         self.seek(0)
+        t6 = __import__('time').time()
         self.update()
         self.update_frame_label()
         self.enable_video_region()
+        t7 = __import__('time').time()
+        print(f"[Profiler] load_video: cap_release={t1-t0:.4f}s, cleanup_sink={t2-t1:.4f}s, open_video={t3-t2:.4f}s, set_params={t4-t3:.4f}s, setup_output={t5-t4:.4f}s, seek0={t6-t5:.4f}s, update={t7-t6:.4f}s, total={t7-t0:.4f}s")
         
     def process_frame_for_inference(self, frame):
-        """Process frame for inference if enabled."""
+        """Process frame for inference if enabled, timing each step."""
         if not self.inference_enabled or not self.inference_engine:
             return frame
-            
+
         try:
+            t0 = time.time()
+            print("[Profiler] Start process_frame_for_inference")
             # Run inference on the current frame
             results = self.inference_engine.infer(frame, self.conf, self.iou)
+            t1 = time.time()
+            print(f"[Profiler] inference_engine.infer: {t1 - t0:.4f}s")
+
             # Count objects in defined regions
             region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
+            t2 = time.time()
+            print(f"[Profiler] count_objects_in_regions: {t2 - t1:.4f}s")
+
             # Draw results on the frame
             frame = self.draw_inference_results(frame, region_counts, results)
+            t3 = time.time()
+            print(f"[Profiler] draw_inference_results: {t3 - t2:.4f}s")
+            print(f"[Profiler] Total process_frame_for_inference: {t3 - t0:.4f}s")
         except Exception as e:
             print(f"Inference processing failed: {e}")
-            
+
         return frame
         
     def next_frame(self):
@@ -522,14 +544,18 @@ class VideoRegionWidget(QWidget):
             self.update_frame_label()
 
     def draw_inference_results(self, frame, region_counts, results):
-        """Draw inference results on the video frame using supervision's BoxAnnotator."""
+        """Draw inference results on the video frame using supervision's BoxAnnotator, with timing for each step."""
+        t0 = time.time()
         if not results or len(results) == 0:
             return frame
-            
+
         try:
+            t1 = time.time()
             result = results[0]
             detections = sv.Detections.from_ultralytics(result)
-            
+            t2 = time.time()
+            print(f"[Profiler] sv.Detections.from_ultralytics: {t2 - t1:.4f}s")
+
             # Prepare labels for each detection
             class_names = []
             for cls in detections.class_id:
@@ -541,20 +567,21 @@ class VideoRegionWidget(QWidget):
                         class_names.append(str(idx))
                 else:
                     class_names.append(str(idx))
-                    
             confidences = detections.confidence
             labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-            
+            t3 = time.time()
+            print(f"[Profiler] Prepare labels: {t3 - t2:.4f}s")
+
             # Apply annotations
             label_annotator = sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER)
-            
+
             # Get selected annotators from parent if available
             selected_annotators = []
             if hasattr(self.parent, 'get_selected_annotators'):
                 selected_annotators = self.parent.get_selected_annotators()
             else:
                 selected_annotators = ["BoxAnnotator"]  # Default
-                
+
             annotators = []
             for key in selected_annotators:
                 if key == "BoxAnnotator":
@@ -571,24 +598,35 @@ class VideoRegionWidget(QWidget):
                     annotators.append(sv.MaskAnnotator())
                 elif key == "PolygonAnnotator":
                     annotators.append(sv.PolygonAnnotator())
-                    
+            t4 = time.time()
+            print(f"[Profiler] Prepare annotators: {t4 - t3:.4f}s")
+
             for annotator in annotators:
                 frame = annotator.annotate(scene=frame, detections=detections)
+            t5 = time.time()
+            print(f"[Profiler] Annotators annotate: {t5 - t4:.4f}s")
+
             frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
-            
+            t6 = time.time()
+            print(f"[Profiler] LabelAnnotator annotate: {t6 - t5:.4f}s")
+
         except Exception as e:
             print(f"Supervision annotate failed: {e}")
-        
+
         # Draw region polygons
+        t7 = time.time()
         region_polygons = getattr(self.parent, 'region_polygons', []) if self.parent else self.region_polygons
         for idx, poly in enumerate(region_polygons):
             if idx < len(region_counts):
                 pts = np.array(list(poly.exterior.coords), np.int32)
                 cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
                 centroid = poly.centroid
-                cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)), 
+                cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        
+        t8 = time.time()
+        print(f"[Profiler] Draw region polygons: {t8 - t7:.4f}s")
+        print(f"[Profiler] Total draw_inference_results: {t8 - t0:.4f}s")
+
         return frame
 
     def __del__(self):
@@ -604,26 +642,30 @@ class InferenceEngine:
         self.model = None
         self.class_names = []
         self.selected_classes = []
-        self._thread_safe_infer = None
 
     def load_model(self, model_path, task):
         """Load the YOLO model for inference."""
-        from ultralytics.utils import ThreadingLocked
-        self.model = YOLO(model_path, task=task)
-        self.class_names = list(self.model.names.values())
+        # Make cursor busy while loading
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         
-        # Decorate the infer method for thread safety
-        @ThreadingLocked()
-        def thread_safe_infer(frame, conf, iou, selected_classes):
-            return self.model.track(frame, 
-                                    persist=True, 
-                                    conf=conf, 
-                                    iou=iou, 
-                                    classes=selected_classes,
-                                    half=True,
-                                    retina_masks=task == "segment")
-        
-        self._thread_safe_infer = thread_safe_infer
+        try:
+            # Load the model using YOLO from ultralytics
+            self.model = YOLO(model_path, task=task)
+            # Store class names from the model
+            self.class_names = list(self.model.names.values())
+            
+            # Run a dummy inference to ensure the model is loaded correctly
+            self.model(np.zeros((640, 640, 3), dtype=np.uint8))
+            print("Model loaded and dummy inference executed successfully.")
+            
+        except Exception as e:
+            QMessageBox.critical(None, 
+                                 "Model Load Error",
+                                 f"Failed to load model from {model_path}: {e}")
+            
+        finally:
+            # Make cursor normal
+            QApplication.restoreOverrideCursor()
 
     def set_selected_classes(self, class_indices):
         """Set the selected classes for inference."""
@@ -631,10 +673,16 @@ class InferenceEngine:
 
     def infer(self, frame, conf, iou):
         """Run inference on a single frame with the current model."""
-        if self.model is None or self._thread_safe_infer is None:
+        if self.model is None:
             return None
-        # Use the thread-safe decorated function
-        return self._thread_safe_infer(frame, conf, iou, self.selected_classes)
+        
+        # Directly call model.track
+        return self.model.track(frame, 
+                                persist=True, 
+                                conf=conf, 
+                                iou=iou, 
+                                classes=self.selected_classes,
+                                half=True)
 
     def count_objects_in_regions(self, results, region_polygons):
         """Count objects in each region based on inference results."""
@@ -678,10 +726,12 @@ class Base(QDialog):
         
         self.task = None                            # Task parameter, modified in subclasses
         
-        self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
+        self.iou_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
+        
+        self.region_polygons = []                   # List of shapely Polygons for regions
         
         self.video_region_widget = None             # Initialized in setup_video_layout
         self.inference_engine = InferenceEngine()
@@ -709,11 +759,6 @@ class Base(QDialog):
         self.setup_inference_layout()
         # Setup Run/Cancel buttons
         self.setup_buttons_layout()
-        
-    def closeEvent(self, event):
-        """Ensure inference thread is stopped before closing the dialog."""
-        self.close_video_sink()
-        super().closeEvent(event)
 
     def setup_input_layout(self):
         """Setup the input video group with a file browser using QFormLayout."""
@@ -787,29 +832,53 @@ class Base(QDialog):
         form_layout.addRow(QLabel(""), btn_widget)
 
         # Parameter sliders (IoU, uncertainty, area)
-        self.iou_thresh_slider = QSlider(Qt.Horizontal)
-        self.iou_thresh_slider.setRange(0, 100)
-        self.iou_thresh_slider.setValue(int(self.iou_thresh * 100))
-        self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
-        form_layout.addRow(QLabel("IoU Threshold:"), self.iou_thresh_slider)
-
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
         self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
         self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
-        form_layout.addRow(QLabel("Uncertainty Threshold:"), self.uncertainty_thresh_slider)
+        self.uncertainty_thresh_label = QLabel(f"{self.uncertainty_thresh:.2f}")
+        uncertainty_layout = QHBoxLayout()
+        uncertainty_layout.addWidget(self.uncertainty_thresh_slider)
+        uncertainty_layout.addWidget(self.uncertainty_thresh_label)
+        uncertainty_widget = QWidget()
+        uncertainty_widget.setLayout(uncertainty_layout)
+        form_layout.addRow(QLabel("Uncertainty Threshold:"), uncertainty_widget)
+
+        self.iou_thresh_slider = QSlider(Qt.Horizontal)
+        self.iou_thresh_slider.setRange(0, 100)
+        self.iou_thresh_slider.setValue(int(self.iou_thresh * 100))
+        self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
+        self.iou_thresh_label = QLabel(f"{self.iou_thresh:.2f}")
+        iou_layout = QHBoxLayout()
+        iou_layout.addWidget(self.iou_thresh_slider)
+        iou_layout.addWidget(self.iou_thresh_label)
+        iou_widget = QWidget()
+        iou_widget.setLayout(iou_layout)
+        form_layout.addRow(QLabel("IoU Threshold:"), iou_widget)
 
         self.area_threshold_min_slider = QSlider(Qt.Horizontal)
         self.area_threshold_min_slider.setRange(0, 100)
         self.area_threshold_min_slider.setValue(int(self.area_thresh_min * 100))
         self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
-        form_layout.addRow(QLabel("Area Threshold Min:"), self.area_threshold_min_slider)
+        self.area_threshold_min_label = QLabel(f"{self.area_thresh_min:.2f}")
+        area_min_layout = QHBoxLayout()
+        area_min_layout.addWidget(self.area_threshold_min_slider)
+        area_min_layout.addWidget(self.area_threshold_min_label)
+        area_min_widget = QWidget()
+        area_min_widget.setLayout(area_min_layout)
+        form_layout.addRow(QLabel("Area Threshold Min:"), area_min_widget)
 
         self.area_threshold_max_slider = QSlider(Qt.Horizontal)
         self.area_threshold_max_slider.setRange(0, 100)
         self.area_threshold_max_slider.setValue(int(self.area_thresh_max * 100))
         self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
-        form_layout.addRow(QLabel("Area Threshold Max:"), self.area_threshold_max_slider)
+        self.area_threshold_max_label = QLabel(f"{self.area_thresh_max:.2f}")
+        area_max_layout = QHBoxLayout()
+        area_max_layout.addWidget(self.area_threshold_max_slider)
+        area_max_layout.addWidget(self.area_threshold_max_label)
+        area_max_widget = QWidget()
+        area_max_widget.setLayout(area_max_layout)
+        form_layout.addRow(QLabel("Area Threshold Max:"), area_max_widget)
 
         group_box.setLayout(form_layout)
         self.controls_layout.addWidget(group_box)
@@ -868,12 +937,10 @@ class Base(QDialog):
         
         self.enable_inference_btn = QPushButton("Enable Inference")
         self.enable_inference_btn.clicked.connect(self.enable_inference)
-        # self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         layout.addWidget(self.enable_inference_btn)
         
         self.disable_inference_btn = QPushButton("Disable Inference")
         self.disable_inference_btn.clicked.connect(self.disable_inference)
-        # self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         self.disable_inference_btn.setEnabled(False)           # Initially disabled
         layout.addWidget(self.disable_inference_btn)
         
@@ -967,14 +1034,7 @@ class Base(QDialog):
         self.uncertainty_thresh = value
         self.main_window.update_uncertainty_thresh(value)
         self.uncertainty_thresh_label.setText(f"{value:.2f}")
-        
-        # Update inference params
-        self.video_region_widget.set_inference_params(
-            self.inference_engine,
-            getattr(self, 'region_polygons', []),
-            self.uncertainty_thresh,
-            self.iou_thresh
-        )
+        self.update_inference_parameters()
 
     def update_iou_label(self, value):
         """Update IoU threshold and label"""
@@ -982,14 +1042,7 @@ class Base(QDialog):
         self.iou_thresh = value
         self.main_window.update_iou_thresh(value)
         self.iou_thresh_label.setText(f"{value:.2f}")
-        
-        # Update inference params
-        self.video_region_widget.set_inference_params(
-            self.inference_engine,
-            getattr(self, 'region_polygons', []),
-            self.uncertainty_thresh,
-            self.iou_thresh
-        )
+        self.update_inference_parameters()
 
     def update_area_label(self):
         """Handle changes to area threshold range slider"""
@@ -1001,12 +1054,15 @@ class Base(QDialog):
         self.area_thresh_min = min_val / 100.0
         self.area_thresh_max = max_val / 100.0
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
-        
-        # Update inference params
+        self.area_threshold_min_label.setText(f"{self.area_thresh_min:.2f}")
+        self.area_threshold_max_label.setText(f"{self.area_thresh_max:.2f}")
+        self.update_inference_parameters()
+
+    def update_inference_parameters(self):
+        """Update inference parameters in the video region widget."""
         self.video_region_widget.set_inference_params(
             self.inference_engine,
-            getattr(self, 'region_polygons', []),
+            self.region_polygons,
             self.uncertainty_thresh,
             self.iou_thresh
         )
@@ -1088,8 +1144,3 @@ class Base(QDialog):
         
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
-
-    def close_video_sink(self):
-        if self.video_sink is not None:
-            self.video_sink.__exit__(None, None, None)
-            self.video_sink = None
