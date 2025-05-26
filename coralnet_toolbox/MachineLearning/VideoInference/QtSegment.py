@@ -24,19 +24,26 @@ class Segment(Base):
         
     def setup_annotators_layout(self):
         """Setup the annotator selection layout using a QListWidget with checkable items."""
-        group_box = QGroupBox("Annotators to Use")
+        group_box = QGroupBox("Annotators")
         layout = QVBoxLayout()
 
         self.annotator_list_widget = QListWidget()
         # List of annotator types (except label annotator, which is always on)
         self.annotator_types = [
             ("BoxAnnotator", "Box Annotator"),
+            ("RoundBoxAnnotator", "Round Box Annotator"),
             ("BoxCornerAnnotator", "Box Corner Annotator"),
+            ("ColorAnnotator", "Color Annotator"),
+            ("CircleAnnotator", "Circle Annotator"),
             ("DotAnnotator", "Dot Annotator"),
+            ("TriangleAnnotator", "Triangle Annotator"),
+            ("EllipseAnnotator", "Ellipse Annotator"),
             ("HaloAnnotator", "Halo Annotator"),
             ("PercentageBarAnnotator", "Percentage Bar Annotator"),
             ("MaskAnnotator", "Mask Annotator"),
             ("PolygonAnnotator", "Polygon Annotator"),
+            ("BlurAnnotator", "Blur Annotator"),
+            ("PixelateAnnotator", "Pixelate Annotator"),
         ]
         for key, label in self.annotator_types:
             item = QListWidgetItem(label)

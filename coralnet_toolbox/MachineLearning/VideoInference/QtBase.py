@@ -81,6 +81,9 @@ class VideoRegionWidget(QWidget):
         self._setup_ui()
         self.disable_video_region()
 
+        # Just loaded video flag
+        self.is_first_frame = False  # Add this flag
+
     def _setup_ui(self):
         """Setup the user interface components."""
         self.layout = QVBoxLayout(self)
@@ -302,7 +305,7 @@ class VideoRegionWidget(QWidget):
         
         # Get widget dimensions (excluding control area)
         widget_w = self.width()
-        widget_h = self.height() - 50  # Reserve space for controls
+        widget_h = self.height() - 10  # Reserve space for controls
         
         # Calculate scaling and positioning (same logic as paintEvent)
         scale = min(widget_w / frame_w, widget_h / frame_h)
@@ -356,7 +359,7 @@ class VideoRegionWidget(QWidget):
             pixmap = QPixmap.fromImage(qimg)
             
             widget_width = self.width()
-            widget_height = self.height() - 50  # Reserve space for controls
+            widget_height = self.height() - 10  # Reserve space for controls
             
             # Scale while maintaining aspect ratio
             scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -433,7 +436,7 @@ class VideoRegionWidget(QWidget):
         if self.current_frame is not None:
             frame_h, frame_w = self.current_frame.shape[:2]
             widget_width = self.width()
-            widget_height = self.height() - 50  # Reserve space for controls
+            widget_height = self.height() - 10  # Reserve space for controls
             
             # Calculate scale to fit video while maintaining aspect ratio
             scale = min(widget_width / frame_w, widget_height / frame_h)
@@ -553,6 +556,7 @@ class VideoRegionWidget(QWidget):
             self.update()
             self.update_frame_label()
             self.enable_video_region()
+            self.is_first_frame = True  # Reset for new video
             t7 = __import__('time').time()
             print(f"[Profiler] load_video: cap_release={t1-t0:.4f}s, cleanup_sink={t2-t1:.4f}s, open_video={t3-t2:.4f}s, set_params={t4-t3:.4f}s, setup_output={t5-t4:.4f}s, seek0={t6-t5:.4f}s, update={t7-t6:.4f}s, total={t7-t0:.4f}s")
         except Exception as e:
@@ -561,7 +565,7 @@ class VideoRegionWidget(QWidget):
                                  f"Failed to load video: {e}")
         finally:
             QApplication.restoreOverrideCursor()
-        
+
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled, timing each step."""
         if not self.inference_enabled or not self.inference_engine:
@@ -571,7 +575,8 @@ class VideoRegionWidget(QWidget):
             t0 = time.time()
             print("[Profiler] Start process_frame_for_inference")
             # Run inference on the current frame
-            results = self.inference_engine.infer(frame, self.conf, self.iou)
+            results = self.inference_engine.infer(frame, self.conf, self.iou, self.is_first_frame)
+            self.is_first_frame = False  # Reset for next frame
             t1 = time.time()
             print(f"[Profiler] inference_engine.infer: {t1 - t0:.4f}s")
 
@@ -660,10 +665,20 @@ class VideoRegionWidget(QWidget):
             for key in selected_annotators:
                 if key == "BoxAnnotator":
                     annotators.append(sv.BoxAnnotator())
+                elif key == "RoundBoxAnnotator":
+                    annotators.append(sv.RoundBoxAnnotator())
                 elif key == "BoxCornerAnnotator":
                     annotators.append(sv.BoxCornerAnnotator())
+                elif key == "ColorAnnotator":
+                    annotators.append(sv.ColorAnnotator())
+                elif key == "CircleAnnotator":
+                    annotators.append(sv.CircleAnnotator())
                 elif key == "DotAnnotator":
                     annotators.append(sv.DotAnnotator())
+                elif key == "TriangleAnnotator":
+                    annotators.append(sv.TriangleAnnotator())
+                elif key == "EllipseAnnotator":
+                    annotators.append(sv.EllipseAnnotator())
                 elif key == "HaloAnnotator":
                     annotators.append(sv.HaloAnnotator())
                 elif key == "PercentageBarAnnotator":
@@ -672,6 +687,11 @@ class VideoRegionWidget(QWidget):
                     annotators.append(sv.MaskAnnotator())
                 elif key == "PolygonAnnotator":
                     annotators.append(sv.PolygonAnnotator())
+                elif key == "BlurAnnotator":
+                    annotators.append(sv.BlurAnnotator())
+                elif key == "PixelateAnnotator":
+                    annotators.append(sv.PixelateAnnotator())
+                    
             t4 = time.time()
             print(f"[Profiler] Prepare annotators: {t4 - t3:.4f}s")
 
@@ -713,6 +733,7 @@ class InferenceEngine:
     """Handles model loading, inference, and class filtering."""
     def __init__(self):
         self.model = None
+        self.task = None
         self.class_names = []
         self.selected_classes = []
 
@@ -722,8 +743,10 @@ class InferenceEngine:
         QApplication.setOverrideCursor(Qt.WaitCursor)
         
         try:
+            # Set the task
+            self.task = task
             # Load the model using YOLO from ultralytics
-            self.model = YOLO(model_path, task=task)
+            self.model = YOLO(model_path, task=self.task)
             # Store class names from the model
             self.class_names = list(self.model.names.values())
             
@@ -732,13 +755,13 @@ class InferenceEngine:
             
             QMessageBox.information(None,
                                     "Model Loaded",
-                                    f"Model loaded successfully.")
+                                    "Model loaded successfully.")
                         
         except Exception as e:
             print(f"Error loading model: {e}")
             QMessageBox.critical(None, 
                                  "Model Load Error",
-                                 f"Failed to load model (see console for details)")
+                                 "Failed to load model (see console for details)")
             
         finally:
             # Make cursor normal
@@ -748,18 +771,31 @@ class InferenceEngine:
         """Set the selected classes for inference."""
         self.selected_classes = class_indices
 
-    def infer(self, frame, conf, iou):
+    def infer(self, frame, conf, iou, is_first_frame=False):
         """Run inference on a single frame with the current model."""
         if self.model is None:
             return None
         
-        # Directly call model.track
-        return self.model.track(frame, 
-                                persist=True, 
-                                conf=conf, 
-                                iou=iou, 
-                                classes=self.selected_classes,
-                                half=True)
+        if is_first_frame:
+            self.reset_tracker()
+        
+        if self.task == 'classify':
+            # For classification, we don't track objects
+            results = self.model(frame, 
+                                 conf=conf, 
+                                 iou=iou, 
+                                 classes=self.selected_classes,
+                                 half=True)
+        else:
+            # For detection or segmentation, we track objects
+            results = self.model.track(frame, 
+                                       persist=not is_first_frame, 
+                                       conf=conf, 
+                                       iou=iou, 
+                                       classes=self.selected_classes,
+                                       half=True)
+        
+        return results
 
     def count_objects_in_regions(self, results, region_polygons):
         """Count objects in each region based on inference results."""
@@ -781,6 +817,11 @@ class InferenceEngine:
                         region_counts[idx] += 1
                         
         return region_counts
+    
+    def reset_tracker(self):
+        """Reset the tracker state."""
+        if self.model and hasattr(self.model, "tracker"):
+            self.model.tracker = None
 
             
 class Base(QDialog):

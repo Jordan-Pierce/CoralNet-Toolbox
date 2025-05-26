@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
         # Video Inference Classification
         self.ml_classify_video_inference_action = QAction("Classify", self)
         self.ml_classify_video_inference_action.triggered.connect(self.open_classify_video_inference_dialog)
-        self.ml_video_inference_menu.addAction(self.ml_classify_video_inference_action)
+        # self.ml_video_inference_menu.addAction(self.ml_classify_video_inference_action)  TODO
         # Video Inference Detection
         self.ml_detect_video_inference_action = QAction("Detect", self)
         self.ml_detect_video_inference_action.triggered.connect(self.open_detect_video_inference_dialog)

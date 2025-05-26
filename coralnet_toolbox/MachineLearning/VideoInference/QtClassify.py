@@ -73,7 +73,7 @@ class Classify(Base):
         
     def setup_annotators_layout(self):
         """Setup the annotator selection layout using a QListWidget with checkable items."""
-        group_box = QGroupBox("Annotators to Use")
+        group_box = QGroupBox("Annotators")
         layout = QVBoxLayout()
 
         self.annotator_list_widget = QListWidget()
