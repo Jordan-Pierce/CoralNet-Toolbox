@@ -219,6 +219,9 @@ class VideoRegionWidget(QWidget):
             self.pause_btn.setEnabled(False)
             self.seek_slider.setValue(0)
             self.update_frame_label()
+        
+        # Clear regions and reset state
+        self.clear_regions()
 
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
@@ -282,7 +285,7 @@ class VideoRegionWidget(QWidget):
         if self.undo_stack:
             self.redo_stack.append(list(self.regions))
             self.regions = self.undo_stack.pop()
-            self._update_region_polygons()
+            self.update_region_polygons()
             self.update()
 
     def redo_region(self):
@@ -290,10 +293,19 @@ class VideoRegionWidget(QWidget):
         if self.redo_stack:
             self.undo_stack.append(list(self.regions))
             self.regions = self.redo_stack.pop()
-            self._update_region_polygons()
+            self.update_region_polygons()
             self.update()
+            
+    def clear_regions(self):
+        """Clear all regions and reset the region polygons."""
+        self.regions.clear()
+        self.update_region_polygons()
+        self.update()
         
-    def _update_region_polygons(self):
+        # Redraw the current frame without region overlays
+        self.seek(self.current_frame_number)
+        
+    def update_region_polygons(self):
         """Update region polygons (QRects to shapely Polygons), mapping from widget to video frame coordinates."""
         self.region_polygons = []
         if self.current_frame is None or not self.regions:
@@ -402,11 +414,11 @@ class VideoRegionWidget(QWidget):
                 if self.rect_start and self.rect_end and self.rect_start != self.rect_end:
                     rect = self._make_rect(self.rect_start, self.rect_end)
                     
-                    # Allow regions to extend outside video area - clamping happens in _update_region_polygons
+                    # Allow regions to extend outside video area - clamping happens in update_region_polygons
                     self.undo_stack.append(list(self.regions))
                     self.redo_stack.clear()
                     self.regions.append(rect)
-                    self._update_region_polygons()
+                    self.update_region_polygons()
                     
                 self.rect_start = None
                 self.rect_end = None
@@ -538,6 +550,11 @@ class VideoRegionWidget(QWidget):
             self.video_path = video_path
             self.output_dir = output_dir
             
+            # Clear regions and region polygons when loading a new video
+            self.regions.clear()
+            self.region_polygons.clear()
+            self.update()
+            
             # Setup output video if output directory is provided
             if output_dir and os.path.exists(output_dir):
                 self._setup_video_output(video_path, output_dir)
@@ -616,7 +633,8 @@ class VideoRegionWidget(QWidget):
         try:
             result = results[0]
             detections = sv.Detections.from_ultralytics(result)
-            # Prepare labels for each detection
+            
+            # Prepare labels for each detection, including tracker ID if available
             class_names = []
             for cls in detections.class_id:
                 idx = int(cls)
@@ -624,9 +642,23 @@ class VideoRegionWidget(QWidget):
                     class_names.append(self.parent.inference_engine.class_names[idx])
                 else:
                     class_names.append(str(idx))
+                    
+            # Get confidences for each detection
             confidences = detections.confidence
-            labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
+            
+            # Try to get tracker IDs if present
+            tracker_ids = detections.tracker_id
+            if tracker_ids is not None:
+                labels = [
+                    f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
+                    for name, conf, tid in zip(class_names, confidences, tracker_ids)
+                ]
+            else:
+                labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
+                
+            # Create a LabelAnnotator for text labels
             label_annotator = sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER)
+            
             # Get selected annotators 
             selected_annotators = self.parent.get_selected_annotators()
             annotators = []
@@ -669,11 +701,31 @@ class VideoRegionWidget(QWidget):
         # Draw region polygons
         for idx, poly in enumerate(self.region_polygons):
             if idx < len(region_counts):
+                # Get the polygon points
                 pts = np.array(list(poly.exterior.coords), np.int32)
-                cv2.polylines(frame, [pts], isClosed=True, color=(255, 0, 0), thickness=2)
-                centroid = poly.centroid
-                cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                # Find the top-left corner of the polygon for text placement
+                min_x, min_y = np.min(pts[:, 0]), np.min(pts[:, 1])
+                
+                # Draw the polygon on the frame
+                cv2.polylines(frame, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
+                
+                # Calculate y position for text, ensuring it stays within the frame
+                text_y = int(min_y) + 90  # Lowered further on the y-axis
+                if text_y > frame.shape[0] - 10:
+                    text_y = frame.shape[0] - 10
+                    
+                # Place text at the adjusted position
+                cv2.putText(
+                    img=frame,
+                    text=str(region_counts[idx]),
+                    org=(int(min_x), text_y),
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=3,
+                    color=(0, 0, 0),
+                    thickness=3
+                )
+                
         return frame
 
     def __del__(self):
@@ -1187,9 +1239,7 @@ class Base(QDialog):
         
     def clear_regions(self):
         """Clear all regions from the video region widget and update display."""
-        self.video_region_widget.regions.clear()
-        self.video_region_widget._update_region_polygons()
-        self.video_region_widget.update()
+        self.video_region_widget.clean_regions()
 
     def enable_inference(self):
         """Enable inference on the video region."""
