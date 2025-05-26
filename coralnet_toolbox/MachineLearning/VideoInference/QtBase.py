@@ -382,6 +382,10 @@ class VideoRegionWidget(QWidget):
 
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
+        # Pause video playback if currently playing
+        if self.is_playing:
+            self.pause_video()
+            
         if event.button() == Qt.LeftButton:
             # Use raw mouse coordinates (no offset adjustment needed)
             pos = event.pos()
@@ -513,41 +517,50 @@ class VideoRegionWidget(QWidget):
         
     def load_video(self, video_path, output_dir=None):
         """Load a video file and prepare for playback and region drawing, with ad-hoc profiling."""
+
         t0 = __import__('time').time()
-        # Clean up existing video capture
-        if self.cap:
-            self.cap.release()
-        t1 = __import__('time').time()
-        # Clean up existing video sink
-        self._cleanup_video_sink()
-        t2 = __import__('time').time()
-        # Load new video
-        self.cap = cv2.VideoCapture(video_path)
-        if not self.cap.isOpened():
-            raise Exception(f"Could not open video at {video_path}")
-        t3 = __import__('time').time()
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
-        self.seek_slider.setMaximum(self.total_frames - 1)
-        self.current_frame_number = 0
-        self.is_playing = False
-        self.video_path = video_path
-        self.output_dir = output_dir
-        t4 = __import__('time').time()
-        # Setup output video if output directory is provided
-        if output_dir and os.path.exists(output_dir):
-            self._setup_video_output(video_path, output_dir)
-        else:
-            self.should_write_video = False
-        t5 = __import__('time').time()
-        # Load first frame
-        self.seek(0)
-        t6 = __import__('time').time()
-        self.update()
-        self.update_frame_label()
-        self.enable_video_region()
-        t7 = __import__('time').time()
-        print(f"[Profiler] load_video: cap_release={t1-t0:.4f}s, cleanup_sink={t2-t1:.4f}s, open_video={t3-t2:.4f}s, set_params={t4-t3:.4f}s, setup_output={t5-t4:.4f}s, seek0={t6-t5:.4f}s, update={t7-t6:.4f}s, total={t7-t0:.4f}s")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Clean up existing video capture
+            if self.cap:
+                self.cap.release()
+            t1 = __import__('time').time()
+            # Clean up existing video sink
+            self._cleanup_video_sink()
+            t2 = __import__('time').time()
+            # Load new video
+            self.cap = cv2.VideoCapture(video_path)
+            if not self.cap.isOpened():
+                raise Exception(f"Could not open video at {video_path}")
+            t3 = __import__('time').time()
+            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
+            self.seek_slider.setMaximum(self.total_frames - 1)
+            self.current_frame_number = 0
+            self.is_playing = False
+            self.video_path = video_path
+            self.output_dir = output_dir
+            t4 = __import__('time').time()
+            # Setup output video if output directory is provided
+            if output_dir and os.path.exists(output_dir):
+                self._setup_video_output(video_path, output_dir)
+            else:
+                self.should_write_video = False
+            t5 = __import__('time').time()
+            # Load first frame
+            self.seek(0)
+            t6 = __import__('time').time()
+            self.update()
+            self.update_frame_label()
+            self.enable_video_region()
+            t7 = __import__('time').time()
+            print(f"[Profiler] load_video: cap_release={t1-t0:.4f}s, cleanup_sink={t2-t1:.4f}s, open_video={t3-t2:.4f}s, set_params={t4-t3:.4f}s, setup_output={t5-t4:.4f}s, seek0={t6-t5:.4f}s, update={t7-t6:.4f}s, total={t7-t0:.4f}s")
+        except Exception as e:
+            QMessageBox.critical(self, 
+                                 "Error", 
+                                 f"Failed to load video: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
         
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled, timing each step."""
@@ -716,12 +729,16 @@ class InferenceEngine:
             
             # Run a dummy inference to ensure the model is loaded correctly
             self.model(np.zeros((640, 640, 3), dtype=np.uint8))
-            print("Model loaded and dummy inference executed successfully.")
             
+            QMessageBox.information(None,
+                                    "Model Loaded",
+                                    f"Model loaded successfully.")
+                        
         except Exception as e:
+            print(f"Error loading model: {e}")
             QMessageBox.critical(None, 
                                  "Model Load Error",
-                                 f"Failed to load model from {model_path}: {e}")
+                                 f"Failed to load model (see console for details)")
             
         finally:
             # Make cursor normal
@@ -953,31 +970,44 @@ class Base(QDialog):
         self.video_layout.addWidget(group_box)
 
     def setup_regions_layout(self):
-        """Setup the regions control group with a clear button."""
+        """Setup the regions control group with Show/Hide, clear, undo, redo buttons."""
         group_box = QGroupBox("Regions")
         layout = QHBoxLayout()
 
-        #  Show/Hide Regions button (leftmost)
-        self.region_vis_btn = QPushButton("Hide Regions")
-        self.region_vis_btn.setCheckable(True)
-        self.region_vis_btn.setChecked(True)
-        
-        def toggle_region_btn():
-            visible = self.region_vis_btn.isChecked()
-            self.video_region_widget.set_region_visibility(visible)
-            self.region_vis_btn.setText("Hide Regions" if visible else "Show Regions")
-            
-        self.region_vis_btn.clicked.connect(toggle_region_btn)
-        layout.addWidget(self.region_vis_btn)
+        # Show/Hide Regions as two separate buttons
+        self.show_regions_btn = QPushButton("Show Regions")
+        self.hide_regions_btn = QPushButton("Hide Regions")
+        self.show_regions_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.hide_regions_btn.setFocusPolicy(Qt.NoFocus)  
+        self.show_regions_btn.setEnabled(False)           # Regions are visible by default
+        self.hide_regions_btn.setEnabled(True)
+
+        def show_regions():
+            self.video_region_widget.set_region_visibility(True)
+            self.show_regions_btn.setEnabled(False)
+            self.hide_regions_btn.setEnabled(True)
+
+        def hide_regions():
+            self.video_region_widget.set_region_visibility(False)
+            self.show_regions_btn.setEnabled(True)
+            self.hide_regions_btn.setEnabled(False)
+
+        self.show_regions_btn.clicked.connect(show_regions)
+        self.hide_regions_btn.clicked.connect(hide_regions)
+        layout.addWidget(self.show_regions_btn)
+        layout.addWidget(self.hide_regions_btn)
 
         clear_btn = QPushButton("Clear Regions")
+        clear_btn.setFocusPolicy(Qt.NoFocus)
         clear_btn.clicked.connect(self.clear_regions)
         layout.addWidget(clear_btn)
 
         self.undo_btn = QPushButton("Undo")
         self.undo_btn.clicked.connect(self.video_region_widget.undo_region)
+        self.undo_btn.setFocusPolicy(Qt.NoFocus)
         layout.addWidget(self.undo_btn)
         self.redo_btn = QPushButton("Redo")
+        self.redo_btn.setFocusPolicy(Qt.NoFocus)
         self.redo_btn.clicked.connect(self.video_region_widget.redo_region)
         layout.addWidget(self.redo_btn)
 
@@ -995,10 +1025,12 @@ class Base(QDialog):
         
         self.enable_inference_btn = QPushButton("Enable Inference")
         self.enable_inference_btn.clicked.connect(self.enable_inference)
+        self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         layout.addWidget(self.enable_inference_btn)
         
         self.disable_inference_btn = QPushButton("Disable Inference")
         self.disable_inference_btn.clicked.connect(self.disable_inference)
+        self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
         self.disable_inference_btn.setEnabled(False)           # Initially disabled
         layout.addWidget(self.disable_inference_btn)
         
