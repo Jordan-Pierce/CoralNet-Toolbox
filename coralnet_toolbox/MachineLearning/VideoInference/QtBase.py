@@ -69,6 +69,9 @@ class VideoRegionWidget(QWidget):
         self.region_polygons = []
         self.conf = 0.3
         self.iou = 0.2
+        
+        # Add tracker for ByteTrack
+        self.tracker = sv.ByteTrack()
 
         # Video output handling - simplified and fixed
         self.video_sink = None
@@ -79,9 +82,6 @@ class VideoRegionWidget(QWidget):
 
         self._setup_ui()
         self.disable_video_region()
-
-        # Just loaded video flag
-        self.is_first_frame = False  # Add this flag
 
     def _setup_ui(self):
         """Setup the user interface components."""
@@ -538,7 +538,7 @@ class VideoRegionWidget(QWidget):
             self.cap = cv2.VideoCapture(video_path)
             
             if not self.cap.isOpened():
-                QMessageBox.critical(self, 
+                QMessageBox.critical(self.parent, 
                                      "Error", 
                                      f"Failed to open video file: {video_path}")
             
@@ -568,10 +568,10 @@ class VideoRegionWidget(QWidget):
             self.enable_video_region()
             
             # Reset for new video
-            self.is_first_frame = True  
+            self.reset_tracker()
             
         except Exception as e:
-            QMessageBox.critical(self, 
+            QMessageBox.critical(self.parent, 
                                  "Error", 
                                  f"Failed to load video: {e}")
         finally:
@@ -583,9 +583,7 @@ class VideoRegionWidget(QWidget):
             return frame
         try:
             # Run inference on the current frame
-            results = self.inference_engine.infer(frame, self.conf, self.iou, self.is_first_frame)
-            # Reset for next frame
-            self.is_first_frame = False
+            results = self.inference_engine.infer(frame, self.conf, self.iou)
             # Count objects in defined regions
             region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
             # Draw results on the frame
@@ -632,22 +630,22 @@ class VideoRegionWidget(QWidget):
             return frame
         try:
             result = results[0]
+            # Convert results to Supervision Detections
             detections = sv.Detections.from_ultralytics(result)
+            # Update tracker with detections
+            tracker_detections = self.tracker.update_with_detections(detections)
             
-            # Prepare labels for each detection, including tracker ID if available
-            class_names = []
-            for cls in detections.class_id:
-                idx = int(cls)
-                if idx < len(self.parent.inference_engine.class_names):
-                    class_names.append(self.parent.inference_engine.class_names[idx])
-                else:
-                    class_names.append(str(idx))
-                    
+            # If no detections after tracking, use original detections
+            if tracker_detections:
+                detections = tracker_detections
+            
+            # Get the class names from detections
+            class_names = detections.data.get('class_name', [])
             # Get confidences for each detection
             confidences = detections.confidence
-            
             # Try to get tracker IDs if present
             tracker_ids = detections.tracker_id
+            
             if tracker_ids is not None:
                 labels = [
                     f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
@@ -727,6 +725,14 @@ class VideoRegionWidget(QWidget):
                 )
                 
         return frame
+    
+    def reset_tracker(self):
+        """Reset the ByteTrack tracker."""
+        if self.tracker:
+            self.tracker.reset()
+            print("Tracker reset")
+        else:
+            print("No tracker initialized")
 
     def __del__(self):
         """Destructor to ensure proper cleanup."""
@@ -737,7 +743,9 @@ class VideoRegionWidget(QWidget):
 
 class InferenceEngine:
     """Handles model loading, inference, and class filtering."""
-    def __init__(self):
+    def __init__(self, parent=None):
+        self.parent = parent
+        
         self.model = None
         self.task = None
         self.class_names = []
@@ -759,13 +767,13 @@ class InferenceEngine:
             # Run a dummy inference to ensure the model is loaded correctly
             self.model(np.zeros((640, 640, 3), dtype=np.uint8))
             
-            QMessageBox.information(None,
+            QMessageBox.information(self.parent,
                                     "Model Loaded",
                                     "Model loaded successfully.")
                         
         except Exception as e:
             print(f"Error loading model: {e}")
-            QMessageBox.critical(None, 
+            QMessageBox.critical(self.parent, 
                                  "Model Load Error",
                                  "Failed to load model (see console for details)")
             
@@ -777,29 +785,17 @@ class InferenceEngine:
         """Set the selected classes for inference."""
         self.selected_classes = class_indices
 
-    def infer(self, frame, conf, iou, is_first_frame=False):
+    def infer(self, frame, conf, iou):
         """Run inference on a single frame with the current model."""
         if self.model is None:
             return None
         
-        if is_first_frame:
-            self.reset_tracker()
-        
-        if self.task == 'classify':
-            # For classification, we don't track objects
-            results = self.model(frame, 
-                                 conf=conf, 
-                                 iou=iou, 
-                                 classes=self.selected_classes,
-                                 half=True)
-        else:
-            # For detection or segmentation, we track objects
-            results = self.model.track(frame, 
-                                       persist=not is_first_frame, 
-                                       conf=conf, 
-                                       iou=iou, 
-                                       classes=self.selected_classes,
-                                       half=True)
+        # For classification, we don't track objects
+        results = self.model(frame, 
+                             conf=conf, 
+                             iou=iou, 
+                             classes=self.selected_classes,
+                             half=True)
         
         return results
 
@@ -812,10 +808,13 @@ class InferenceEngine:
         region_counts = [0 for _ in region_polygons]
         
         # Check if results are valid and have boxes
-        if results and hasattr(results[0].boxes, 'id') and results[0].boxes.id is not None:
-            # Iterate through the boxes and count them in regions
+        if results:
+            # Get the boxes and classes from the results
             boxes = results[0].boxes.xyxy.cpu().numpy()
             clss = results[0].boxes.cls.cpu().numpy()
+            
+            # Iterate through the boxes and count them in regions
+            # TODO modify if entire box, or just center point in region
             for box, cls in zip(boxes, clss):
                 center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
                 for idx, poly in enumerate(region_polygons):
@@ -823,11 +822,6 @@ class InferenceEngine:
                         region_counts[idx] += 1
                         
         return region_counts
-    
-    def reset_tracker(self):
-        """Reset the tracker state."""
-        if self.model and hasattr(self.model, "tracker"):
-            self.model.tracker = None
 
             
 class Base(QDialog):
@@ -856,7 +850,7 @@ class Base(QDialog):
         self.area_thresh_max = 0.40
                 
         self.video_region_widget = None             # Initialized in setup_video_layout
-        self.inference_engine = InferenceEngine()
+        self.inference_engine = InferenceEngine(self)
 
         # Main layout
         self.layout = QHBoxLayout(self)
@@ -1239,7 +1233,7 @@ class Base(QDialog):
         
     def clear_regions(self):
         """Clear all regions from the video region widget and update display."""
-        self.video_region_widget.clean_regions()
+        self.video_region_widget.clear_regions()
 
     def enable_inference(self):
         """Enable inference on the video region."""
