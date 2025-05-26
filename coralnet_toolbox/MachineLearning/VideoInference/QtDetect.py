@@ -1,3 +1,7 @@
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QVBoxLayout, QGroupBox, QCheckBox, QFormLayout, 
+                             QLabel, QSlider, QListWidget, QListWidgetItem)
+
 from coralnet_toolbox.MachineLearning.VideoInference.QtBase import Base
 
 
@@ -17,4 +21,33 @@ class Detect(Base):
     def showEvent(self, event):
         self.showMaximized()
         super().showEvent(event)
+
+    def setup_annotators_layout(self):
+        """Setup the annotator selection layout using a QListWidget with checkable items."""
+        group_box = QGroupBox("Annotators to Use")
+        layout = QVBoxLayout()
+
+        self.annotator_list_widget = QListWidget()
+        self.annotator_types = [
+            ("BoxAnnotator", "Box Annotator"),
+            ("BoxCornerAnnotator", "Box Corner Annotator"),
+            ("DotAnnotator", "Dot Annotator"),
+            ("PercentageBarAnnotator", "Percentage Bar Annotator"),
+        ]
+        for key, label in self.annotator_types:
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, key)
+            self.annotator_list_widget.addItem(item)
+        layout.addWidget(self.annotator_list_widget)
+
+        group_box.setLayout(layout)
+        self.controls_layout.addWidget(group_box)
+        
+    def initialize_thresholds(self):
+        """Initialize all threshold sliders with current values."""
+        self.initialize_uncertainty_threshold()
+        self.initialize_iou_threshold()
+        self.initialize_area_threshold()
 

@@ -1,4 +1,6 @@
-from PyQt5.QtWidgets import QGroupBox, QVBoxLayout, QCheckBox
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (QVBoxLayout, QGroupBox, QCheckBox, QFormLayout, 
+                             QLabel, QSlider, QListWidget, QListWidgetItem)
 
 from coralnet_toolbox.MachineLearning.VideoInference.QtBase import Base
 
@@ -21,15 +23,13 @@ class Segment(Base):
         super().showEvent(event)
         
     def setup_annotators_layout(self):
-        """Setup the annotator selection layout."""
+        """Setup the annotator selection layout using a QListWidget with checkable items."""
         group_box = QGroupBox("Annotators to Use")
         layout = QVBoxLayout()
-        
-        # Store checkboxes for later access
-        self.annotator_checkboxes = {}
-        
+
+        self.annotator_list_widget = QListWidget()
         # List of annotator types (except label annotator, which is always on)
-        annotator_types = [
+        self.annotator_types = [
             ("BoxAnnotator", "Box Annotator"),
             ("BoxCornerAnnotator", "Box Corner Annotator"),
             ("DotAnnotator", "Dot Annotator"),
@@ -38,10 +38,19 @@ class Segment(Base):
             ("MaskAnnotator", "Mask Annotator"),
             ("PolygonAnnotator", "Polygon Annotator"),
         ]
-        for key, label in annotator_types:
-            cb = QCheckBox(label)
-            cb.setChecked(False)
-            layout.addWidget(cb)
-            self.annotator_checkboxes[key] = cb
+        for key, label in self.annotator_types:
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, key)
+            self.annotator_list_widget.addItem(item)
+        layout.addWidget(self.annotator_list_widget)
+
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
+        
+    def initialize_thresholds(self):
+        """Initialize all threshold sliders with current values."""
+        self.initialize_uncertainty_threshold()
+        self.initialize_iou_threshold()
+        self.initialize_area_threshold()

@@ -1,5 +1,7 @@
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QVBoxLayout, QGroupBox, QCheckBox, QFormLayout, QLabel, QSlider
+from PyQt5.QtWidgets import (QVBoxLayout, QGroupBox, QCheckBox, QFormLayout, QAbstractButton,
+                             QLabel, QSlider, QListWidget, QListWidgetItem, QHBoxLayout, QLineEdit, 
+                             QPushButton, QAbstractItemView)
 
 from coralnet_toolbox.MachineLearning.VideoInference.QtBase import Base
 
@@ -21,44 +23,64 @@ class Classify(Base):
         self.showMaximized()
         super().showEvent(event)
         
-    def setup_parameters_layout(self):
-        """
-        Setup parameter control section in a group box.
-        """
-        group_box = QGroupBox("Model Parameters")
-        layout = QFormLayout()
+    def setup_model_layout(self):
+        """Setup the model and parameters layout using a QFormLayout within a group box."""
+        group_box = QGroupBox("Model and Parameters")
+        form_layout = QFormLayout()
 
-        # Confidence threshold controls (instead of uncertainty)
+        # Model path input
+        model_path_layout = QHBoxLayout()
+        self.model_edit = QLineEdit()
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self.browse_model)
+        model_path_layout.addWidget(self.model_edit)
+        model_path_layout.addWidget(browse_btn)
+        form_layout.addRow(QLabel("Model Path:"), model_path_layout)
+
+        # Class filter
+        self.class_filter_widget = QListWidget()
+        self.class_filter_widget.setSelectionMode(QAbstractItemView.MultiSelection)
+        class_filter_layout = QVBoxLayout()
+        class_filter_layout.addWidget(self.class_filter_widget)
+        btn_layout = QHBoxLayout()
+        self.select_all_btn = QPushButton("Select All")
+        self.deselect_all_btn = QPushButton("Deselect All")
+        self.select_all_btn.clicked.connect(self.select_all_classes)
+        self.deselect_all_btn.clicked.connect(self.deselect_all_classes)
+        btn_layout.addWidget(self.select_all_btn)
+        btn_layout.addWidget(self.deselect_all_btn)
+        class_filter_layout.addLayout(btn_layout)
+        form_layout.addRow(QLabel("Class Filter:"), class_filter_layout)
+
+        # Uncertainty threshold slider
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
         self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
-        self.uncertainty_thresh_slider.setTickPosition(QSlider.TicksBelow)
-        self.uncertainty_thresh_slider.setTickInterval(10)
         self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
-        self.uncertainty_thresh_label = QLabel(f"{self.uncertainty_thresh:.2f}")
-        layout.addRow("Uncertainty Threshold", self.uncertainty_thresh_slider)
-        layout.addRow("", self.uncertainty_thresh_label)
-        
-        group_box.setLayout(layout)
+        form_layout.addRow(QLabel("Uncertainty Threshold:"), self.uncertainty_thresh_slider)
+
+        group_box.setLayout(form_layout)
         self.controls_layout.addWidget(group_box)
         
     def setup_annotators_layout(self):
-        """Setup the annotator selection layout."""
+        """Setup the annotator selection layout using a QListWidget with checkable items."""
         group_box = QGroupBox("Annotators to Use")
         layout = QVBoxLayout()
-        
-        # Store checkboxes for later access
-        self.annotator_checkboxes = {}
-        
+
+        self.annotator_list_widget = QListWidget()
         # List of annotator types (except label annotator, which is always on)
-        annotator_types = [
+        self.annotator_types = [
             ("BoxAnnotator", "Box Annotator"),
+            ("PercentageBarAnnotator", "Percentage Bar Annotator"),
         ]
-        for key, label in annotator_types:
-            cb = QCheckBox(label)
-            cb.setChecked(False)
-            layout.addWidget(cb)
-            self.annotator_checkboxes[key] = cb
+        for key, label in self.annotator_types:
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, key)
+            self.annotator_list_widget.addItem(item)
+        layout.addWidget(self.annotator_list_widget)
+
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
         
