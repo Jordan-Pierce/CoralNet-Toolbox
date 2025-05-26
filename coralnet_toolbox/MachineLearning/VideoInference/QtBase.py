@@ -1,5 +1,4 @@
 import os 
-import time
 from datetime import datetime
 
 import cv2
@@ -477,21 +476,15 @@ class VideoRegionWidget(QWidget):
             self._setup_video_output(self.video_path, self.output_dir)
 
     def _write_frame_to_sink(self, frame):
-        """Write a frame to the video sink if enabled, with ad-hoc profiling."""
+        """Write a frame to the video sink if enabled."""
         if not self.should_write_video or self.video_sink is None:
             return
-
-        t0 = time.time()
         try:
             # Ensure frame matches expected output size
             expected_shape = (self.video_sink.video_info.height, self.video_sink.video_info.width)
-            t1 = time.time()
             if frame.shape[:2] != expected_shape:
                 frame = cv2.resize(frame, (expected_shape[1], expected_shape[0]))
-            t2 = time.time()
             self.video_sink.write_frame(frame)
-            t3 = time.time()
-            print(f"[Profiler] _write_frame_to_sink: shape_check={t1-t0:.4f}s, resize={t2-t1:.4f}s, write={t3-t2:.4f}s, total={t3-t0:.4f}s")
         except Exception as e:
             print(f"Error writing frame to video sink: {e}")
             
@@ -519,23 +512,24 @@ class VideoRegionWidget(QWidget):
         print("Video recording ended - ready for new recording on next play")
         
     def load_video(self, video_path, output_dir=None):
-        """Load a video file and prepare for playback and region drawing, with ad-hoc profiling."""
-
-        t0 = __import__('time').time()
+        """Load a video file and prepare for playback and region drawing."""
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             # Clean up existing video capture
             if self.cap:
                 self.cap.release()
-            t1 = __import__('time').time()
+                
             # Clean up existing video sink
             self._cleanup_video_sink()
-            t2 = __import__('time').time()
+            
             # Load new video
             self.cap = cv2.VideoCapture(video_path)
+            
             if not self.cap.isOpened():
-                raise Exception(f"Could not open video at {video_path}")
-            t3 = __import__('time').time()
+                QMessageBox.critical(self, 
+                                     "Error", 
+                                     f"Failed to open video file: {video_path}")
+            
             self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
             self.seek_slider.setMaximum(self.total_frames - 1)
@@ -543,22 +537,22 @@ class VideoRegionWidget(QWidget):
             self.is_playing = False
             self.video_path = video_path
             self.output_dir = output_dir
-            t4 = __import__('time').time()
+            
             # Setup output video if output directory is provided
             if output_dir and os.path.exists(output_dir):
                 self._setup_video_output(video_path, output_dir)
             else:
                 self.should_write_video = False
-            t5 = __import__('time').time()
+                
             # Load first frame
             self.seek(0)
-            t6 = __import__('time').time()
             self.update()
             self.update_frame_label()
             self.enable_video_region()
-            self.is_first_frame = True  # Reset for new video
-            t7 = __import__('time').time()
-            print(f"[Profiler] load_video: cap_release={t1-t0:.4f}s, cleanup_sink={t2-t1:.4f}s, open_video={t3-t2:.4f}s, set_params={t4-t3:.4f}s, setup_output={t5-t4:.4f}s, seek0={t6-t5:.4f}s, update={t7-t6:.4f}s, total={t7-t0:.4f}s")
+            
+            # Reset for new video
+            self.is_first_frame = True  
+            
         except Exception as e:
             QMessageBox.critical(self, 
                                  "Error", 
@@ -567,32 +561,20 @@ class VideoRegionWidget(QWidget):
             QApplication.restoreOverrideCursor()
 
     def process_frame_for_inference(self, frame):
-        """Process frame for inference if enabled, timing each step."""
+        """Process frame for inference if enabled."""
         if not self.inference_enabled or not self.inference_engine:
             return frame
-
         try:
-            t0 = time.time()
-            print("[Profiler] Start process_frame_for_inference")
             # Run inference on the current frame
             results = self.inference_engine.infer(frame, self.conf, self.iou, self.is_first_frame)
-            self.is_first_frame = False  # Reset for next frame
-            t1 = time.time()
-            print(f"[Profiler] inference_engine.infer: {t1 - t0:.4f}s")
-
+            # Reset for next frame
+            self.is_first_frame = False
             # Count objects in defined regions
             region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
-            t2 = time.time()
-            print(f"[Profiler] count_objects_in_regions: {t2 - t1:.4f}s")
-
             # Draw results on the frame
             frame = self.draw_inference_results(frame, region_counts, results)
-            t3 = time.time()
-            print(f"[Profiler] draw_inference_results: {t3 - t2:.4f}s")
-            print(f"[Profiler] Total process_frame_for_inference: {t3 - t0:.4f}s")
         except Exception as e:
             print(f"Inference processing failed: {e}")
-
         return frame
         
     def next_frame(self):
@@ -628,39 +610,25 @@ class VideoRegionWidget(QWidget):
             self.update_frame_label()
 
     def draw_inference_results(self, frame, region_counts, results):
-        """Draw inference results on the video frame using supervision's BoxAnnotator, with timing for each step."""
-        t0 = time.time()
+        """Draw inference results on the video frame using supervision's BoxAnnotator."""
         if not results or len(results) == 0:
             return frame
-
         try:
-            t1 = time.time()
             result = results[0]
             detections = sv.Detections.from_ultralytics(result)
-            t2 = time.time()
-            print(f"[Profiler] sv.Detections.from_ultralytics: {t2 - t1:.4f}s")
-
             # Prepare labels for each detection
             class_names = []
             for cls in detections.class_id:
                 idx = int(cls)
-
                 if idx < len(self.parent.inference_engine.class_names):
                     class_names.append(self.parent.inference_engine.class_names[idx])
                 else:
                     class_names.append(str(idx))
-
             confidences = detections.confidence
             labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-            t3 = time.time()
-            print(f"[Profiler] Prepare labels: {t3 - t2:.4f}s")
-
-            # Apply annotations
             label_annotator = sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER)
-
             # Get selected annotators 
             selected_annotators = self.parent.get_selected_annotators()
-
             annotators = []
             for key in selected_annotators:
                 if key == "BoxAnnotator":
@@ -691,24 +659,14 @@ class VideoRegionWidget(QWidget):
                     annotators.append(sv.BlurAnnotator())
                 elif key == "PixelateAnnotator":
                     annotators.append(sv.PixelateAnnotator())
-                    
-            t4 = time.time()
-            print(f"[Profiler] Prepare annotators: {t4 - t3:.4f}s")
-
             for annotator in annotators:
                 frame = annotator.annotate(scene=frame, detections=detections)
-            t5 = time.time()
-            print(f"[Profiler] Annotators annotate: {t5 - t4:.4f}s")
-
             frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
-            t6 = time.time()
-            print(f"[Profiler] LabelAnnotator annotate: {t6 - t5:.4f}s")
-
+        
         except Exception as e:
             print(f"Supervision annotate failed: {e}")
-
+            
         # Draw region polygons
-        t7 = time.time()
         for idx, poly in enumerate(self.region_polygons):
             if idx < len(region_counts):
                 pts = np.array(list(poly.exterior.coords), np.int32)
@@ -716,10 +674,6 @@ class VideoRegionWidget(QWidget):
                 centroid = poly.centroid
                 cv2.putText(frame, str(region_counts[idx]), (int(centroid.x), int(centroid.y)),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        t8 = time.time()
-        print(f"[Profiler] Draw region polygons: {t8 - t7:.4f}s")
-        print(f"[Profiler] Total draw_inference_results: {t8 - t0:.4f}s")
-
         return frame
 
     def __del__(self):
@@ -1251,6 +1205,7 @@ class Base(QDialog):
         self.video_region_widget.enable_inference(True)
         self.enable_inference_btn.setEnabled(False)
         self.disable_inference_btn.setEnabled(True)
+        
         # Refresh the current frame without inference
         self.video_region_widget.seek(self.video_region_widget.current_frame_number)
 
