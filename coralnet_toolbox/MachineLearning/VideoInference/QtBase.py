@@ -931,11 +931,20 @@ class Base(QDialog):
         model_widget.setLayout(model_layout)
         form_layout.addRow(QLabel("Model Path:"), model_widget)
 
-        # Class filter
+        # Searchable Class Filter
+        class_filter_layout = QVBoxLayout()
+        self.class_filter_search = QLineEdit()
+        self.class_filter_search.setPlaceholderText("Search classes...")
+        self.class_filter_search.textChanged.connect(self.filter_class_list)
+        class_filter_layout.addWidget(self.class_filter_search)
         self.class_filter_widget = QListWidget()
         self.class_filter_widget.setSelectionMode(QAbstractItemView.MultiSelection)
-        form_layout.addRow(QLabel("Class Filter:"), self.class_filter_widget)
+        class_filter_layout.addWidget(self.class_filter_widget)
+        class_filter_widget_container = QWidget()
+        class_filter_widget_container.setLayout(class_filter_layout)
+        form_layout.addRow(QLabel("Class Filter:"), class_filter_widget_container)
 
+        # Select All / Deselect All buttons
         btn_layout = QHBoxLayout()
         self.select_all_btn = QPushButton("Select All")
         self.deselect_all_btn = QPushButton("Deselect All")
@@ -998,6 +1007,13 @@ class Base(QDialog):
 
         group_box.setLayout(form_layout)
         self.controls_layout.addWidget(group_box)
+
+    def filter_class_list(self, text):
+        """Filter the class filter QListWidget based on the search text."""
+        text = text.lower()
+        for i in range(self.class_filter_widget.count()):
+            item = self.class_filter_widget.item(i)
+            item.setHidden(text not in item.text().lower())
 
     def setup_video_layout(self):
         """Setup the video region widget inside a group box (no tabs)."""
