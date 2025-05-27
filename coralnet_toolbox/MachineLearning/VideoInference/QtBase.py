@@ -108,6 +108,7 @@ class VideoRegionWidget(QWidget):
         super().__init__(parent)
         
         self.parent = parent
+        
         # Polygon drawing state (must be set before any UI or event setup)
         self.drawing_polygon = False
         self.current_polygon_points = []
@@ -358,12 +359,23 @@ class VideoRegionWidget(QWidget):
             self._setup_video_output(self.video_path, self.output_dir)
         if not self.is_playing:
             self.play_video()
-        self._update_record_buttons()
+        self.update_record_buttons()
 
     def stop_recording(self):
         """Stop recording the video and finalize output."""
         self._cleanup_video_sink()
-        self._update_record_buttons()
+        self.update_record_buttons()
+        
+    def update_record_buttons(self):
+        """Update the enabled state of record buttons based on output directory and recording status."""
+        # Record Play button should be enabled if an output directory is set,
+        # a video is loaded, and we are not currently recording.
+        can_start_recording = bool(self.output_dir and os.path.exists(self.output_dir) and self.video_path)
+        
+        self.record_play_btn.setEnabled(can_start_recording and not self.should_write_video)
+        
+        # Record Stop button should be enabled only if we are currently recording.
+        self.record_stop_btn.setEnabled(self.should_write_video)
 
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
@@ -693,7 +705,7 @@ class VideoRegionWidget(QWidget):
             
             # Do NOT setup output video here; only do so when recording is started
             self.should_write_video = False
-            self._update_record_buttons()
+            self.update_record_buttons()
             
             # Load first frame
             self.seek(0)
@@ -721,9 +733,9 @@ class VideoRegionWidget(QWidget):
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)
             else:
-                self._update_record_buttons()
+                self.update_record_buttons()
         else:
-            self._update_record_buttons()
+            self.update_record_buttons()
 
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled."""
@@ -880,6 +892,9 @@ class InferenceEngine:
     def __init__(self, parent=None):
         self.parent = parent
         
+        # Set the device (video_region.base.main_window)
+        self.device = "cpu"
+        
         # Initialize model and task
         self.model = None
         self.task = None
@@ -915,6 +930,9 @@ class InferenceEngine:
             # Run a dummy inference to ensure the model is loaded correctly
             self.model(np.zeros((640, 640, 3), dtype=np.uint8))
             
+            # Set the device for inference
+            self.set_device()
+            
             QMessageBox.information(self.parent,
                                     "Model Loaded",
                                     "Model loaded successfully.")
@@ -928,6 +946,10 @@ class InferenceEngine:
         finally:
             # Make cursor normal
             QApplication.restoreOverrideCursor()
+            
+    def set_device(self):
+        """Set the device for inference."""
+        self.device = self.parent.parent.main_window.device
 
     def set_selected_classes(self, class_indices):
         """Set the selected classes for inference."""
@@ -958,7 +980,8 @@ class InferenceEngine:
                              conf=self.conf, 
                              iou=self.iou, 
                              classes=self.selected_classes,
-                             half=True)[0]
+                             half=True,
+                             device=self.device)[0]
         
         # Convert results to Supervision Detections
         detections = sv.Detections.from_ultralytics(results)
@@ -1341,9 +1364,9 @@ class Base(QDialog):
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)
             else:
-                self._update_record_buttons()
+                self.update_record_buttons()
         else:
-            self._update_record_buttons()
+            self.update_record_buttons()
 
     def browse_model(self):
         """Open file dialog to select model file (filtered to .pt, .pth)."""
