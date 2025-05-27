@@ -10,12 +10,12 @@ from shapely.geometry import Polygon, Point
 from ultralytics import YOLO
 
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
-from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal, QMutex, QWaitCondition, QRect
+from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
-                             QWidget, QGridLayout, QListWidget, QListWidgetItem, 
-                             QAbstractItemView, QFormLayout, QTabWidget, 
-                             QComboBox, QCheckBox, QSpacerItem, QSizePolicy,
+                             QWidget, QListWidget, QListWidgetItem, 
+                             QAbstractItemView, QFormLayout, 
+                             QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
 from coralnet_toolbox.Icons import get_icon
@@ -295,6 +295,9 @@ class VideoRegionWidget(QWidget):
         
         # Clear regions and reset state
         self.clear_regions()
+        
+        # Disable Inference from parent widget
+        self.parent.disable_inference()
 
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
@@ -355,22 +358,6 @@ class VideoRegionWidget(QWidget):
         self.show_regions = visible
         self.video_display.update()
         
-    def undo_region(self):
-        """Undo the last region action."""
-        if self.undo_stack:
-            self.redo_stack.append(list(self.regions))
-            self.regions = self.undo_stack.pop()
-            self.update_region_polygons()
-            self.video_display.update()
-
-    def redo_region(self):
-        """Redo the last undone region action."""
-        if self.redo_stack:
-            self.undo_stack.append(list(self.regions))
-            self.regions = self.redo_stack.pop()
-            self.update_region_polygons()
-            self.video_display.update()
-            
     def clear_regions(self):
         """Clear all regions and reset the region polygons."""
         self.regions.clear()
@@ -1073,46 +1060,14 @@ class Base(QDialog):
         self.video_layout.addWidget(self.video_region_widget)
 
     def setup_regions_layout(self):
-        """Setup the regions control group with Show/Hide, clear, undo, redo buttons."""
+        """Setup the regions control group with only Clear Regions button (removes Show/Hide, Undo, Redo)."""
         group_box = QGroupBox("Regions")
         layout = QHBoxLayout()
-
-        # Show/Hide Regions as two separate buttons
-        self.show_regions_btn = QPushButton("Show Regions")
-        self.hide_regions_btn = QPushButton("Hide Regions")
-        self.show_regions_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
-        self.hide_regions_btn.setFocusPolicy(Qt.NoFocus)  
-        self.show_regions_btn.setEnabled(False)           # Regions are visible by default
-        self.hide_regions_btn.setEnabled(True)
-
-        def show_regions():
-            self.video_region_widget.set_region_visibility(True)
-            self.show_regions_btn.setEnabled(False)
-            self.hide_regions_btn.setEnabled(True)
-
-        def hide_regions():
-            self.video_region_widget.set_region_visibility(False)
-            self.show_regions_btn.setEnabled(True)
-            self.hide_regions_btn.setEnabled(False)
-
-        self.show_regions_btn.clicked.connect(show_regions)
-        self.hide_regions_btn.clicked.connect(hide_regions)
-        layout.addWidget(self.show_regions_btn)
-        layout.addWidget(self.hide_regions_btn)
 
         clear_btn = QPushButton("Clear Regions")
         clear_btn.setFocusPolicy(Qt.NoFocus)
         clear_btn.clicked.connect(self.clear_regions)
         layout.addWidget(clear_btn)
-
-        self.undo_btn = QPushButton("Undo")
-        self.undo_btn.clicked.connect(self.video_region_widget.undo_region)
-        self.undo_btn.setFocusPolicy(Qt.NoFocus)
-        layout.addWidget(self.undo_btn)
-        self.redo_btn = QPushButton("Redo")
-        self.redo_btn.setFocusPolicy(Qt.NoFocus)
-        self.redo_btn.clicked.connect(self.video_region_widget.redo_region)
-        layout.addWidget(self.redo_btn)
 
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
@@ -1304,6 +1259,7 @@ class Base(QDialog):
         if not self.inference_engine.model:
             QMessageBox.warning(self, "Model Not Loaded", "Please load a model before enabling inference.")
             return
+        
         # Only set the flag and update UI, do not change video state
         self.video_region_widget.enable_inference(True)
         self.enable_inference_btn.setEnabled(False)
