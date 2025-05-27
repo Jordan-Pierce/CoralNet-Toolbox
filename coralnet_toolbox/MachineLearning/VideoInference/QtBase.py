@@ -229,11 +229,15 @@ class VideoRegionWidget(QWidget):
         self.record_play_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
         self.record_play_btn.setToolTip("Start Recording")
         self.record_play_btn.setFocusPolicy(Qt.NoFocus)
+        self.record_play_btn.clicked.connect(self.start_recording)
+        self.record_play_btn.setEnabled(False)  # Only enabled if output_dir is set
         controls.addWidget(self.record_play_btn)
         self.record_stop_btn = QPushButton()
         self.record_stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
         self.record_stop_btn.setToolTip("Stop Recording")
         self.record_stop_btn.setFocusPolicy(Qt.NoFocus)
+        self.record_stop_btn.clicked.connect(self.stop_recording)
+        self.record_stop_btn.setEnabled(False)
         controls.addWidget(self.record_stop_btn)
 
         # Seek slider
@@ -311,10 +315,6 @@ class VideoRegionWidget(QWidget):
     def play_video(self):
         """Play the video from the current position."""
         if not self.is_playing and self.cap:
-            # If we don't have an active video sink but should be recording, create a new one
-            if self.output_dir and not self.should_write_video:
-                self._prepare_new_video_output()
-                
             self.is_playing = True
             self.timer.start(int(1000 / (self.fps * self.playback_speed)))
             self.play_btn.setEnabled(False)
@@ -335,7 +335,7 @@ class VideoRegionWidget(QWidget):
             self.timer.stop()
             
         # Finalize current video output when stopped
-        self._cleanup_video_sink()
+        self.stop_recording()
         print("Video recording stopped - ready for new recording on next play")
         
         # Reset to first frame
@@ -353,15 +353,18 @@ class VideoRegionWidget(QWidget):
         self.parent.disable_inference()
         
     def start_recording(self):
-        """Start recording the video to output file."""
-        self.record_stop_btn.setEnabled(True)
-        self.record_play_btn.setEnabled(False)
-        
+        """Start recording the video to output file. Also start playback if not already playing."""
+        if not self.should_write_video and self.output_dir and os.path.exists(self.output_dir) and self.video_path:
+            self._setup_video_output(self.video_path, self.output_dir)
+        if not self.is_playing:
+            self.play_video()
+        self._update_record_buttons()
+
     def stop_recording(self):
         """Stop recording the video and finalize output."""
-        self.record_stop_btn.setEnabled(False)
-        self.record_play_btn.setEnabled(True)
-        
+        self._cleanup_video_sink()
+        self._update_record_buttons()
+
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
         if not self.cap:
@@ -688,12 +691,10 @@ class VideoRegionWidget(QWidget):
             self.region_polygons.clear()
             self.update()
             
-            # Setup output video if output directory is provided
-            if output_dir and os.path.exists(output_dir):
-                self._setup_video_output(video_path, output_dir)
-            else:
-                self.should_write_video = False
-                
+            # Do NOT setup output video here; only do so when recording is started
+            self.should_write_video = False
+            self._update_record_buttons()
+            
             # Load first frame
             self.seek(0)
             self.update()
@@ -709,6 +710,20 @@ class VideoRegionWidget(QWidget):
                                  f"Failed to load video: {e}")
         finally:
             QApplication.restoreOverrideCursor()
+
+    def browse_output(self):
+        """Open directory dialog to select output directory."""
+        dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_name:
+            self.output_edit.setText(dir_name)
+            self.output_dir = dir_name
+            # If video already loaded, update output dir for widget
+            if self.video_path:
+                self.video_region_widget.load_video(self.video_path, dir_name)
+            else:
+                self._update_record_buttons()
+        else:
+            self._update_record_buttons()
 
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled."""
@@ -745,11 +760,10 @@ class VideoRegionWidget(QWidget):
                 return
                 
         if frame is not None:
-            # Process the frame for inference if enabled
             processed_frame = self.process_frame_for_inference(frame.copy())
-            
-            # Write to video sink
-            self._write_frame_to_sink(processed_frame)
+            # Only write if recording
+            if self.should_write_video:
+                self._write_frame_to_sink(processed_frame)
             
             # Update display
             self.current_frame = processed_frame
@@ -1326,6 +1340,10 @@ class Base(QDialog):
             # If video already loaded, update output dir for widget
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)
+            else:
+                self._update_record_buttons()
+        else:
+            self._update_record_buttons()
 
     def browse_model(self):
         """Open file dialog to select model file (filtered to .pt, .pth)."""
