@@ -25,6 +25,7 @@ from coralnet_toolbox.Icons import get_icon
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+
 class VideoDisplayWidget(QWidget):
     """Custom widget for displaying video frames and handling mouse events for region drawing."""
     
@@ -337,12 +338,14 @@ class VideoRegionWidget(QWidget):
         """Update the frame label with current frame number and total frames."""
         self.frame_label.setText(f"Frame: {self.current_frame_number + 1} / {self.total_frames}")
         
-    def set_inference_params(self, inference_engine, conf, iou):
+    def set_inference_params(self, inference_engine, conf, iou, area_min, area_max):
         """Set inference parameters for the video region. Always gets polygons from current regions."""
         self.inference_engine = inference_engine
         self.conf = conf
         self.iou = iou
-
+        self.area_min = area_min
+        self.area_max = area_max
+        
     def enable_inference(self, enable: bool):
         """Enable or disable inference in the video region."""
         self.inference_enabled = enable
@@ -663,9 +666,19 @@ class VideoRegionWidget(QWidget):
         if not results or len(results) == 0:
             return frame
         try:
+            # Extract the results
             result = results[0]
             # Convert results to Supervision Detections
             detections = sv.Detections.from_ultralytics(result)
+            
+            # Calculate the area of the frame
+            height, width = frame.shape[:2]
+            frame_area = height * width
+            
+            # Filter detections based on relative area
+            detections = detections[(detections.area / frame_area) <= self.area_max]
+            detections = detections[(detections.area / frame_area) >= self.area_min]
+            
             # Update tracker with detections
             tracker_detections = self.tracker.update_with_detections(detections)
             
@@ -1243,7 +1256,9 @@ class Base(QDialog):
         self.video_region_widget.set_inference_params(
             self.inference_engine,
             self.uncertainty_thresh,
-            self.iou_thresh
+            self.iou_thresh,
+            self.area_thresh_min,
+            self.area_thresh_max
         )
 
     def populate_class_filter(self):
