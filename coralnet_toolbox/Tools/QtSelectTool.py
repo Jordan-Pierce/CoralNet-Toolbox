@@ -1,9 +1,9 @@
 import warnings
 
-from PyQt5.QtCore import Qt, QPointF, QRectF, QLineF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QPen, QBrush, QColor, QPainterPath
 from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem, QMessageBox,
-                             QGraphicsLineItem, QGraphicsPathItem)
+                             QGraphicsPathItem, QGraphicsItemGroup)
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -229,7 +229,6 @@ class SelectTool(Tool):
         if not self.annotation_window.selected_annotations:
             return
         
-        updated_count = 0
         for annotation in self.annotation_window.selected_annotations:
             if not annotation.machine_confidence:
                 continue
@@ -237,15 +236,11 @@ class SelectTool(Tool):
             # Get the top confidence prediction
             top_label = next(iter(annotation.machine_confidence))
             annotation.update_user_confidence(top_label)
-            updated_count += 1
         
-        # Update UI based on selection state
-        if len(self.annotation_window.selected_annotations) == 1 and updated_count == 1:
-            selected_annotation = self.annotation_window.selected_annotations[0]
-            self.annotation_window.labelSelected.emit(selected_annotation.label.id)
-        else:
-            self.annotation_window.unselect_annotations()
-    
+        # Refresh the confidence window to show the updated state
+        if len(self.annotation_window.selected_annotations) == 1:
+            self.annotation_window.main_window.confidence_window.refresh_display()
+
     def _init_rectangle_selection(self, position):
         """Initialize rectangle selection mode."""
         self.rectangle_selection = True
@@ -295,44 +290,104 @@ class SelectTool(Tool):
         """Get the locked label if it exists."""
         return self.annotation_window.main_window.label_window.locked_label
 
+    def get_annotation_from_item(self, item):
+        """Get annotation from a graphics item, handling both individual items and groups."""
+        annotation_id = None
+        
+        # If it's a group item, find the main graphics item with annotation ID
+        if isinstance(item, QGraphicsItemGroup):
+            for child_item in item.childItems():
+                if child_item.data(0):  # Has annotation ID
+                    annotation_id = child_item.data(0)
+                    break
+        else:
+            # Individual item
+            annotation_id = item.data(0)
+        
+        if annotation_id:
+            return self.annotation_window.annotations_dict.get(annotation_id)
+        return None
+
     def get_clickable_items(self, position):
-        """Get items that can be clicked in the scene."""
+        """Get items that can be clicked in the scene, prioritizing center graphics items."""
         items = self.annotation_window.scene.items(position)
-        # Include ellipse items (resize handles) in clickable items
-        clickable_items = []
+        center_items = []  # Items that are center graphics (ellipses)
+        other_items = []   # Other clickable items
+        
         for item in items:
-            if isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem)):
-                clickable_items.append(item)
-        return clickable_items
+            # Handle QGraphicsItemGroup - get the main graphics item from the group
+            if isinstance(item, QGraphicsItemGroup):
+                # Find the main graphics item in the group (the one with annotation ID data)
+                for child_item in item.childItems():
+                    if child_item.data(0):  # Has annotation ID
+                        other_items.append(child_item)
+                        break
+                        
+            # Handle individual graphics items
+            elif isinstance(item, (QGraphicsRectItem, QGraphicsPolygonItem, QGraphicsEllipseItem)):
+                # Check if this is a center graphics item (ellipse that's part of an annotation)
+                if isinstance(item, QGraphicsEllipseItem) and not item.data(1):  # Not a resize handle
+                    # Check if this ellipse belongs to an annotation by looking for nearby annotation
+                    annotation = self.get_annotation_from_center_item(item, position)
+                    if annotation:
+                        center_items.append(item)
+                    else:
+                        other_items.append(item)
+                else:
+                    other_items.append(item)
+        
+        # Return center items first (highest priority), then other items
+        return center_items + other_items
+
+    def get_annotation_from_center_item(self, center_item, click_position):
+        """Get annotation from a center graphics item (ellipse)."""
+        # For center items, we need to find which annotation this center belongs to
+        # by checking all annotations and seeing which one's center is closest to this item's center
+        center_rect = center_item.rect()
+        item_center = QPointF(center_rect.x() + center_rect.width() / 2, 
+                              center_rect.y() + center_rect.height() / 2)
+        
+        # Find the annotation whose center is closest to this center item
+        closest_annotation = None
+        min_distance = float('inf')
+        
+        for annotation in self.annotation_window.get_image_annotations():
+            if annotation.center_xy:
+                distance = self.calculate_distance(item_center, annotation.center_xy)
+                if distance < min_distance and distance < 10:  # Within 10 pixels
+                    min_distance = distance
+                    closest_annotation = annotation
+        
+        return closest_annotation
 
     def select_annotation(self, position, items, modifiers):
-        """Select an annotation based on the click position."""
+        """Select an annotation based on the click position, prioritizing center graphics items."""
         locked_label = self.get_locked_label()
 
-        # Find items sorted by proximity to center
-        center_proximity_items = [
-            (item, self.calculate_distance(position, self.get_item_center(item)))
-            for item in items if self.is_annotation_clickable(item, position)
-        ]
-        center_proximity_items.sort(key=lambda x: x[1])
-
-        # Select the closest annotation
-        for item, _ in center_proximity_items:
-            annotation_id = item.data(0)
-            selected_annotation = self.annotation_window.annotations_dict.get(annotation_id)
-
-            if selected_annotation:
+        # Process items in order (center items are already prioritized in get_clickable_items)
+        for item in items:
+            annotation = None
+            
+            # For center graphics items (ellipses), use the special center item handler
+            if isinstance(item, QGraphicsEllipseItem) and not item.data(1):  # Not a resize handle
+                annotation = self.get_annotation_from_center_item(item, position)
+            else:
+                # For other items, use the standard method
+                annotation = self.get_annotation_from_item(item)
+                
+            # Check if we found a valid annotation and it contains the click position
+            if annotation and annotation.contains_point(position):
                 # Check if a label is locked
-                if locked_label and selected_annotation.label.id != locked_label.id:
+                if locked_label and annotation.label.id != locked_label.id:
                     continue  # Skip annotations with a different label
 
                 ctrl_pressed = modifiers & Qt.ControlModifier
-                if selected_annotation in self.annotation_window.selected_annotations and ctrl_pressed:
+                if annotation in self.annotation_window.selected_annotations and ctrl_pressed:
                     # Unselect the annotation if Ctrl is pressed and it is already selected
-                    self.annotation_window.unselect_annotation(selected_annotation)
+                    self.annotation_window.unselect_annotation(annotation)
                     return None
                 else:
-                    return self.handle_selection(selected_annotation, modifiers)
+                    return self.handle_selection(annotation, modifiers)
 
         return None
 

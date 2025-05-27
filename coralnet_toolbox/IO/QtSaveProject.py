@@ -41,6 +41,7 @@ class SaveProject(QDialog):
         self.setup_buttons_layout()
 
     def setup_save_layout(self):
+        """Setup the layout for saving the project."""
         group_box = QGroupBox("Save Project")
         layout = QFormLayout()
 
@@ -58,6 +59,7 @@ class SaveProject(QDialog):
         self.setLayout(main_layout)
 
     def setup_buttons_layout(self):
+        """Setup the layout for the save and cancel buttons."""
         layout = self.layout()
         button_layout = QHBoxLayout()
         self.save_button = QPushButton("Save")
@@ -69,6 +71,7 @@ class SaveProject(QDialog):
         layout.addLayout(button_layout)
 
     def browse_file_path(self):
+        """Open a file dialog to select the save file path."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getSaveFileName(self,
                                                    "Save Project JSON",
@@ -79,6 +82,7 @@ class SaveProject(QDialog):
             self.file_path_edit.setText(file_path)
 
     def save_project(self):
+        """Save the project data to a JSON file."""
         file_path = self.file_path_edit.text()
         if file_path:
             self.save_project_data(file_path)
@@ -86,7 +90,7 @@ class SaveProject(QDialog):
             self.file_path_edit.setText(self.current_project_path)
 
     def save_project_data(self, file_path):
-
+        """Save the project data to a JSON file."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -94,7 +98,8 @@ class SaveProject(QDialog):
             project_data = {
                 'image_paths': self.get_images(),
                 'labels': self.get_labels(),
-                'annotations': self.get_annotations()
+                'annotations': self.get_annotations(),
+                'workareas': self.get_workareas()
             }
 
             with open(file_path, 'w') as file:
@@ -120,6 +125,7 @@ class SaveProject(QDialog):
         self.accept()
 
     def get_images(self):
+        """Get the list of image paths to export."""
         # Start the progress bar
         total_images = len(self.image_window.raster_manager.image_paths)
         progress_bar = ProgressBar(self.label_window, "Exporting Images")
@@ -146,6 +152,7 @@ class SaveProject(QDialog):
         return export_images
 
     def get_labels(self):
+        """Get the list of labels to export."""
         # Start the progress bar
         total_labels = len(self.label_window.labels)
         progress_bar = ProgressBar(self.label_window, "Exporting Labels")
@@ -172,6 +179,7 @@ class SaveProject(QDialog):
         return export_labels
 
     def get_annotations(self):
+        """Get the annotations to export."""
         # Start progress bar
         total_annotations = len(list(self.annotation_window.annotations_dict.values()))
         progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
@@ -226,7 +234,44 @@ class SaveProject(QDialog):
 
         return export_annotations
 
+    def get_workareas(self):
+        """Get the work areas to export."""
+        # Start progress bar
+        total_rasters = len(self.image_window.raster_manager.image_paths)
+        progress_bar = ProgressBar(self.annotation_window, title="Exporting Work Areas")
+        progress_bar.show()
+        progress_bar.start_progress(total_rasters)
+
+        try:
+            export_workareas = {}
+
+            # Loop through all rasters to get their work areas
+            for image_path in self.image_window.raster_manager.image_paths:
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster and raster.has_work_areas():
+                    work_areas_list = []
+                    for work_area in raster.get_work_areas():
+                        work_areas_list.append(work_area.to_dict())
+                    
+                    if work_areas_list:  # Only add if there are work areas
+                        export_workareas[image_path] = work_areas_list
+                
+                progress_bar.update_progress()
+
+        except Exception as e:
+            QMessageBox.warning(self.annotation_window,
+                                "Error Exporting Work Areas",
+                                f"An error occurred while exporting work areas: {str(e)}")
+
+        finally:
+            # Stop the progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
+
+        return export_workareas
+
     def get_project_path(self):
+        """Get the current project path."""
         return self.current_project_path
 
     def showEvent(self, event):

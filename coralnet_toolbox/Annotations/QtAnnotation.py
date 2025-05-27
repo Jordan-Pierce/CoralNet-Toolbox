@@ -415,7 +415,7 @@ class Annotation(QObject):
         # Create the graphic
         self.update_graphics_item()
         self.show_message = False
-
+        
     def update_machine_confidence(self, prediction: dict, from_import: bool = False):
         """Update annotation with machine-generated confidence scores."""
         if not prediction:

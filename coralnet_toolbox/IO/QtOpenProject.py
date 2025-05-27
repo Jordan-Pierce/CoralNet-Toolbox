@@ -12,6 +12,9 @@ from PyQt5.QtWidgets import (QDialog, QFileDialog, QVBoxLayout, QPushButton, QLa
                              QLineEdit)
 
 from coralnet_toolbox.QtLabelWindow import Label
+
+from coralnet_toolbox.QtWorkArea import WorkArea
+
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -48,10 +51,12 @@ class OpenProject(QDialog):
         self.setup_buttons_layout()
         
     def showEvent(self, event):
+        """Override showEvent to set the current project path in the file path edit."""
         super().showEvent(event)
         self.file_path_edit.setText(self.current_project_path)
 
     def setup_open_layout(self):
+        """Setup the layout for opening a project."""
         # Create main layout
         layout = QVBoxLayout()
         group_box = QGroupBox("Open Project")
@@ -79,6 +84,7 @@ class OpenProject(QDialog):
         self.setLayout(layout)
 
     def setup_buttons_layout(self):
+        """Setup the layout for the buttons."""
         layout = self.layout()
         
         # Create horizontal layout for buttons
@@ -97,6 +103,7 @@ class OpenProject(QDialog):
         layout.addLayout(button_layout)
 
     def browse_file(self):
+        """Open a file dialog to select a project JSON file."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, 
                                                    "Open Project JSON", 
@@ -107,6 +114,7 @@ class OpenProject(QDialog):
             self.file_path_edit.setText(file_path)
             
     def load_selected_project(self):
+        """Load the selected project file."""
         file_path = self.file_path_edit.text()
         if file_path:
             self.load_project(file_path)
@@ -116,6 +124,7 @@ class OpenProject(QDialog):
                                 "Please select a project file first.")
 
     def open_project(self):
+        """Open a project from a JSON file."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, 
                                                    "Open Project JSON", 
@@ -126,6 +135,7 @@ class OpenProject(QDialog):
             self.load_project(file_path)
 
     def load_project(self, file_path):
+        """Load a project from a JSON file."""
         try:
             # Make the cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -134,10 +144,11 @@ class OpenProject(QDialog):
                 project_data = json.load(file)
 
             # Update main window with loaded project data
-            self.import_images(project_data['image_paths'])
-            self.import_labels(project_data['labels'])
-            self.import_annotations(project_data['annotations'])
-
+            self.import_images(project_data.get('image_paths'))
+            self.import_workareas(project_data.get('workareas'))
+            self.import_labels(project_data.get('labels'))
+            self.import_annotations(project_data.get('annotations'))
+            
             # Update current project path
             self.current_project_path = file_path
 
@@ -158,6 +169,7 @@ class OpenProject(QDialog):
         self.accept()
 
     def import_images(self, image_paths):
+        """Import images from the given paths."""
         if not image_paths:
             return
         
@@ -192,8 +204,72 @@ class OpenProject(QDialog):
             # Close progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+            
+    def import_workareas(self, workareas):
+        """Import work areas for each image."""
+        if not workareas:
+            return
+        
+        # Start the progress bar
+        total_images = len(workareas)
+        progress_bar = ProgressBar(self.annotation_window, title="Importing Work Areas")
+        progress_bar.show()
+        progress_bar.start_progress(total_images)
+
+        try:
+            # Loop through each image's work areas
+            for image_path, work_areas_list in workareas.items():
+                
+                # Check if the image path was updated (moved)
+                updated_path = False
+                
+                if image_path not in self.image_window.raster_manager.image_paths:
+                    # Check if the path was updated
+                    if image_path in self.updated_paths:
+                        image_path = self.updated_paths[image_path]
+                        updated_path = True
+                    else:
+                        print(f"Warning: Image not found for work areas: {image_path}")
+                        continue
+                
+                # Get the raster for this image
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if not raster:
+                    print(f"Warning: Could not get raster for image: {image_path}")
+                    continue
+                
+                # Import each work area for this image
+                for work_area_data in work_areas_list:
+                    try:
+                        # Update image path if it was changed
+                        if updated_path:
+                            work_area_data['image_path'] = image_path
+                        
+                        # Create WorkArea from dictionary
+                        work_area = WorkArea.from_dict(work_area_data, image_path)
+                        
+                        # Add work area to the raster
+                        raster.add_work_area(work_area)
+                        
+                    except Exception as e:
+                        print(f"Warning: Could not import work area {work_area_data}: {str(e)}")
+                        continue
+                
+                # Update the progress bar
+                progress_bar.update_progress()
+
+        except Exception as e:
+            QMessageBox.warning(self.annotation_window,
+                                "Error Importing Work Areas",
+                                f"An error occurred while importing work areas: {str(e)}")
+
+        finally:
+            # Close progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
 
     def import_labels(self, labels):
+        """Import labels from the given list."""
         if not labels:
             return
         
@@ -228,6 +304,7 @@ class OpenProject(QDialog):
             progress_bar.close()
 
     def import_annotations(self, annotations):
+        """Import annotations from the given dictionary."""
         if not annotations:
             return
         
