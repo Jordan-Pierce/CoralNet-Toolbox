@@ -78,15 +78,19 @@ class Classify(Base):
         layout = QVBoxLayout()
 
         self.annotator_list_widget = QListWidget()
-        # List of annotator types (except label annotator, which is always on)
+        # List of annotator types (LabelAnnotator now included and checked by default)
         self.annotator_types = [
+            ("LabelAnnotator", "Label Annotator"),
             ("BoxAnnotator", "Box Annotator"),
             ("PercentageBarAnnotator", "Percentage Bar Annotator"),
         ]
         for key, label in self.annotator_types:
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
+            if key == "LabelAnnotator":
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
             item.setData(Qt.UserRole, key)
             self.annotator_list_widget.addItem(item)
         layout.addWidget(self.annotator_list_widget)

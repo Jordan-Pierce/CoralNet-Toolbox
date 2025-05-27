@@ -30,6 +30,7 @@ class Detect(Base):
 
         self.annotator_list_widget = QListWidget()
         self.annotator_types = [
+            ("LabelAnnotator", "Label Annotator"),
             ("BoxAnnotator", "Box Annotator"),
             ("RoundBoxAnnotator", "Round Box Annotator"),
             ("BoxCornerAnnotator", "Box Corner Annotator"),
@@ -45,7 +46,10 @@ class Detect(Base):
         for key, label in self.annotator_types:
             item = QListWidgetItem(label)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
+            if key == "LabelAnnotator":
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
             item.setData(Qt.UserRole, key)
             self.annotator_list_widget.addItem(item)
         layout.addWidget(self.annotator_list_widget)

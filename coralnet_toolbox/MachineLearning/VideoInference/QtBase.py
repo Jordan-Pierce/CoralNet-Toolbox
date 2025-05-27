@@ -716,15 +716,14 @@ class VideoRegionWidget(QWidget):
         """Draw inference results on the video frame using supervision's BoxAnnotator."""
         if not detections or len(detections) == 0:
             return frame
-        
-        try:           
+        try:
             # Get the class names from detections
             class_names = detections.data.get('class_name', [])
             # Get confidences for each detection
             confidences = detections.confidence
             # Try to get tracker IDs if present
             tracker_ids = detections.tracker_id
-            
+
             if tracker_ids is not None:
                 labels = [
                     f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
@@ -732,10 +731,7 @@ class VideoRegionWidget(QWidget):
                 ]
             else:
                 labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-                
-            # Create a LabelAnnotator for text labels
-            label_annotator = sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER)
-            
+
             # Get selected annotators 
             selected_annotators = self.parent.get_selected_annotators()
             annotators = []
@@ -768,10 +764,14 @@ class VideoRegionWidget(QWidget):
                     annotators.append(sv.BlurAnnotator())
                 elif key == "PixelateAnnotator":
                     annotators.append(sv.PixelateAnnotator())
+                elif key == "LabelAnnotator":
+                    annotators.append(sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER))
             for annotator in annotators:
-                frame = annotator.annotate(scene=frame, detections=detections)
-            frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
-        
+                # Only pass labels to LabelAnnotator
+                if isinstance(annotator, sv.LabelAnnotator):
+                    frame = annotator.annotate(scene=frame, detections=detections, labels=labels)
+                else:
+                    frame = annotator.annotate(scene=frame, detections=detections)
         except Exception as e:
             print(f"Supervision annotate failed: {e}")
             
@@ -1136,7 +1136,7 @@ class Base(QDialog):
         self.video_layout.addWidget(self.video_region_widget)
 
     def setup_regions_layout(self):
-        """Setup the regions control group with only Clear Regions button (removes Show/Hide, Undo, Redo)."""
+        """Setup the regions control group."""
         group_box = QGroupBox("Regions")
         layout = QHBoxLayout()
 
@@ -1144,6 +1144,20 @@ class Base(QDialog):
         clear_btn.setFocusPolicy(Qt.NoFocus)
         clear_btn.clicked.connect(self.clear_regions)
         layout.addWidget(clear_btn)
+
+        # Dropdown for count region criteria
+        self.count_criteria_combo = QComboBox()
+        self.count_criteria_combo.addItems(["Detection", "Centroid"])
+        self.count_criteria_combo.setCurrentIndex(1)  # Default to Centroid
+        layout.addWidget(QLabel("Count Criteria:"))
+        layout.addWidget(self.count_criteria_combo)
+
+        # Dropdown for display detections outside regions
+        self.display_outside_combo = QComboBox()
+        self.display_outside_combo.addItems(["True", "False"])
+        self.display_outside_combo.setCurrentIndex(0)  # Default to True
+        layout.addWidget(QLabel("Detect Outside:"))
+        layout.addWidget(self.display_outside_combo)
 
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
