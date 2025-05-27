@@ -405,22 +405,11 @@ class PolygonAnnotation(Annotation):
                     overlap_graph[i].add(j)
                     overlap_graph[j].add(i)
 
-        # Check if all polygons form a connected component using BFS
-        visited = [False] * len(annotations)
-        queue = [0]  # Start from the first polygon
-        visited[0] = True
-
-        while queue:
-            node = queue.pop(0)
-            for neighbor in overlap_graph[node]:
-                if not visited[neighbor]:
-                    visited[neighbor] = True
-                    queue.append(neighbor)
-
-        # If any polygon is not visited, the annotations don't form a connected component
-        if False in visited:
-            # Create MultiPolygonAnnotation with all input polygons
-            # Wrap each annotation's points in a PolygonAnnotation object
+        # Check if there are any overlaps at all
+        has_any_overlap = any(len(neighbors) > 0 for neighbors in overlap_graph.values())
+        
+        if not has_any_overlap:
+            # No intersections at all - create MultiPolygonAnnotation
             polygons = [
                 cls(
                     points=anno.points,
@@ -445,7 +434,27 @@ class PolygonAnnotation(Annotation):
                     new_anno.rasterio_src = annotations[0].rasterio_src
                     new_anno.create_cropped_image(new_anno.rasterio_src)
             return new_anno
+        
+        # Check if all polygons form a single connected component
+        visited = [False] * len(annotations)
+        stack = [0]  # Start from the first polygon
+        visited[0] = True
+        visited_count = 1
 
+        while stack:
+            node = stack.pop()
+            for neighbor in overlap_graph[node]:
+                if not visited[neighbor]:
+                    visited[neighbor] = True
+                    visited_count += 1
+                    stack.append(neighbor)
+
+        # If not all polygons are reachable, we have multiple disconnected components
+        if visited_count != len(annotations):
+            # Multiple disconnected components - return early doing nothing
+            return None
+
+        # All polygons form a single connected component - merge them
         # Combine polygons by creating a binary mask of all polygons
         # Determine the bounds of all polygons
         min_x = min(anno.cropped_bbox[0] for anno in annotations)

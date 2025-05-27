@@ -1,5 +1,6 @@
 import warnings
 
+import json
 import random
 
 from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt

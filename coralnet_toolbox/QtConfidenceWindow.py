@@ -234,6 +234,25 @@ class ConfidenceWindow(QWidget):
         else:
             self.set_user_icon(False)  # Disable user icon if no annotation is provided
             
+    def refresh_display(self):
+        """Refresh the confidence window display for the current annotation."""
+        if self.annotation:
+            # Update annotation data
+            self.update_annotation(self.annotation)
+            # Recreate the bar chart with updated data
+            self.create_bar_chart()
+            # Update the graphics view border color based on top confidence
+            if self.chart_dict:
+                labels, confidences = self.get_chart_data()
+                if labels and confidences:
+                    max_color = labels[confidences.index(max(confidences))].color
+                    self.graphics_view.setStyleSheet(f"border: 2px solid {max_color.name()};")
+    
+    def on_annotation_updated(self, updated_annotation):
+        """Handle annotation update signal - refresh display if it's the currently shown annotation."""
+        if self.annotation and updated_annotation.id == self.annotation.id:
+            self.refresh_display()
+
     def scale_pixmap(self, pixmap):
         """Scale pixmap and graphic if they exceed max dimension while preserving aspect ratio"""
         width = pixmap.width()
