@@ -13,9 +13,8 @@ from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
 from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
-                             QWidget, QListWidget, QListWidgetItem, 
-                             QAbstractItemView, QFormLayout, 
-                             QComboBox, QSizePolicy,
+                             QWidget, QListWidget, QListWidgetItem, QFrame,
+                             QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
 from coralnet_toolbox.Icons import get_icon
@@ -184,7 +183,7 @@ class VideoRegionWidget(QWidget):
         controls = QHBoxLayout(self.controls_group)
         controls.setContentsMargins(10, 10, 10, 10)
 
-        # Control buttons
+        # Main playback controls
         self.step_back_btn = QPushButton()
         self.step_back_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekBackward))
         self.step_back_btn.clicked.connect(self.step_backward)
@@ -219,6 +218,24 @@ class VideoRegionWidget(QWidget):
         self.stop_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.stop_btn)
 
+        # Add vertical line separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        controls.addWidget(separator)
+
+        # Record Play and Stop buttons (no groupbox)
+        self.record_play_btn = QPushButton()
+        self.record_play_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
+        self.record_play_btn.setToolTip("Start Recording")
+        self.record_play_btn.setFocusPolicy(Qt.NoFocus)
+        controls.addWidget(self.record_play_btn)
+        self.record_stop_btn = QPushButton()
+        self.record_stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
+        self.record_stop_btn.setToolTip("Stop Recording")
+        self.record_stop_btn.setFocusPolicy(Qt.NoFocus)
+        controls.addWidget(self.record_stop_btn)
+
         # Seek slider
         controls.addSpacing(8)
         controls.addStretch(1)
@@ -231,7 +248,13 @@ class VideoRegionWidget(QWidget):
 
         # Set button sizes
         max_btn_size = 32
-        for btn in [self.step_back_btn, self.play_btn, self.pause_btn, self.step_fwd_btn, self.stop_btn]:
+        for btn in [self.step_back_btn, 
+                    self.play_btn,
+                    self.pause_btn, 
+                    self.step_fwd_btn, 
+                    self.stop_btn, 
+                    self.record_play_btn, 
+                    self.record_stop_btn]:
             btn.setMaximumSize(max_btn_size, max_btn_size)
 
         # Frame label and speed control
@@ -258,17 +281,31 @@ class VideoRegionWidget(QWidget):
     def enable_video_region(self):
         """Enable all controls in the video region widget."""
         self.setEnabled(True)
-        for widget in [self.step_back_btn, self.play_btn, self.pause_btn, 
-                       self.step_fwd_btn, self.stop_btn, self.seek_slider, 
-                       self.speed_dropdown, self.frame_label]:
+        for widget in [self.step_back_btn, 
+                       self.play_btn, 
+                       self.pause_btn, 
+                       self.record_play_btn,
+                       self.record_stop_btn,
+                       self.step_fwd_btn, 
+                       self.stop_btn, 
+                       self.seek_slider, 
+                       self.speed_dropdown, 
+                       self.frame_label]:
             widget.setEnabled(True)
 
     def disable_video_region(self):
         """Disable all controls in the video region widget."""
         self.setEnabled(False)
-        for widget in [self.step_back_btn, self.play_btn, self.pause_btn, 
-                       self.step_fwd_btn, self.stop_btn, self.seek_slider, 
-                       self.speed_dropdown, self.frame_label]:
+        for widget in [self.step_back_btn, 
+                       self.play_btn, 
+                       self.pause_btn, 
+                       self.record_play_btn,
+                       self.record_stop_btn,
+                       self.step_fwd_btn, 
+                       self.stop_btn, 
+                       self.seek_slider, 
+                       self.speed_dropdown, 
+                       self.frame_label]:
             widget.setEnabled(False)
             
     def play_video(self):
@@ -314,7 +351,17 @@ class VideoRegionWidget(QWidget):
         
         # Disable Inference from parent widget
         self.parent.disable_inference()
-
+        
+    def start_recording(self):
+        """Start recording the video to output file."""
+        self.record_stop_btn.setEnabled(True)
+        self.record_play_btn.setEnabled(False)
+        
+    def stop_recording(self):
+        """Stop recording the video and finalize output."""
+        self.record_stop_btn.setEnabled(False)
+        self.record_play_btn.setEnabled(True)
+        
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
         if not self.cap:
