@@ -672,9 +672,10 @@ class VideoRegionWidget(QWidget):
             # Run inference on the current frame
             detections = self.inference_engine.infer(frame)
             # Count objects in defined regions
-            region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
+            detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
             # Draw detections on the frame
-            frame = self.draw_inference_results(frame, region_counts, detections)
+            frame = self.draw_inference_results(frame, detections, region_counts)
+            
         except Exception as e:
             print(f"Inference processing failed: {e}")
             
@@ -712,7 +713,7 @@ class VideoRegionWidget(QWidget):
             self.seek_slider.blockSignals(False)
             self.update_frame_label()
 
-    def draw_inference_results(self, frame, region_counts, detections):
+    def draw_inference_results(self, frame, detections, region_counts):
         """Draw inference results on the video frame using supervision's BoxAnnotator."""
         if not detections or len(detections) == 0:
             return frame
@@ -766,6 +767,7 @@ class VideoRegionWidget(QWidget):
                     annotators.append(sv.PixelateAnnotator())
                 elif key == "LabelAnnotator":
                     annotators.append(sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER))
+                    
             for annotator in annotators:
                 # Only pass labels to LabelAnnotator
                 if isinstance(annotator, sv.LabelAnnotator):
@@ -830,6 +832,9 @@ class InferenceEngine:
         self.area_min = 0.0
         self.area_max = 0.4
         
+        self.count_criteria = "Centroid"  # Criteria for counting objects in regions
+        self.display_outside = True
+        
         self.class_names = []
         self.selected_classes = []
 
@@ -874,6 +879,14 @@ class InferenceEngine:
         self.area_min = area_min
         self.area_max = area_max
 
+    def set_count_criteria(self, count_criteria):
+        """Set the criteria for counting objects in regions."""
+        self.count_criteria = count_criteria
+        
+    def set_display_outside_detections(self, display_outside):
+        """Set whether to display detections outside the regions."""
+        self.display_outside = display_outside
+
     def infer(self, frame):
         """Run inference on a single frame with the current model."""
         if self.model is None:
@@ -889,16 +902,11 @@ class InferenceEngine:
         # Convert results to Supervision Detections
         detections = sv.Detections.from_ultralytics(results)
         
-        # Calculate the area of the frame
-        height, width = frame.shape[:2]
-        frame_area = height * width
-        
-        # Filter detections based on relative area
-        detections = detections[(detections.area / frame_area) <= self.area_max]
-        detections = detections[(detections.area / frame_area) >= self.area_min]        
-        
         # Update tracker with detections
         detections = self.update_tracker(detections)
+        
+        # Apply area filter to detections
+        detections = self.apply_area_filter(frame, detections)
             
         return detections
     
@@ -909,6 +917,69 @@ class InferenceEngine:
             return tracker_detections
         return detections
     
+    def apply_area_filter(self, frame, detections):
+        """Filter detections based on area thresholds."""
+        if detections is None or len(detections) == 0:
+            return detections
+        
+        # Calculate the area of the frame
+        height, width = frame.shape[:2]
+        frame_area = height * width
+        
+        # Filter detections based on relative area
+        detections = detections[(detections.area / frame_area) <= self.area_max]
+        detections = detections[(detections.area / frame_area) >= self.area_min]
+        
+        return detections
+            
+    def count_objects_in_regions(self, detections, region_polygons):
+        """Count objects in each region based on supervision Detections."""
+        if not region_polygons or detections is None or len(detections) == 0:
+            region_counts = [0 for _ in region_polygons]
+            return detections, region_counts
+
+        # Get the number of regions
+        region_counts = [0 for _ in region_polygons]
+        
+        # Use detection boxes for region assignment
+        boxes = detections.xyxy  # shape (n, 4)
+        
+        # Create mask to track which detections are inside regions
+        inside_mask = np.zeros(len(boxes), dtype=bool)
+        
+        # Loop through each detection box
+        for i, box in enumerate(boxes):
+            
+            # Check if just the centroid is in inside the region
+            if self.count_criteria == "Centroid":
+                # Check if centroid is inside the region
+                center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+                for idx, poly in enumerate(region_polygons):
+                    if poly.contains(Point(center)):
+                        region_counts[idx] += 1
+                        inside_mask[i] = True
+                        break  # Count in first matching region only
+                    
+            # Check if entire bounding box is inside the region
+            elif self.count_criteria == "Bounding Box":
+                box_corners = [
+                    (box[0], box[1]),  # top-left
+                    (box[2], box[1]),  # top-right
+                    (box[2], box[3]),  # bottom-right
+                    (box[0], box[3])   # bottom-left
+                ]
+                for idx, poly in enumerate(region_polygons):
+                    if all(poly.contains(Point(corner)) for corner in box_corners):
+                        region_counts[idx] += 1
+                        inside_mask[i] = True
+                        break  # Count in first matching region only
+        
+        # Filter detections based on display_outside setting
+        if not self.display_outside:
+            detections = detections[inside_mask]
+    
+        return detections, region_counts
+    
     def reset_tracker(self):
         """Reset the ByteTrack tracker."""
         if self.tracker:
@@ -916,24 +987,6 @@ class InferenceEngine:
             print("Tracker reset")
         else:
             print("No tracker initialized")
-            
-    def count_objects_in_regions(self, detections, region_polygons):
-        """Count objects in each region based on supervision Detections."""
-        if not region_polygons or detections is None or len(detections) == 0:
-            return [0 for _ in region_polygons]
-    
-        region_counts = [0 for _ in region_polygons]
-    
-        # Use detection centers for region assignment
-        boxes = detections.xyxy  # shape (n, 4)
-        # Loop through each detection box
-        for box in boxes:
-            center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
-            for idx, poly in enumerate(region_polygons):
-                if poly.contains(Point(center)):
-                    region_counts[idx] += 1
-    
-        return region_counts
 
             
 class Base(QDialog):
@@ -1144,20 +1197,28 @@ class Base(QDialog):
         clear_btn.setFocusPolicy(Qt.NoFocus)
         clear_btn.clicked.connect(self.clear_regions)
         layout.addWidget(clear_btn)
-
-        # Dropdown for count region criteria
-        self.count_criteria_combo = QComboBox()
-        self.count_criteria_combo.addItems(["Detection", "Centroid"])
-        self.count_criteria_combo.setCurrentIndex(1)  # Default to Centroid
+        
+        # Add stretch to push everything to the left
+        layout.addStretch()
+        
+        # Count criteria dropdown with label
         layout.addWidget(QLabel("Count Criteria:"))
+        self.count_criteria_combo = QComboBox()
+        self.count_criteria_combo.addItems(["Centroid", "Bounding Box"])
+        self.count_criteria_combo.setCurrentIndex(0)
+        self.count_criteria_combo.currentIndexChanged.connect(self.update_region_parameters)
         layout.addWidget(self.count_criteria_combo)
 
-        # Dropdown for display detections outside regions
+        # Dropdown for display detections outside regions with label
+        layout.addWidget(QLabel("Show Outside Detections:"))
         self.display_outside_combo = QComboBox()
         self.display_outside_combo.addItems(["True", "False"])
-        self.display_outside_combo.setCurrentIndex(0)  # Default to True
-        layout.addWidget(QLabel("Detect Outside:"))
+        self.display_outside_combo.setCurrentIndex(0)
+        self.display_outside_combo.currentIndexChanged.connect(self.update_region_parameters)
         layout.addWidget(self.display_outside_combo)
+        
+        # Add some spacing
+        layout.addSpacing(10)
 
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
@@ -1304,6 +1365,14 @@ class Base(QDialog):
             self.area_thresh_min,
             self.area_thresh_max
         )
+        
+    def update_region_parameters(self):
+        """Update region parameters based on the selected count criteria and display outside detections."""
+        count_criteria = self.count_criteria_combo.currentText()
+        display_outside = self.display_outside_combo.currentText() == "True"
+        # Update the inference engine with the selected criteria
+        self.video_region_widget.inference_engine.set_count_criteria(count_criteria)
+        self.video_region_widget.inference_engine.set_display_outside_detections(display_outside)
 
     def populate_class_filter(self):
         """Populate the class filter widget with class names from the loaded model."""
