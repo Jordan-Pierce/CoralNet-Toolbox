@@ -62,18 +62,34 @@ class VideoDisplayWidget(QWidget):
             
             painter.drawPixmap(offset_x, offset_y, scaled)
             
-        # Draw rectangles (these are in widget coordinates)
+        # Draw rectangles and polygons (these are in widget coordinates)
         if self.parent_widget.show_regions:
             pen = QPen(Qt.red, 2)
             painter.setPen(pen)
-            for rect in self.parent_widget.regions:
-                painter.drawRect(rect)
-                
+            for region in self.parent_widget.regions:
+                if isinstance(region, dict) and region.get("type") == "polygon":
+                    points = region["points"]
+                    if len(points) > 1:
+                        for i in range(len(points)):
+                            painter.drawLine(points[i], points[(i + 1) % len(points)])
+                else:
+                    # Backward compatibility: treat as QRect or dict with type 'rect'
+                    rect = region["rect"] if isinstance(region, dict) and region.get("type") == "rect" else region
+                    painter.drawRect(rect)
+                    
         # Draw current rectangle being drawn
         if self.parent_widget.drawing and self.parent_widget.current_rect:
             pen = QPen(Qt.green, 2, Qt.DashLine)
             painter.setPen(pen)
             painter.drawRect(self.parent_widget.current_rect)
+            
+        # Draw in-progress polygon
+        if self.parent_widget.drawing_polygon and self.parent_widget.current_polygon_points:
+            pen = QPen(Qt.green, 2, Qt.DashLine)
+            painter.setPen(pen)
+            pts = self.parent_widget.current_polygon_points
+            for i in range(1, len(pts)):
+                painter.drawLine(pts[i - 1], pts[i])
             
     def mousePressEvent(self, event):
         """Forward mouse press events to parent widget with proper coordinates."""
@@ -91,12 +107,16 @@ class VideoRegionWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.parent = parent
         
+        self.parent = parent
+        # Polygon drawing state (must be set before any UI or event setup)
+        self.drawing_polygon = False
+        self.current_polygon_points = []
+
         # Video frame and display
         self.frame = None
         self.pixmap = None
-        self.regions = []  # List of QRect
+        self.regions = []  # List of dicts: {"type": "rect"/"polygon", ...}
         self.drawing = False
         self.rect_start = None  # QPoint
         self.rect_end = None    # QPoint
@@ -141,6 +161,7 @@ class VideoRegionWidget(QWidget):
 
         self._setup_ui()
         self.disable_video_region()
+        self.setFocusPolicy(Qt.StrongFocus)  # Needed for key events
 
     def _setup_ui(self):
         """Setup the user interface components."""
@@ -387,36 +408,48 @@ class VideoRegionWidget(QWidget):
         offset_x = (widget_w - scaled_w) // 2
         offset_y = (widget_h - scaled_h) // 2
         
-        for rect in self.regions:
-            # Map QRect from video display widget coordinates to video frame coordinates
-            # First, subtract the offset to get coordinates relative to the scaled video
-            left_scaled = rect.left() - offset_x
-            top_scaled = rect.top() - offset_y
-            right_scaled = rect.right() - offset_x
-            bottom_scaled = rect.bottom() - offset_y
-            
-            # Then scale back to original video frame coordinates
-            left_frame = left_scaled / scale
-            top_frame = top_scaled / scale
-            right_frame = right_scaled / scale
-            bottom_frame = bottom_scaled / scale
-            
-            # Clamp to frame bounds and ensure valid rectangle
-            left_frame = max(0, min(left_frame, frame_w))
-            right_frame = max(0, min(right_frame, frame_w))
-            top_frame = max(0, min(top_frame, frame_h))
-            bottom_frame = max(0, min(bottom_frame, frame_h))
-            
-            # Ensure we have a valid rectangle after clamping
-            if left_frame < right_frame and top_frame < bottom_frame:
-                # Create polygon in video frame coordinates
-                poly = Polygon([
-                    (left_frame, top_frame),
-                    (right_frame, top_frame),
-                    (right_frame, bottom_frame),
-                    (left_frame, bottom_frame)
-                ])
-                self.region_polygons.append(poly)
+        for region in self.regions:
+            if isinstance(region, dict) and region.get("type") == "rect":
+                rect = region["rect"]
+                # Map QRect from video display widget coordinates to video frame coordinates
+                # First, subtract the offset to get coordinates relative to the scaled video
+                left_scaled = rect.left() - offset_x
+                top_scaled = rect.top() - offset_y
+                right_scaled = rect.right() - offset_x
+                bottom_scaled = rect.bottom() - offset_y
+                
+                # Then scale back to original video frame coordinates
+                left_frame = left_scaled / scale
+                top_frame = top_scaled / scale
+                right_frame = right_scaled / scale
+                bottom_frame = bottom_scaled / scale
+                
+                # Clamp to frame bounds and ensure valid rectangle
+                left_frame = max(0, min(left_frame, frame_w))
+                right_frame = max(0, min(right_frame, frame_w))
+                top_frame = max(0, min(top_frame, frame_h))
+                bottom_frame = max(0, min(bottom_frame, frame_h))
+                
+                # Ensure we have a valid rectangle after clamping
+                if left_frame < right_frame and top_frame < bottom_frame:
+                    # Create polygon in video frame coordinates
+                    poly = Polygon([
+                        (left_frame, top_frame),
+                        (right_frame, top_frame),
+                        (right_frame, bottom_frame),
+                        (left_frame, bottom_frame)
+                    ])
+                    self.region_polygons.append(poly)
+            elif isinstance(region, dict) and region.get("type") == "polygon":
+                pts = []
+                for pt in region["points"]:
+                    x_scaled = (pt.x() - offset_x) / scale
+                    y_scaled = (pt.y() - offset_y) / scale
+                    x_scaled = max(0, min(x_scaled, frame_w))
+                    y_scaled = max(0, min(y_scaled, frame_h))
+                    pts.append((x_scaled, y_scaled))
+                if len(pts) > 2:
+                    self.region_polygons.append(Polygon(pts))
 
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
@@ -424,29 +457,51 @@ class VideoRegionWidget(QWidget):
         if self.is_playing:
             self.pause_video()
             
-        if event.button() == Qt.LeftButton:
-            # Use raw mouse coordinates from the video display widget
+        if event.modifiers() & Qt.ControlModifier and event.button() == Qt.LeftButton:
+            # Polygon drawing mode
             pos = event.pos()
+            if not self.drawing_polygon:
+                self.drawing_polygon = True
+                self.current_polygon_points = [pos, pos]  # Add first point and a preview point
+            else:
+                self.current_polygon_points.insert(-1, pos)  # Insert before the preview point
+            # Update the video display to show the polygon in progress
+            self.video_display.update()
             
+        elif event.button() == Qt.LeftButton and not (event.modifiers() & Qt.ControlModifier):
+            # Rectangle drawing as before
+            # Get the current mouse position
+            pos = event.pos()
+            # Check if we're not currently drawing a rectangle
             if not self.drawing:
+                # Start drawing a new rectangle
                 self.drawing = True
+                # Set the starting point of the rectangle
                 self.rect_start = pos
+                # Set the ending point to the same position initially
                 self.rect_end = pos
+                # Clear any current rectangle being drawn
                 self.current_rect = None
             else:
+                # Finish drawing the rectangle
                 self.drawing = False
+                # Check if we have valid start and end points that are different
                 if self.rect_start and self.rect_end and self.rect_start != self.rect_end:
+                    # Create a QRect from the start and end points
                     rect = self._make_rect(self.rect_start, self.rect_end)
-                    
-                    # Allow regions to extend outside video area - clamping happens in update_region_polygons
+                    # Save current state to undo stack before adding new region
                     self.undo_stack.append(list(self.regions))
+                    # Clear redo stack since we're adding a new action
                     self.redo_stack.clear()
-                    self.regions.append(rect)
+                    # Add the new rectangle region to the regions list
+                    self.regions.append({"type": "rect", "rect": rect})
+                    # Update the region polygons for inference calculations
                     self.update_region_polygons()
-                    
+                # Reset rectangle drawing state
                 self.rect_start = None
                 self.rect_end = None
                 self.current_rect = None
+            # Update the video display to reflect changes
             self.video_display.update()
 
     def mouseMoveEvent(self, event):
@@ -457,7 +512,25 @@ class VideoRegionWidget(QWidget):
             self.rect_end = pos
             self.current_rect = self._make_rect(self.rect_start, self.rect_end)
             self.video_display.update()
+        elif self.drawing_polygon and self.current_polygon_points:
+            # Update the last point of the polygon in progress
+            pos = event.pos()
+            self.current_polygon_points[-1] = pos
+            self.video_display.update()
         
+    def keyReleaseEvent(self, event):
+        """Finish polygon drawing when Ctrl is released."""
+        if event.key() == Qt.Key_Control and self.drawing_polygon:
+            if len(self.current_polygon_points) > 2:
+                self.regions.append({
+                    "type": "polygon",
+                    "points": list(self.current_polygon_points)
+                })
+                self.update_region_polygons()
+            self.drawing_polygon = False
+            self.current_polygon_points = []
+            self.video_display.update()
+
     def _make_rect(self, p1, p2):
         """Return a QRect from two points."""
         x1, y1 = p1.x(), p1.y()
