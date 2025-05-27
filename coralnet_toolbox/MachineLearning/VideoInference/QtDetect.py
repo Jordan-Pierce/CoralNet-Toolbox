@@ -19,6 +19,7 @@ class Detect(Base):
         self.task = "detect"
 
     def showEvent(self, event):
+        self.device = self.main_window.device
         self.showMaximized()
         super().showEvent(event)
 

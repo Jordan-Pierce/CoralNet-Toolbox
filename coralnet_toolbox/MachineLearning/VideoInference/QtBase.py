@@ -25,6 +25,65 @@ from coralnet_toolbox.Icons import get_icon
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+class VideoDisplayWidget(QWidget):
+    """Custom widget for displaying video frames and handling mouse events for region drawing."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.setMinimumSize(640, 360)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
+        
+    def paintEvent(self, event):
+        """Paint the video frame and regions on this widget."""
+        if not self.parent_widget:
+            return
+            
+        painter = QPainter(self)
+        
+        if self.parent_widget.current_frame is not None:
+            # Convert frame to QImage and QPixmap
+            rgb = cv2.cvtColor(self.parent_widget.current_frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            bytes_per_line = ch * w
+            qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimg)
+            
+            # Scale while maintaining aspect ratio to fit this widget
+            widget_width = self.width()
+            widget_height = self.height()
+            scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+            # Center the scaled image within this widget
+            offset_x = (widget_width - scaled.width()) // 2
+            offset_y = (widget_height - scaled.height()) // 2
+            
+            painter.drawPixmap(offset_x, offset_y, scaled)
+            
+        # Draw rectangles (these are in widget coordinates)
+        if self.parent_widget.show_regions:
+            pen = QPen(Qt.red, 2)
+            painter.setPen(pen)
+            for rect in self.parent_widget.regions:
+                painter.drawRect(rect)
+                
+        # Draw current rectangle being drawn
+        if self.parent_widget.drawing and self.parent_widget.current_rect:
+            pen = QPen(Qt.green, 2, Qt.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(self.parent_widget.current_rect)
+            
+    def mousePressEvent(self, event):
+        """Forward mouse press events to parent widget with proper coordinates."""
+        if self.parent_widget:
+            self.parent_widget.mousePressEvent(event)
+            
+    def mouseMoveEvent(self, event):
+        """Forward mouse move events to parent widget with proper coordinates."""
+        if self.parent_widget:
+            self.parent_widget.mouseMoveEvent(event)
+
 
 class VideoRegionWidget(QWidget):
     """Widget for displaying video, playback controls, and drawing/editing rectangular regions only."""
@@ -42,7 +101,6 @@ class VideoRegionWidget(QWidget):
         self.rect_end = None    # QPoint
         self.current_rect = None  # QRect
         self.selected_region = None
-        self.setMouseTracking(True)
         self.setMinimumSize(640, 480)
 
         # Undo/Redo stacks
@@ -85,14 +143,29 @@ class VideoRegionWidget(QWidget):
 
     def _setup_ui(self):
         """Setup the user interface components."""
+        # Main layout for the widget
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
-        self.layout.addStretch(1)  # Video area will be drawn in paintEvent
+        self.layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.setSpacing(5)
+        
+        # Video Player GroupBox - takes up most of the space
+        self.video_group = QGroupBox("Video Player")
+        self.video_layout = QVBoxLayout(self.video_group)
+        self.video_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Video display area using custom widget
+        self.video_display = VideoDisplayWidget(self)
+        self.video_layout.addWidget(self.video_display)
+        
+        # Add video group to main layout with stretch factor
+        self.layout.addWidget(self.video_group, stretch=1)
 
-        # Media Controls GroupBox
-        controls_group = QGroupBox("Media Controls")
-        controls = QHBoxLayout()
+        # Media Controls GroupBox - fixed height
+        self.controls_group = QGroupBox("Media Controls")
+        self.controls_group.setMaximumHeight(100)
+        self.controls_group.setMinimumHeight(100)
+        controls = QHBoxLayout(self.controls_group)
+        controls.setContentsMargins(10, 10, 10, 10)
 
         # Control buttons
         self.step_back_btn = QPushButton()
@@ -134,8 +207,7 @@ class VideoRegionWidget(QWidget):
         controls.addStretch(1)
         self.seek_slider = QSlider(Qt.Horizontal)
         self.seek_slider.valueChanged.connect(self.seek)
-        self.seek_slider.setMinimumWidth(600)
-        self.seek_slider.setMaximumWidth(1000)
+        self.seek_slider.setMinimumWidth(300)
         controls.addWidget(self.seek_slider)
         controls.addStretch(1)
         controls.addSpacing(8)
@@ -156,8 +228,8 @@ class VideoRegionWidget(QWidget):
         self.speed_dropdown.setMaximumWidth(80)
         controls.addWidget(self.speed_dropdown)
 
-        controls_group.setLayout(controls)
-        self.layout.addWidget(controls_group)
+        # Add controls group to main layout with no stretch
+        self.layout.addWidget(self.controls_group, stretch=0)
         
     def closeEvent(self, event):
         """Handle widget close event."""
@@ -237,7 +309,7 @@ class VideoRegionWidget(QWidget):
             
             self.current_frame = processed_frame
             self.current_frame_number = frame_number
-            self.update()
+            self.video_display.update()  # Update the video display widget
             self.update_frame_label()
 
     def step_forward(self):
@@ -278,7 +350,7 @@ class VideoRegionWidget(QWidget):
     def set_region_visibility(self, visible: bool):
         """Set the visibility of regions in the video."""
         self.show_regions = visible
-        self.update()
+        self.video_display.update()
         
     def undo_region(self):
         """Undo the last region action."""
@@ -286,7 +358,7 @@ class VideoRegionWidget(QWidget):
             self.redo_stack.append(list(self.regions))
             self.regions = self.undo_stack.pop()
             self.update_region_polygons()
-            self.update()
+            self.video_display.update()
 
     def redo_region(self):
         """Redo the last undone region action."""
@@ -294,13 +366,13 @@ class VideoRegionWidget(QWidget):
             self.undo_stack.append(list(self.regions))
             self.regions = self.redo_stack.pop()
             self.update_region_polygons()
-            self.update()
+            self.video_display.update()
             
     def clear_regions(self):
         """Clear all regions and reset the region polygons."""
         self.regions.clear()
         self.update_region_polygons()
-        self.update()
+        self.video_display.update()
         
         # Redraw the current frame without region overlays
         self.seek(self.current_frame_number)
@@ -314,11 +386,11 @@ class VideoRegionWidget(QWidget):
         # Get video frame dimensions
         frame_h, frame_w = self.current_frame.shape[:2]
         
-        # Get widget dimensions (excluding control area)
-        widget_w = self.width()
-        widget_h = self.height() - 10  # Reserve space for controls
+        # Get video display area dimensions
+        widget_w = self.video_display.width()
+        widget_h = self.video_display.height()
         
-        # Calculate scaling and positioning (same logic as paintEvent)
+        # Calculate scaling and positioning (same logic as paintEvent in VideoDisplayWidget)
         scale = min(widget_w / frame_w, widget_h / frame_h)
         scaled_w = int(frame_w * scale)
         scaled_h = int(frame_h * scale)
@@ -326,7 +398,7 @@ class VideoRegionWidget(QWidget):
         offset_y = (widget_h - scaled_h) // 2
         
         for rect in self.regions:
-            # Map QRect from widget coordinates to video frame coordinates
+            # Map QRect from video display widget coordinates to video frame coordinates
             # First, subtract the offset to get coordinates relative to the scaled video
             left_scaled = rect.left() - offset_x
             top_scaled = rect.top() - offset_y
@@ -356,44 +428,6 @@ class VideoRegionWidget(QWidget):
                 ])
                 self.region_polygons.append(poly)
 
-    def paintEvent(self, event):
-        """Draw the video frame centered, and rectangular regions."""
-        painter = QPainter(self)
-        
-        offset_x, offset_y = 0, 0
-        
-        if self.current_frame is not None:
-            rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb.shape
-            bytes_per_line = ch * w
-            qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(qimg)
-            
-            widget_width = self.width()
-            widget_height = self.height() - 10  # Reserve space for controls
-            
-            # Scale while maintaining aspect ratio
-            scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            
-            # Center the scaled image
-            offset_x = (widget_width - scaled.width()) // 2
-            offset_y = (widget_height - scaled.height()) // 2
-            
-            painter.drawPixmap(offset_x, offset_y, scaled)
-            
-        # Draw rectangles (these are in widget coordinates, no translation needed for display)
-        if self.show_regions:
-            pen = QPen(Qt.red, 2)
-            painter.setPen(pen)
-            for rect in self.regions:
-                painter.drawRect(rect)
-                
-        # Draw current rectangle being drawn
-        if self.drawing and self.current_rect:
-            pen = QPen(Qt.green, 2, Qt.DashLine)
-            painter.setPen(pen)
-            painter.drawRect(self.current_rect)
-
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
         # Pause video playback if currently playing
@@ -401,7 +435,7 @@ class VideoRegionWidget(QWidget):
             self.pause_video()
             
         if event.button() == Qt.LeftButton:
-            # Use raw mouse coordinates (no offset adjustment needed)
+            # Use raw mouse coordinates from the video display widget
             pos = event.pos()
             
             if not self.drawing:
@@ -423,16 +457,16 @@ class VideoRegionWidget(QWidget):
                 self.rect_start = None
                 self.rect_end = None
                 self.current_rect = None
-            self.update()
+            self.video_display.update()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events for updating region shape."""
         if self.drawing and self.rect_start:
-            # Use raw mouse coordinates
+            # Use raw mouse coordinates from the video display widget
             pos = event.pos()
             self.rect_end = pos
             self.current_rect = self._make_rect(self.rect_start, self.rect_end)
-            self.update()
+            self.video_display.update()
         
     def _make_rect(self, p1, p2):
         """Return a QRect from two points."""
@@ -446,8 +480,8 @@ class VideoRegionWidget(QWidget):
         """Calculate the offset and scale for centering the video in the widget."""
         if self.current_frame is not None:
             frame_h, frame_w = self.current_frame.shape[:2]
-            widget_width = self.width()
-            widget_height = self.height() - 10  # Reserve space for controls
+            widget_width = self.video_display.width()
+            widget_height = self.video_display.height()
             
             # Calculate scale to fit video while maintaining aspect ratio
             scale = min(widget_width / frame_w, widget_height / frame_h)
@@ -741,6 +775,7 @@ class VideoRegionWidget(QWidget):
             self.cap.release()
             
 
+
 class InferenceEngine:
     """Handles model loading, inference, and class filtering."""
     def __init__(self, parent=None):
@@ -830,12 +865,16 @@ class Base(QDialog):
         """Initialize the Video Inference dialog."""
         super().__init__(parent)
         self.main_window = main_window
+        
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Video Inference")
         
         # Optionally set a minimum size
         self.setMinimumSize(800, 600)
         
+        # Initialize device as 'cpu' by default
+        self.device = 'cpu'
+                
         # Initialize parameters
         self.video_path = ""
         self.output_dir = ""
@@ -848,7 +887,7 @@ class Base(QDialog):
         self.iou_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
-                
+                 
         self.video_region_widget = None             # Initialized in setup_video_layout
         self.inference_engine = InferenceEngine(self)
 
@@ -1016,15 +1055,9 @@ class Base(QDialog):
             item.setHidden(text not in item.text().lower())
 
     def setup_video_layout(self):
-        """Setup the video region widget inside a group box (no tabs)."""
-        group_box = QGroupBox("Video Player")
-        vbox = QVBoxLayout()
-        
+        """Setup the video region widget directly without an external group box."""
         self.video_region_widget = VideoRegionWidget(self)
-        vbox.addWidget(self.video_region_widget)
-        
-        group_box.setLayout(vbox)
-        self.video_layout.addWidget(group_box)
+        self.video_layout.addWidget(self.video_region_widget)
 
     def setup_regions_layout(self):
         """Setup the regions control group with Show/Hide, clear, undo, redo buttons."""
@@ -1253,22 +1286,14 @@ class Base(QDialog):
 
     def enable_inference(self):
         """Enable inference on the video region."""
-        if not self.model_path or not self.video_path:
+        if not self.inference_engine.model:
+            QMessageBox.warning(self, "Model Not Loaded", "Please load a model before enabling inference.")
             return
-        # Set inference parameters in the video region widget
-        self.video_region_widget.set_inference_params(
-            self.inference_engine,
-            self.uncertainty_thresh,
-            self.iou_thresh
-        )
         # Only set the flag and update UI, do not change video state
         self.video_region_widget.enable_inference(True)
         self.enable_inference_btn.setEnabled(False)
         self.disable_inference_btn.setEnabled(True)
         
-        # Refresh the current frame without inference
-        self.video_region_widget.seek(self.video_region_widget.current_frame_number)
-
     def disable_inference(self):
         """Disable inference on the video region."""
         # Only set the flag and update UI, do not change video state

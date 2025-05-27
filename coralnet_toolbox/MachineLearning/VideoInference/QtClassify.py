@@ -20,6 +20,7 @@ class Classify(Base):
         self.task = "classify"
     
     def showEvent(self, event):
+        self.device = self.main_window.device
         self.showMaximized()
         super().showEvent(event)
         
