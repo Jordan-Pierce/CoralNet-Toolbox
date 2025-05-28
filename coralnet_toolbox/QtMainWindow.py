@@ -28,7 +28,8 @@ from coralnet_toolbox.Tile import (
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
-    TileInference as TileInferenceDialog
+    TileInference as TileInferenceDialog,
+    TileBatchInference as TileBatchInferenceDialog
 )
 
 # TODO update IO classes to have dialogs
@@ -250,6 +251,7 @@ class MainWindow(QMainWindow):
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
         self.tile_inference_dialog = TileInferenceDialog(self)
+        self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
 
         # Create dialogs (Break Time)
         self.snake_game_dialog = SnakeGame(self)
@@ -451,6 +453,10 @@ class MainWindow(QMainWindow):
         self.tile_inference_action = QAction("Tile Inference", self)
         self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
         self.tile_menu.addAction(self.tile_inference_action)
+        # Tile Batch Inference
+        self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
+        self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
+        self.tile_menu.addAction(self.tile_batch_inference_action)
 
         # CoralNet menu
         self.coralnet_menu = self.menu_bar.addMenu("CoralNet")
@@ -1560,6 +1566,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_import_dataset_dialog(self):
+        """Open the Import Dataset dialog to import datasets into the project."""
         try:
             self.untoggle_all_tools()
             self.import_dataset_dialog.exec_()
@@ -1567,6 +1574,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_export_dataset_dialog(self):
+        """Open the Classify Export Dataset dialog to export classification datasets."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -1588,6 +1596,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_export_dataset_dialog(self):
+        """Open the Detect Export Dataset dialog to export detection datasets."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -1609,6 +1618,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_export_dataset_dialog(self):
+        """Open the Segment Export Dataset dialog to export segmentation datasets."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -1630,6 +1640,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_merge_datasets_dialog(self):
+        """Open the Classify Merge Datasets dialog to merge datasets."""
         try:
             self.untoggle_all_tools()
             self.classify_merge_datasets_dialog.exec_()
@@ -1637,6 +1648,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_tile_dataset_dialog(self):
+        """Open the Classify Tile Dataset dialog to classify tiled images."""
         try:
             self.untoggle_all_tools()
             self.classify_tile_dataset_dialog.exec_()
@@ -1644,6 +1656,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_tile_dataset_dialog(self):
+        """Open the Detect Tile Dataset dialog to detect tiled images."""
         try:
             self.untoggle_all_tools()
             self.detect_tile_dataset_dialog.exec_()
@@ -1651,6 +1664,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_tile_dataset_dialog(self):
+        """Open the Segment Tile Dataset dialog to segment tiled images."""
         try:
             self.untoggle_all_tools()
             self.segment_tile_dataset_dialog.exec_()
@@ -1658,6 +1672,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_tile_inference_dialog(self):
+        """Open the Tile Inference dialog to run inference on tiled images."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -1670,8 +1685,32 @@ class MainWindow(QMainWindow):
             self.tile_inference_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_tile_batch_inference_dialog(self):
+        """Open the Tile Batch Inference dialog to run batch inference on tiled images."""
+        # Check if there are loaded images
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Tile Batch Inference",
+                                "No images are present in the project.")
+            return
+        
+        # Check if there are any models deployed
+        if not self.tile_batch_inference_dialog.check_model_availability():
+            QMessageBox.warning(self,
+                                "Tile Batch Inference",
+                                "Please deploy a model before running batch inference.")
+            return
+
+        try:
+            # Untoggle all tools, choose the work area tool
+            self.choose_specific_tool("work_area")
+            self.tile_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_train_model_dialog(self):
+        """Open the Classify Train Model dialog to train a classification model."""
         try:
             self.untoggle_all_tools()
             self.classify_train_model_dialog.exec_()
@@ -1679,6 +1718,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_train_model_dialog(self):
+        """Open the Detect Train Model dialog to train a detection model."""
         try:
             self.untoggle_all_tools()
             self.detect_train_model_dialog.exec_()
@@ -1686,6 +1726,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_train_model_dialog(self):
+        """Open the Segment Train Model dialog to train a segmentation model."""
         try:
             self.untoggle_all_tools()
             self.segment_train_model_dialog.exec_()
@@ -1693,6 +1734,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_evaluate_model_dialog(self):
+        """Open the Classify Evaluate Model dialog to evaluate a classification model."""
         try:
             self.untoggle_all_tools()
             self.classify_evaluate_model_dialog.exec_()
@@ -1700,6 +1742,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_evaluate_model_dialog(self):
+        """Open the Detect Evaluate Model dialog to evaluate a detection model."""
         try:
             self.untoggle_all_tools()
             self.detect_evaluate_model_dialog.exec_()
@@ -1707,6 +1750,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_evaluate_model_dialog(self):
+        """Open the Segment Evaluate Model dialog to evaluate a segmentation model."""
         try:
             self.untoggle_all_tools()
             self.segment_evaluate_model_dialog.exec_()
@@ -1714,6 +1758,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_optimize_model_dialog(self):
+        """Open the Optimize Model dialog to optimize a model."""
         try:
             self.untoggle_all_tools()
             self.optimize_model_dialog.exec_()
@@ -1721,6 +1766,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_deploy_model_dialog(self):
+        """Open the Classify Deploy Model dialog to deploy a classification model."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Classify Deploy Model",
@@ -1734,6 +1780,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_deploy_model_dialog(self):
+        """Open the Detect Deploy Model dialog to deploy a detection model."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Detect Deploy Model",
@@ -1747,6 +1794,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_deploy_model_dialog(self):
+        """Open the Segment Deploy Model dialog to deploy a segmentation model."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Segment Deploy Model",
@@ -1760,6 +1808,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_classify_batch_inference_dialog(self):
+        """Open the Classify Batch Inference dialog to run batch inference on classification models."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Batch Inference",
@@ -1785,6 +1834,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_detect_batch_inference_dialog(self):
+        """Open the Detect Batch Inference dialog to run batch inference on detection models."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Batch Inference",
@@ -1804,6 +1854,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_segment_batch_inference_dialog(self):
+        """Open the Segment Batch Inference dialog to run batch inference on segmentation models."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "Batch Inference",
@@ -1823,6 +1874,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_classify_video_inference_dialog(self):
+        """Open the Classify Video Inference dialog to run inference on video files."""
         try:
             self.untoggle_all_tools()
             self.classify_video_inference_dialog.exec_()
@@ -1830,6 +1882,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_detect_video_inference_dialog(self):
+        """Open the Detect Video Inference dialog to run inference on video files."""
         try:
             self.untoggle_all_tools()
             self.detect_video_inference_dialog.exec_()
@@ -1837,6 +1890,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
     def open_segment_video_inference_dialog(self):
+        """Open the Segment Video Inference dialog to run inference on video files."""
         try:
             self.untoggle_all_tools()
             self.segment_video_inference_dialog.exec_()
@@ -1844,6 +1898,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_deploy_predictor_dialog(self):
+        """Open the SAM Deploy Predictor dialog to deploy a SAM predictor."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Predictor",
@@ -1857,6 +1912,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_deploy_generator_dialog(self):
+        """Open the SAM Deploy Generator dialog to deploy a SAM generator."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "SAM Deploy Generator",
@@ -1870,6 +1926,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_sam_batch_inference_dialog(self):
+        """Open the SAM Batch Inference dialog to run batch inference with SAM."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "SAM Batch Inference",
@@ -1889,6 +1946,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_see_anything_train_model_dialog(self):
+        """Open the See Anything Train Model dialog to train a See Anything model."""
         try:
             self.untoggle_all_tools()
             self.see_anything_train_model_dialog.exec_()
@@ -1896,6 +1954,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_see_anything_deploy_predictor_dialog(self):
+        """Open the See Anything Deploy Predictor dialog to deploy a See Anything predictor."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE)",
@@ -1909,6 +1968,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_see_anything_batch_inference_dialog(self):
+        """Open the See Anything Batch Inference dialog to run batch inference with See Anything."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "See Anything (YOLOE) Batch Inference",
@@ -1929,6 +1989,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_auto_distill_deploy_model_dialog(self):
+        """Open the AutoDistill Deploy Model dialog to deploy an AutoDistill model."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "AutoDistill Deploy Model",
@@ -1942,6 +2003,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_auto_distill_batch_inference_dialog(self):
+        """Open the AutoDistill Batch Inference dialog to run batch inference with AutoDistill."""
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
                                 "AutoDistill Batch Inference",
