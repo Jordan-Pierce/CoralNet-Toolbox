@@ -74,13 +74,13 @@ class Classify(Base):
 
         # Create a blank sample in train folder if it's a test-only dataset
         # Ultralytics bug... it doesn't like empty directories (hacky)
-        for label in self.selected_labels:
-            label_folder = os.path.join(train_dir, label)
-            os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
-            # Create blank RGB image array (224x224x3)
-            blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
-            # Save as jpg using numpy
-            cv2.imwrite(os.path.join(label_folder, 'NULL.jpg'), blank_img)
+        # for label in self.selected_labels:
+        #     label_folder = os.path.join(train_dir, label)
+        #     os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
+        #     # Create blank RGB image array (224x224x3)
+        #     blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
+        #     # Save as jpg using numpy
+        #     cv2.imwrite(os.path.join(label_folder, 'NULL.jpg'), blank_img)
 
         self.process_annotations(self.train_annotations, train_dir, "Train")
         self.process_annotations(self.val_annotations, val_dir, "Validation")

@@ -452,34 +452,64 @@ class Base(QDialog):
 
     def check_label_distribution(self):
         """
-        Check the label distribution in the splits to ensure all labels are present.
-
+        Check the label distribution in the splits to ensure all labels are present,
+        and only allow specific split combinations.
+    
         Returns:
-            bool: True if all labels are present in all splits, False otherwise.
+            bool: True if all labels are present in all splits and split config is allowed, False otherwise.
         """
         # Get the ratios from the spinboxes
         train_ratio = self.train_ratio_spinbox.value()
         val_ratio = self.val_ratio_spinbox.value()
         test_ratio = self.test_ratio_spinbox.value()
+    
+        # Only allow these split combinations:
+        # - Train only
+        # - Test only
+        # - Train/Val
+        # - Train/Val/Test
+        
+        allowed = False
 
+        # Train only
+        if train_ratio == 1.0 and val_ratio == 0 and test_ratio == 0:
+            allowed = True
+            
+        # Test only
+        elif train_ratio == 0 and val_ratio == 0 and test_ratio == 1.0:
+            allowed = True
+            
+        # Train/Val
+        elif train_ratio > 0 and val_ratio > 0 and test_ratio == 0:
+            if abs(train_ratio + val_ratio - 1.0) < 1e-9:
+                allowed = True
+                
+        # Train/Val/Test
+        elif train_ratio > 0 and val_ratio > 0 and test_ratio > 0:
+            if abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-9:
+                allowed = True
+
+        if not allowed:
+            return False
+    
         # Initialize dictionaries to store label counts for each split
         train_label_counts = {}
         val_label_counts = {}
         test_label_counts = {}
-
+    
         # Count annotations for each label in each split
         for annotation in self.train_annotations:
             label = annotation.label.short_label_code
             train_label_counts[label] = train_label_counts.get(label, 0) + 1
-
+    
         for annotation in self.val_annotations:
             label = annotation.label.short_label_code
             val_label_counts[label] = val_label_counts.get(label, 0) + 1
-
+    
         for annotation in self.test_annotations:
             label = annotation.label.short_label_code
             test_label_counts[label] = test_label_counts.get(label, 0) + 1
-
+    
         # Check the conditions for each split
         for label in self.selected_labels:
             if train_ratio > 0 and (label not in train_label_counts or train_label_counts[label] == 0):
@@ -488,7 +518,7 @@ class Base(QDialog):
                 return False
             if test_ratio > 0 and (label not in test_label_counts or test_label_counts[label] == 0):
                 return False
-
+    
         # Additional checks to ensure no empty splits
         if train_ratio > 0 and len(self.train_annotations) == 0:
             return False
@@ -496,15 +526,7 @@ class Base(QDialog):
             return False
         if test_ratio > 0 and len(self.test_annotations) == 0:
             return False
-
-        # Allow creation of dataset if
-        if train_ratio >= 0 and val_ratio >= 0 and test_ratio >= 0:
-            return True
-        if train_ratio >= 0 and val_ratio >= 0 and test_ratio == 0:
-            return True
-        if train_ratio == 0 and val_ratio == 0 and test_ratio == 1:
-            return True
-
+    
         return True
 
     def update_image_selection(self):
@@ -602,8 +624,8 @@ class Base(QDialog):
         if not self.ready_status:
             QMessageBox.warning(self,
                                 "Dataset Not Ready",
-                                "Not all labels are present in all sets.\n"
-                                "Please adjust your selections or sample more data.")
+                                "Not all labels are present in all sets, or your ratios do not sum to 1.\n"
+                                "Please press 'Refresh' or 'Shuffle', adjust your selections or sample more data.")
             return False
 
         if not self.dataset_name or not self.output_dir:
