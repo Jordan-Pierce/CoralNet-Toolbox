@@ -7,8 +7,8 @@ import numpy as np
 
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor, QPolygonF
-from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QLabel, QDialog, QHBoxLayout,
-                             QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox,
+from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
+                             QPushButton, QComboBox, QSpinBox, QButtonGroup, QCheckBox, 
                              QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
@@ -118,13 +118,22 @@ class PatchSamplingDialog(QDialog):
         self.label_combo.setCurrentIndex(0)
         self.label_combo.currentIndexChanged.connect(self.preview_annotations)
         layout.addRow("Sample As:", self.label_combo)
+        
+        # Propagate Labels
+        self.propagate_labels_combo = QComboBox()
+        self.propagate_labels_combo.addItems(["False", "True"])
+        self.propagate_labels_combo.setCurrentIndex(0)
+        self.propagate_labels_combo.currentIndexChanged.connect(self.preview_annotations)
+        self.propagate_labels_combo.currentIndexChanged.connect(self.on_propagate_labels_changed)
+        layout.addRow("Propagate Labels:", self.propagate_labels_combo)
 
         # Exclude Regions
         self.exclude_regions_combo = QComboBox()
         self.exclude_regions_combo.addItems(["False", "True"])
         self.exclude_regions_combo.setCurrentIndex(0)
         self.exclude_regions_combo.currentIndexChanged.connect(self.preview_annotations)
-        layout.addRow("Exclude Regions:", self.exclude_regions_combo)
+        self.exclude_regions_combo.currentIndexChanged.connect(self.on_exclude_regions_changed)
+        layout.addRow("Avoid Annotations:", self.exclude_regions_combo)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -224,6 +233,28 @@ class PatchSamplingDialog(QDialog):
         for label in self.label_window.labels:
             self.label_combo.addItem(label.short_label_code, label.id)
         self.label_combo.setCurrentIndex(0)
+        
+    def on_propagate_labels_changed(self, idx):
+        """Handle changes to the propagate labels combo box."""
+        propagate = self.propagate_labels_combo.currentText() == "True"
+        if propagate:
+            # turn off avoid‐regions
+            self.exclude_regions_combo.setCurrentIndex(0)
+            self.exclude_regions_combo.setDisabled(True)
+        else:
+            self.exclude_regions_combo.setDisabled(False)
+        self.preview_annotations()
+
+    def on_exclude_regions_changed(self, idx):
+        """Handle changes to the exclude regions combo box."""
+        exclude = self.exclude_regions_combo.currentText() == "True"
+        if exclude:
+            # turn off propagate
+            self.propagate_labels_combo.setCurrentIndex(0)
+            self.propagate_labels_combo.setDisabled(True)
+        else:
+            self.propagate_labels_combo.setDisabled(False)
+        self.preview_annotations()
 
     def sample_annotations(self, method, num_annotations, annotation_size, 
                            margins, image_width, image_height, exclude_regions=False, exclude_polygons=None):
@@ -345,7 +376,8 @@ class PatchSamplingDialog(QDialog):
         num_annotations = self.num_annotations_spinbox.value()
         annotation_size = self.annotation_size_spinbox.value()
         sample_label = self.label_window.get_label_by_short_code(self.label_combo.currentText())
-        exclude_regions = self.exclude_regions_combo.currentText() == "True"
+        propagate = self.propagate_labels_combo.currentText() == "True"
+        exclude_regions = False if propagate else (self.exclude_regions_combo.currentText() == "True")
     
         if not sample_label:
             return
@@ -404,12 +436,26 @@ class PatchSamplingDialog(QDialog):
             exclude_polygons=polygons
         )
     
-        # Create graphics for each annotation
-        for annotation in self.sampled_annotations:
-            x, y, size = annotation
-            graphic = PatchGraphic(x, y, size, sample_label.color)
+        # Create graphics for each annotation, using propagated label color if needed
+        image_annotations = self.annotation_window.get_image_annotations()
+        for x, y, size in self.sampled_annotations:
+            if propagate:
+                center = QPointF(x + size / 2, y + size / 2)
+                # find annotation whose polygon contains the center
+                found = next(
+                    (
+                        a for a in image_annotations
+                        if a.get_polygon().containsPoint(center, Qt.OddEvenFill)
+                    ),
+                    None
+                )
+                color = found.label.color if found else sample_label.color
+            else:
+                color = sample_label.color
+            graphic = PatchGraphic(x, y, size, color)
             self.annotation_window.scene.addItem(graphic)
             self.annotation_graphics.append(graphic)
+        self.annotation_window.viewport().update()
 
     def preview_annotations(self):
         """Preview sampled annotations."""
@@ -448,8 +494,9 @@ class PatchSamplingDialog(QDialog):
             QMessageBox.warning(self, "Error", "No image is currently selected")
             return
 
-        # Prepare exclude regions flag
-        exclude_regions = self.exclude_regions_combo.currentText() == "True"
+        # Prepare flags
+        propagate = self.propagate_labels_combo.currentText() == "True"
+        exclude_regions = False if propagate else (self.exclude_regions_combo.currentText() == "True")
 
         # Determine which images to apply annotations to
         if self.apply_to_filtered:
@@ -512,14 +559,30 @@ class PatchSamplingDialog(QDialog):
                                                              exclude_polygons=polygons)
 
                 for x, y, size in annotations_coords:
+                    # Determine label based on propagation
+                    if propagate:
+                        center = QPointF(x + size // 2, y + size // 2)
+                        existing = self.annotation_window.get_image_annotations(image_path)
+                        found = next(
+                            (
+                                a for a in existing
+                                if a.get_polygon().containsPoint(
+                                    center, Qt.OddEvenFill
+                                )
+                            ),
+                            None
+                        )
+                        used_label = found.label if found else sample_label
+                    else:
+                        used_label = sample_label
                     # Create the annotation with center point
                     new_annotation = PatchAnnotation(QPointF(x + size // 2, y + size // 2),
                                                      size,
-                                                     sample_label.short_label_code,
-                                                     sample_label.long_label_code,
-                                                     sample_label.color,
+                                                     used_label.short_label_code,
+                                                     used_label.long_label_code,
+                                                     used_label.color,
                                                      image_path,
-                                                     sample_label.id,
+                                                     used_label.id,
                                                      transparency=self.annotation_window.transparency)
 
                     # Add annotation to the annotation window

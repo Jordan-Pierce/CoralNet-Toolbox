@@ -10,12 +10,11 @@ from shapely.geometry import Polygon, Point
 from ultralytics import YOLO
 
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
-from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal, QMutex, QWaitCondition, QRect
+from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
-                             QWidget, QGridLayout, QListWidget, QListWidgetItem, 
-                             QAbstractItemView, QFormLayout, QTabWidget, 
-                             QComboBox, QCheckBox, QSpacerItem, QSizePolicy,
+                             QWidget, QListWidget, QListWidgetItem, QFrame,
+                             QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
 from coralnet_toolbox.Icons import get_icon
@@ -26,23 +25,108 @@ from coralnet_toolbox.Icons import get_icon
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class VideoDisplayWidget(QWidget):
+    """Custom widget for displaying video frames and handling mouse events for region drawing."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.setMinimumSize(640, 360)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
+        
+    def paintEvent(self, event):
+        """Paint the video frame and regions on this widget."""
+        if not self.parent_widget:
+            return
+            
+        painter = QPainter(self)
+        
+        if self.parent_widget.current_frame is not None:
+            # Convert frame to QImage and QPixmap
+            rgb = cv2.cvtColor(self.parent_widget.current_frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            bytes_per_line = ch * w
+            qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimg)
+            
+            # Scale while maintaining aspect ratio to fit this widget
+            widget_width = self.width()
+            widget_height = self.height()
+            scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+            # Center the scaled image within this widget
+            offset_x = (widget_width - scaled.width()) // 2
+            offset_y = (widget_height - scaled.height()) // 2
+            
+            painter.drawPixmap(offset_x, offset_y, scaled)
+            
+        # Draw rectangles and polygons (these are in widget coordinates)
+        if self.parent_widget.show_regions:
+            pen = QPen(Qt.red, 2)
+            painter.setPen(pen)
+            for region in self.parent_widget.regions:
+                if isinstance(region, dict) and region.get("type") == "polygon":
+                    points = region["points"]
+                    if len(points) > 1:
+                        for i in range(len(points)):
+                            painter.drawLine(points[i], points[(i + 1) % len(points)])
+                else:
+                    # Backward compatibility: treat as QRect or dict with type 'rect'
+                    rect = region["rect"] if isinstance(region, dict) and region.get("type") == "rect" else region
+                    painter.drawRect(rect)
+                    
+        # Draw current rectangle being drawn
+        if self.parent_widget.drawing and self.parent_widget.current_rect:
+            pen = QPen(Qt.green, 2, Qt.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(self.parent_widget.current_rect)
+            
+        # Draw in-progress polygon
+        if self.parent_widget.drawing_polygon and self.parent_widget.current_polygon_points:
+            pen = QPen(Qt.green, 2, Qt.DashLine)
+            painter.setPen(pen)
+            pts = self.parent_widget.current_polygon_points
+            for i in range(1, len(pts)):
+                painter.drawLine(pts[i - 1], pts[i])
+            
+    def mousePressEvent(self, event):
+        """Forward mouse press events to parent widget with proper coordinates."""
+        if self.parent_widget:
+            self.parent_widget.mousePressEvent(event)
+            
+    def mouseMoveEvent(self, event):
+        """Forward mouse move events to parent widget with proper coordinates."""
+        if self.parent_widget:
+            self.parent_widget.mouseMoveEvent(event)
+
+
 class VideoRegionWidget(QWidget):
     """Widget for displaying video, playback controls, and drawing/editing rectangular regions only."""
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        
         self.parent = parent
         
+        # Polygon drawing state (must be set before any UI or event setup)
+        self.drawing_polygon = False
+        self.current_polygon_points = []
+
+        # Inference
+        self.inference_engine = InferenceEngine(self)
+        self.inference_enabled = False
+        self.region_polygons = []
+
         # Video frame and display
         self.frame = None
         self.pixmap = None
-        self.regions = []  # List of QRect
+        self.regions = []  # List of dicts: {"type": "rect"/"polygon", ...}
         self.drawing = False
         self.rect_start = None  # QPoint
         self.rect_end = None    # QPoint
         self.current_rect = None  # QRect
         self.selected_region = None
-        self.setMouseTracking(True)
         self.setMinimumSize(640, 480)
 
         # Undo/Redo stacks
@@ -63,16 +147,6 @@ class VideoRegionWidget(QWidget):
         self.fps = 30
         self.playback_speed = 1.0
 
-        # Inference
-        self.inference_enabled = False
-        self.inference_engine = None
-        self.region_polygons = []
-        self.conf = 0.3
-        self.iou = 0.2
-        
-        # Add tracker for ByteTrack
-        self.tracker = sv.ByteTrack()
-
         # Video output handling - simplified and fixed
         self.video_sink = None
         self.video_path = None
@@ -82,19 +156,35 @@ class VideoRegionWidget(QWidget):
 
         self._setup_ui()
         self.disable_video_region()
+        self.setFocusPolicy(Qt.StrongFocus)  # Needed for key events
 
     def _setup_ui(self):
         """Setup the user interface components."""
+        # Main layout for the widget
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
-        self.layout.addStretch(1)  # Video area will be drawn in paintEvent
+        self.layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.setSpacing(5)
+        
+        # Video Player GroupBox - takes up most of the space
+        self.video_group = QGroupBox("Video Player")
+        self.video_layout = QVBoxLayout(self.video_group)
+        self.video_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Video display area using custom widget
+        self.video_display = VideoDisplayWidget(self)
+        self.video_layout.addWidget(self.video_display)
+        
+        # Add video group to main layout with stretch factor
+        self.layout.addWidget(self.video_group, stretch=1)
 
-        # Media Controls GroupBox
-        controls_group = QGroupBox("Media Controls")
-        controls = QHBoxLayout()
+        # Media Controls GroupBox - fixed height
+        self.controls_group = QGroupBox("Media Controls")
+        self.controls_group.setMaximumHeight(100)
+        self.controls_group.setMinimumHeight(100)
+        controls = QHBoxLayout(self.controls_group)
+        controls.setContentsMargins(10, 10, 10, 10)
 
-        # Control buttons
+        # Main playback controls
         self.step_back_btn = QPushButton()
         self.step_back_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekBackward))
         self.step_back_btn.clicked.connect(self.step_backward)
@@ -124,25 +214,52 @@ class VideoRegionWidget(QWidget):
 
         self.stop_btn = QPushButton()
         self.stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
-        self.stop_btn.setToolTip("Stop")
+        self.stop_btn.setToolTip("Stop & Reset")
         self.stop_btn.clicked.connect(self.stop_video)
         self.stop_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.stop_btn)
+
+        # Add vertical line separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        controls.addWidget(separator)
+
+        # Record Play and Stop buttons (no groupbox)
+        self.record_play_btn = QPushButton()
+        self.record_play_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
+        self.record_play_btn.setToolTip("Start Recording")
+        self.record_play_btn.setFocusPolicy(Qt.NoFocus)
+        self.record_play_btn.clicked.connect(self.start_recording)
+        self.record_play_btn.setEnabled(False)  # Only enabled if output_dir is set
+        controls.addWidget(self.record_play_btn)
+        self.record_stop_btn = QPushButton()
+        self.record_stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
+        self.record_stop_btn.setToolTip("Stop Recording")
+        self.record_stop_btn.setFocusPolicy(Qt.NoFocus)
+        self.record_stop_btn.clicked.connect(self.stop_recording)
+        self.record_stop_btn.setEnabled(False)
+        controls.addWidget(self.record_stop_btn)
 
         # Seek slider
         controls.addSpacing(8)
         controls.addStretch(1)
         self.seek_slider = QSlider(Qt.Horizontal)
         self.seek_slider.valueChanged.connect(self.seek)
-        self.seek_slider.setMinimumWidth(600)
-        self.seek_slider.setMaximumWidth(1000)
+        self.seek_slider.setMinimumWidth(300)
         controls.addWidget(self.seek_slider)
         controls.addStretch(1)
         controls.addSpacing(8)
 
         # Set button sizes
         max_btn_size = 32
-        for btn in [self.step_back_btn, self.play_btn, self.pause_btn, self.step_fwd_btn, self.stop_btn]:
+        for btn in [self.step_back_btn, 
+                    self.play_btn,
+                    self.pause_btn, 
+                    self.step_fwd_btn, 
+                    self.stop_btn, 
+                    self.record_play_btn, 
+                    self.record_stop_btn]:
             btn.setMaximumSize(max_btn_size, max_btn_size)
 
         # Frame label and speed control
@@ -156,8 +273,8 @@ class VideoRegionWidget(QWidget):
         self.speed_dropdown.setMaximumWidth(80)
         controls.addWidget(self.speed_dropdown)
 
-        controls_group.setLayout(controls)
-        self.layout.addWidget(controls_group)
+        # Add controls group to main layout with no stretch
+        self.layout.addWidget(self.controls_group, stretch=0)
         
     def closeEvent(self, event):
         """Handle widget close event."""
@@ -169,26 +286,38 @@ class VideoRegionWidget(QWidget):
     def enable_video_region(self):
         """Enable all controls in the video region widget."""
         self.setEnabled(True)
-        for widget in [self.step_back_btn, self.play_btn, self.pause_btn, 
-                       self.step_fwd_btn, self.stop_btn, self.seek_slider, 
-                       self.speed_dropdown, self.frame_label]:
+        for widget in [self.step_back_btn, 
+                       self.play_btn, 
+                       self.pause_btn, 
+                       self.step_fwd_btn, 
+                       self.stop_btn, 
+                       self.seek_slider, 
+                       self.speed_dropdown, 
+                       self.frame_label]:
             widget.setEnabled(True)
+            
+        for widget in [self.record_play_btn, self.record_stop_btn]:
+            # Enable record buttons only if output directory is set
+            widget.setEnabled(bool(self.output_dir and os.path.exists(self.output_dir) and self.video_path))
 
     def disable_video_region(self):
         """Disable all controls in the video region widget."""
         self.setEnabled(False)
-        for widget in [self.step_back_btn, self.play_btn, self.pause_btn, 
-                       self.step_fwd_btn, self.stop_btn, self.seek_slider, 
-                       self.speed_dropdown, self.frame_label]:
+        for widget in [self.step_back_btn, 
+                       self.play_btn, 
+                       self.pause_btn, 
+                       self.record_play_btn,
+                       self.record_stop_btn,
+                       self.step_fwd_btn, 
+                       self.stop_btn, 
+                       self.seek_slider, 
+                       self.speed_dropdown, 
+                       self.frame_label]:
             widget.setEnabled(False)
             
     def play_video(self):
         """Play the video from the current position."""
         if not self.is_playing and self.cap:
-            # If we don't have an active video sink but should be recording, create a new one
-            if self.output_dir and not self.should_write_video:
-                self._prepare_new_video_output()
-                
             self.is_playing = True
             self.timer.start(int(1000 / (self.fps * self.playback_speed)))
             self.play_btn.setEnabled(False)
@@ -209,7 +338,7 @@ class VideoRegionWidget(QWidget):
             self.timer.stop()
             
         # Finalize current video output when stopped
-        self._cleanup_video_sink()
+        self.stop_recording()
         print("Video recording stopped - ready for new recording on next play")
         
         # Reset to first frame
@@ -222,6 +351,33 @@ class VideoRegionWidget(QWidget):
         
         # Clear regions and reset state
         self.clear_regions()
+        
+        # Disable Inference from parent widget
+        self.parent.disable_inference()
+        
+    def start_recording(self):
+        """Start recording the video to output file. Also start playback if not already playing."""
+        if not self.should_write_video and self.output_dir and os.path.exists(self.output_dir) and self.video_path:
+            self._setup_video_output(self.video_path, self.output_dir)
+        if not self.is_playing:
+            self.play_video()
+        self.update_record_buttons()
+
+    def stop_recording(self):
+        """Stop recording the video and finalize output."""
+        self._cleanup_video_sink()
+        self.update_record_buttons()
+        
+    def update_record_buttons(self):
+        """Update the enabled state of record buttons based on output directory and recording status."""
+        # Record Play button should be enabled if an output directory is set,
+        # a video is loaded, and we are not currently recording.
+        can_start_recording = bool(self.output_dir and os.path.exists(self.output_dir) and self.video_path)
+        
+        self.record_play_btn.setEnabled(can_start_recording and not self.should_write_video)
+        
+        # Record Stop button should be enabled only if we are currently recording.
+        self.record_stop_btn.setEnabled(self.should_write_video)
 
     def seek(self, frame_number):
         """Seek to a specific frame in the video."""
@@ -237,7 +393,7 @@ class VideoRegionWidget(QWidget):
             
             self.current_frame = processed_frame
             self.current_frame_number = frame_number
-            self.update()
+            self.video_display.update()  # Update the video display widget
             self.update_frame_label()
 
     def step_forward(self):
@@ -265,12 +421,6 @@ class VideoRegionWidget(QWidget):
         """Update the frame label with current frame number and total frames."""
         self.frame_label.setText(f"Frame: {self.current_frame_number + 1} / {self.total_frames}")
         
-    def set_inference_params(self, inference_engine, conf, iou):
-        """Set inference parameters for the video region. Always gets polygons from current regions."""
-        self.inference_engine = inference_engine
-        self.conf = conf
-        self.iou = iou
-
     def enable_inference(self, enable: bool):
         """Enable or disable inference in the video region."""
         self.inference_enabled = enable
@@ -278,29 +428,13 @@ class VideoRegionWidget(QWidget):
     def set_region_visibility(self, visible: bool):
         """Set the visibility of regions in the video."""
         self.show_regions = visible
-        self.update()
+        self.video_display.update()
         
-    def undo_region(self):
-        """Undo the last region action."""
-        if self.undo_stack:
-            self.redo_stack.append(list(self.regions))
-            self.regions = self.undo_stack.pop()
-            self.update_region_polygons()
-            self.update()
-
-    def redo_region(self):
-        """Redo the last undone region action."""
-        if self.redo_stack:
-            self.undo_stack.append(list(self.regions))
-            self.regions = self.redo_stack.pop()
-            self.update_region_polygons()
-            self.update()
-            
     def clear_regions(self):
         """Clear all regions and reset the region polygons."""
         self.regions.clear()
         self.update_region_polygons()
-        self.update()
+        self.video_display.update()
         
         # Redraw the current frame without region overlays
         self.seek(self.current_frame_number)
@@ -314,85 +448,59 @@ class VideoRegionWidget(QWidget):
         # Get video frame dimensions
         frame_h, frame_w = self.current_frame.shape[:2]
         
-        # Get widget dimensions (excluding control area)
-        widget_w = self.width()
-        widget_h = self.height() - 10  # Reserve space for controls
+        # Get video display area dimensions
+        widget_w = self.video_display.width()
+        widget_h = self.video_display.height()
         
-        # Calculate scaling and positioning (same logic as paintEvent)
+        # Calculate scaling and positioning (same logic as paintEvent in VideoDisplayWidget)
         scale = min(widget_w / frame_w, widget_h / frame_h)
         scaled_w = int(frame_w * scale)
         scaled_h = int(frame_h * scale)
         offset_x = (widget_w - scaled_w) // 2
         offset_y = (widget_h - scaled_h) // 2
         
-        for rect in self.regions:
-            # Map QRect from widget coordinates to video frame coordinates
-            # First, subtract the offset to get coordinates relative to the scaled video
-            left_scaled = rect.left() - offset_x
-            top_scaled = rect.top() - offset_y
-            right_scaled = rect.right() - offset_x
-            bottom_scaled = rect.bottom() - offset_y
-            
-            # Then scale back to original video frame coordinates
-            left_frame = left_scaled / scale
-            top_frame = top_scaled / scale
-            right_frame = right_scaled / scale
-            bottom_frame = bottom_scaled / scale
-            
-            # Clamp to frame bounds and ensure valid rectangle
-            left_frame = max(0, min(left_frame, frame_w))
-            right_frame = max(0, min(right_frame, frame_w))
-            top_frame = max(0, min(top_frame, frame_h))
-            bottom_frame = max(0, min(bottom_frame, frame_h))
-            
-            # Ensure we have a valid rectangle after clamping
-            if left_frame < right_frame and top_frame < bottom_frame:
-                # Create polygon in video frame coordinates
-                poly = Polygon([
-                    (left_frame, top_frame),
-                    (right_frame, top_frame),
-                    (right_frame, bottom_frame),
-                    (left_frame, bottom_frame)
-                ])
-                self.region_polygons.append(poly)
-
-    def paintEvent(self, event):
-        """Draw the video frame centered, and rectangular regions."""
-        painter = QPainter(self)
-        
-        offset_x, offset_y = 0, 0
-        
-        if self.current_frame is not None:
-            rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb.shape
-            bytes_per_line = ch * w
-            qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(qimg)
-            
-            widget_width = self.width()
-            widget_height = self.height() - 10  # Reserve space for controls
-            
-            # Scale while maintaining aspect ratio
-            scaled = pixmap.scaled(widget_width, widget_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            
-            # Center the scaled image
-            offset_x = (widget_width - scaled.width()) // 2
-            offset_y = (widget_height - scaled.height()) // 2
-            
-            painter.drawPixmap(offset_x, offset_y, scaled)
-            
-        # Draw rectangles (these are in widget coordinates, no translation needed for display)
-        if self.show_regions:
-            pen = QPen(Qt.red, 2)
-            painter.setPen(pen)
-            for rect in self.regions:
-                painter.drawRect(rect)
+        for region in self.regions:
+            if isinstance(region, dict) and region.get("type") == "rect":
+                rect = region["rect"]
+                # Map QRect from video display widget coordinates to video frame coordinates
+                # First, subtract the offset to get coordinates relative to the scaled video
+                left_scaled = rect.left() - offset_x
+                top_scaled = rect.top() - offset_y
+                right_scaled = rect.right() - offset_x
+                bottom_scaled = rect.bottom() - offset_y
                 
-        # Draw current rectangle being drawn
-        if self.drawing and self.current_rect:
-            pen = QPen(Qt.green, 2, Qt.DashLine)
-            painter.setPen(pen)
-            painter.drawRect(self.current_rect)
+                # Then scale back to original video frame coordinates
+                left_frame = left_scaled / scale
+                top_frame = top_scaled / scale
+                right_frame = right_scaled / scale
+                bottom_frame = bottom_scaled / scale
+                
+                # Clamp to frame bounds and ensure valid rectangle
+                left_frame = max(0, min(left_frame, frame_w))
+                right_frame = max(0, min(right_frame, frame_w))
+                top_frame = max(0, min(top_frame, frame_h))
+                bottom_frame = max(0, min(bottom_frame, frame_h))
+                
+                # Ensure we have a valid rectangle after clamping
+                if left_frame < right_frame and top_frame < bottom_frame:
+                    # Create polygon in video frame coordinates
+                    poly = Polygon([
+                        (left_frame, top_frame),
+                        (right_frame, top_frame),
+                        (right_frame, bottom_frame),
+                        (left_frame, bottom_frame)
+                    ])
+                    self.region_polygons.append(poly)
+            elif isinstance(region, dict) and region.get("type") == "polygon":
+                pts = []
+                for pt in region["points"]:
+                    x_scaled = (pt.x() - offset_x) / scale
+                    y_scaled = (pt.y() - offset_y) / scale
+                    x_scaled = max(0, min(x_scaled, frame_w))
+                    y_scaled = max(0, min(y_scaled, frame_h))
+                    pts.append((x_scaled, y_scaled))
+                if len(pts) > 2:
+                    self.region_polygons.append(Polygon(pts))
 
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
@@ -400,40 +508,80 @@ class VideoRegionWidget(QWidget):
         if self.is_playing:
             self.pause_video()
             
-        if event.button() == Qt.LeftButton:
-            # Use raw mouse coordinates (no offset adjustment needed)
+        if event.modifiers() & Qt.ControlModifier and event.button() == Qt.LeftButton:
+            # Polygon drawing mode
             pos = event.pos()
+            if not self.drawing_polygon:
+                self.drawing_polygon = True
+                self.current_polygon_points = [pos, pos]  # Add first point and a preview point
+            else:
+                self.current_polygon_points.insert(-1, pos)  # Insert before the preview point
+            # Update the video display to show the polygon in progress
+            self.video_display.update()
             
+        elif event.button() == Qt.LeftButton and not (event.modifiers() & Qt.ControlModifier):
+            # Rectangle drawing as before
+            # Get the current mouse position
+            pos = event.pos()
+            # Check if we're not currently drawing a rectangle
             if not self.drawing:
+                # Start drawing a new rectangle
                 self.drawing = True
+                # Set the starting point of the rectangle
                 self.rect_start = pos
+                # Set the ending point to the same position initially
                 self.rect_end = pos
+                # Clear any current rectangle being drawn
                 self.current_rect = None
             else:
+                # Finish drawing the rectangle
                 self.drawing = False
+                # Check if we have valid start and end points that are different
                 if self.rect_start and self.rect_end and self.rect_start != self.rect_end:
+                    # Create a QRect from the start and end points
                     rect = self._make_rect(self.rect_start, self.rect_end)
-                    
-                    # Allow regions to extend outside video area - clamping happens in update_region_polygons
+                    # Save current state to undo stack before adding new region
                     self.undo_stack.append(list(self.regions))
+                    # Clear redo stack since we're adding a new action
                     self.redo_stack.clear()
-                    self.regions.append(rect)
+                    # Add the new rectangle region to the regions list
+                    self.regions.append({"type": "rect", "rect": rect})
+                    # Update the region polygons for inference calculations
                     self.update_region_polygons()
-                    
+                # Reset rectangle drawing state
                 self.rect_start = None
                 self.rect_end = None
                 self.current_rect = None
-            self.update()
+            # Update the video display to reflect changes
+            self.video_display.update()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events for updating region shape."""
         if self.drawing and self.rect_start:
-            # Use raw mouse coordinates
+            # Use raw mouse coordinates from the video display widget
             pos = event.pos()
             self.rect_end = pos
             self.current_rect = self._make_rect(self.rect_start, self.rect_end)
-            self.update()
+            self.video_display.update()
+        elif self.drawing_polygon and self.current_polygon_points:
+            # Update the last point of the polygon in progress
+            pos = event.pos()
+            self.current_polygon_points[-1] = pos
+            self.video_display.update()
         
+    def keyReleaseEvent(self, event):
+        """Finish polygon drawing when Ctrl is released."""
+        if event.key() == Qt.Key_Control and self.drawing_polygon:
+            if len(self.current_polygon_points) > 2:
+                self.regions.append({
+                    "type": "polygon",
+                    "points": list(self.current_polygon_points)
+                })
+                self.update_region_polygons()
+            self.drawing_polygon = False
+            self.current_polygon_points = []
+            self.video_display.update()
+
     def _make_rect(self, p1, p2):
         """Return a QRect from two points."""
         x1, y1 = p1.x(), p1.y()
@@ -446,8 +594,8 @@ class VideoRegionWidget(QWidget):
         """Calculate the offset and scale for centering the video in the widget."""
         if self.current_frame is not None:
             frame_h, frame_w = self.current_frame.shape[:2]
-            widget_width = self.width()
-            widget_height = self.height() - 10  # Reserve space for controls
+            widget_width = self.video_display.width()
+            widget_height = self.video_display.height()
             
             # Calculate scale to fit video while maintaining aspect ratio
             scale = min(widget_width / frame_w, widget_height / frame_h)
@@ -491,6 +639,7 @@ class VideoRegionWidget(QWidget):
         """Write a frame to the video sink if enabled."""
         if not self.should_write_video or self.video_sink is None:
             return
+        
         try:
             # Ensure frame matches expected output size
             expected_shape = (self.video_sink.video_info.height, self.video_sink.video_info.width)
@@ -519,6 +668,7 @@ class VideoRegionWidget(QWidget):
         self.is_playing = False
         self.play_btn.setEnabled(True)
         self.pause_btn.setEnabled(False)
+        
         # Finalize current video output
         self._cleanup_video_sink()
         print("Video recording ended - ready for new recording on next play")
@@ -555,12 +705,10 @@ class VideoRegionWidget(QWidget):
             self.region_polygons.clear()
             self.update()
             
-            # Setup output video if output directory is provided
-            if output_dir and os.path.exists(output_dir):
-                self._setup_video_output(video_path, output_dir)
-            else:
-                self.should_write_video = False
-                
+            # Do NOT setup output video here; only do so when recording is started
+            self.should_write_video = False
+            self.update_record_buttons()
+            
             # Load first frame
             self.seek(0)
             self.update()
@@ -568,7 +716,7 @@ class VideoRegionWidget(QWidget):
             self.enable_video_region()
             
             # Reset for new video
-            self.reset_tracker()
+            self.inference_engine.reset_tracker()
             
         except Exception as e:
             QMessageBox.critical(self.parent, 
@@ -577,19 +725,36 @@ class VideoRegionWidget(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
 
+    def browse_output(self):
+        """Open directory dialog to select output directory."""
+        dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_name:
+            self.output_edit.setText(dir_name)
+            self.output_dir = dir_name
+            # If video already loaded, update output dir for widget
+            if self.video_path:
+                self.video_region_widget.load_video(self.video_path, dir_name)
+            else:
+                self.update_record_buttons()
+        else:
+            self.update_record_buttons()
+
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled."""
         if not self.inference_enabled or not self.inference_engine:
             return frame
+        
         try:
             # Run inference on the current frame
-            results = self.inference_engine.infer(frame, self.conf, self.iou)
+            detections = self.inference_engine.infer(frame)
             # Count objects in defined regions
-            region_counts = self.inference_engine.count_objects_in_regions(results, self.region_polygons)
-            # Draw results on the frame
-            frame = self.draw_inference_results(frame, region_counts, results)
+            detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
+            # Draw detections on the frame
+            frame = self.draw_inference_results(frame, detections, region_counts)
+            
         except Exception as e:
             print(f"Inference processing failed: {e}")
+            
         return frame
         
     def next_frame(self):
@@ -609,11 +774,10 @@ class VideoRegionWidget(QWidget):
                 return
                 
         if frame is not None:
-            # Process the frame for inference if enabled
             processed_frame = self.process_frame_for_inference(frame.copy())
-            
-            # Write to video sink
-            self._write_frame_to_sink(processed_frame)
+            # Only write if recording
+            if self.should_write_video:
+                self._write_frame_to_sink(processed_frame)
             
             # Update display
             self.current_frame = processed_frame
@@ -624,28 +788,18 @@ class VideoRegionWidget(QWidget):
             self.seek_slider.blockSignals(False)
             self.update_frame_label()
 
-    def draw_inference_results(self, frame, region_counts, results):
+    def draw_inference_results(self, frame, detections, region_counts):
         """Draw inference results on the video frame using supervision's BoxAnnotator."""
-        if not results or len(results) == 0:
+        if not detections or len(detections) == 0:
             return frame
         try:
-            result = results[0]
-            # Convert results to Supervision Detections
-            detections = sv.Detections.from_ultralytics(result)
-            # Update tracker with detections
-            tracker_detections = self.tracker.update_with_detections(detections)
-            
-            # If no detections after tracking, use original detections
-            if tracker_detections:
-                detections = tracker_detections
-            
             # Get the class names from detections
             class_names = detections.data.get('class_name', [])
             # Get confidences for each detection
             confidences = detections.confidence
             # Try to get tracker IDs if present
             tracker_ids = detections.tracker_id
-            
+
             if tracker_ids is not None:
                 labels = [
                     f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
@@ -653,10 +807,7 @@ class VideoRegionWidget(QWidget):
                 ]
             else:
                 labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-                
-            # Create a LabelAnnotator for text labels
-            label_annotator = sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER)
-            
+
             # Get selected annotators 
             selected_annotators = self.parent.get_selected_annotators()
             annotators = []
@@ -689,10 +840,15 @@ class VideoRegionWidget(QWidget):
                     annotators.append(sv.BlurAnnotator())
                 elif key == "PixelateAnnotator":
                     annotators.append(sv.PixelateAnnotator())
+                elif key == "LabelAnnotator":
+                    annotators.append(sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER))
+                    
             for annotator in annotators:
-                frame = annotator.annotate(scene=frame, detections=detections)
-            frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
-        
+                # Only pass labels to LabelAnnotator
+                if isinstance(annotator, sv.LabelAnnotator):
+                    frame = annotator.annotate(scene=frame, detections=detections, labels=labels)
+                else:
+                    frame = annotator.annotate(scene=frame, detections=detections)
         except Exception as e:
             print(f"Supervision annotate failed: {e}")
             
@@ -725,14 +881,6 @@ class VideoRegionWidget(QWidget):
                 )
                 
         return frame
-    
-    def reset_tracker(self):
-        """Reset the ByteTrack tracker."""
-        if self.tracker:
-            self.tracker.reset()
-            print("Tracker reset")
-        else:
-            print("No tracker initialized")
 
     def __del__(self):
         """Destructor to ensure proper cleanup."""
@@ -746,8 +894,25 @@ class InferenceEngine:
     def __init__(self, parent=None):
         self.parent = parent
         
+        # Set the device (video_region.base.main_window)
+        self.device = "cpu"
+        
+        # Initialize model and task
         self.model = None
         self.task = None
+        
+        # Initialize ByteTrack tracker
+        self.tracker = sv.ByteTrack()
+        
+        # Default inference parameters
+        self.conf = 0.3
+        self.iou = 0.2
+        self.area_min = 0.0
+        self.area_max = 0.4
+        
+        self.count_criteria = "Centroid"  # Criteria for counting objects in regions
+        self.display_outside = True
+        
         self.class_names = []
         self.selected_classes = []
 
@@ -767,6 +932,9 @@ class InferenceEngine:
             # Run a dummy inference to ensure the model is loaded correctly
             self.model(np.zeros((640, 640, 3), dtype=np.uint8))
             
+            # Set the device for inference
+            self.set_device()
+            
             QMessageBox.information(self.parent,
                                     "Model Loaded",
                                     "Model loaded successfully.")
@@ -780,48 +948,131 @@ class InferenceEngine:
         finally:
             # Make cursor normal
             QApplication.restoreOverrideCursor()
+            
+    def set_device(self):
+        """Set the device for inference."""
+        self.device = self.parent.parent.main_window.device
 
     def set_selected_classes(self, class_indices):
         """Set the selected classes for inference."""
         self.selected_classes = class_indices
+        
+    def set_inference_params(self, conf, iou, area_min, area_max):
+        """Set inference parameters for the video region."""
+        self.conf = conf
+        self.iou = iou
+        self.area_min = area_min
+        self.area_max = area_max
 
-    def infer(self, frame, conf, iou):
+    def set_count_criteria(self, count_criteria):
+        """Set the criteria for counting objects in regions."""
+        self.count_criteria = count_criteria
+        
+    def set_display_outside_detections(self, display_outside):
+        """Set whether to display detections outside the regions."""
+        self.display_outside = display_outside
+
+    def infer(self, frame):
         """Run inference on a single frame with the current model."""
         if self.model is None:
             return None
         
-        # For classification, we don't track objects
+        # Detect, and filter results based on confidence and IoU
         results = self.model(frame, 
-                             conf=conf, 
-                             iou=iou, 
+                             conf=self.conf, 
+                             iou=self.iou, 
                              classes=self.selected_classes,
-                             half=True)
+                             half=True,
+                             device=self.device)[0]
         
-        return results
+        # Convert results to Supervision Detections
+        detections = sv.Detections.from_ultralytics(results)
+        
+        # Update tracker with detections
+        detections = self.update_tracker(detections)
+        
+        # Apply area filter to detections
+        detections = self.apply_area_filter(frame, detections)
+            
+        return detections
+    
+    def update_tracker(self, detections):
+        """Update the tracker with the current detections."""
+        tracker_detections = self.tracker.update_with_detections(detections)
+        if tracker_detections:
+            return tracker_detections
+        return detections
+    
+    def apply_area_filter(self, frame, detections):
+        """Filter detections based on area thresholds."""
+        if detections is None or len(detections) == 0:
+            return detections
+        
+        # Calculate the area of the frame
+        height, width = frame.shape[:2]
+        frame_area = height * width
+        
+        # Filter detections based on relative area
+        detections = detections[(detections.area / frame_area) <= self.area_max]
+        detections = detections[(detections.area / frame_area) >= self.area_min]
+        
+        return detections
+            
+    def count_objects_in_regions(self, detections, region_polygons):
+        """Count objects in each region based on supervision Detections."""
+        if not region_polygons or detections is None or len(detections) == 0:
+            region_counts = [0 for _ in region_polygons]
+            return detections, region_counts
 
-    def count_objects_in_regions(self, results, region_polygons):
-        """Count objects in each region based on inference results."""
-        if not region_polygons:
-            return []
-        
-        # Get the region counts
+        # Get the number of regions
         region_counts = [0 for _ in region_polygons]
         
-        # Check if results are valid and have boxes
-        if results:
-            # Get the boxes and classes from the results
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            clss = results[0].boxes.cls.cpu().numpy()
+        # Use detection boxes for region assignment
+        boxes = detections.xyxy  # shape (n, 4)
+        
+        # Create mask to track which detections are inside regions
+        inside_mask = np.zeros(len(boxes), dtype=bool)
+        
+        # Loop through each detection box
+        for i, box in enumerate(boxes):
             
-            # Iterate through the boxes and count them in regions
-            # TODO modify if entire box, or just center point in region
-            for box, cls in zip(boxes, clss):
+            # Check if just the centroid is in inside the region
+            if self.count_criteria == "Centroid":
+                # Check if centroid is inside the region
                 center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
                 for idx, poly in enumerate(region_polygons):
                     if poly.contains(Point(center)):
                         region_counts[idx] += 1
-                        
-        return region_counts
+                        inside_mask[i] = True
+                        break  # Count in first matching region only
+                    
+            # Check if entire bounding box is inside the region
+            elif self.count_criteria == "Bounding Box":
+                box_corners = [
+                    (box[0], box[1]),  # top-left
+                    (box[2], box[1]),  # top-right
+                    (box[2], box[3]),  # bottom-right
+                    (box[0], box[3])   # bottom-left
+                ]
+                for idx, poly in enumerate(region_polygons):
+                    if all(poly.contains(Point(corner)) for corner in box_corners):
+                        region_counts[idx] += 1
+                        inside_mask[i] = True
+                        break  # Count in first matching region only
+        
+        # Filter detections based on display_outside setting
+        if not self.display_outside:
+            detections = detections[inside_mask]
+    
+        return detections, region_counts
+    
+    def reset_tracker(self):
+        """Reset the ByteTrack tracker."""
+        if self.tracker:
+            self.tracker.reset()
+            print("Tracker reset")
+        else:
+            print("No tracker initialized")
 
             
 class Base(QDialog):
@@ -830,12 +1081,16 @@ class Base(QDialog):
         """Initialize the Video Inference dialog."""
         super().__init__(parent)
         self.main_window = main_window
+        
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Video Inference")
         
         # Optionally set a minimum size
         self.setMinimumSize(800, 600)
         
+        # Initialize device as 'cpu' by default
+        self.device = 'cpu'
+                
         # Initialize parameters
         self.video_path = ""
         self.output_dir = ""
@@ -848,9 +1103,8 @@ class Base(QDialog):
         self.iou_thresh = 0.20
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.40
-                
+                 
         self.video_region_widget = None             # Initialized in setup_video_layout
-        self.inference_engine = InferenceEngine(self)
 
         # Main layout
         self.layout = QHBoxLayout(self)
@@ -1016,57 +1270,41 @@ class Base(QDialog):
             item.setHidden(text not in item.text().lower())
 
     def setup_video_layout(self):
-        """Setup the video region widget inside a group box (no tabs)."""
-        group_box = QGroupBox("Video Player")
-        vbox = QVBoxLayout()
-        
+        """Setup the video region widget directly without an external group box."""
         self.video_region_widget = VideoRegionWidget(self)
-        vbox.addWidget(self.video_region_widget)
-        
-        group_box.setLayout(vbox)
-        self.video_layout.addWidget(group_box)
+        self.video_layout.addWidget(self.video_region_widget)
 
     def setup_regions_layout(self):
-        """Setup the regions control group with Show/Hide, clear, undo, redo buttons."""
+        """Setup the regions control group."""
         group_box = QGroupBox("Regions")
         layout = QHBoxLayout()
-
-        # Show/Hide Regions as two separate buttons
-        self.show_regions_btn = QPushButton("Show Regions")
-        self.hide_regions_btn = QPushButton("Hide Regions")
-        self.show_regions_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
-        self.hide_regions_btn.setFocusPolicy(Qt.NoFocus)  
-        self.show_regions_btn.setEnabled(False)           # Regions are visible by default
-        self.hide_regions_btn.setEnabled(True)
-
-        def show_regions():
-            self.video_region_widget.set_region_visibility(True)
-            self.show_regions_btn.setEnabled(False)
-            self.hide_regions_btn.setEnabled(True)
-
-        def hide_regions():
-            self.video_region_widget.set_region_visibility(False)
-            self.show_regions_btn.setEnabled(True)
-            self.hide_regions_btn.setEnabled(False)
-
-        self.show_regions_btn.clicked.connect(show_regions)
-        self.hide_regions_btn.clicked.connect(hide_regions)
-        layout.addWidget(self.show_regions_btn)
-        layout.addWidget(self.hide_regions_btn)
 
         clear_btn = QPushButton("Clear Regions")
         clear_btn.setFocusPolicy(Qt.NoFocus)
         clear_btn.clicked.connect(self.clear_regions)
         layout.addWidget(clear_btn)
+        
+        # Add stretch to push everything to the left
+        layout.addStretch()
+        
+        # Count criteria dropdown with label
+        layout.addWidget(QLabel("Count Criteria:"))
+        self.count_criteria_combo = QComboBox()
+        self.count_criteria_combo.addItems(["Centroid", "Bounding Box"])
+        self.count_criteria_combo.setCurrentIndex(0)
+        self.count_criteria_combo.currentIndexChanged.connect(self.update_region_parameters)
+        layout.addWidget(self.count_criteria_combo)
 
-        self.undo_btn = QPushButton("Undo")
-        self.undo_btn.clicked.connect(self.video_region_widget.undo_region)
-        self.undo_btn.setFocusPolicy(Qt.NoFocus)
-        layout.addWidget(self.undo_btn)
-        self.redo_btn = QPushButton("Redo")
-        self.redo_btn.setFocusPolicy(Qt.NoFocus)
-        self.redo_btn.clicked.connect(self.video_region_widget.redo_region)
-        layout.addWidget(self.redo_btn)
+        # Dropdown for display detections outside regions with label
+        layout.addWidget(QLabel("Show Outside Detections:"))
+        self.display_outside_combo = QComboBox()
+        self.display_outside_combo.addItems(["True", "False"])
+        self.display_outside_combo.setCurrentIndex(0)
+        self.display_outside_combo.currentIndexChanged.connect(self.update_region_parameters)
+        layout.addWidget(self.display_outside_combo)
+        
+        # Add some spacing
+        layout.addSpacing(10)
 
         group_box.setLayout(layout)
         self.controls_layout.addWidget(group_box)
@@ -1127,6 +1365,10 @@ class Base(QDialog):
             # If video already loaded, update output dir for widget
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)
+            else:
+                self.update_record_buttons()
+        else:
+            self.update_record_buttons()
 
     def browse_model(self):
         """Open file dialog to select model file (filtered to .pt, .pth)."""
@@ -1139,7 +1381,7 @@ class Base(QDialog):
         if file_name:
             self.model_edit.setText(file_name)
             self.model_path = file_name
-            self.inference_engine.load_model(file_name, task=self.task)
+            self.video_region_widget.inference_engine.load_model(file_name, task=self.task)
             self.populate_class_filter()
         
     def get_selected_annotators(self):
@@ -1207,16 +1449,25 @@ class Base(QDialog):
 
     def update_inference_parameters(self):
         """Update inference parameters in the video region widget."""
-        self.video_region_widget.set_inference_params(
-            self.inference_engine,
+        self.video_region_widget.inference_engine.set_inference_params(
             self.uncertainty_thresh,
-            self.iou_thresh
+            self.iou_thresh,
+            self.area_thresh_min,
+            self.area_thresh_max
         )
+        
+    def update_region_parameters(self):
+        """Update region parameters based on the selected count criteria and display outside detections."""
+        count_criteria = self.count_criteria_combo.currentText()
+        display_outside = self.display_outside_combo.currentText() == "True"
+        # Update the inference engine with the selected criteria
+        self.video_region_widget.inference_engine.set_count_criteria(count_criteria)
+        self.video_region_widget.inference_engine.set_display_outside_detections(display_outside)
 
     def populate_class_filter(self):
         """Populate the class filter widget with class names from the loaded model."""
         self.class_filter_widget.clear()
-        for idx, name in enumerate(self.inference_engine.class_names):
+        for idx, name in enumerate(self.video_region_widget.inference_engine.class_names):
             item = QListWidgetItem(name)
             item.setData(Qt.UserRole, idx)
             item.setCheckState(Qt.Checked)  # Select all by default
@@ -1231,7 +1482,7 @@ class Base(QDialog):
             item = self.class_filter_widget.item(i)
             if item.checkState() == Qt.Checked:
                 selected.append(item.data(Qt.UserRole))
-        self.inference_engine.set_selected_classes(selected)
+        self.video_region_widget.inference_engine.set_selected_classes(selected)
 
     def select_all_classes(self):
         """Select all classes in the class filter widget."""
@@ -1253,22 +1504,15 @@ class Base(QDialog):
 
     def enable_inference(self):
         """Enable inference on the video region."""
-        if not self.model_path or not self.video_path:
+        if not self.video_region_widget.inference_engine.model:
+            QMessageBox.warning(self, "Model Not Loaded", "Please load a model before enabling inference.")
             return
-        # Set inference parameters in the video region widget
-        self.video_region_widget.set_inference_params(
-            self.inference_engine,
-            self.uncertainty_thresh,
-            self.iou_thresh
-        )
+        
         # Only set the flag and update UI, do not change video state
         self.video_region_widget.enable_inference(True)
         self.enable_inference_btn.setEnabled(False)
         self.disable_inference_btn.setEnabled(True)
         
-        # Refresh the current frame without inference
-        self.video_region_widget.seek(self.video_region_widget.current_frame_number)
-
     def disable_inference(self):
         """Disable inference on the video region."""
         # Only set the flag and update UI, do not change video state
