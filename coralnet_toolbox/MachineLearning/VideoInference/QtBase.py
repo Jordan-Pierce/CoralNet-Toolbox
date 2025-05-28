@@ -214,7 +214,7 @@ class VideoRegionWidget(QWidget):
 
         self.stop_btn = QPushButton()
         self.stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
-        self.stop_btn.setToolTip("Stop")
+        self.stop_btn.setToolTip("Stop & Reset")
         self.stop_btn.clicked.connect(self.stop_video)
         self.stop_btn.setFocusPolicy(Qt.NoFocus)
         controls.addWidget(self.stop_btn)
@@ -289,14 +289,16 @@ class VideoRegionWidget(QWidget):
         for widget in [self.step_back_btn, 
                        self.play_btn, 
                        self.pause_btn, 
-                       self.record_play_btn,
-                       self.record_stop_btn,
                        self.step_fwd_btn, 
                        self.stop_btn, 
                        self.seek_slider, 
                        self.speed_dropdown, 
                        self.frame_label]:
             widget.setEnabled(True)
+            
+        for widget in [self.record_play_btn, self.record_stop_btn]:
+            # Enable record buttons only if output directory is set
+            widget.setEnabled(bool(self.output_dir and os.path.exists(self.output_dir) and self.video_path))
 
     def disable_video_region(self):
         """Disable all controls in the video region widget."""
