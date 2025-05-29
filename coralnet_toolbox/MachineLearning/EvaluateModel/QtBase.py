@@ -169,7 +169,7 @@ class Base(QDialog):
     def browse_dataset_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
-            self.dataset_dir_edit.setText(dir_path)
+            self.dataset_edit.setText(dir_path)
 
     def browse_dataset_yaml(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select YAML File", "", "YAML Files (*.yaml)")

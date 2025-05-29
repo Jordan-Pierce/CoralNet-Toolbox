@@ -165,6 +165,10 @@ class TrainModelWorker(QThread):
         Evaluate the model after training.
         """
         try:
+            # Do not evaluate if the user specifies 
+            if not self.params.get('Validation', False):
+                return
+            
             # Check that there is a test folder
             test_folder = f"{self.params['data']}/test"
             print(f"Note: Looking for test folder: {test_folder}")
@@ -186,6 +190,7 @@ class TrainModelWorker(QThread):
 
             eval_worker.evaluation_error.connect(self.on_evaluation_error)
             eval_worker.run()  # Run the evaluation synchronously (same thread)
+            
         except Exception as e:
             print(f"Error during evaluation: {e}\n\nTraceback:\n{traceback.format_exc()}")
             self.training_error.emit(f"Error during evaluation: {e} (see console log)")

@@ -679,12 +679,17 @@ class Base(QDialog):
             class_mapping = self.get_class_mapping()
             self.save_class_mapping_json(class_mapping, output_dir_path)
 
-        # Create the dataset
-        self.create_dataset(output_dir_path)
+        try:
+            # Create the dataset
+            self.create_dataset(output_dir_path)
 
-        QMessageBox.information(self,
-                                "Dataset Created",
-                                "Dataset has been successfully created.")
+            QMessageBox.information(self,
+                                    "Dataset Created",
+                                    "Dataset has been successfully created.")
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
+            
         super().accept()
 
     def create_dataset(self, output_dir_path):

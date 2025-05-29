@@ -16,7 +16,6 @@ class Detect(Base):
         self.task = 'detection'
         self.imgsz = 640
         
-        
     def setup_info_layout(self):
         """Set up the layout and widgets for the info layout."""
         group_box = QGroupBox("Information")

@@ -71,17 +71,13 @@ class Classify(Base):
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'val')
         test_dir = os.path.join(output_dir_path, 'test')
-
-        # Create a blank sample in train folder if it's a test-only dataset
-        # Ultralytics bug... it doesn't like empty directories (hacky)
-        # for label in self.selected_labels:
-        #     label_folder = os.path.join(train_dir, label)
-        #     os.makedirs(f"{train_dir}/{label}/", exist_ok=True)
-        #     # Create blank RGB image array (224x224x3)
-        #     blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
-        #     # Save as jpg using numpy
-        #     cv2.imwrite(os.path.join(label_folder, 'NULL.jpg'), blank_img)
-
+        
+        # Create dummy data inside datset folders if ratio is 0
+        self.create_dummy_dataset(train_dir, self.train_ratio)
+        self.create_dummy_dataset(val_dir, self.val_ratio)
+        self.create_dummy_dataset(test_dir, self.test_ratio)
+        
+        # Crop the acutal annotations
         self.process_annotations(self.train_annotations, train_dir, "Train")
         self.process_annotations(self.val_annotations, val_dir, "Validation")
         self.process_annotations(self.test_annotations, test_dir, "Test")
@@ -94,74 +90,29 @@ class Classify(Base):
 
         pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
         
-    def process_annotations(self, annotations, split_dir, split):
-        """Deprecated method for processing annotations without parallel execution"""
+    def create_dummy_dataset(self, dataset_dir, ratio):
+        """
+        Creates a dummy dataset with 'NULL' images in each of the category folders.
         
-        # Get unique image paths
-        image_paths = list(set(a.image_path for a in annotations))
-        if not image_paths:
+        Ultralytics requires there to be files in each of the train/valid/test dataset folders,
+        even if they are not used.
+        """
+        # Only done if the ratio is 0
+        if ratio > 0:
             return
-
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title=f"Creating {split} Dataset")
-        progress_bar.show()
-        progress_bar.start_progress(len(image_paths))
-
-        # Group annotations by image path
-        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')),
-                                   key=attrgetter('image_path'))
-
-        for image_path, group in grouped_annotations:
-            try:
-                # Process image annotations
-                image_annotations = list(group)
-                image_annotations = self.annotation_window.crop_annotations(image_path,
-                                                                            image_annotations,
-                                                                            verbose=False)
-            except Exception as e:
-                print(f'{image_path} generated an exception: {e}')
-                continue
-            
-            try:
-                # Save each cropped annotation
-                for annotation in image_annotations:
-                    # If the annotation has no cropped image, skip it
-                    if not annotation.cropped_image:
-                        print(f"Skipping annotation {annotation.id} because it has no cropped image")
-                        continue
-                    
-                    label_code = annotation.label.short_label_code
-                    output_path = os.path.join(split_dir, label_code)
-                    # Create a split / label directory if it does not exist
-                    os.makedirs(output_path, exist_ok=True)
-                    output_filename = f"{label_code}_{annotation.id}.jpg"
-                    full_output_path = os.path.join(output_path, output_filename)
-
-                    try:
-                        annotation.cropped_image.save(full_output_path, "JPG", quality=100)
-                        
-                    except Exception as e:
-                        print(f"ERROR: Issue saving image {full_output_path}: {e}")
-                        # Optionally, save as PNG if JPG fails
-                        png_path = full_output_path.replace(".jpg", ".png")
-                        annotation.cropped_image.save(png_path, "PNG")
-
-            except Exception as e:
-                print(f'{image_path} generated an exception: {e}')
-            finally:
-                progress_bar.update_progress()
-
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-        progress_bar.stop_progress()
-        progress_bar.close()
-        progress_bar = None
+        
+        # Loop through each of the selected labels
+        for label in self.selected_labels:
+            # Create the category folder within the dummy dataset folder
+            label_folder = f"{dataset_dir}/{label}"
+            os.makedirs(label_folder, exist_ok=True)
+            # Create blank RGB image array (224x224x3)
+            blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
+            # Save as jpg using numpy
+            cv2.imwrite(f"{label_folder}/NULL.jpg", blank_img)
 
     def process_annotations(self, annotations, split_dir, split):
-        """
-        Process annotations using parallel execution for cropping, then save them.
-        """
+        """Process annotations using parallel execution for cropping, then save them."""
         # Get unique image paths
         image_paths = list(set(a.image_path for a in annotations))
         if not image_paths:
@@ -174,8 +125,8 @@ class Classify(Base):
         progress_bar.start_progress(len(image_paths))
 
         # Group annotations by image path
-        grouped_annotations = groupby(sorted(annotations, key=attrgetter('image_path')),
-                                key=attrgetter('image_path'))
+        sorted_annotations = sorted(annotations, key=attrgetter('image_path'))
+        grouped_annotations = groupby(sorted_annotations, key=attrgetter('image_path'))
         
         cropped_annotations = []
         
