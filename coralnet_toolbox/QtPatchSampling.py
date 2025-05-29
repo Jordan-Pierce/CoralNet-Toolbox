@@ -202,7 +202,7 @@ class PatchSamplingDialog(QDialog):
         """Handle dialog show event."""
         self.update_checkboxes()
         self.update_label_combo()
-        self.update_annotation_graphics()
+        self.preview_annotations()
 
     def closeEvent(self, event):
         """Handle dialog close event."""
@@ -459,7 +459,19 @@ class PatchSamplingDialog(QDialog):
 
     def preview_annotations(self):
         """Preview sampled annotations."""
-        self.update_annotation_graphics()
+        # Make cursor busy
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.update_annotation_graphics()
+            
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Error", f"Error previewing annotations: {str(e)}")
+            return
+        
+        finally:
+            # Restore cursor to default
+            QApplication.restoreOverrideCursor()
 
     def accept_annotations(self):
         """Accept the sampled annotations and add them to the current image."""
