@@ -72,12 +72,12 @@ class Classify(Base):
         val_dir = os.path.join(output_dir_path, 'val')
         test_dir = os.path.join(output_dir_path, 'test')
         
-        # Create dummy data inside datset folders if ratio is 0
+        # Create dummy data inside dataset folders if ratio is 0
         self.create_dummy_dataset(train_dir, self.train_ratio)
         self.create_dummy_dataset(val_dir, self.val_ratio)
         self.create_dummy_dataset(test_dir, self.test_ratio)
         
-        # Crop the acutal annotations
+        # Crop the actual annotations
         self.process_annotations(self.train_annotations, train_dir, "Train")
         self.process_annotations(self.val_annotations, val_dir, "Validation")
         self.process_annotations(self.test_annotations, test_dir, "Test")
