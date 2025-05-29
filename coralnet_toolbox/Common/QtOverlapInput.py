@@ -71,6 +71,7 @@ class OverlapInput(QGroupBox):
         self.value_type.currentIndexChanged.connect(self.update_input_mode)
 
     def update_input_mode(self, index):
+        """Update input mode based on selected unit type."""
         is_percentage = index == 1
         self.width_spin.setVisible(not is_percentage)
         self.width_double.setVisible(is_percentage)
