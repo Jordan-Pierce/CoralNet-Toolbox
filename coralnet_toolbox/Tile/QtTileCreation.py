@@ -720,41 +720,60 @@ class TileCreation(QDialog):
         if not image_paths:
             QMessageBox.warning(self, "No Images", "No images are currently selected.")
             return
-
+    
         total_tiles = 0
         errors = []
-
+    
         # Calculate margin/overlap percentages from current image if needed
-        current_width = self.annotation_window.pixmap_image.width()
-        current_height = self.annotation_window.pixmap_image.height()
-
+        current_image_display_width = self.annotation_window.pixmap_image.width()
+        current_image_display_height = self.annotation_window.pixmap_image.height()
+    
+        # Get the tile size from the input fields, as this is constant across images
+        input_tile_width, input_tile_height = self.tile_size_input.get_value()
+    
         # Overlap
         if self.overlap_input.value_type.currentIndex() == 0:  # Pixels
             overlap_width_px = self.overlap_input.width_spin.value()
             overlap_height_px = self.overlap_input.height_spin.value()
-            overlap_width_pct = overlap_width_px / current_width if current_width else 0
-            overlap_height_pct = overlap_height_px / current_height if current_height else 0
-        else:  # Percentage
+            # Convert pixel overlap to percentage of INPUT TILE SIZE
+            overlap_width_pct = overlap_width_px / input_tile_width if input_tile_width else 0
+            overlap_height_pct = overlap_height_px / input_tile_height if input_tile_height else 0
+        else:  # Percentage (already a percentage of tile size)
             overlap_width_pct = self.overlap_input.width_double.value()
             overlap_height_pct = self.overlap_input.height_double.value()
-
+    
         # Margin
         if self.margins_input.value_type.currentIndex() == 0:  # Pixels
-            margins_px = self.margins_input.get_margins(current_width, current_height, validate=False)
+            margins_px = self.margins_input.get_margins(current_image_display_width, 
+                                                        current_image_display_height, 
+                                                        validate=False)
+            
             if isinstance(margins_px, tuple) and len(margins_px) == 4:
-                left_pct = margins_px[0] / current_width if current_width else 0
-                top_pct = margins_px[1] / current_height if current_height else 0
-                right_pct = margins_px[2] / current_width if current_width else 0
-                bottom_pct = margins_px[3] / current_height if current_height else 0
+                left_pct = margins_px[0] / current_image_display_width if current_image_display_width else 0
+                top_pct = margins_px[1] / current_image_display_height if current_image_display_height else 0
+                right_pct = margins_px[2] / current_image_display_width if current_image_display_width else 0
+                bottom_pct = margins_px[3] / current_image_display_height if current_image_display_height else 0
             else:
-                left_pct = top_pct = right_pct = bottom_pct = (margins_px[0] / current_width if current_width else 0)
+                if current_image_display_width:
+                    left_pct = margins_px[0] / current_image_display_width
+                    right_pct = margins_px[2] / current_image_display_width
+                else:
+                    left_pct = right_pct = 0
+                if current_image_display_height:
+                    top_pct = margins_px[1] / current_image_display_height
+                    bottom_pct = margins_px[3] / current_image_display_height
+                else:
+                    top_pct = bottom_pct = 0
+                
         else:  # Percentage
-            margins = self.margins_input.get_margins(current_width, current_height, validate=False)
+            margins = self.margins_input.get_margins(current_image_display_width, 
+                                                     current_image_display_height, 
+                                                     validate=False)
             if isinstance(margins, tuple) and len(margins) == 4:
                 left_pct, top_pct, right_pct, bottom_pct = margins
             else:
                 left_pct = top_pct = right_pct = bottom_pct = margins[0]
-
+    
         for image_path in image_paths:
             # For the current image, use the annotation window for validation
             if image_path == self.annotation_window.current_image_path:
@@ -765,7 +784,7 @@ class TileCreation(QDialog):
                 if not raster or not hasattr(raster, 'width') or not hasattr(raster, 'height'):
                     errors.append(f"{image_path}: Could not get image dimensions.")
                     continue
-
+    
                 # Extract image dimensions
                 image_width = raster.width
                 image_height = raster.height
@@ -775,29 +794,30 @@ class TileCreation(QDialog):
                     if tile_width > image_width or tile_height > image_height:
                         errors.append(f"{image_path}: Tile size exceeds image size ({image_width}×{image_height}).")
                         continue
-
+    
                     # Always use percentage-based overlap/margins for other images
-                    overlap_width = int(overlap_width_pct * image_width)
-                    overlap_height = int(overlap_height_pct * image_height)
+                    # Now correctly calculate overlap based on tile size, not image size
+                    overlap_width = int(overlap_width_pct * tile_width)
+                    overlap_height = int(overlap_height_pct * tile_height)
                     margins = (
                         int(left_pct * image_width),
                         int(top_pct * image_height),
                         int(right_pct * image_width),
                         int(bottom_pct * image_height),
                     )
-
+    
                     # Calculate effective tile size
                     effective_width = tile_width - overlap_width
                     effective_height = tile_height - overlap_height
                     if effective_width <= 0 or effective_height <= 0:
                         errors.append(f"{image_path}: Effective tile size must be positive. Reduce overlap.")
                         continue
-
+    
                     left, top, right, bottom = margins
                     if left + right >= image_width or top + bottom >= image_height:
                         errors.append(f"{image_path}: Margins are too large for the image size.")
                         continue
-
+    
                     # Prepare parameters dict for tiling
                     params = {
                         "tile_width": tile_width,
@@ -810,36 +830,36 @@ class TileCreation(QDialog):
                     }
                     is_valid = True
                     error_message = ""
-
+    
                 except Exception as e:
                     errors.append(f"{image_path}: Invalid parameters: {e}")
                     continue
-
+    
             # If parameters are not valid, record the error and skip
             if not is_valid:
                 errors.append(f"{image_path}: {error_message}")
                 continue
-
+    
             # Generate tile work areas for this image
             tile_work_areas = self.generate_tile_work_areas(params, image_path)
             raster = self.main_window.image_window.raster_manager.get_raster(image_path)
-
+    
             if not raster:
                 errors.append(f"{image_path}: Could not get raster.")
                 continue
-
+    
             # Add each tile work area to the raster
             for work_area in tile_work_areas:
                 raster.add_work_area(work_area)
             total_tiles += len(tile_work_areas)
-
+    
         # Show summary message
         QMessageBox.information(self, "Tiles Added", f"Added {total_tiles} tiles to selected images.")
-
+    
         # Show dialog if any images were skipped due to errors
         if errors:
             self.show_skipped_images_dialog(errors)
-
+    
         # Clear any previewed tiles and close the dialog
         self.clear_tiles()
         self.accept()

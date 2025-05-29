@@ -1672,7 +1672,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
     def open_tile_creation_dialog(self):
-        """Open the Tile Inference dialog to run inference on tiled images."""
+        """Open the Tile Creation dialog to create work areas on images."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
