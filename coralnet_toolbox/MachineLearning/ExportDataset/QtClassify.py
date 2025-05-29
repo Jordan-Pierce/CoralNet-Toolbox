@@ -73,9 +73,9 @@ class Classify(Base):
         test_dir = os.path.join(output_dir_path, 'test')
         
         # Create dummy data inside dataset folders if ratio is 0
-        self.create_dummy_dataset(train_dir, self.train_ratio)
-        self.create_dummy_dataset(val_dir, self.val_ratio)
-        self.create_dummy_dataset(test_dir, self.test_ratio)
+        self.create_dummy_data(train_dir, self.train_annotations)
+        self.create_dummy_data(val_dir, self.val_annotations)
+        self.create_dummy_data(test_dir, self.test_annotations)
         
         # Crop the actual annotations
         self.process_annotations(self.train_annotations, train_dir, "Train")
@@ -90,26 +90,33 @@ class Classify(Base):
 
         pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
         
-    def create_dummy_dataset(self, dataset_dir, ratio):
+    def create_dummy_data(self, dataset_dir, annotations):
         """
-        Creates a dummy dataset with 'NULL' images in each of the category folders.
+        Creates dummy data ('NULL' image) in each of the category folders with the dataset folder
+        if there are not annotations for that category.
         
         Ultralytics requires there to be files in each of the train/valid/test dataset folders,
         even if they are not used.
         """
-        # Only done if the ratio is 0
-        if ratio > 0:
-            return
+        # Get labels that have annotations in this split
+        labels_with_annotations = set()
+        for annotation in annotations:
+            labels_with_annotations.add(annotation.label.short_label_code)
         
         # Loop through each of the selected labels
         for label in self.selected_labels:
-            # Create the category folder within the dummy dataset folder
+            # Create the category folder within the dataset folder
             label_folder = f"{dataset_dir}/{label}"
             os.makedirs(label_folder, exist_ok=True)
-            # Create blank RGB image array (224x224x3)
-            blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
-            # Save as jpg using numpy
-            cv2.imwrite(f"{label_folder}/NULL.jpg", blank_img)
+            
+            # Only create dummy data if there are no annotations for this label in this split
+            if label not in labels_with_annotations:
+                # Create blank RGB image array (224x224x3)
+                blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
+                # Save as jpg using numpy
+                blank_path = f"{label_folder}/NULL.jpg"
+                if not os.path.exists(blank_path):
+                    cv2.imwrite(blank_path, blank_img)
 
     def process_annotations(self, annotations, split_dir, split):
         """Process annotations using parallel execution for cropping, then save them."""
