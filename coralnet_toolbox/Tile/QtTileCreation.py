@@ -24,9 +24,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class TileInference(QDialog):
+class TileCreation(QDialog):
     """
-    Base class for performing tiled inference on images using object detection, and instance segmentation.
+    Base class for performing tiled creation on images using object detection, and instance segmentation.
 
     :param main_window: MainWindow object
     :param parent: Parent widget
@@ -39,7 +39,7 @@ class TileInference(QDialog):
         self.graphics_utility = main_window.annotation_window.graphics_utility
 
         self.setWindowIcon(get_icon("coral.png"))
-        self.setWindowTitle("Tile Inference")
+        self.setWindowTitle("Tile Creation")
         self.resize(400, 600)
         
         # Initialize graphics tracking lists and objects
@@ -66,15 +66,18 @@ class TileInference(QDialog):
         super().showEvent(event)
         self.update_tile_size_limits()
         self.clear_tiles()
+        self.clear_checkboxes()
 
     def closeEvent(self, event):
         """Handle dialog close event."""
         self.clear_tiles()
+        self.clear_checkboxes()
         event.accept()
 
     def reject(self):
         """Handle dialog rejection."""
         self.clear_tiles()
+        self.clear_checkboxes()
         super().reject()
 
     def setup_info_layout(self):
@@ -85,7 +88,7 @@ class TileInference(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Tile an image into smaller non / overlapping images, performing inference on each.")
+        info_label = QLabel("Tile images into smaller non / overlapping images for performing inference on.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -182,6 +185,48 @@ class TileInference(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        
+    def clear_checkboxes(self):
+        """Clear all apply checkboxes."""
+        # Temporarily disable exclusivity to allow clearing all
+        self.apply_group.setExclusive(False)
+        
+        self.apply_filtered_checkbox.setChecked(False)
+        self.apply_prev_checkbox.setChecked(False)
+        self.apply_next_checkbox.setChecked(False)
+        self.apply_all_checkbox.setChecked(False)
+        
+        # Re-enable exclusivity
+        self.apply_group.setExclusive(True)
+        
+    def show_skipped_images_dialog(self, errors):
+        """
+        Show a dialog with a QTableWidget listing skipped images and reasons.
+        """    
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Some Images Skipped")
+        dialog.resize(700, 350)
+        layout = QVBoxLayout(dialog)
+        label = QLabel("The following images were skipped:")
+        layout.addWidget(label)
+        table_widget = QTableWidget()
+        table_widget.setColumnCount(2)
+        table_widget.setHorizontalHeaderLabels(["Image Path", "Reason"])
+        table_widget.setRowCount(len(errors))
+        for row, error in enumerate(errors):
+            if ": " in error:
+                image_path, reason = error.split(": ", 1)
+            else:
+                image_path = error
+                reason = ""
+            table_widget.setItem(row, 0, QTableWidgetItem(image_path))
+            table_widget.setItem(row, 1, QTableWidgetItem(reason))
+        table_widget.resizeColumnsToContents()
+        layout.addWidget(table_widget)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        button_box.accepted.connect(dialog.accept)
+        layout.addWidget(button_box)
+        dialog.exec_()
 
     def update_tile_size_limits(self):
         """Set tile size spin box maximums to current image dimensions."""
@@ -288,13 +333,13 @@ class TileInference(QDialog):
         """
         self.update_tile_size_limits()
         self.clear_tiles()
-    
+
         # Validate and extract parameters
         is_valid, error_message, params = self.validate_parameters(self.annotation_window.current_image_path)
         if not is_valid:
             QMessageBox.warning(self, "Invalid Parameters", error_message)
             return
-    
+
         # Unpack validated parameters
         tile_width = params["tile_width"]
         tile_height = params["tile_height"]
@@ -365,6 +410,10 @@ class TileInference(QDialog):
                     x = left + j * effective_width
                     y = top + i * effective_height
                     
+                    # Ensure tile doesn't exceed image boundaries
+                    if x + tile_width > image_width or y + tile_height > image_height:
+                        continue
+                    
                     # Create work area for this tile
                     tile_work_area = WorkArea(
                         x, y, tile_width, tile_height,
@@ -384,70 +433,91 @@ class TileInference(QDialog):
             
             # Check if we need extra columns on the right
             if covered_width < usable_width:
-                # Create extra column of tiles aligned to the right edge
-                right_edge = left + usable_width - tile_width
-                for i in range(num_tiles_y):
-                    y = top + i * effective_height
-                    
-                    # Create work area aligned to right edge
-                    tile_work_area = WorkArea(
-                        right_edge, y, tile_width, tile_height,
-                        self.annotation_window.current_image_path
-                    )
-                    
-                    # Add to scene with thinner line and store the graphics
-                    tile_graphics = tile_work_area.create_graphics(
-                        self.annotation_window.scene, pen_width=thickness,
-                    )
-                    
-                    # Store the graphics for later removal
-                    self.all_graphics.append(tile_graphics)
-                    
-                    # Store the work area
-                    self.tile_work_areas.append(tile_work_area)
+                # Calculate right edge position ensuring tile fits within image
+                right_edge = min(left + usable_width - tile_width, image_width - tile_width)
+                
+                # Only add right edge tiles if they would be valid
+                if right_edge >= left and right_edge + tile_width <= image_width:
+                    for i in range(num_tiles_y):
+                        y = top + i * effective_height
+                        
+                        # Ensure tile doesn't exceed image boundaries
+                        if y + tile_height > image_height:
+                            continue
+                        
+                        # Create work area aligned to right edge
+                        tile_work_area = WorkArea(
+                            right_edge, y, tile_width, tile_height,
+                            self.annotation_window.current_image_path
+                        )
+                        
+                        # Add to scene with thinner line and store the graphics
+                        tile_graphics = tile_work_area.create_graphics(
+                            self.annotation_window.scene, pen_width=thickness,
+                        )
+                        
+                        # Store the graphics for later removal
+                        self.all_graphics.append(tile_graphics)
+                        
+                        # Store the work area
+                        self.tile_work_areas.append(tile_work_area)
             
             # Check if we need extra rows at the bottom
             if covered_height < usable_height:
-                # Create extra row of tiles aligned to the bottom edge
-                bottom_edge = top + usable_height - tile_height
-                for j in range(num_tiles_x):
-                    x = left + j * effective_width
-                    
-                    # Create work area aligned to bottom edge
-                    tile_work_area = WorkArea(
-                        x, bottom_edge, tile_width, tile_height,
-                        self.annotation_window.current_image_path
-                    )
-                    
-                    # Add to scene with thinner line and store the graphics
-                    tile_graphics = tile_work_area.create_graphics(
-                        self.annotation_window.scene, pen_width=thickness,
-                    )
-                    
-                    # Store the graphics for later removal
-                    self.all_graphics.append(tile_graphics)
-                    
-                    # Store the work area
-                    self.tile_work_areas.append(tile_work_area)
+                # Calculate bottom edge position ensuring tile fits within image
+                bottom_edge = min(top + usable_height - tile_height, image_height - tile_height)
                 
-                # Check if we need a corner tile (if both right and bottom need coverage)
-                if covered_width < usable_width:
-                    # Create the bottom right corner tile
-                    tile_work_area = WorkArea(
-                        right_edge, bottom_edge, tile_width, tile_height,
-                        self.annotation_window.current_image_path
-                    )
+                # Only add bottom edge tiles if they would be valid
+                if bottom_edge >= top and bottom_edge + tile_height <= image_height:
+                    for j in range(num_tiles_x):
+                        x = left + j * effective_width
+                        
+                        # Ensure tile doesn't exceed image boundaries
+                        if x + tile_width > image_width:
+                            continue
+                        
+                        # Create work area aligned to bottom edge
+                        tile_work_area = WorkArea(
+                            x, bottom_edge, tile_width, tile_height,
+                            self.annotation_window.current_image_path
+                        )
+                        
+                        # Add to scene with thinner line and store the graphics
+                        tile_graphics = tile_work_area.create_graphics(
+                            self.annotation_window.scene, pen_width=thickness,
+                        )
+                        
+                        # Store the graphics for later removal
+                        self.all_graphics.append(tile_graphics)
+                        
+                        # Store the work area
+                        self.tile_work_areas.append(tile_work_area)
                     
-                    # Add to scene with thinner line and store the graphics
-                    tile_graphics = tile_work_area.create_graphics(
-                        self.annotation_window.scene, pen_width=thickness,
-                    )
-                    
-                    # Store the graphics for later removal
-                    self.all_graphics.append(tile_graphics)
-                    
-                    # Store the work area
-                    self.tile_work_areas.append(tile_work_area)
+                    # Check if we need a corner tile (if both right and bottom need coverage)
+                    if covered_width < usable_width:
+                        # Calculate corner position ensuring tile fits within image
+                        right_edge = min(left + usable_width - tile_width, image_width - tile_width)
+                        
+                        # Only add corner tile if it would be valid
+                        if (right_edge >= left and right_edge + tile_width <= image_width and 
+                            bottom_edge >= top and bottom_edge + tile_height <= image_height):
+                            
+                            # Create the bottom right corner tile
+                            tile_work_area = WorkArea(
+                                right_edge, bottom_edge, tile_width, tile_height,
+                                self.annotation_window.current_image_path
+                            )
+                            
+                            # Add to scene with thinner line and store the graphics
+                            tile_graphics = tile_work_area.create_graphics(
+                                self.annotation_window.scene, pen_width=thickness,
+                            )
+                            
+                            # Store the graphics for later removal
+                            self.all_graphics.append(tile_graphics)
+                            
+                            # Store the work area
+                            self.tile_work_areas.append(tile_work_area)
         else:
             # Original logic when ensure_coverage is disabled
             num_tiles_x = max(1, int((usable_width - overlap_width) / effective_width) + 1)
@@ -460,8 +530,9 @@ class TileInference(QDialog):
                     x = left + j * effective_width
                     y = top + i * effective_height
                     
-                    # Ensure the tile doesn't go beyond the usable area
-                    if x + tile_width > left + usable_width or y + tile_height > top + usable_height:
+                    # Ensure the tile doesn't go beyond the usable area OR image boundaries
+                    if (x + tile_width > left + usable_width or y + tile_height > top + usable_height or
+                        x + tile_width > image_width or y + tile_height > image_height):
                         continue
                     
                     # Create work area for this tile
@@ -557,6 +628,11 @@ class TileInference(QDialog):
                 for j in range(num_tiles_x):
                     x = left + j * effective_width
                     y = top + i * effective_height
+                    
+                    # Ensure tile doesn't exceed image boundaries
+                    if x + tile_width > image_width or y + tile_height > image_height:
+                        continue
+                        
                     tile_work_area = WorkArea(
                         x, y, tile_width, tile_height, image_path
                     )
@@ -564,30 +640,55 @@ class TileInference(QDialog):
                     
             # Add extra column of tiles at the right edge if needed
             if covered_width < usable_width:
-                right_edge = left + usable_width - tile_width
-                for i in range(num_tiles_y):
-                    y = top + i * effective_height
-                    tile_work_area = WorkArea(
-                        right_edge, y, tile_width, tile_height, image_path
-                    )
-                    tile_work_areas.append(tile_work_area)
+                # Calculate right edge position ensuring tile fits within image
+                right_edge = min(left + usable_width - tile_width, image_width - tile_width)
+                
+                # Only add right edge tiles if they would be valid
+                if right_edge >= left and right_edge + tile_width <= image_width:
+                    for i in range(num_tiles_y):
+                        y = top + i * effective_height
+                        
+                        # Ensure tile doesn't exceed image boundaries
+                        if y + tile_height > image_height:
+                            continue
+                            
+                        tile_work_area = WorkArea(
+                            right_edge, y, tile_width, tile_height, image_path
+                        )
+                        tile_work_areas.append(tile_work_area)
                     
             # Add extra row of tiles at the bottom edge if needed
             if covered_height < usable_height:
-                bottom_edge = top + usable_height - tile_height
-                for j in range(num_tiles_x):
-                    x = left + j * effective_width
-                    tile_work_area = WorkArea(
-                        x, bottom_edge, tile_width, tile_height, image_path
-                    )
-                    tile_work_areas.append(tile_work_area)
-                    
-                # Add bottom-right corner tile if both right and bottom need coverage
-                if covered_width < usable_width:
-                    tile_work_area = WorkArea(
-                        right_edge, bottom_edge, tile_width, tile_height, image_path
-                    )
-                    tile_work_areas.append(tile_work_area)
+                # Calculate bottom edge position ensuring tile fits within image
+                bottom_edge = min(top + usable_height - tile_height, image_height - tile_height)
+                
+                # Only add bottom edge tiles if they would be valid
+                if bottom_edge >= top and bottom_edge + tile_height <= image_height:
+                    for j in range(num_tiles_x):
+                        x = left + j * effective_width
+                        
+                        # Ensure tile doesn't exceed image boundaries
+                        if x + tile_width > image_width:
+                            continue
+                            
+                        tile_work_area = WorkArea(
+                            x, bottom_edge, tile_width, tile_height, image_path
+                        )
+                        tile_work_areas.append(tile_work_area)
+                        
+                    # Add bottom-right corner tile if both right and bottom need coverage
+                    if covered_width < usable_width:
+                        # Calculate corner position ensuring tile fits within image
+                        right_edge = min(left + usable_width - tile_width, image_width - tile_width)
+                        
+                        # Only add corner tile if it would be valid
+                        if (right_edge >= left and right_edge + tile_width <= image_width and 
+                            bottom_edge >= top and bottom_edge + tile_height <= image_height):
+                            
+                            tile_work_area = WorkArea(
+                                right_edge, bottom_edge, tile_width, tile_height, image_path
+                            )
+                            tile_work_areas.append(tile_work_area)
         else:
             # Standard grid logic (no extra coverage)
             num_tiles_x = max(1, int((usable_width - overlap_width) / effective_width) + 1)
@@ -596,44 +697,18 @@ class TileInference(QDialog):
                 for j in range(num_tiles_x):
                     x = left + j * effective_width
                     y = top + i * effective_height
-                    # Skip tiles that would exceed the usable area
-                    if x + tile_width > left + usable_width or y + tile_height > top + usable_height:
+                    
+                    # Skip tiles that would exceed the usable area OR image boundaries
+                    if (x + tile_width > left + usable_width or y + tile_height > top + usable_height or
+                        x + tile_width > image_width or y + tile_height > image_height):
                         continue
+                        
                     tile_work_area = WorkArea(
                         x, y, tile_width, tile_height, image_path
                     )
                     tile_work_areas.append(tile_work_area)
                     
         return tile_work_areas
-
-    def show_skipped_images_dialog(self, errors):
-        """
-        Show a dialog with a QTableWidget listing skipped images and reasons.
-        """    
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Some Images Skipped")
-        dialog.resize(700, 350)
-        layout = QVBoxLayout(dialog)
-        label = QLabel("The following images were skipped:")
-        layout.addWidget(label)
-        table_widget = QTableWidget()
-        table_widget.setColumnCount(2)
-        table_widget.setHorizontalHeaderLabels(["Image Path", "Reason"])
-        table_widget.setRowCount(len(errors))
-        for row, error in enumerate(errors):
-            if ": " in error:
-                image_path, reason = error.split(": ", 1)
-            else:
-                image_path = error
-                reason = ""
-            table_widget.setItem(row, 0, QTableWidgetItem(image_path))
-            table_widget.setItem(row, 1, QTableWidgetItem(reason))
-        table_widget.resizeColumnsToContents()
-        layout.addWidget(table_widget)
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok)
-        button_box.accepted.connect(dialog.accept)
-        layout.addWidget(button_box)
-        dialog.exec_()
 
     def apply(self):
         """
@@ -648,7 +723,38 @@ class TileInference(QDialog):
 
         total_tiles = 0
         errors = []
-        
+
+        # Calculate margin/overlap percentages from current image if needed
+        current_width = self.annotation_window.pixmap_image.width()
+        current_height = self.annotation_window.pixmap_image.height()
+
+        # Overlap
+        if self.overlap_input.value_type.currentIndex() == 0:  # Pixels
+            overlap_width_px = self.overlap_input.width_spin.value()
+            overlap_height_px = self.overlap_input.height_spin.value()
+            overlap_width_pct = overlap_width_px / current_width if current_width else 0
+            overlap_height_pct = overlap_height_px / current_height if current_height else 0
+        else:  # Percentage
+            overlap_width_pct = self.overlap_input.width_double.value()
+            overlap_height_pct = self.overlap_input.height_double.value()
+
+        # Margin
+        if self.margins_input.value_type.currentIndex() == 0:  # Pixels
+            margins_px = self.margins_input.get_margins(current_width, current_height, validate=False)
+            if isinstance(margins_px, tuple) and len(margins_px) == 4:
+                left_pct = margins_px[0] / current_width if current_width else 0
+                top_pct = margins_px[1] / current_height if current_height else 0
+                right_pct = margins_px[2] / current_width if current_width else 0
+                bottom_pct = margins_px[3] / current_height if current_height else 0
+            else:
+                left_pct = top_pct = right_pct = bottom_pct = (margins_px[0] / current_width if current_width else 0)
+        else:  # Percentage
+            margins = self.margins_input.get_margins(current_width, current_height, validate=False)
+            if isinstance(margins, tuple) and len(margins) == 4:
+                left_pct, top_pct, right_pct, bottom_pct = margins
+            else:
+                left_pct = top_pct = right_pct = bottom_pct = margins[0]
+
         for image_path in image_paths:
             # For the current image, use the annotation window for validation
             if image_path == self.annotation_window.current_image_path:
@@ -659,7 +765,7 @@ class TileInference(QDialog):
                 if not raster or not hasattr(raster, 'width') or not hasattr(raster, 'height'):
                     errors.append(f"{image_path}: Could not get image dimensions.")
                     continue
-                
+
                 # Extract image dimensions
                 image_width = raster.width
                 image_height = raster.height
@@ -669,31 +775,29 @@ class TileInference(QDialog):
                     if tile_width > image_width or tile_height > image_height:
                         errors.append(f"{image_path}: Tile size exceeds image size ({image_width}×{image_height}).")
                         continue
-                    
-                    # Get overlap values (in pixels)
-                    overlap_width_pct, overlap_height_pct = self.overlap_input.get_overlap(image_width, image_height)
-                    if self.overlap_input.value_type.currentIndex() == 1:
-                        overlap_width = int(overlap_width_pct * tile_width)
-                        overlap_height = int(overlap_height_pct * tile_height)
-                    else:
-                        overlap_width = int(self.overlap_input.width_spin.value())
-                        overlap_height = int(self.overlap_input.height_spin.value())
-                    
-                    # Get margins
-                    margins = self.margins_input.get_margins(image_width, image_height)
-                    
+
+                    # Always use percentage-based overlap/margins for other images
+                    overlap_width = int(overlap_width_pct * image_width)
+                    overlap_height = int(overlap_height_pct * image_height)
+                    margins = (
+                        int(left_pct * image_width),
+                        int(top_pct * image_height),
+                        int(right_pct * image_width),
+                        int(bottom_pct * image_height),
+                    )
+
                     # Calculate effective tile size
                     effective_width = tile_width - overlap_width
                     effective_height = tile_height - overlap_height
                     if effective_width <= 0 or effective_height <= 0:
                         errors.append(f"{image_path}: Effective tile size must be positive. Reduce overlap.")
                         continue
-                    
+
                     left, top, right, bottom = margins
                     if left + right >= image_width or top + bottom >= image_height:
                         errors.append(f"{image_path}: Margins are too large for the image size.")
                         continue
-                    
+
                     # Prepare parameters dict for tiling
                     params = {
                         "tile_width": tile_width,
@@ -706,36 +810,36 @@ class TileInference(QDialog):
                     }
                     is_valid = True
                     error_message = ""
-                
+
                 except Exception as e:
                     errors.append(f"{image_path}: Invalid parameters: {e}")
                     continue
-            
+
             # If parameters are not valid, record the error and skip
             if not is_valid:
                 errors.append(f"{image_path}: {error_message}")
                 continue
-           
+
             # Generate tile work areas for this image
             tile_work_areas = self.generate_tile_work_areas(params, image_path)
             raster = self.main_window.image_window.raster_manager.get_raster(image_path)
-            
+
             if not raster:
                 errors.append(f"{image_path}: Could not get raster.")
                 continue
-            
+
             # Add each tile work area to the raster
             for work_area in tile_work_areas:
                 raster.add_work_area(work_area)
             total_tiles += len(tile_work_areas)
-            
+
         # Show summary message
         QMessageBox.information(self, "Tiles Added", f"Added {total_tiles} tiles to selected images.")
-        
+
         # Show dialog if any images were skipped due to errors
         if errors:
             self.show_skipped_images_dialog(errors)
-        
+
         # Clear any previewed tiles and close the dialog
         self.clear_tiles()
         self.accept()

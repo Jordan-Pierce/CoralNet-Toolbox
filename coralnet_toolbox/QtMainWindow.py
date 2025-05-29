@@ -28,7 +28,7 @@ from coralnet_toolbox.Tile import (
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
     TileSegmentDataset as SegmentTileDatasetDialog,
-    TileInference as TileInferenceDialog,
+    TileCreation as TileCreationDialog,
     TileBatchInference as TileBatchInferenceDialog
 )
 
@@ -250,7 +250,7 @@ class MainWindow(QMainWindow):
         self.classify_tile_dataset_dialog = ClassifyTileDatasetDialog(self)
         self.detect_tile_dataset_dialog = DetectTileDatasetDialog(self)
         self.segment_tile_dataset_dialog = SegmentTileDatasetDialog(self)
-        self.tile_inference_dialog = TileInferenceDialog(self)
+        self.tile_creation_dialog = TileCreationDialog(self)
         self.tile_batch_inference_dialog = TileBatchInferenceDialog(self)
 
         # Create dialogs (Break Time)
@@ -450,9 +450,9 @@ class MainWindow(QMainWindow):
         self.segment_tile_dataset_action.triggered.connect(self.open_segment_tile_dataset_dialog)
         self.tile_dataset_menu.addAction(self.segment_tile_dataset_action)
         # Tile Inference
-        self.tile_inference_action = QAction("Tile Inference", self)
-        self.tile_inference_action.triggered.connect(self.open_tile_inference_dialog)
-        self.tile_menu.addAction(self.tile_inference_action)
+        self.tile_creation_action = QAction("Tile Creation", self)
+        self.tile_creation_action.triggered.connect(self.open_tile_creation_dialog)
+        self.tile_menu.addAction(self.tile_creation_action)
         # Tile Batch Inference
         self.tile_batch_inference_action = QAction("Tile Batch Inference", self)
         self.tile_batch_inference_action.triggered.connect(self.open_tile_batch_inference_dialog)
@@ -1671,7 +1671,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 
-    def open_tile_inference_dialog(self):
+    def open_tile_creation_dialog(self):
         """Open the Tile Inference dialog to run inference on tiled images."""
         # Check if there are loaded images
         if not self.image_window.raster_manager.image_paths:
@@ -1682,7 +1682,7 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            self.tile_inference_dialog.exec_()
+            self.tile_creation_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
             
