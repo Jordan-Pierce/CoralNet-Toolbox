@@ -620,25 +620,33 @@ class Base(QDialog):
         self.train_ratio = self.train_ratio_spinbox.value()
         self.val_ratio = self.val_ratio_spinbox.value()
         self.test_ratio = self.test_ratio_spinbox.value()
-
-        if not self.ready_status:
-            QMessageBox.warning(self,
-                                "Dataset Not Ready",
-                                "Not all labels are present in all sets, or your ratios do not sum to 1.\n"
-                                "Please press 'Refresh' or 'Shuffle', adjust your selections or sample more data.")
-            return False
-
+        
+        # Check that all fields are filled
         if not self.dataset_name or not self.output_dir:
             QMessageBox.warning(self,
                                 "Input Error",
                                 "All fields must be filled.")
             return False
-
+        
+        # Check that the ratios sum to 1.0
         if abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) > 1e-9:
             QMessageBox.warning(self,
                                 "Input Error",
                                 "Train, Validation, and Test ratios must sum to 1.0")
             return False
+
+        if not self.ready_status:
+            reply = QMessageBox.question(
+                self,
+                "Dataset Not Ready",
+                "Not all selected labels are present in all sets.\n"
+                "Are you sure you want to proceed?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                return True
+            else:
+                return False
 
         return True
 
