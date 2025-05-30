@@ -1,9 +1,8 @@
-import os 
-from datetime import datetime
-
+import os
 import cv2
 import numpy as np
 import supervision as sv
+from datetime import datetime
 
 from shapely.geometry import Polygon
 
@@ -17,8 +16,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
-from coralnet_toolbox.MachineLearning.VideoInference.Zones import TRACKING_COLORS
-from coralnet_toolbox.MachineLearning.VideoInference.Zones import RegionZoneManager
+from coralnet_toolbox.MachineLearning.VideoInference.Zones import RegionZoneManager, TRACKING_COLORS
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -77,13 +75,17 @@ class VideoDisplayWidget(QWidget):
                 painter.setPen(pen)
                 
                 if isinstance(region, dict) and region.get("type") == "polygon":
-                    points = region["points"]
-                    if len(points) > 1:
-                        for j in range(len(points)):
-                            painter.drawLine(points[j], points[(j + 1) % len(points)])
+                    # Draw polygon
+                    points = [self.parent_widget._map_widget_to_frame_coords(pt) for pt in region["points"]]
+                    if len(points) > 2:
+                        polygon_points = [self.parent_widget._map_frame_to_widget_coords(pt) for pt in points]
+                        for i in range(len(polygon_points)):
+                            start_pt = polygon_points[i]
+                            end_pt = polygon_points[(i + 1) % len(polygon_points)]
+                            painter.drawLine(start_pt, end_pt)
                 else:
-                    # Backward compatibility: treat as QRect or dict with type 'rect'
-                    rect = region["rect"] if isinstance(region, dict) and region.get("type") == "rect" else region
+                    # Draw rectangle 
+                    rect = region["rect"]
                     painter.drawRect(rect)
                     
         # Draw current rectangle being drawn
@@ -292,6 +294,20 @@ class VideoRegionWidget(QWidget):
         if self.cap:
             self.cap.release()
         super().closeEvent(event)
+        
+    def browse_output(self):
+        """Open directory dialog to select output directory."""
+        dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_name:
+            self.output_edit.setText(dir_name)
+            self.output_dir = dir_name
+            # If video already loaded, update output dir for widget
+            if self.video_path:
+                self.video_region_widget.load_video(self.video_path, dir_name)
+            else:
+                self.update_record_buttons()
+        else:
+            self.update_record_buttons()
         
     def enable_video_region(self):
         """Enable all controls in the video region widget."""
@@ -751,38 +767,6 @@ class VideoRegionWidget(QWidget):
                                  f"Failed to load video: {e}")
         finally:
             QApplication.restoreOverrideCursor()
-
-    def browse_output(self):
-        """Open directory dialog to select output directory."""
-        dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
-        if dir_name:
-            self.output_edit.setText(dir_name)
-            self.output_dir = dir_name
-            # If video already loaded, update output dir for widget
-            if self.video_path:
-                self.video_region_widget.load_video(self.video_path, dir_name)
-            else:
-                self.update_record_buttons()
-        else:
-            self.update_record_buttons()
-
-    def process_frame_for_inference(self, frame):
-        """Process frame for inference if enabled."""
-        if not self.inference_enabled or not self.inference_engine:
-            return frame
-        
-        try:
-            # Run inference on the current frame
-            detections = self.inference_engine.infer(frame)
-            # Count objects in defined regions
-            detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
-            # Draw detections on the frame
-            frame = self.draw_inference_results(frame, detections, region_counts)
-            
-        except Exception as e:
-            print(f"Inference processing failed: {e}")
-            
-        return frame
         
     def next_frame(self):
         """Advance to the next frame in the video and update the display."""
@@ -814,96 +798,33 @@ class VideoRegionWidget(QWidget):
             self.seek_slider.setValue(self.current_frame_number)
             self.seek_slider.blockSignals(False)
             self.update_frame_label()
+            
+    def process_frame_for_inference(self, frame):
+        """Process frame for inference if enabled."""
+        if not self.inference_enabled or not self.inference_engine:
+            return frame
+        
+        try:
+            # Run inference on the current frame
+            detections = self.inference_engine.infer(frame)
+            # Count objects in defined regions
+            detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
+            # Draw detections on the frame
+            frame = self.draw_inference_results(frame, detections, region_counts)
+            
+        except Exception as e:
+            print(f"Inference processing failed: {e}")
+            
+        return frame
 
     def draw_inference_results(self, frame, detections, region_counts):
         """Draw inference results on the video frame using supervision annotators."""
-        if not detections or len(detections) == 0:
-            # Even if no detections, we still want to draw zones
-            return self._draw_zones_only(frame)
-        
-        try:
-            # Draw detection annotations first
-            frame = self._draw_detection_annotations(frame, detections)
-            
-            # Draw zones using the zone manager's annotators
-            frame = self._draw_zones_with_annotators(frame)
-            
-        except Exception as e:
-            print(f"Annotation failed: {e}")
-            
+        if self.inference_engine.zone_manager:
+            return self.inference_engine.zone_manager.annotate_detections_and_zones(
+                frame, detections, self.parent.get_selected_annotators()
+            )
         return frame
-
-    def _draw_detection_annotations(self, frame, detections):
-        """Draw detection annotations using selected annotators."""
-        # Get the class names from detections
-        class_names = detections.data.get('class_name', [])
-        # Get confidences for each detection
-        confidences = detections.confidence
-        # Try to get tracker IDs if present
-        tracker_ids = detections.tracker_id
-
-        if tracker_ids is not None:
-            labels = [
-                f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
-                for name, conf, tid in zip(class_names, confidences, tracker_ids)
-            ]
-        else:
-            labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-
-        # Get selected annotators 
-        selected_annotators = self.parent.get_selected_annotators()
-        annotators = []
-        for key in selected_annotators:
-            if key == "BoxAnnotator":
-                annotators.append(sv.BoxAnnotator())
-            elif key == "RoundBoxAnnotator":
-                annotators.append(sv.RoundBoxAnnotator())
-            elif key == "BoxCornerAnnotator":
-                annotators.append(sv.BoxCornerAnnotator())
-            elif key == "ColorAnnotator":
-                annotators.append(sv.ColorAnnotator())
-            elif key == "CircleAnnotator":
-                annotators.append(sv.CircleAnnotator())
-            elif key == "DotAnnotator":
-                annotators.append(sv.DotAnnotator())
-            elif key == "TriangleAnnotator":
-                annotators.append(sv.TriangleAnnotator())
-            elif key == "EllipseAnnotator":
-                annotators.append(sv.EllipseAnnotator())
-            elif key == "HaloAnnotator":
-                annotators.append(sv.HaloAnnotator())
-            elif key == "PercentageBarAnnotator":
-                annotators.append(sv.PercentageBarAnnotator())
-            elif key == "MaskAnnotator":
-                annotators.append(sv.MaskAnnotator())
-            elif key == "PolygonAnnotator":
-                annotators.append(sv.PolygonAnnotator())
-            elif key == "BlurAnnotator":
-                annotators.append(sv.BlurAnnotator())
-            elif key == "PixelateAnnotator":
-                annotators.append(sv.PixelateAnnotator())
-            elif key == "LabelAnnotator":
-                annotators.append(sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER))
-                
-        for annotator in annotators:
-            # Only pass labels to LabelAnnotator
-            if isinstance(annotator, sv.LabelAnnotator):
-                frame = annotator.annotate(scene=frame, detections=detections, labels=labels)
-            else:
-                frame = annotator.annotate(scene=frame, detections=detections)
-        
-        return frame
-
-    def _draw_zones_with_annotators(self, frame):
-        """Draw zones using the zone manager's annotators."""
-        if hasattr(self.inference_engine, 'zone_manager') and self.inference_engine.zone_manager:
-            frame = self.inference_engine.zone_manager.annotate_zones(frame)
-        return frame
-
-    def _draw_zones_only(self, frame):
-        """Draw only the zones when there are no detections."""
-        return self._draw_zones_with_annotators(frame)
-
+    
     def __del__(self):
         """Destructor to ensure proper cleanup."""
         self._cleanup_video_sink()
