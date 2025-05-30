@@ -39,6 +39,10 @@ class PatchTool(Tool):
                                 "No Label Selected",
                                 "A label must be selected before adding an annotation.")
             return None
+        
+        # Add cursor bounds check
+        if not self.annotation_window.cursorInWindow(event.pos()):
+            return None
 
         if event.button() == Qt.LeftButton:
             self.annotation_window.unselect_annotations()
