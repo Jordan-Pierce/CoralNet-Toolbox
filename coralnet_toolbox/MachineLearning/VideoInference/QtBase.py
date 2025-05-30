@@ -5,11 +5,11 @@ import cv2
 import numpy as np
 import supervision as sv
 
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon
 
 from ultralytics import YOLO
 
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
@@ -17,8 +17,10 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.MachineLearning.VideoInference.Zones import TRACKING_COLORS
+from coralnet_toolbox.MachineLearning.VideoInference.Zones import RegionZoneManager
 
+from coralnet_toolbox.Icons import get_icon
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -61,16 +63,24 @@ class VideoDisplayWidget(QWidget):
             
             painter.drawPixmap(offset_x, offset_y, scaled)
             
-        # Draw rectangles and polygons (these are in widget coordinates)
+        # Draw rectangles and polygons with TRACKING_COLORS
         if self.parent_widget.show_regions:
-            pen = QPen(Qt.red, 2)
-            painter.setPen(pen)
-            for region in self.parent_widget.regions:
+            for i, region in enumerate(self.parent_widget.regions):
+                # Get color from TRACKING_COLORS palette, cycling through colors
+                color_idx = i % len(TRACKING_COLORS.colors)
+                tracking_color = TRACKING_COLORS.colors[color_idx]
+                
+                # Convert supervision Color to Qt color using hex string
+                hex_color = tracking_color.as_hex()
+                qt_color = QColor(hex_color)
+                pen = QPen(qt_color, 2)
+                painter.setPen(pen)
+                
                 if isinstance(region, dict) and region.get("type") == "polygon":
                     points = region["points"]
                     if len(points) > 1:
-                        for i in range(len(points)):
-                            painter.drawLine(points[i], points[(i + 1) % len(points)])
+                        for j in range(len(points)):
+                            painter.drawLine(points[j], points[(j + 1) % len(points)])
                 else:
                     # Backward compatibility: treat as QRect or dict with type 'rect'
                     rect = region["rect"] if isinstance(region, dict) and region.get("type") == "rect" else region
@@ -439,9 +449,16 @@ class VideoRegionWidget(QWidget):
         # Redraw the current frame without region overlays
         self.seek(self.current_frame_number)
         
+    def get_zone_statistics(self):
+        """Get zone statistics from the inference engine."""
+        if self.inference_engine:
+            return self.inference_engine.get_zone_statistics()
+        return {}
+    
     def update_region_polygons(self):
-        """Update region polygons (QRects to shapely Polygons), mapping from widget to video frame coordinates."""
+        """Update region polygons with zone IDs for better tracking."""
         self.region_polygons = []
+        
         if self.current_frame is None or not self.regions:
             return
             
@@ -452,24 +469,28 @@ class VideoRegionWidget(QWidget):
         widget_w = self.video_display.width()
         widget_h = self.video_display.height()
         
-        # Calculate scaling and positioning (same logic as paintEvent in VideoDisplayWidget)
+        # Calculate scaling and positioning
         scale = min(widget_w / frame_w, widget_h / frame_h)
         scaled_w = int(frame_w * scale)
         scaled_h = int(frame_h * scale)
         offset_x = (widget_w - scaled_w) // 2
         offset_y = (widget_h - scaled_h) // 2
         
-        for region in self.regions:
+        # Create zone IDs for tracking
+        zone_ids = []
+        
+        for i, region in enumerate(self.regions):
+            zone_id = f"region_{i}"
+            
             if isinstance(region, dict) and region.get("type") == "rect":
                 rect = region["rect"]
                 # Map QRect from video display widget coordinates to video frame coordinates
-                # First, subtract the offset to get coordinates relative to the scaled video
                 left_scaled = rect.left() - offset_x
                 top_scaled = rect.top() - offset_y
                 right_scaled = rect.right() - offset_x
                 bottom_scaled = rect.bottom() - offset_y
                 
-                # Then scale back to original video frame coordinates
+                # Scale back to original video frame coordinates
                 left_frame = left_scaled / scale
                 top_frame = top_scaled / scale
                 right_frame = right_scaled / scale
@@ -483,7 +504,6 @@ class VideoRegionWidget(QWidget):
                 
                 # Ensure we have a valid rectangle after clamping
                 if left_frame < right_frame and top_frame < bottom_frame:
-                    # Create polygon in video frame coordinates
                     poly = Polygon([
                         (left_frame, top_frame),
                         (right_frame, top_frame),
@@ -491,6 +511,8 @@ class VideoRegionWidget(QWidget):
                         (left_frame, bottom_frame)
                     ])
                     self.region_polygons.append(poly)
+                    zone_ids.append(zone_id)
+                    
             elif isinstance(region, dict) and region.get("type") == "polygon":
                 pts = []
                 for pt in region["points"]:
@@ -501,7 +523,12 @@ class VideoRegionWidget(QWidget):
                     pts.append((x_scaled, y_scaled))
                 if len(pts) > 2:
                     self.region_polygons.append(Polygon(pts))
-
+                    zone_ids.append(zone_id)
+        
+        # Update the inference engine with zone IDs if it has the zone manager
+        if hasattr(self.inference_engine, 'zone_manager'):
+            self.inference_engine.zone_manager.update_regions(self.region_polygons, zone_ids)
+        
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
         # Pause video playback if currently playing
@@ -789,98 +816,93 @@ class VideoRegionWidget(QWidget):
             self.update_frame_label()
 
     def draw_inference_results(self, frame, detections, region_counts):
-        """Draw inference results on the video frame using supervision's BoxAnnotator."""
+        """Draw inference results on the video frame using supervision annotators."""
         if not detections or len(detections) == 0:
-            return frame
+            # Even if no detections, we still want to draw zones
+            return self._draw_zones_only(frame)
+        
         try:
-            # Get the class names from detections
-            class_names = detections.data.get('class_name', [])
-            # Get confidences for each detection
-            confidences = detections.confidence
-            # Try to get tracker IDs if present
-            tracker_ids = detections.tracker_id
-
-            if tracker_ids is not None:
-                labels = [
-                    f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
-                    for name, conf, tid in zip(class_names, confidences, tracker_ids)
-                ]
-            else:
-                labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-
-            # Get selected annotators 
-            selected_annotators = self.parent.get_selected_annotators()
-            annotators = []
-            for key in selected_annotators:
-                if key == "BoxAnnotator":
-                    annotators.append(sv.BoxAnnotator())
-                elif key == "RoundBoxAnnotator":
-                    annotators.append(sv.RoundBoxAnnotator())
-                elif key == "BoxCornerAnnotator":
-                    annotators.append(sv.BoxCornerAnnotator())
-                elif key == "ColorAnnotator":
-                    annotators.append(sv.ColorAnnotator())
-                elif key == "CircleAnnotator":
-                    annotators.append(sv.CircleAnnotator())
-                elif key == "DotAnnotator":
-                    annotators.append(sv.DotAnnotator())
-                elif key == "TriangleAnnotator":
-                    annotators.append(sv.TriangleAnnotator())
-                elif key == "EllipseAnnotator":
-                    annotators.append(sv.EllipseAnnotator())
-                elif key == "HaloAnnotator":
-                    annotators.append(sv.HaloAnnotator())
-                elif key == "PercentageBarAnnotator":
-                    annotators.append(sv.PercentageBarAnnotator())
-                elif key == "MaskAnnotator":
-                    annotators.append(sv.MaskAnnotator())
-                elif key == "PolygonAnnotator":
-                    annotators.append(sv.PolygonAnnotator())
-                elif key == "BlurAnnotator":
-                    annotators.append(sv.BlurAnnotator())
-                elif key == "PixelateAnnotator":
-                    annotators.append(sv.PixelateAnnotator())
-                elif key == "LabelAnnotator":
-                    annotators.append(sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER))
-                    
-            for annotator in annotators:
-                # Only pass labels to LabelAnnotator
-                if isinstance(annotator, sv.LabelAnnotator):
-                    frame = annotator.annotate(scene=frame, detections=detections, labels=labels)
-                else:
-                    frame = annotator.annotate(scene=frame, detections=detections)
-        except Exception as e:
-            print(f"Supervision annotate failed: {e}")
+            # Draw detection annotations first
+            frame = self._draw_detection_annotations(frame, detections)
             
-        # Draw region polygons
-        for idx, poly in enumerate(self.region_polygons):
-            if idx < len(region_counts):
-                # Get the polygon points
-                pts = np.array(list(poly.exterior.coords), np.int32)
-                
-                # Find the top-left corner of the polygon for text placement
-                min_x, min_y = np.min(pts[:, 0]), np.min(pts[:, 1])
-                
-                # Draw the polygon on the frame
-                cv2.polylines(frame, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
-                
-                # Calculate y position for text, ensuring it stays within the frame
-                text_y = int(min_y) + 90  # Lowered further on the y-axis
-                if text_y > frame.shape[0] - 10:
-                    text_y = frame.shape[0] - 10
-                    
-                # Place text at the adjusted position
-                cv2.putText(
-                    img=frame,
-                    text=str(region_counts[idx]),
-                    org=(int(min_x), text_y),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=3,
-                    color=(0, 0, 0),
-                    thickness=3
-                )
-                
+            # Draw zones using the zone manager's annotators
+            frame = self._draw_zones_with_annotators(frame)
+            
+        except Exception as e:
+            print(f"Annotation failed: {e}")
+            
         return frame
+
+    def _draw_detection_annotations(self, frame, detections):
+        """Draw detection annotations using selected annotators."""
+        # Get the class names from detections
+        class_names = detections.data.get('class_name', [])
+        # Get confidences for each detection
+        confidences = detections.confidence
+        # Try to get tracker IDs if present
+        tracker_ids = detections.tracker_id
+
+        if tracker_ids is not None:
+            labels = [
+                f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
+                for name, conf, tid in zip(class_names, confidences, tracker_ids)
+            ]
+        else:
+            labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
+
+        # Get selected annotators 
+        selected_annotators = self.parent.get_selected_annotators()
+        annotators = []
+        for key in selected_annotators:
+            if key == "BoxAnnotator":
+                annotators.append(sv.BoxAnnotator())
+            elif key == "RoundBoxAnnotator":
+                annotators.append(sv.RoundBoxAnnotator())
+            elif key == "BoxCornerAnnotator":
+                annotators.append(sv.BoxCornerAnnotator())
+            elif key == "ColorAnnotator":
+                annotators.append(sv.ColorAnnotator())
+            elif key == "CircleAnnotator":
+                annotators.append(sv.CircleAnnotator())
+            elif key == "DotAnnotator":
+                annotators.append(sv.DotAnnotator())
+            elif key == "TriangleAnnotator":
+                annotators.append(sv.TriangleAnnotator())
+            elif key == "EllipseAnnotator":
+                annotators.append(sv.EllipseAnnotator())
+            elif key == "HaloAnnotator":
+                annotators.append(sv.HaloAnnotator())
+            elif key == "PercentageBarAnnotator":
+                annotators.append(sv.PercentageBarAnnotator())
+            elif key == "MaskAnnotator":
+                annotators.append(sv.MaskAnnotator())
+            elif key == "PolygonAnnotator":
+                annotators.append(sv.PolygonAnnotator())
+            elif key == "BlurAnnotator":
+                annotators.append(sv.BlurAnnotator())
+            elif key == "PixelateAnnotator":
+                annotators.append(sv.PixelateAnnotator())
+            elif key == "LabelAnnotator":
+                annotators.append(sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER))
+                
+        for annotator in annotators:
+            # Only pass labels to LabelAnnotator
+            if isinstance(annotator, sv.LabelAnnotator):
+                frame = annotator.annotate(scene=frame, detections=detections, labels=labels)
+            else:
+                frame = annotator.annotate(scene=frame, detections=detections)
+        
+        return frame
+
+    def _draw_zones_with_annotators(self, frame):
+        """Draw zones using the zone manager's annotators."""
+        if hasattr(self.inference_engine, 'zone_manager') and self.inference_engine.zone_manager:
+            frame = self.inference_engine.zone_manager.annotate_zones(frame)
+        return frame
+
+    def _draw_zones_only(self, frame):
+        """Draw only the zones when there are no detections."""
+        return self._draw_zones_with_annotators(frame)
 
     def __del__(self):
         """Destructor to ensure proper cleanup."""
@@ -901,20 +923,27 @@ class InferenceEngine:
         self.model = None
         self.task = None
         
-        # Initialize ByteTrack tracker
-        self.tracker = sv.ByteTrack()
-        
         # Default inference parameters
         self.conf = 0.3
         self.iou = 0.2
         self.area_min = 0.0
         self.area_max = 0.4
+
+        self.class_names = []
+        self.selected_classes = []
+        
+        # Initialize ByteTrack tracker - enabled by default
+        self.tracker = sv.ByteTrack()
+        self.tracking_enabled = True
         
         self.count_criteria = "Centroid"  # Criteria for counting objects in regions
         self.display_outside = True
         
-        self.class_names = []
-        self.selected_classes = []
+        # Initialize ZoneManager
+        self.zone_manager = RegionZoneManager(
+            count_criteria=self.count_criteria,
+            display_outside=self.display_outside
+        )
 
     def load_model(self, model_path, task):
         """Load the YOLO model for inference."""
@@ -967,15 +996,17 @@ class InferenceEngine:
     def set_count_criteria(self, count_criteria):
         """Set the criteria for counting objects in regions."""
         self.count_criteria = count_criteria
+        self.zone_manager.count_criteria = count_criteria
         
     def set_display_outside_detections(self, display_outside):
         """Set whether to display detections outside the regions."""
         self.display_outside = display_outside
+        self.zone_manager.display_outside = display_outside
 
     def infer(self, frame):
         """Run inference on a single frame with the current model."""
         if self.model is None:
-            return None
+            return sv.Detections.empty()
         
         # Detect, and filter results based on confidence and IoU
         results = self.model(frame, 
@@ -988,8 +1019,9 @@ class InferenceEngine:
         # Convert results to Supervision Detections
         detections = sv.Detections.from_ultralytics(results)
         
-        # Update tracker with detections
-        detections = self.update_tracker(detections)
+        # Apply tracking if enabled and detections exist
+        if self.tracking_enabled and len(detections) > 0:
+            detections = self.tracker.update_with_detections(detections)
         
         # Apply area filter to detections
         detections = self.apply_area_filter(frame, detections)
@@ -1019,61 +1051,36 @@ class InferenceEngine:
         return detections
             
     def count_objects_in_regions(self, detections, region_polygons):
-        """Count objects in each region based on supervision Detections."""
+        """Count objects in each region using the new zone manager."""
         if not region_polygons or detections is None or len(detections) == 0:
             region_counts = [0 for _ in region_polygons]
             return detections, region_counts
 
-        # Get the number of regions
-        region_counts = [0 for _ in region_polygons]
+        # Update zones with current regions and criteria
+        self.zone_manager.update_regions(region_polygons)
         
-        # Use detection boxes for region assignment
-        boxes = detections.xyxy  # shape (n, 4)
+        # Count detections using the zone manager
+        filtered_detections, region_counts, zone_detection_map = self.zone_manager.count_detections(detections)
         
-        # Create mask to track which detections are inside regions
-        inside_mask = np.zeros(len(boxes), dtype=bool)
+        # Store zone detection mapping for potential future use
+        self._last_zone_detection_map = zone_detection_map
         
-        # Loop through each detection box
-        for i, box in enumerate(boxes):
-            
-            # Check if just the centroid is in inside the region
-            if self.count_criteria == "Centroid":
-                # Check if centroid is inside the region
-                center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
-                for idx, poly in enumerate(region_polygons):
-                    if poly.contains(Point(center)):
-                        region_counts[idx] += 1
-                        inside_mask[i] = True
-                        break  # Count in first matching region only
-                    
-            # Check if entire bounding box is inside the region
-            elif self.count_criteria == "Bounding Box":
-                box_corners = [
-                    (box[0], box[1]),  # top-left
-                    (box[2], box[1]),  # top-right
-                    (box[2], box[3]),  # bottom-right
-                    (box[0], box[3])   # bottom-left
-                ]
-                for idx, poly in enumerate(region_polygons):
-                    if all(poly.contains(Point(corner)) for corner in box_corners):
-                        region_counts[idx] += 1
-                        inside_mask[i] = True
-                        break  # Count in first matching region only
-        
-        # Filter detections based on display_outside setting
-        if not self.display_outside:
-            detections = detections[inside_mask]
+        return filtered_detections, region_counts
     
-        return detections, region_counts
+    def get_zone_statistics(self):
+        """Get comprehensive zone statistics."""
+        return self.zone_manager.get_zone_statistics()
     
     def reset_tracker(self):
-        """Reset the ByteTrack tracker."""
+        """Reset the ByteTrack tracker and zone manager."""
         if self.tracker:
-            self.tracker.reset()
-            print("Tracker reset")
-        else:
-            print("No tracker initialized")
+            self.tracker = sv.ByteTrack()
 
+    def reset_zone_manager(self):
+        """Reset the zone manager."""
+        if self.zone_manager:
+            self.zone_manager.reset_zones()
+            
             
 class Base(QDialog):
     """Dialog for video inference with region selection and parameter controls."""
