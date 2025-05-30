@@ -56,9 +56,16 @@ class CustomPolygonZone(sv.PolygonZone):
         self.cumulative_count = 0  # Track total detections that have passed through
         self.seen_tracker_ids = set()  # Track unique tracker IDs for cumulative counting
         
+        # NEW: Entry/Exit tracking
+        self.object_states = {}  # tracker_id -> bool (inside state)
+        self.entry_count = 0
+        self.exit_count = 0
+        self.net_flow = 0  # entry_count - exit_count
+        
     def trigger_with_metadata(self, detections: sv.Detections) -> Tuple[np.ndarray, np.ndarray]:
         """
         Enhanced trigger that returns both boolean mask and metadata.
+        Also tracks entry/exit events.
         
         Returns:
             tuple: (boolean_mask, detection_indices_in_zone)
@@ -66,11 +73,12 @@ class CustomPolygonZone(sv.PolygonZone):
         is_inside = self.trigger(detections)
         detection_indices = np.where(is_inside)[0] if len(is_inside) > 0 else np.array([])
         
-        # Update cumulative count based on unique tracker IDs
+        # Track entry/exit events if we have tracker IDs
         if detections.tracker_id is not None and len(detections.tracker_id) > 0:
-            # Use tracker IDs for more accurate cumulative counting
+            self._update_entry_exit_tracking(detections, is_inside)
+            
+            # Update cumulative count based on unique tracker IDs (existing logic)
             inside_tracker_ids = detections.tracker_id[is_inside]
-            # Filter out None values
             valid_tracker_ids = [tid for tid in inside_tracker_ids if tid is not None]
             
             for tid in valid_tracker_ids:
@@ -78,18 +86,89 @@ class CustomPolygonZone(sv.PolygonZone):
                     self.seen_tracker_ids.add(tid)
                     self.cumulative_count += 1
     
-        # Store detection history for future features - use self.current_count which is updated by parent class
+        # Store detection history for future features
         self.detection_history.append({
             'count': self.current_count,  # Current detections in zone right now
             'cumulative_count': self.cumulative_count,  # Total unique detections seen over time
+            'entry_count': self.entry_count,  # NEW: Total entries
+            'exit_count': self.exit_count,   # NEW: Total exits
+            'net_flow': self.net_flow,       # NEW: Net flow (entries - exits)
             'detection_indices': detection_indices.tolist()
         })
         
-        # Keep only last 100 entries to prevent memory issues
-        if len(self.detection_history) > 100:
-            self.detection_history = self.detection_history[-100:]
+        # Keep only last 250 entries to prevent memory issues
+        if len(self.detection_history) > 250:
+            self.detection_history = self.detection_history[-250:]
         
         return is_inside, detection_indices
+    
+    def _update_entry_exit_tracking(self, detections: sv.Detections, is_inside: np.ndarray):
+        """
+        Update entry/exit tracking based on current detections and their zone status.
+        
+        Args:
+            detections: Current detections
+            is_inside: Boolean array indicating which detections are inside the zone
+        """
+        current_frame_tracker_ids = set()
+        
+        # Process each detection with a valid tracker ID
+        for i, tracker_id in enumerate(detections.tracker_id):
+            if tracker_id is None:
+                continue
+                
+            current_frame_tracker_ids.add(tracker_id)
+            currently_inside = bool(is_inside[i]) if i < len(is_inside) else False
+            
+            if tracker_id in self.object_states:
+                # Object was seen before - check for state change
+                was_inside = self.object_states[tracker_id]
+                
+                # Detect entry: was outside, now inside
+                if not was_inside and currently_inside:
+                    self.entry_count += 1
+                
+                # Detect exit: was inside, now outside
+                elif was_inside and not currently_inside:
+                    self.exit_count += 1
+                
+                # Update state
+                self.object_states[tracker_id] = currently_inside
+            else:
+                # First time seeing this object
+                self.object_states[tracker_id] = currently_inside
+                
+                # If object first appears inside the zone, count as entry
+                # (This handles cases where tracking starts mid-scene)
+                if currently_inside:
+                    self.entry_count += 1
+        
+        # Clean up object states for tracker IDs not seen in current frame
+        # Only remove if they haven't been seen for multiple frames to avoid flicker
+        # For now, we'll keep all states to maintain tracking continuity
+        
+        # Update net flow
+        self.net_flow = self.entry_count - self.exit_count
+    
+    def get_entry_exit_stats(self) -> Dict:
+        """Get entry/exit statistics for this zone."""
+        return {
+            "zone_id": self.zone_id,
+            "entry_count": self.entry_count,
+            "exit_count": self.exit_count,
+            "net_flow": self.net_flow,
+            "current_count": self.current_count,
+            "cumulative_count": self.cumulative_count,
+            "active_objects": len(self.object_states),
+            "objects_inside": sum(1 for inside in self.object_states.values() if inside)
+        }
+    
+    def reset_entry_exit_counters(self):
+        """Reset entry/exit counters while preserving current object states."""
+        self.entry_count = 0
+        self.exit_count = 0
+        self.net_flow = 0
+        # Note: We keep object_states to maintain tracking continuity
 
 
 class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
@@ -107,8 +186,9 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
         show_current_count: bool = True,
         opacity: float = 0,
         show_zone_id: bool = True,
-        show_cumulative_count: bool = True,  # Changed from show_max_count
-        text_position: str = "top_left"  # New parameter for text positioning
+        show_cumulative_count: bool = True,
+        show_entry_exit: bool = True,  # NEW: Show entry/exit counts
+        text_position: str = "top_left"
     ):
         """
         Initialize custom polygon zone annotator.
@@ -125,6 +205,7 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
             opacity: Zone fill opacity
             show_zone_id: Whether to show zone ID
             show_cumulative_count: Whether to show cumulative count of all detections
+            show_entry_exit: Whether to show entry/exit counts
             text_position: Position for text ("top_left", "center", "top_center")
         """
         super().__init__(
@@ -139,13 +220,14 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
         )
         self.custom_zone = zone
         self.show_zone_id = show_zone_id
-        self.show_current_count = show_current_count  # Store as instance variable instead
-        self.show_cumulative_count = show_cumulative_count  # Changed from show_max_count
+        self.show_current_count = show_current_count
+        self.show_cumulative_count = show_cumulative_count
+        self.show_entry_exit = show_entry_exit  # NEW
         self.text_position = text_position
     
     def annotate(self, scene: np.ndarray, zone_metadata: Optional[Dict] = None) -> np.ndarray:
         """
-        Annotate the scene with enhanced zone information.
+        Annotate the scene with enhanced zone information using multi-line compact display.
         
         Args:
             scene: The image to annotate
@@ -159,87 +241,111 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
         # First draw the zone using parent method (without label)
         annotated_scene = super().annotate(scene=scene, label=None)
         
-        # Build custom label with enhanced information
-        label_parts = []
-        
-        if self.show_zone_id:
-            label_parts.append(f"ID: {self.custom_zone.zone_id}")
-        
+        # Build multi-line compact label (without zone ID)
+        label_lines = []
+
+        # Line 1: Current and Cumulative counts
+        line1_parts = []
         if self.show_current_count:
-            label_parts.append(f"Current: {self.custom_zone.current_count}")
-            
+            line1_parts.append(f"Cur:{self.custom_zone.current_count}")
         if self.show_cumulative_count:
-            label_parts.append(f"Cumulative: {self.custom_zone.cumulative_count}")
+            line1_parts.append(f"Cum:{self.custom_zone.cumulative_count}")
+        if line1_parts:
+            label_lines.append(" | ".join(line1_parts))
+
+        # Line 2: Entry/Exit/Net flow
+        if self.show_entry_exit:
+            net_sign = "+" if self.custom_zone.net_flow >= 0 else ""
+            label_lines.append(f"In:{self.custom_zone.entry_count} | Out:{self.custom_zone.exit_count} | Net:{net_sign}{self.custom_zone.net_flow}")
+
+        if not label_lines:
+            return annotated_scene
         
-        # Join all label parts
-        custom_label = " | ".join(label_parts) if label_parts else None
+        # Get polygon bounds for text positioning
+        polygon_points = self.custom_zone.polygon
+        min_x = int(np.min(polygon_points[:, 0]))
+        min_y = int(np.min(polygon_points[:, 1]))
+        max_x = int(np.max(polygon_points[:, 0]))
+        max_y = int(np.max(polygon_points[:, 1]))
         
-        if custom_label:
-            # Get polygon bounds for text positioning
-            polygon_points = self.custom_zone.polygon
-            min_x = int(np.min(polygon_points[:, 0]))
-            min_y = int(np.min(polygon_points[:, 1]))
-            max_x = int(np.max(polygon_points[:, 0]))
-            max_y = int(np.max(polygon_points[:, 1]))
-            
-            # Calculate text position based on preference
-            if self.text_position == "top_left":
-                text_x = min_x + self.text_padding
-                text_y = min_y + 25  # Offset from top edge
-            elif self.text_position == "top_center":
-                text_x = (min_x + max_x) // 2
-                text_y = min_y + 25
-            else:  # center (default behavior)
-                text_x = (min_x + max_x) // 2
-                text_y = (min_y + max_y) // 2
-            
-            # Get text size for background rectangle
+        # Calculate starting position based on text_position
+        if self.text_position == "top_left":
+            start_x = min_x + self.text_padding
+            start_y = min_y + 25
+        elif self.text_position == "top_center":
+            start_x = (min_x + max_x) // 2
+            start_y = min_y + 25
+        else:  # center
+            start_x = (min_x + max_x) // 2
+            start_y = (min_y + max_y) // 2
+        
+        # Calculate dimensions for multi-line text background
+        line_heights = []
+        line_widths = []
+        max_width = 0
+        
+        for line in label_lines:
             (text_width, text_height), baseline = cv2.getTextSize(
-                custom_label, cv2.FONT_HERSHEY_SIMPLEX, self.text_scale, self.text_thickness
+                line, cv2.FONT_HERSHEY_SIMPLEX, self.text_scale, self.text_thickness
             )
-            
-            # Draw text background rectangle
-            if self.text_position == "top_left":
-                rect_x1 = text_x - self.text_padding
-                rect_y1 = text_y - text_height - self.text_padding
-                rect_x2 = text_x + text_width + self.text_padding
-                rect_y2 = text_y + baseline + self.text_padding
-            elif self.text_position == "top_center":
-                rect_x1 = text_x - text_width // 2 - self.text_padding
-                rect_y1 = text_y - text_height - self.text_padding
-                rect_x2 = text_x + text_width // 2 + self.text_padding
-                rect_y2 = text_y + baseline + self.text_padding
-            else:  # center
-                rect_x1 = text_x - text_width // 2 - self.text_padding
-                rect_y1 = text_y - text_height // 2 - self.text_padding
-                rect_x2 = text_x + text_width // 2 + self.text_padding
-                rect_y2 = text_y + text_height // 2 + self.text_padding
-            
-            # Draw semi-transparent background
-            overlay = annotated_scene.copy()
-            cv2.rectangle(overlay, (rect_x1, rect_y1), (rect_x2, rect_y2), (255, 255, 255), -1)
-            annotated_scene = cv2.addWeighted(annotated_scene, 0.7, overlay, 0.3, 0)
-            
-            # Draw text
-            if self.text_position in ["top_left", "top_center"]:
-                text_y_final = text_y
-            else:  # center
-                text_y_final = text_y + text_height // 2
-                
+            line_widths.append(text_width)
+            line_heights.append(text_height + baseline)
+            max_width = max(max_width, text_width)
+        
+        total_height = sum(line_heights) + (len(label_lines) - 1) * 5  # 5px spacing between lines
+        
+        # Calculate background rectangle bounds
+        if self.text_position == "top_left":
+            rect_x1 = start_x - self.text_padding
+            rect_y1 = start_y - line_heights[0] - self.text_padding
+            rect_x2 = start_x + max_width + self.text_padding
+            rect_y2 = start_y + total_height - line_heights[0] + self.text_padding
+        elif self.text_position == "top_center":
+            rect_x1 = start_x - max_width // 2 - self.text_padding
+            rect_y1 = start_y - line_heights[0] - self.text_padding
+            rect_x2 = start_x + max_width // 2 + self.text_padding
+            rect_y2 = start_y + total_height - line_heights[0] + self.text_padding
+        else:  # center
+            rect_x1 = start_x - max_width // 2 - self.text_padding
+            rect_y1 = start_y - total_height // 2 - self.text_padding
+            rect_x2 = start_x + max_width // 2 + self.text_padding
+            rect_y2 = start_y + total_height // 2 + self.text_padding
+        
+        # Draw semi-transparent background using the zone's color
+        overlay = annotated_scene.copy()
+        # Use the zone's color for the background with slight brightening to improve readability
+        bg_color = self.color.as_bgr()
+        cv2.rectangle(overlay, (rect_x1, rect_y1), (rect_x2, rect_y2), bg_color, -1)
+        # Apply transparency (0.7 = 70% original image, 0.3 = 30% overlay)
+        annotated_scene = cv2.addWeighted(annotated_scene, 0.7, overlay, 0.3, 0)
+        
+        # Draw each line of text
+        current_y = start_y
+        if self.text_position == "center":
+            current_y = start_y - total_height // 2 + line_heights[0]
+        
+        for i, line in enumerate(label_lines):
+            # Calculate x position for each line based on text_position
             if self.text_position == "top_center":
-                text_x_final = text_x - text_width // 2
-            else:
-                text_x_final = text_x
-                
+                line_x = start_x - line_widths[i] // 2
+            elif self.text_position == "center":
+                line_x = start_x - line_widths[i] // 2
+            else:  # top_left
+                line_x = start_x
+            
             cv2.putText(
                 annotated_scene,
-                custom_label,
-                (text_x_final, text_y_final),
+                line,
+                (line_x, current_y),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 self.text_scale,
                 self.text_color.as_bgr(),
                 self.text_thickness
             )
+            
+            # Move to next line
+            if i < len(label_lines) - 1:
+                current_y += line_heights[i] + 5  # 5px spacing between lines
         
         return annotated_scene
 
@@ -321,8 +427,8 @@ class RegionZoneManager:
             annotator = CustomPolygonZoneAnnotator(
                 zone=zone,
                 color=zone_color,
-                thickness=2,
-                text_scale=0.6,
+                thickness=1,
+                text_scale=0.4,
                 opacity=0.1,
                 text_position="top_left"
             )
