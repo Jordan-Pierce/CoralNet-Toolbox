@@ -459,10 +459,19 @@ class VideoRegionWidget(QWidget):
     def clear_regions(self):
         """Clear all regions and reset the region polygons."""
         self.regions.clear()
-        self.update_region_polygons()
-        self.video_display.update()
+        self.region_polygons.clear()  
         
-        # Redraw the current frame without region overlays
+        # Reset the zone manager completely and create a fresh instance
+        self.inference_engine.zone_manager = RegionZoneManager(
+            count_criteria=self.inference_engine.count_criteria,
+            display_outside=self.inference_engine.display_outside
+        )
+        
+        # Also, reset the tracker to ensure tracking data doesn't persist
+        self.inference_engine.reset_tracker()
+        
+        # Update the display and refresh the current frame
+        self.video_display.update()
         self.seek(self.current_frame_number)
         
     def get_zone_statistics(self):
@@ -807,6 +816,16 @@ class VideoRegionWidget(QWidget):
         try:
             # Run inference on the current frame
             detections = self.inference_engine.infer(frame)
+            
+            # Skip region counting if no regions are defined
+            if not self.region_polygons:
+                # Just draw detections without region processing
+                if self.inference_engine.zone_manager and detections is not None and len(detections) > 0:
+                    return self.inference_engine.zone_manager.draw_detection_annotations_only(
+                        frame, detections, self.parent.get_selected_annotators()
+                    )
+                return frame
+            
             # Count objects in defined regions
             detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
             # Draw detections on the frame
