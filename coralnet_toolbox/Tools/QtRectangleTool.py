@@ -37,10 +37,15 @@ class RectangleTool(Tool):
         self.drawing_continuous = False
 
     def mousePressEvent(self, event: QMouseEvent):
+        
         if not self.annotation_window.selected_label:
             QMessageBox.warning(self.annotation_window,
                                 "No Label Selected",
                                 "A label must be selected before adding an annotation.")
+            return None
+        
+        # Add cursor bounds check
+        if not self.annotation_window.cursorInWindow(event.pos()):
             return None
 
         if event.button() == Qt.LeftButton and not self.drawing_continuous:

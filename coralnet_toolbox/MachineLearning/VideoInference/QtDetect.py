@@ -31,6 +31,7 @@ class Detect(Base):
         self.annotator_list_widget = QListWidget()
         self.annotator_types = [
             ("LabelAnnotator", "Label Annotator"),
+            ("TrackerAnnotator", "Tracker Annotator"),
             ("BoxAnnotator", "Box Annotator"),
             ("RoundBoxAnnotator", "Round Box Annotator"),
             ("BoxCornerAnnotator", "Box Corner Annotator"),

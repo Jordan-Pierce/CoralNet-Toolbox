@@ -2,7 +2,8 @@ import sys
 import traceback
 
 import qdarktheme
-from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton, QTextEdit
+
+from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtMainWindow import MainWindow
 

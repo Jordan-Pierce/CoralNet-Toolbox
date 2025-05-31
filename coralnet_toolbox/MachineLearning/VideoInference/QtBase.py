@@ -1,24 +1,24 @@
-import os 
-from datetime import datetime
-
+import os
 import cv2
 import numpy as np
 import supervision as sv
+from datetime import datetime
 
-from shapely.geometry import Polygon, Point
+from shapely.geometry import Polygon
 
 from ultralytics import YOLO
 
-from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen
-from PyQt5.QtCore import Qt, QTimer, QRect
+from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
                              QWidget, QListWidget, QListWidgetItem, QFrame,
                              QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
                              QMessageBox, QApplication)
 
-from coralnet_toolbox.Icons import get_icon
+from coralnet_toolbox.MachineLearning.VideoInference.Zones import RegionZoneManager, TRACKING_COLORS
 
+from coralnet_toolbox.Icons import get_icon
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -61,19 +61,31 @@ class VideoDisplayWidget(QWidget):
             
             painter.drawPixmap(offset_x, offset_y, scaled)
             
-        # Draw rectangles and polygons (these are in widget coordinates)
+        # Draw rectangles and polygons with TRACKING_COLORS
         if self.parent_widget.show_regions:
-            pen = QPen(Qt.red, 2)
-            painter.setPen(pen)
-            for region in self.parent_widget.regions:
+            for i, region in enumerate(self.parent_widget.regions):
+                # Get color from TRACKING_COLORS palette, cycling through colors
+                color_idx = i % len(TRACKING_COLORS.colors)
+                tracking_color = TRACKING_COLORS.colors[color_idx]
+                
+                # Convert supervision Color to Qt color using hex string
+                hex_color = tracking_color.as_hex()
+                qt_color = QColor(hex_color)
+                pen = QPen(qt_color, 2)
+                painter.setPen(pen)
+                
                 if isinstance(region, dict) and region.get("type") == "polygon":
-                    points = region["points"]
-                    if len(points) > 1:
-                        for i in range(len(points)):
-                            painter.drawLine(points[i], points[(i + 1) % len(points)])
+                    # Draw polygon
+                    points = [self.parent_widget._map_widget_to_frame_coords(pt) for pt in region["points"]]
+                    if len(points) > 2:
+                        polygon_points = [self.parent_widget._map_frame_to_widget_coords(pt) for pt in points]
+                        for i in range(len(polygon_points)):
+                            start_pt = polygon_points[i]
+                            end_pt = polygon_points[(i + 1) % len(polygon_points)]
+                            painter.drawLine(start_pt, end_pt)
                 else:
-                    # Backward compatibility: treat as QRect or dict with type 'rect'
-                    rect = region["rect"] if isinstance(region, dict) and region.get("type") == "rect" else region
+                    # Draw rectangle 
+                    rect = region["rect"]
                     painter.drawRect(rect)
                     
         # Draw current rectangle being drawn
@@ -283,6 +295,20 @@ class VideoRegionWidget(QWidget):
             self.cap.release()
         super().closeEvent(event)
         
+    def browse_output(self):
+        """Open directory dialog to select output directory."""
+        dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+        if dir_name:
+            self.output_edit.setText(dir_name)  # AttributeError - no output_edit attribute
+            self.output_dir = dir_name          # Sets output_dir on wrong object
+            # If video already loaded, update output dir for widget
+            if self.video_path:
+                self.video_region_widget.load_video(self.video_path, dir_name)
+            else:
+                self.update_record_buttons()
+        else:
+            self.update_record_buttons()
+        
     def enable_video_region(self):
         """Enable all controls in the video region widget."""
         self.setEnabled(True)
@@ -433,15 +459,31 @@ class VideoRegionWidget(QWidget):
     def clear_regions(self):
         """Clear all regions and reset the region polygons."""
         self.regions.clear()
-        self.update_region_polygons()
-        self.video_display.update()
+        self.region_polygons.clear()  
         
-        # Redraw the current frame without region overlays
+        # Reset the zone manager completely and create a fresh instance
+        self.inference_engine.zone_manager = RegionZoneManager(
+            count_criteria=self.inference_engine.count_criteria,
+            display_outside=self.inference_engine.display_outside
+        )
+        
+        # Also, reset the tracker to ensure tracking data doesn't persist
+        self.inference_engine.reset_tracker()
+        
+        # Update the display and refresh the current frame
+        self.video_display.update()
         self.seek(self.current_frame_number)
         
+    def get_zone_statistics(self):
+        """Get zone statistics from the inference engine."""
+        if self.inference_engine:
+            return self.inference_engine.get_zone_statistics()
+        return {}
+    
     def update_region_polygons(self):
-        """Update region polygons (QRects to shapely Polygons), mapping from widget to video frame coordinates."""
+        """Update region polygons with zone IDs for better tracking."""
         self.region_polygons = []
+        
         if self.current_frame is None or not self.regions:
             return
             
@@ -452,24 +494,28 @@ class VideoRegionWidget(QWidget):
         widget_w = self.video_display.width()
         widget_h = self.video_display.height()
         
-        # Calculate scaling and positioning (same logic as paintEvent in VideoDisplayWidget)
+        # Calculate scaling and positioning
         scale = min(widget_w / frame_w, widget_h / frame_h)
         scaled_w = int(frame_w * scale)
         scaled_h = int(frame_h * scale)
         offset_x = (widget_w - scaled_w) // 2
         offset_y = (widget_h - scaled_h) // 2
         
-        for region in self.regions:
+        # Create zone IDs for tracking
+        zone_ids = []
+        
+        for i, region in enumerate(self.regions):
+            zone_id = f"region_{i}"
+            
             if isinstance(region, dict) and region.get("type") == "rect":
                 rect = region["rect"]
                 # Map QRect from video display widget coordinates to video frame coordinates
-                # First, subtract the offset to get coordinates relative to the scaled video
                 left_scaled = rect.left() - offset_x
                 top_scaled = rect.top() - offset_y
                 right_scaled = rect.right() - offset_x
                 bottom_scaled = rect.bottom() - offset_y
                 
-                # Then scale back to original video frame coordinates
+                # Scale back to original video frame coordinates
                 left_frame = left_scaled / scale
                 top_frame = top_scaled / scale
                 right_frame = right_scaled / scale
@@ -483,7 +529,6 @@ class VideoRegionWidget(QWidget):
                 
                 # Ensure we have a valid rectangle after clamping
                 if left_frame < right_frame and top_frame < bottom_frame:
-                    # Create polygon in video frame coordinates
                     poly = Polygon([
                         (left_frame, top_frame),
                         (right_frame, top_frame),
@@ -491,6 +536,8 @@ class VideoRegionWidget(QWidget):
                         (left_frame, bottom_frame)
                     ])
                     self.region_polygons.append(poly)
+                    zone_ids.append(zone_id)
+                    
             elif isinstance(region, dict) and region.get("type") == "polygon":
                 pts = []
                 for pt in region["points"]:
@@ -501,7 +548,12 @@ class VideoRegionWidget(QWidget):
                     pts.append((x_scaled, y_scaled))
                 if len(pts) > 2:
                     self.region_polygons.append(Polygon(pts))
-
+                    zone_ids.append(zone_id)
+        
+        # Update the inference engine with zone IDs if it has the zone manager
+        if hasattr(self.inference_engine, 'zone_manager'):
+            self.inference_engine.zone_manager.update_regions(self.region_polygons, zone_ids)
+        
     def mousePressEvent(self, event):
         """Handle mouse press events for drawing regions."""
         # Pause video playback if currently playing
@@ -589,6 +641,77 @@ class VideoRegionWidget(QWidget):
         left, right = min(x1, x2), max(x1, x2)
         top, bottom = min(y1, y2), max(y1, y2)
         return QRect(left, top, right - left, bottom - top)
+    
+    def _map_widget_to_frame_coords(self, point):
+        """
+        Convert coordinates from widget space to frame space.
+        
+        Args:
+            point: QPoint in widget coordinates
+            
+        Returns:
+            QPoint in frame coordinates
+        """
+        if self.current_frame is None:
+            return point
+            
+        # Get frame dimensions
+        frame_h, frame_w = self.current_frame.shape[:2]
+        
+        # Get widget dimensions
+        widget_w = self.video_display.width()
+        widget_h = self.video_display.height()
+        
+        # Calculate scale factor
+        scale = min(widget_w / frame_w, widget_h / frame_h)
+        
+        # Calculate offset for centered image
+        offset_x = (widget_w - (frame_w * scale)) // 2
+        offset_y = (widget_h - (frame_h * scale)) // 2
+        
+        # Convert to frame coordinates
+        frame_x = (point.x() - offset_x) / scale
+        frame_y = (point.y() - offset_y) / scale
+        
+        # Clamp to frame boundaries
+        frame_x = max(0, min(frame_x, frame_w - 1))
+        frame_y = max(0, min(frame_y, frame_h - 1))
+        
+        from PyQt5.QtCore import QPoint
+        return QPoint(int(frame_x), int(frame_y))
+
+    def _map_frame_to_widget_coords(self, point):
+        """
+        Convert coordinates from frame space to widget space.
+        
+        Args:
+            point: QPoint in frame coordinates
+            
+        Returns:
+            QPoint in widget coordinates
+        """
+        if self.current_frame is None:
+            return point
+            
+        # Get frame dimensions
+        frame_h, frame_w = self.current_frame.shape[:2]
+        
+        # Get widget dimensions
+        widget_w = self.video_display.width()
+        widget_h = self.video_display.height()
+        
+        # Calculate scale factor
+        scale = min(widget_w / frame_w, widget_h / frame_h)
+        
+        # Calculate offset for centered image
+        offset_x = (widget_w - (frame_w * scale)) // 2
+        offset_y = (widget_h - (frame_h * scale)) // 2
+        
+        # Convert to widget coordinates
+        widget_x = (point.x() * scale) + offset_x
+        widget_y = (point.y() * scale) + offset_y
+        
+        return QPoint(int(widget_x), int(widget_y))
         
     def _get_video_offset(self):
         """Calculate the offset and scale for centering the video in the widget."""
@@ -724,38 +847,6 @@ class VideoRegionWidget(QWidget):
                                  f"Failed to load video: {e}")
         finally:
             QApplication.restoreOverrideCursor()
-
-    def browse_output(self):
-        """Open directory dialog to select output directory."""
-        dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
-        if dir_name:
-            self.output_edit.setText(dir_name)
-            self.output_dir = dir_name
-            # If video already loaded, update output dir for widget
-            if self.video_path:
-                self.video_region_widget.load_video(self.video_path, dir_name)
-            else:
-                self.update_record_buttons()
-        else:
-            self.update_record_buttons()
-
-    def process_frame_for_inference(self, frame):
-        """Process frame for inference if enabled."""
-        if not self.inference_enabled or not self.inference_engine:
-            return frame
-        
-        try:
-            # Run inference on the current frame
-            detections = self.inference_engine.infer(frame)
-            # Count objects in defined regions
-            detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
-            # Draw detections on the frame
-            frame = self.draw_inference_results(frame, detections, region_counts)
-            
-        except Exception as e:
-            print(f"Inference processing failed: {e}")
-            
-        return frame
         
     def next_frame(self):
         """Advance to the next frame in the video and update the display."""
@@ -787,101 +878,43 @@ class VideoRegionWidget(QWidget):
             self.seek_slider.setValue(self.current_frame_number)
             self.seek_slider.blockSignals(False)
             self.update_frame_label()
-
-    def draw_inference_results(self, frame, detections, region_counts):
-        """Draw inference results on the video frame using supervision's BoxAnnotator."""
-        if not detections or len(detections) == 0:
-            return frame
-        try:
-            # Get the class names from detections
-            class_names = detections.data.get('class_name', [])
-            # Get confidences for each detection
-            confidences = detections.confidence
-            # Try to get tracker IDs if present
-            tracker_ids = detections.tracker_id
-
-            if tracker_ids is not None:
-                labels = [
-                    f"#{int(tid)} {name}: {conf:.2f}" if tid is not None else f"{name}: {conf:.2f}"
-                    for name, conf, tid in zip(class_names, confidences, tracker_ids)
-                ]
-            else:
-                labels = [f"{name}: {conf:.2f}" for name, conf in zip(class_names, confidences)]
-
-            # Get selected annotators 
-            selected_annotators = self.parent.get_selected_annotators()
-            annotators = []
-            for key in selected_annotators:
-                if key == "BoxAnnotator":
-                    annotators.append(sv.BoxAnnotator())
-                elif key == "RoundBoxAnnotator":
-                    annotators.append(sv.RoundBoxAnnotator())
-                elif key == "BoxCornerAnnotator":
-                    annotators.append(sv.BoxCornerAnnotator())
-                elif key == "ColorAnnotator":
-                    annotators.append(sv.ColorAnnotator())
-                elif key == "CircleAnnotator":
-                    annotators.append(sv.CircleAnnotator())
-                elif key == "DotAnnotator":
-                    annotators.append(sv.DotAnnotator())
-                elif key == "TriangleAnnotator":
-                    annotators.append(sv.TriangleAnnotator())
-                elif key == "EllipseAnnotator":
-                    annotators.append(sv.EllipseAnnotator())
-                elif key == "HaloAnnotator":
-                    annotators.append(sv.HaloAnnotator())
-                elif key == "PercentageBarAnnotator":
-                    annotators.append(sv.PercentageBarAnnotator())
-                elif key == "MaskAnnotator":
-                    annotators.append(sv.MaskAnnotator())
-                elif key == "PolygonAnnotator":
-                    annotators.append(sv.PolygonAnnotator())
-                elif key == "BlurAnnotator":
-                    annotators.append(sv.BlurAnnotator())
-                elif key == "PixelateAnnotator":
-                    annotators.append(sv.PixelateAnnotator())
-                elif key == "LabelAnnotator":
-                    annotators.append(sv.LabelAnnotator(text_position=sv.Position.BOTTOM_CENTER))
-                    
-            for annotator in annotators:
-                # Only pass labels to LabelAnnotator
-                if isinstance(annotator, sv.LabelAnnotator):
-                    frame = annotator.annotate(scene=frame, detections=detections, labels=labels)
-                else:
-                    frame = annotator.annotate(scene=frame, detections=detections)
-        except Exception as e:
-            print(f"Supervision annotate failed: {e}")
             
-        # Draw region polygons
-        for idx, poly in enumerate(self.region_polygons):
-            if idx < len(region_counts):
-                # Get the polygon points
-                pts = np.array(list(poly.exterior.coords), np.int32)
-                
-                # Find the top-left corner of the polygon for text placement
-                min_x, min_y = np.min(pts[:, 0]), np.min(pts[:, 1])
-                
-                # Draw the polygon on the frame
-                cv2.polylines(frame, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
-                
-                # Calculate y position for text, ensuring it stays within the frame
-                text_y = int(min_y) + 90  # Lowered further on the y-axis
-                if text_y > frame.shape[0] - 10:
-                    text_y = frame.shape[0] - 10
-                    
-                # Place text at the adjusted position
-                cv2.putText(
-                    img=frame,
-                    text=str(region_counts[idx]),
-                    org=(int(min_x), text_y),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=3,
-                    color=(0, 0, 0),
-                    thickness=3
-                )
-                
+    def process_frame_for_inference(self, frame):
+        """Process frame for inference if enabled."""
+        if not self.inference_enabled or not self.inference_engine:
+            return frame
+        
+        try:
+            # Run inference on the current frame
+            detections = self.inference_engine.infer(frame)
+            
+            # Skip region counting if no regions are defined
+            if not self.region_polygons:
+                # Just draw detections without region processing
+                if self.inference_engine.zone_manager and detections is not None and len(detections) > 0:
+                    return self.inference_engine.zone_manager.draw_detection_annotations_only(
+                        frame, detections, self.parent.get_selected_annotators()
+                    )
+                return frame
+            
+            # Count objects in defined regions
+            detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
+            # Draw detections on the frame
+            frame = self.draw_inference_results(frame, detections, region_counts)
+            
+        except Exception as e:
+            print(f"Inference processing failed: {e}")
+            
         return frame
 
+    def draw_inference_results(self, frame, detections, region_counts):
+        """Draw inference results on the video frame using supervision annotators."""
+        if self.inference_engine.zone_manager:
+            return self.inference_engine.zone_manager.annotate_detections_and_zones(
+                frame, detections, self.parent.get_selected_annotators()
+            )
+        return frame
+    
     def __del__(self):
         """Destructor to ensure proper cleanup."""
         self._cleanup_video_sink()
@@ -901,20 +934,27 @@ class InferenceEngine:
         self.model = None
         self.task = None
         
-        # Initialize ByteTrack tracker
-        self.tracker = sv.ByteTrack()
-        
         # Default inference parameters
         self.conf = 0.3
         self.iou = 0.2
         self.area_min = 0.0
         self.area_max = 0.4
+
+        self.class_names = []
+        self.selected_classes = []
+        
+        # Initialize ByteTrack tracker - enabled by default
+        self.tracker = sv.ByteTrack()
+        self.tracking_enabled = True
         
         self.count_criteria = "Centroid"  # Criteria for counting objects in regions
         self.display_outside = True
         
-        self.class_names = []
-        self.selected_classes = []
+        # Initialize ZoneManager
+        self.zone_manager = RegionZoneManager(
+            count_criteria=self.count_criteria,
+            display_outside=self.display_outside
+        )
 
     def load_model(self, model_path, task):
         """Load the YOLO model for inference."""
@@ -967,15 +1007,17 @@ class InferenceEngine:
     def set_count_criteria(self, count_criteria):
         """Set the criteria for counting objects in regions."""
         self.count_criteria = count_criteria
+        self.zone_manager.count_criteria = count_criteria
         
     def set_display_outside_detections(self, display_outside):
         """Set whether to display detections outside the regions."""
         self.display_outside = display_outside
+        self.zone_manager.display_outside = display_outside
 
     def infer(self, frame):
         """Run inference on a single frame with the current model."""
         if self.model is None:
-            return None
+            return sv.Detections.empty()
         
         # Detect, and filter results based on confidence and IoU
         results = self.model(frame, 
@@ -988,8 +1030,9 @@ class InferenceEngine:
         # Convert results to Supervision Detections
         detections = sv.Detections.from_ultralytics(results)
         
-        # Update tracker with detections
-        detections = self.update_tracker(detections)
+        # Apply tracking if enabled and detections exist
+        if self.tracking_enabled and len(detections) > 0:
+            detections = self.tracker.update_with_detections(detections)
         
         # Apply area filter to detections
         detections = self.apply_area_filter(frame, detections)
@@ -1019,61 +1062,36 @@ class InferenceEngine:
         return detections
             
     def count_objects_in_regions(self, detections, region_polygons):
-        """Count objects in each region based on supervision Detections."""
+        """Count objects in each region using the new zone manager."""
         if not region_polygons or detections is None or len(detections) == 0:
             region_counts = [0 for _ in region_polygons]
             return detections, region_counts
 
-        # Get the number of regions
-        region_counts = [0 for _ in region_polygons]
+        # Update zones with current regions and criteria
+        self.zone_manager.update_regions(region_polygons)
         
-        # Use detection boxes for region assignment
-        boxes = detections.xyxy  # shape (n, 4)
+        # Count detections using the zone manager
+        filtered_detections, region_counts, zone_detection_map = self.zone_manager.count_detections(detections)
         
-        # Create mask to track which detections are inside regions
-        inside_mask = np.zeros(len(boxes), dtype=bool)
+        # Store zone detection mapping for potential future use
+        self._last_zone_detection_map = zone_detection_map
         
-        # Loop through each detection box
-        for i, box in enumerate(boxes):
-            
-            # Check if just the centroid is in inside the region
-            if self.count_criteria == "Centroid":
-                # Check if centroid is inside the region
-                center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
-                for idx, poly in enumerate(region_polygons):
-                    if poly.contains(Point(center)):
-                        region_counts[idx] += 1
-                        inside_mask[i] = True
-                        break  # Count in first matching region only
-                    
-            # Check if entire bounding box is inside the region
-            elif self.count_criteria == "Bounding Box":
-                box_corners = [
-                    (box[0], box[1]),  # top-left
-                    (box[2], box[1]),  # top-right
-                    (box[2], box[3]),  # bottom-right
-                    (box[0], box[3])   # bottom-left
-                ]
-                for idx, poly in enumerate(region_polygons):
-                    if all(poly.contains(Point(corner)) for corner in box_corners):
-                        region_counts[idx] += 1
-                        inside_mask[i] = True
-                        break  # Count in first matching region only
-        
-        # Filter detections based on display_outside setting
-        if not self.display_outside:
-            detections = detections[inside_mask]
+        return filtered_detections, region_counts
     
-        return detections, region_counts
+    def get_zone_statistics(self):
+        """Get comprehensive zone statistics."""
+        return self.zone_manager.get_zone_statistics()
     
     def reset_tracker(self):
-        """Reset the ByteTrack tracker."""
+        """Reset the ByteTrack tracker and zone manager."""
         if self.tracker:
-            self.tracker.reset()
-            print("Tracker reset")
-        else:
-            print("No tracker initialized")
+            self.tracker = sv.ByteTrack()
 
+    def reset_zone_manager(self):
+        """Reset the zone manager."""
+        if self.zone_manager:
+            self.zone_manager.reset_zones()
+            
             
 class Base(QDialog):
     """Dialog for video inference with region selection and parameter controls."""
@@ -1360,8 +1378,8 @@ class Base(QDialog):
         """Open directory dialog to select output directory."""
         dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_name:
-            self.output_edit.setText(dir_name)
-            self.output_dir = dir_name
+            self.output_edit.setText(dir_name)  # AttributeError - no output_edit attribute
+            self.output_dir = dir_name          # Sets output_dir on wrong object
             # If video already loaded, update output dir for widget
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)

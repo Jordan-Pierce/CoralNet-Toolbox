@@ -32,6 +32,7 @@ class Segment(Base):
         # List of annotator types (LabelAnnotator now included and checked by default)
         self.annotator_types = [
             ("LabelAnnotator", "Label Annotator"),
+            ("TrackerAnnotator", "Tracker Annotator"),
             ("BoxAnnotator", "Box Annotator"),
             ("RoundBoxAnnotator", "Round Box Annotator"),
             ("BoxCornerAnnotator", "Box Corner Annotator"),
