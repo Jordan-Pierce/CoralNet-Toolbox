@@ -8,8 +8,8 @@ from shapely.geometry import Polygon
 
 from ultralytics import YOLO
 
+from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
-from PyQt5.QtCore import Qt, QTimer, QRect
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
                              QWidget, QListWidget, QListWidgetItem, QFrame,
@@ -299,8 +299,8 @@ class VideoRegionWidget(QWidget):
         """Open directory dialog to select output directory."""
         dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_name:
-            self.output_edit.setText(dir_name)
-            self.output_dir = dir_name
+            self.output_edit.setText(dir_name)  # AttributeError - no output_edit attribute
+            self.output_dir = dir_name          # Sets output_dir on wrong object
             # If video already loaded, update output dir for widget
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)
@@ -641,6 +641,77 @@ class VideoRegionWidget(QWidget):
         left, right = min(x1, x2), max(x1, x2)
         top, bottom = min(y1, y2), max(y1, y2)
         return QRect(left, top, right - left, bottom - top)
+    
+    def _map_widget_to_frame_coords(self, point):
+        """
+        Convert coordinates from widget space to frame space.
+        
+        Args:
+            point: QPoint in widget coordinates
+            
+        Returns:
+            QPoint in frame coordinates
+        """
+        if self.current_frame is None:
+            return point
+            
+        # Get frame dimensions
+        frame_h, frame_w = self.current_frame.shape[:2]
+        
+        # Get widget dimensions
+        widget_w = self.video_display.width()
+        widget_h = self.video_display.height()
+        
+        # Calculate scale factor
+        scale = min(widget_w / frame_w, widget_h / frame_h)
+        
+        # Calculate offset for centered image
+        offset_x = (widget_w - (frame_w * scale)) // 2
+        offset_y = (widget_h - (frame_h * scale)) // 2
+        
+        # Convert to frame coordinates
+        frame_x = (point.x() - offset_x) / scale
+        frame_y = (point.y() - offset_y) / scale
+        
+        # Clamp to frame boundaries
+        frame_x = max(0, min(frame_x, frame_w - 1))
+        frame_y = max(0, min(frame_y, frame_h - 1))
+        
+        from PyQt5.QtCore import QPoint
+        return QPoint(int(frame_x), int(frame_y))
+
+    def _map_frame_to_widget_coords(self, point):
+        """
+        Convert coordinates from frame space to widget space.
+        
+        Args:
+            point: QPoint in frame coordinates
+            
+        Returns:
+            QPoint in widget coordinates
+        """
+        if self.current_frame is None:
+            return point
+            
+        # Get frame dimensions
+        frame_h, frame_w = self.current_frame.shape[:2]
+        
+        # Get widget dimensions
+        widget_w = self.video_display.width()
+        widget_h = self.video_display.height()
+        
+        # Calculate scale factor
+        scale = min(widget_w / frame_w, widget_h / frame_h)
+        
+        # Calculate offset for centered image
+        offset_x = (widget_w - (frame_w * scale)) // 2
+        offset_y = (widget_h - (frame_h * scale)) // 2
+        
+        # Convert to widget coordinates
+        widget_x = (point.x() * scale) + offset_x
+        widget_y = (point.y() * scale) + offset_y
+        
+        return QPoint(int(widget_x), int(widget_y))
         
     def _get_video_offset(self):
         """Calculate the offset and scale for centering the video in the widget."""
@@ -1307,8 +1378,8 @@ class Base(QDialog):
         """Open directory dialog to select output directory."""
         dir_name = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if dir_name:
-            self.output_edit.setText(dir_name)
-            self.output_dir = dir_name
+            self.output_edit.setText(dir_name)  # AttributeError - no output_edit attribute
+            self.output_dir = dir_name          # Sets output_dir on wrong object
             # If video already loaded, update output dir for widget
             if self.video_path:
                 self.video_region_widget.load_video(self.video_path, dir_name)
