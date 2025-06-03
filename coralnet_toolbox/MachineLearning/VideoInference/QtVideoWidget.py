@@ -4,8 +4,9 @@ from typing import List, Optional, Dict, Tuple
 
 import cv2
 import numpy as np
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+import pyqtgraph as pg
+from pyqtgraph import PlotWidget
 
 from shapely.geometry import Polygon
 
@@ -116,9 +117,9 @@ class VideoDisplayWidget(QWidget):
         if self.parent_widget:
             self.parent_widget.mouseMoveEvent(event)
             
-            
+
 class VideoPlotWidget(QWidget):
-    """Widget for displaying real-time analytics plots above the video."""
+    """Widget for displaying real-time analytics plots above the video using PyQtGraph."""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -138,53 +139,105 @@ class VideoPlotWidget(QWidget):
         # Plot mode: "total" or "regions"
         self.plot_mode = "total"
         
+        # Plot curves storage for efficient updates
+        self.plot_curves = {}
+        
         self.setup_ui()
         self.setup_plot()
         
     def setup_ui(self):
         """Setup the UI components."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
+        # Main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
-        # Controls
+        # Create a GroupBox to contain the plot widgets
+        self.plot_group = QGroupBox("Detection Analytics")
+        self.plot_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        
+        # Layout for the group box contents
+        plot_layout = QVBoxLayout(self.plot_group)
+        plot_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Controls row
         controls_layout = QHBoxLayout()
         
+        # Clear button - moved to the left
+        clear_btn = QPushButton("Clear Plot")
+        clear_btn.clicked.connect(self.clear_data)
+        controls_layout.addWidget(clear_btn)
+        
+        # Plot mode controls
         controls_layout.addWidget(QLabel("Plot Mode:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Total Detections", "Per Region"])
         self.mode_combo.currentTextChanged.connect(self.change_plot_mode)
         controls_layout.addWidget(self.mode_combo)
         
+        # Add stretch to push enable/disable buttons to the right
         controls_layout.addStretch()
         
-        # Clear button
-        from PyQt5.QtWidgets import QPushButton
-        clear_btn = QPushButton("Clear Plot")
-        clear_btn.clicked.connect(self.clear_data)
-        controls_layout.addWidget(clear_btn)
+        # Enable/Disable plot buttons
+        self.enable_plot_btn = QPushButton("Enable Plotting")
+        self.enable_plot_btn.clicked.connect(self.enable_plotting)
+        controls_layout.addWidget(self.enable_plot_btn)
         
-        layout.addLayout(controls_layout)
+        self.disable_plot_btn = QPushButton("Disable Plotting")
+        self.disable_plot_btn.clicked.connect(self.disable_plotting)
+        self.disable_plot_btn.setEnabled(False)  # Initially disabled
+        controls_layout.addWidget(self.disable_plot_btn)
         
-        # Plot display
-        self.plot_label = QLabel()
-        self.plot_label.setMinimumHeight(150)
-        self.plot_label.setMaximumHeight(200)
-        self.plot_label.setStyleSheet("border: 1px solid gray;")
-        layout.addWidget(self.plot_label)
+        plot_layout.addLayout(controls_layout)
+        
+        # Create PyQtGraph PlotWidget
+        self.plot_widget = PlotWidget()
+        self.plot_widget.setMinimumHeight(150)
+        self.plot_widget.setMaximumHeight(200)
+        self.plot_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        plot_layout.addWidget(self.plot_widget)
+        
+        # Add the group box to the main layout
+        main_layout.addWidget(self.plot_group)
+        
+        # Initialize plotting state
+        self.plotting_enabled = True
         
     def setup_plot(self):
-        """Initialize the matplotlib figure and canvas."""
-        self.fig = Figure(facecolor=self.bg_color, figsize=(12, 3))
-        self.canvas = FigureCanvasAgg(self.fig)
-        self.ax = self.fig.add_subplot(111, facecolor=self.bg_color)
+        """Initialize the PyQtGraph plot widget."""
+        # Configure plot appearance
+        self.plot_widget.setBackground(self.bg_color)
+        self.plot_widget.setLabel('left', 'Detection Count', color=self.fg_color)
+        self.plot_widget.setLabel('bottom', 'Frame Number', color=self.fg_color)
+        self.plot_widget.setTitle('Real-time Detection Count', color=self.fg_color)
         
-        # Initial empty plot
-        self.update_plot_display()
+        # Enable grid
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        
+        # Set axis colors
+        axis_pen = pg.mkPen(color=self.fg_color, width=1)
+        self.plot_widget.getAxis('left').setPen(axis_pen)
+        self.plot_widget.getAxis('bottom').setPen(axis_pen)
+        
+        # Enable auto-range
+        self.plot_widget.enableAutoRange()
         
     def change_plot_mode(self, mode_text):
         """Change between total and per-region plotting modes."""
         self.plot_mode = "total" if mode_text == "Total Detections" else "regions"
         self.update_plot_display()
+        
+    def enable_plotting(self):
+        """Enable plotting functionality and update button states."""
+        self.plotting_enabled = True
+        self.enable_plot_btn.setEnabled(False)
+        self.disable_plot_btn.setEnabled(True)
+        
+    def disable_plotting(self):
+        """Disable plotting functionality and update button states."""
+        self.plotting_enabled = False
+        self.enable_plot_btn.setEnabled(True)
+        self.disable_plot_btn.setEnabled(False)
         
     def update_data(self, frame_number: int, zone_statistics: Dict[str, Dict]):
         """
@@ -194,6 +247,10 @@ class VideoPlotWidget(QWidget):
             frame_number: Current frame number
             zone_statistics: Dictionary of zone statistics from RegionZoneManager
         """
+        # Only update plot data if plotting is enabled
+        if not self.plotting_enabled:
+            return
+            
         # Add frame number
         self.frame_numbers.append(frame_number)
         
@@ -223,71 +280,77 @@ class VideoPlotWidget(QWidget):
         self.update_plot_display()
         
     def update_plot_display(self):
-        """Update the plot display with current data."""
-        self.ax.clear()
+        """Update the plot display with current data using PyQtGraph."""
+        # Clear existing plots
+        self.plot_widget.clear()
+        self.plot_curves.clear()
         
         if not self.frame_numbers:
-            # Empty plot
-            self.ax.set_title("Real-time Detection Count", color=self.fg_color, fontsize=12)
-            self.ax.set_xlabel("Frame Number", color=self.fg_color)
-            self.ax.set_ylabel("Detection Count", color=self.fg_color)
-        else:
-            x_data = np.array(self.frame_numbers)
+            # Empty plot - just set title
+            self.plot_widget.setTitle("Real-time Detection Count", color=self.fg_color)
+            return
             
-            if self.plot_mode == "total":
-                # Plot total detections
-                y_data = np.array(self.total_counts)
-                self.ax.plot(x_data, y_data, color="#7b0068", linewidth=self.line_width, 
-                             marker="o", markersize=3, label="Total Detections")
-                self.ax.set_title("Total Detections Over Time", color=self.fg_color, fontsize=12)
+        x_data = np.array(self.frame_numbers)
+        
+        if self.plot_mode == "total":
+            # Plot total detections
+            y_data = np.array(self.total_counts)
+            
+            # Create pen for total detections line
+            pen = pg.mkPen(color="#7b0068", width=self.line_width)
+            
+            # Plot the line with markers
+            curve = self.plot_widget.plot(
+                x_data, y_data, 
+                pen=pen,
+                symbol='o', 
+                symbolSize=4,
+                symbolBrush="#7b0068",
+                name="Total Detections"
+            )
+            
+            self.plot_curves['total'] = curve
+            self.plot_widget.setTitle("Total Detections Over Time", color=self.fg_color)
+            
+        else:
+            # Plot per-region data
+            if self.region_data:
+                legend = self.plot_widget.addLegend()
                 
-            else:
-                # Plot per-region data
-                if self.region_data:
-                    for i, (zone_id, counts) in enumerate(self.region_data.items()):
-                        if len(counts) > 0:
-                            # Use TRACKING_COLORS for consistency
-                            color_idx = i % len(TRACKING_COLORS.colors)
-                            color = TRACKING_COLORS.colors[color_idx].as_hex()
-                            
-                            y_data = np.array(counts)
-                            self.ax.plot(x_data, y_data, color=color, linewidth=self.line_width,
-                                         marker="o", markersize=3, label=f"Region {i}")
-                    
-                    self.ax.legend(loc="upper right", fontsize=8)
+                for i, (zone_id, counts) in enumerate(self.region_data.items()):
+                    if len(counts) > 0:
+                        # Use TRACKING_COLORS for consistency
+                        color_idx = i % len(TRACKING_COLORS.colors)
+                        color_hex = TRACKING_COLORS.colors[color_idx].as_hex()
+                        
+                        y_data = np.array(counts)
+                        
+                        # Create pen for this region
+                        pen = pg.mkPen(color=color_hex, width=self.line_width)
+                        
+                        # Plot the line with markers
+                        curve = self.plot_widget.plot(
+                            x_data, y_data,
+                            pen=pen,
+                            symbol='o',
+                            symbolSize=4,
+                            symbolBrush=color_hex,
+                            name=f"Region {i}"
+                        )
+                        
+                        self.plot_curves[zone_id] = curve
                 
-                self.ax.set_title("Detections Per Region Over Time", color=self.fg_color, fontsize=12)
+            self.plot_widget.setTitle("Detections Per Region Over Time", color=self.fg_color)
         
-        # Common plot settings
-        self.ax.set_facecolor("#f0f0f0")
-        self.ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-        self.ax.set_xlabel("Frame Number", color=self.fg_color, fontsize=10)
-        self.ax.set_ylabel("Detection Count", color=self.fg_color, fontsize=10)
-        
-        # Auto-scale
-        self.ax.relim()
-        self.ax.autoscale_view()
-        
-        # Convert to QPixmap and display
-        self.canvas.draw()
-        buf = np.frombuffer(self.canvas.tostring_rgb(), dtype=np.uint8)
-        buf = buf.reshape(self.canvas.get_width_height()[::-1] + (3,))
-        
-        # Convert to QImage then QPixmap
-        h, w, ch = buf.shape
-        bytes_per_line = ch * w
-        qimg = QImage(buf.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(qimg)
-        
-        # Scale to fit the label
-        scaled_pixmap = pixmap.scaled(self.plot_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.plot_label.setPixmap(scaled_pixmap)
+        # Auto-range to fit all data
+        self.plot_widget.autoRange()
         
     def clear_data(self):
         """Clear all plot data."""
         self.frame_numbers.clear()
         self.total_counts.clear()
         self.region_data.clear()
+        self.plot_curves.clear()
         self.update_plot_display()
         
     def reset_for_new_video(self):
@@ -306,11 +369,14 @@ class VideoRegionWidget(QWidget):
         # Polygon drawing state (must be set before any UI or event setup)
         self.drawing_polygon = False
         self.current_polygon_points = []
+        self.region_polygons = []
+        
+        # Add VideoPlotWidget above the video player
+        self.plot_widget = VideoPlotWidget(self)
 
         # Inference
         self.inference_engine = InferenceEngine(self)
         self.inference_enabled = False
-        self.region_polygons = []
 
         # Video frame and display
         self.frame = None
@@ -358,6 +424,9 @@ class VideoRegionWidget(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(5, 5, 5, 5)
         self.layout.setSpacing(5)
+        
+        # Add plot widget above the video player
+        self.layout.addWidget(self.plot_widget)
         
         # Video Player GroupBox - takes up most of the space
         self.video_group = QGroupBox("Video Player")
@@ -603,6 +672,13 @@ class VideoRegionWidget(QWidget):
             self.current_frame_number = frame_number
             self.video_display.update()  # Update the video display widget
             self.update_frame_label()
+            # Update plot with current statistics
+            stats = self.get_zone_statistics()
+            self.plot_widget.update_data(self.current_frame_number, stats)
+        else:
+            QMessageBox.critical(self.parent, 
+                                 "Error", 
+                                 f"Failed to seek to frame {frame_number}")
 
     def step_forward(self):
         """Step forward one frame in the video."""
@@ -656,6 +732,9 @@ class VideoRegionWidget(QWidget):
         self.video_display.update()
         self.seek(self.current_frame_number)
         
+        # Also clear the plot data
+        self.plot_widget.clear_data()
+
     def get_zone_statistics(self):
         """Get zone statistics from the inference engine."""
         if self.inference_engine:
@@ -1022,7 +1101,8 @@ class VideoRegionWidget(QWidget):
             
             # Reset for new video
             self.inference_engine.reset_tracker()
-            
+            # Reset plot for new video
+            self.plot_widget.reset_for_new_video()
         except Exception as e:
             QMessageBox.critical(self.parent, 
                                  "Error", 
@@ -1060,6 +1140,10 @@ class VideoRegionWidget(QWidget):
             self.seek_slider.setValue(self.current_frame_number)
             self.seek_slider.blockSignals(False)
             self.update_frame_label()
+            
+            # Update plot with current statistics - ADD THESE TWO LINES HERE
+            stats = self.get_zone_statistics()
+            self.plot_widget.update_data(self.current_frame_number, stats)
             
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled."""
