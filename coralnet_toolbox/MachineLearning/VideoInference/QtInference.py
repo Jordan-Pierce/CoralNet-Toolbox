@@ -1,8 +1,24 @@
+import os
+from datetime import datetime
 from typing import List, Optional, Dict, Tuple
 
+import cv2
 import numpy as np
-import supervision as sv
+
 from shapely.geometry import Polygon
+
+import supervision as sv
+from ultralytics import YOLO
+
+from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
+from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
+                             QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
+                             QWidget, QListWidget, QListWidgetItem, QFrame,
+                             QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
+                             QMessageBox, QApplication)
+
+from coralnet_toolbox.Icons import get_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -235,9 +251,7 @@ class CustomPolygonZoneAnnotator(sv.PolygonZoneAnnotator):
             
         Returns:
             Annotated scene
-        """
-        import cv2
-        
+        """        
         # First draw the zone using parent method (without label)
         annotated_scene = super().annotate(scene=scene, label=None)
         
@@ -696,3 +710,175 @@ class RegionZoneManager:
             trace_length=30,
             position=sv.Position.CENTER
         )
+
+
+class InferenceEngine:
+    """Handles model loading, inference, and class filtering."""
+    def __init__(self, parent=None):
+        self.parent = parent
+        
+        # Set the device (video_region.base.main_window)
+        self.device = "cpu"
+        
+        # Initialize model and task
+        self.model = None
+        self.task = None
+        
+        # Default inference parameters
+        self.conf = 0.3
+        self.iou = 0.2
+        self.area_min = 0.0
+        self.area_max = 0.4
+
+        self.class_names = []
+        self.selected_classes = []
+        
+        # Initialize ByteTrack tracker - enabled by default
+        self.tracker = sv.ByteTrack()
+        self.tracking_enabled = True
+        
+        self.count_criteria = "Centroid"  # Criteria for counting objects in regions
+        self.display_outside = True
+        
+        # Initialize ZoneManager
+        self.zone_manager = RegionZoneManager(
+            count_criteria=self.count_criteria,
+            display_outside=self.display_outside
+        )
+
+    def load_model(self, model_path, task):
+        """Load the YOLO model for inference."""
+        # Make cursor busy while loading
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        
+        try:
+            # Set the task
+            self.task = task
+            # Load the model using YOLO from ultralytics
+            self.model = YOLO(model_path, task=self.task)
+            # Store class names from the model
+            self.class_names = list(self.model.names.values())
+            
+            # Run a dummy inference to ensure the model is loaded correctly
+            self.model(np.zeros((640, 640, 3), dtype=np.uint8))
+            
+            # Set the device for inference
+            self.set_device()
+            
+            QMessageBox.information(self.parent,
+                                    "Model Loaded",
+                                    "Model loaded successfully.")
+                        
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            QMessageBox.critical(self.parent, 
+                                 "Model Load Error",
+                                 "Failed to load model (see console for details)")
+            
+        finally:
+            # Make cursor normal
+            QApplication.restoreOverrideCursor()
+            
+    def set_device(self):
+        """Set the device for inference."""
+        self.device = self.parent.parent.main_window.device
+
+    def set_selected_classes(self, class_indices):
+        """Set the selected classes for inference."""
+        self.selected_classes = class_indices
+        
+    def set_inference_params(self, conf, iou, area_min, area_max):
+        """Set inference parameters for the video region."""
+        self.conf = conf
+        self.iou = iou
+        self.area_min = area_min
+        self.area_max = area_max
+
+    def set_count_criteria(self, count_criteria):
+        """Set the criteria for counting objects in regions."""
+        self.count_criteria = count_criteria
+        self.zone_manager.count_criteria = count_criteria
+        
+    def set_display_outside_detections(self, display_outside):
+        """Set whether to display detections outside the regions."""
+        self.display_outside = display_outside
+        self.zone_manager.display_outside = display_outside
+
+    def infer(self, frame):
+        """Run inference on a single frame with the current model."""
+        if self.model is None:
+            return sv.Detections.empty()
+        
+        # Detect, and filter results based on confidence and IoU
+        results = self.model(frame, 
+                             conf=self.conf, 
+                             iou=self.iou, 
+                             classes=self.selected_classes,
+                             half=True,
+                             device=self.device)[0]
+        
+        # Convert results to Supervision Detections
+        detections = sv.Detections.from_ultralytics(results)
+        
+        # Apply tracking if enabled and detections exist
+        if self.tracking_enabled and len(detections) > 0:
+            detections = self.tracker.update_with_detections(detections)
+        
+        # Apply area filter to detections
+        detections = self.apply_area_filter(frame, detections)
+            
+        return detections
+    
+    def update_tracker(self, detections):
+        """Update the tracker with the current detections."""
+        tracker_detections = self.tracker.update_with_detections(detections)
+        if tracker_detections:
+            return tracker_detections
+        return detections
+    
+    def apply_area_filter(self, frame, detections):
+        """Filter detections based on area thresholds."""
+        if detections is None or len(detections) == 0:
+            return detections
+        
+        # Calculate the area of the frame
+        height, width = frame.shape[:2]
+        frame_area = height * width
+        
+        # Filter detections based on relative area
+        detections = detections[(detections.area / frame_area) <= self.area_max]
+        detections = detections[(detections.area / frame_area) >= self.area_min]
+        
+        return detections
+            
+    def count_objects_in_regions(self, detections, region_polygons):
+        """Count objects in each region using the new zone manager."""
+        if not region_polygons or detections is None or len(detections) == 0:
+            region_counts = [0 for _ in region_polygons]
+            return detections, region_counts
+
+        # Update zones with current regions and criteria
+        self.zone_manager.update_regions(region_polygons)
+        
+        # Count detections using the zone manager
+        filtered_detections, region_counts, zone_detection_map = self.zone_manager.count_detections(detections)
+        
+        # Store zone detection mapping for potential future use
+        self._last_zone_detection_map = zone_detection_map
+        
+        return filtered_detections, region_counts
+    
+    def get_zone_statistics(self):
+        """Get comprehensive zone statistics."""
+        return self.zone_manager.get_zone_statistics()
+    
+    def reset_tracker(self):
+        """Reset the ByteTrack tracker and zone manager."""
+        if self.tracker:
+            self.tracker = sv.ByteTrack()
+
+    def reset_zone_manager(self):
+        """Reset the zone manager."""
+        if self.zone_manager:
+            self.zone_manager.reset_zones()
+            
