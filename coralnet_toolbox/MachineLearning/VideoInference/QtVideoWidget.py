@@ -163,19 +163,14 @@ class VideoPlotWidget(QWidget):
         # Controls row
         controls_layout = QHBoxLayout()
         
-        # Clear button - moved to the left
-        clear_btn = QPushButton("Clear Plot")
-        clear_btn.clicked.connect(self.clear_data)
-        controls_layout.addWidget(clear_btn)
-        
-        # Plot mode controls
+        # Plot mode controls - moved to the far left
         controls_layout.addWidget(QLabel("Plot Mode:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Total Detections", "Per Region"])
         self.mode_combo.currentTextChanged.connect(self.change_plot_mode)
         controls_layout.addWidget(self.mode_combo)
         
-        # Add stretch to push enable/disable buttons to the right
+        # Add stretch to push enable/disable and clear buttons to the right
         controls_layout.addStretch()
         
         # Enable/Disable plot buttons
@@ -187,6 +182,11 @@ class VideoPlotWidget(QWidget):
         self.disable_plot_btn.clicked.connect(self.disable_plotting)
         self.disable_plot_btn.setEnabled(False)  # Initially disabled
         controls_layout.addWidget(self.disable_plot_btn)
+        
+        # Clear button - moved to the far right after disable plotting
+        clear_btn = QPushButton("Clear Plot")
+        clear_btn.clicked.connect(self.clear_data)
+        controls_layout.addWidget(clear_btn)
         
         plot_layout.addLayout(controls_layout)
         
@@ -200,8 +200,8 @@ class VideoPlotWidget(QWidget):
         # Add the group box to the main layout
         main_layout.addWidget(self.plot_group)
         
-        # Initialize plotting state
-        self.plotting_enabled = True
+        # Initialize plotting state - disabled by default
+        self.plotting_enabled = False
         
     def setup_plot(self):
         """Initialize the PyQtGraph plot widget."""
@@ -218,6 +218,9 @@ class VideoPlotWidget(QWidget):
         axis_pen = pg.mkPen(color=self.fg_color, width=1)
         self.plot_widget.getAxis('left').setPen(axis_pen)
         self.plot_widget.getAxis('bottom').setPen(axis_pen)
+        
+        # Add padding to prevent x-axis text from being cut off
+        self.plot_widget.getPlotItem().setContentsMargins(10, 10, 10, 20)  # left, top, right, bottom
         
         # Enable auto-range
         self.plot_widget.enableAutoRange()
@@ -239,13 +242,14 @@ class VideoPlotWidget(QWidget):
         self.enable_plot_btn.setEnabled(True)
         self.disable_plot_btn.setEnabled(False)
         
-    def update_data(self, frame_number: int, zone_statistics: Dict[str, Dict]):
+    def update_data(self, frame_number: int, zone_statistics: Dict[str, Dict], total_detections: int = 0):
         """
         Update plot data with new frame information.
         
         Args:
             frame_number: Current frame number
             zone_statistics: Dictionary of zone statistics from RegionZoneManager
+            total_detections: Total detections in frame when no regions are defined
         """
         # Only update plot data if plotting is enabled
         if not self.plotting_enabled:
@@ -254,8 +258,13 @@ class VideoPlotWidget(QWidget):
         # Add frame number
         self.frame_numbers.append(frame_number)
         
-        # Calculate total count across all zones
-        total_current = sum(stats.get('current_count', 0) for stats in zone_statistics.values())
+        # Calculate total count across all zones, or use total detections if no zones
+        if zone_statistics:
+            total_current = sum(stats.get('current_count', 0) for stats in zone_statistics.values())
+        else:
+            # When no regions are defined, show total detections across entire frame
+            total_current = total_detections
+            
         self.total_counts.append(total_current)
         
         # Update per-region data
@@ -313,8 +322,9 @@ class VideoPlotWidget(QWidget):
             self.plot_widget.setTitle("Total Detections Over Time", color=self.fg_color)
             
         else:
-            # Plot per-region data
+            # Plot per-region data, or total data if no regions exist
             if self.region_data:
+                # We have region data - plot per region
                 legend = self.plot_widget.addLegend()
                 
                 for i, (zone_id, counts) in enumerate(self.region_data.items()):
@@ -339,8 +349,27 @@ class VideoPlotWidget(QWidget):
                         )
                         
                         self.plot_curves[zone_id] = curve
+                        
+                self.plot_widget.setTitle("Detections Per Region Over Time", color=self.fg_color)
+            else:
+                # No regions defined - show total detections like in total mode
+                y_data = np.array(self.total_counts)
                 
-            self.plot_widget.setTitle("Detections Per Region Over Time", color=self.fg_color)
+                # Create pen for total detections line
+                pen = pg.mkPen(color="#7b0068", width=self.line_width)
+                
+                # Plot the line with markers
+                curve = self.plot_widget.plot(
+                    x_data, y_data, 
+                    pen=pen,
+                    symbol='o', 
+                    symbolSize=4,
+                    symbolBrush="#7b0068",
+                    name="Total Detections (No Regions)"
+                )
+                
+                self.plot_curves['total'] = curve
+                self.plot_widget.setTitle("Total Detections Over Time (No Regions Defined)", color=self.fg_color)
         
         # Auto-range to fit all data
         self.plot_widget.autoRange()
@@ -666,7 +695,7 @@ class VideoRegionWidget(QWidget):
         
         if ret:
             # Process the frame for inference if enabled
-            processed_frame = self.process_frame_for_inference(frame.copy())
+            processed_frame, total_detections = self.process_frame_for_inference(frame.copy())
             
             self.current_frame = processed_frame
             self.current_frame_number = frame_number
@@ -674,7 +703,7 @@ class VideoRegionWidget(QWidget):
             self.update_frame_label()
             # Update plot with current statistics
             stats = self.get_zone_statistics()
-            self.plot_widget.update_data(self.current_frame_number, stats)
+            self.plot_widget.update_data(self.current_frame_number, stats, total_detections)
         else:
             QMessageBox.critical(self.parent, 
                                  "Error", 
@@ -1127,7 +1156,7 @@ class VideoRegionWidget(QWidget):
                 return
                 
         if frame is not None:
-            processed_frame = self.process_frame_for_inference(frame.copy())
+            processed_frame, total_detections = self.process_frame_for_inference(frame.copy())
             # Only write if recording
             if self.should_write_video:
                 self._write_frame_to_sink(processed_frame)
@@ -1141,27 +1170,34 @@ class VideoRegionWidget(QWidget):
             self.seek_slider.blockSignals(False)
             self.update_frame_label()
             
-            # Update plot with current statistics - ADD THESE TWO LINES HERE
+            # Update plot with current statistics and total detection count
             stats = self.get_zone_statistics()
-            self.plot_widget.update_data(self.current_frame_number, stats)
+            self.plot_widget.update_data(self.current_frame_number, stats, total_detections)
             
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled."""
+        total_detections = 0
+        
         if not self.inference_enabled or not self.inference_engine:
-            return frame
+            return frame, total_detections
         
         try:
             # Run inference on the current frame
             detections = self.inference_engine.infer(frame)
             
+            # Get total detection count
+            if detections is not None:
+                total_detections = len(detections)
+            
             # Skip region counting if no regions are defined
             if not self.region_polygons:
                 # Just draw detections without region processing
                 if self.inference_engine.zone_manager and detections is not None and len(detections) > 0:
-                    return self.inference_engine.zone_manager.draw_detection_annotations_only(
+                    processed_frame = self.inference_engine.zone_manager.draw_detection_annotations_only(
                         frame, detections, self.parent.get_selected_annotators()
                     )
-                return frame
+                    return processed_frame, total_detections
+                return frame, total_detections
             
             # Count objects in defined regions
             detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
@@ -1171,7 +1207,7 @@ class VideoRegionWidget(QWidget):
         except Exception as e:
             print(f"Inference processing failed: {e}")
             
-        return frame
+        return frame, total_detections
 
     def draw_inference_results(self, frame, detections, region_counts):
         """Draw inference results on the video frame using supervision annotators."""
