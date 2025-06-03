@@ -288,11 +288,68 @@ class Base(QDialog):
         btn_layout = QHBoxLayout()
         
         self.exit_btn = QPushButton("Exit")
-        self.exit_btn.clicked.connect(self.reject)
+        self.exit_btn.clicked.connect(self.cleanup_and_exit)
         self.exit_btn.setFocusPolicy(Qt.NoFocus)                # Prevent focus/highlighting
         btn_layout.addWidget(self.exit_btn)
         
         self.controls_layout.addLayout(btn_layout)
+
+    def cleanup_and_exit(self):
+        """Perform cleanup operations and close the dialog."""
+        self.cleanup()
+        self.reject()
+
+    def cleanup(self):
+        """Clean up all resources before closing the dialog."""
+        try:
+            # Disable inference first
+            if hasattr(self, 'video_region_widget') and self.video_region_widget:
+                # Disable inference
+                self.video_region_widget.enable_inference(False)
+                
+                # Stop video playback
+                if hasattr(self.video_region_widget, 'stop_video'):
+                    self.video_region_widget.stop_video()
+                
+                # Clear regions
+                self.video_region_widget.clear_regions()
+                
+                # Clean up inference engine and model
+                if hasattr(self.video_region_widget, 'inference_engine') and self.video_region_widget.inference_engine:
+                    if hasattr(self.video_region_widget.inference_engine, 'cleanup'):
+                        self.video_region_widget.inference_engine.cleanup()
+                    
+                    # Clear model reference
+                    if hasattr(self.video_region_widget.inference_engine, 'model'):
+                        self.video_region_widget.inference_engine.model = None
+                
+                # Release video capture if exists
+                if hasattr(self.video_region_widget, 'cap') and self.video_region_widget.cap:
+                    self.video_region_widget.cap.release()
+                    self.video_region_widget.cap = None
+            
+            # Clear class filter
+            if hasattr(self, 'class_filter_widget') and self.class_filter_widget:
+                self.class_filter_widget.clear()
+            
+            # Reset UI state
+            if hasattr(self, 'enable_inference_btn') and hasattr(self, 'disable_inference_btn'):
+                self.enable_inference_btn.setEnabled(True)
+                self.disable_inference_btn.setEnabled(False)
+            
+            # Clear file paths
+            self.video_path = ""
+            self.output_dir = ""
+            self.model_path = ""
+            
+        except Exception as e:
+            # Log the error but don't prevent closing
+            print(f"Error during cleanup: {e}")
+
+    def closeEvent(self, event):
+        """Override closeEvent to ensure cleanup when window is closed with X button."""
+        self.cleanup()
+        event.accept()
         
     def browse_video(self):
         """Open file dialog to select input video (filtered to common formats)."""

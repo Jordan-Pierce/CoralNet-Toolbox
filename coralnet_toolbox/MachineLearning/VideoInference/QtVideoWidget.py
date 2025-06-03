@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
                              QWidget, QListWidget, QListWidgetItem, QFrame,
                              QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
-                             QMessageBox, QApplication)
+                             QMessageBox, QApplication, QSpinBox, QScrollArea)
 
 from coralnet_toolbox.MachineLearning.VideoInference.QtInference import TRACKING_COLORS
 from coralnet_toolbox.MachineLearning.VideoInference.QtInference import InferenceEngine
@@ -143,6 +143,10 @@ class VideoPlotWidget(QWidget):
         # Plot curves storage for efficient updates
         self.plot_curves = {}
         
+        # Legend management
+        self.legend_items = []  # Store legend items for separate display
+        self.top_classes_limit = 20  # Show top 20 classes by default
+        
         self.setup_ui()
         self.setup_plot()
         
@@ -161,42 +165,53 @@ class VideoPlotWidget(QWidget):
         plot_layout = QVBoxLayout(self.plot_group)
         plot_layout.setContentsMargins(5, 5, 5, 5)
         
-        # Controls row
-        controls_layout = QHBoxLayout()
+        # Controls row 1
+        controls_layout1 = QHBoxLayout()
         
         # Plot mode controls - moved to the far left
-        controls_layout.addWidget(QLabel("Plot Mode:"))
+        controls_layout1.addWidget(QLabel("Plot Mode:"))
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Total Detections", "Per Region", "Per Class"])
         self.mode_combo.currentTextChanged.connect(self.change_plot_mode)
-        controls_layout.addWidget(self.mode_combo)
+        controls_layout1.addWidget(self.mode_combo)
         
         # Add stretch to push enable/disable and clear buttons to the right
-        controls_layout.addStretch()
+        controls_layout1.addStretch()
         
         # Enable/Disable plot buttons
         self.enable_plot_btn = QPushButton("Enable Plotting")
         self.enable_plot_btn.clicked.connect(self.enable_plotting)
-        controls_layout.addWidget(self.enable_plot_btn)
+        controls_layout1.addWidget(self.enable_plot_btn)
         
         self.disable_plot_btn = QPushButton("Disable Plotting")
         self.disable_plot_btn.clicked.connect(self.disable_plotting)
         self.disable_plot_btn.setEnabled(False)  # Initially disabled
-        controls_layout.addWidget(self.disable_plot_btn)
+        controls_layout1.addWidget(self.disable_plot_btn)
         
         # Clear button - moved to the far right after disable plotting
         clear_btn = QPushButton("Clear Plot")
         clear_btn.clicked.connect(self.clear_data)
-        controls_layout.addWidget(clear_btn)
+        controls_layout1.addWidget(clear_btn)
         
-        plot_layout.addLayout(controls_layout)
+        plot_layout.addLayout(controls_layout1)
         
-        # Create PyQtGraph PlotWidget
+        # Create horizontal layout for plot and legend areas
+        plot_and_legend_layout = QHBoxLayout()
+        
+        # Create PyQtGraph PlotWidget (main plot area)
         self.plot_widget = PlotWidget()
         self.plot_widget.setMinimumHeight(150)
         self.plot_widget.setMaximumHeight(200)
         self.plot_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        plot_layout.addWidget(self.plot_widget)
+        
+        # Create scrollable legend area with proper initialization
+        self.setup_legend_scroll_area()
+        
+        # Add both widgets to horizontal layout
+        plot_and_legend_layout.addWidget(self.plot_widget, stretch=1)  # Plot gets most space
+        plot_and_legend_layout.addWidget(self.legend_scroll_area, stretch=0)  # Legend fixed width
+        
+        plot_layout.addLayout(plot_and_legend_layout)
         
         # Add the group box to the main layout
         main_layout.addWidget(self.plot_group)
@@ -204,27 +219,138 @@ class VideoPlotWidget(QWidget):
         # Initialize plotting state - disabled by default
         self.plotting_enabled = False
         
+    def setup_legend_scroll_area(self):
+        """Setup the scrollable legend area with proper configuration."""
+        self.legend_scroll_area = QScrollArea()
+        
+        # Set size policies and dimensions
+        self.legend_scroll_area.setMinimumHeight(150)
+        self.legend_scroll_area.setMaximumHeight(200)
+        self.legend_scroll_area.setMinimumWidth(150)
+        self.legend_scroll_area.setMaximumWidth(150)
+        self.legend_scroll_area.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        
+        # Configure scroll behavior
+        self.legend_scroll_area.setWidgetResizable(True)
+        self.legend_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.legend_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Create a widget to hold the legend content
+        self.legend_content_widget = QWidget()
+        self.legend_content_widget.setMinimumWidth(135)  # Slightly less than scroll area to avoid horizontal scrollbar
+        
+        # Create layout for legend items
+        self.legend_content_layout = QVBoxLayout(self.legend_content_widget)
+        self.legend_content_layout.setContentsMargins(5, 5, 5, 5)
+        self.legend_content_layout.setSpacing(3)
+        self.legend_content_layout.setAlignment(Qt.AlignTop)  # Align items to top
+        
+        # Set the content widget in the scroll area
+        self.legend_scroll_area.setWidget(self.legend_content_widget)
+        
+        # Style the scroll area
+        self.legend_scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {self.bg_color};
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: {self.bg_color};
+            }}
+        """)
+        
     def setup_plot(self):
         """Initialize the PyQtGraph plot widget."""
-        # Configure plot appearance
+        # Configure main plot appearance
         self.plot_widget.setBackground(self.bg_color)
         self.plot_widget.setLabel('left', 'Detection Count', color=self.fg_color)
         self.plot_widget.setLabel('bottom', 'Frame Number', color=self.fg_color)
         self.plot_widget.setTitle('Real-time Detection Count', color=self.fg_color)
         
-        # Enable grid
+        # Enable grid on main plot
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         
-        # Set axis colors
+        # Set axis colors on main plot
         axis_pen = pg.mkPen(color=self.fg_color, width=1)
         self.plot_widget.getAxis('left').setPen(axis_pen)
         self.plot_widget.getAxis('bottom').setPen(axis_pen)
         
-        # Add padding to prevent x-axis text from being cut off
-        self.plot_widget.getPlotItem().setContentsMargins(10, 10, 10, 20)  # left, top, right, bottom
+        # Restore normal margins since we have separate legend area
+        self.plot_widget.getPlotItem().setContentsMargins(10, 10, 10, 20)
         
-        # Enable auto-range
+        # Enable auto-range on main plot
         self.plot_widget.enableAutoRange()
+        
+        # Initialize legend with empty state
+        self.create_legend_in_separate_area()
+        
+    def create_legend_in_separate_area(self):
+        """Create legend items in the scrollable legend area using QWidget labels."""
+        # Clear existing legend items more thoroughly
+        while self.legend_content_layout.count():
+            child = self.legend_content_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        
+        # If no legend items, show a placeholder
+        if not self.legend_items:
+            placeholder_label = QLabel("No data to display")
+            placeholder_label.setStyleSheet(f"""
+                color: {self.fg_color}; 
+                font-size: 10px; 
+                font-style: italic;
+                padding: 5px;
+            """)
+            placeholder_label.setAlignment(Qt.AlignCenter)
+            self.legend_content_layout.addWidget(placeholder_label)
+            self.legend_content_layout.addStretch()
+            return
+        
+        # Create legend items as QWidget labels with colored indicators
+        for i, (name, color) in enumerate(self.legend_items):
+            # Create container widget for each legend item
+            legend_item_widget = QWidget()
+            legend_item_widget.setFixedHeight(20)  # Fixed height for consistency
+            
+            legend_item_layout = QHBoxLayout(legend_item_widget)
+            legend_item_layout.setContentsMargins(2, 2, 2, 2)
+            legend_item_layout.setSpacing(8)
+            
+            # Create colored indicator (small colored square)
+            color_indicator = QLabel()
+            color_indicator.setFixedSize(12, 12)
+            color_indicator.setStyleSheet(f"""
+                background-color: {color}; 
+                border: 1px solid #333333;
+                border-radius: 2px;
+            """)
+            legend_item_layout.addWidget(color_indicator)
+            
+            # Create text label with truncation for long names
+            display_name = name
+            if len(display_name) > 18:  # Truncate long names
+                display_name = display_name[:15] + "..."
+                
+            text_label = QLabel(display_name)
+            text_label.setStyleSheet(f"""
+                color: {self.fg_color}; 
+                font-size: 9px;
+                font-weight: normal;
+            """)
+            text_label.setToolTip(name)  # Show full name on hover
+            text_label.setWordWrap(False)
+            legend_item_layout.addWidget(text_label, stretch=1)
+            
+            # Add the legend item to the layout
+            self.legend_content_layout.addWidget(legend_item_widget)
+        
+        # Add stretch at the end to push items to the top
+        self.legend_content_layout.addStretch()
+        
+        # Force layout update
+        self.legend_content_widget.updateGeometry()
+        self.legend_scroll_area.updateGeometry()
         
     def change_plot_mode(self, mode_text):
         """Change between total, per-region, and per-class plotting modes."""
@@ -234,6 +360,7 @@ class VideoPlotWidget(QWidget):
             self.plot_mode = "regions"
         elif mode_text == "Per Class":
             self.plot_mode = "classes"
+            
         self.update_plot_display()
         
     def enable_plotting(self):
@@ -248,7 +375,31 @@ class VideoPlotWidget(QWidget):
         self.enable_plot_btn.setEnabled(True)
         self.disable_plot_btn.setEnabled(False)
         
-    def update_data(self, frame_number: int, zone_statistics: Dict[str, Dict], total_detections: int = 0, class_counts: Dict[str, int] = None):
+    def get_top_classes_by_recent_activity(self, n_classes=20):
+        """Get top N classes based on recent detection activity - increased default."""
+        if not self.class_data or not self.frame_numbers:
+            return []
+            
+        # Calculate recent activity (last 20% of frames or minimum 10 frames)
+        recent_frames = max(10, len(self.frame_numbers) // 5)
+        
+        class_scores = {}
+        for class_name, counts in self.class_data.items():
+            if len(counts) >= recent_frames:
+                # Score based on recent activity and total activity
+                recent_sum = sum(counts[-recent_frames:])
+                total_sum = sum(counts)
+                # Weight recent activity more heavily
+                class_scores[class_name] = recent_sum * 2 + total_sum
+            else:
+                class_scores[class_name] = sum(counts)
+        
+        # Sort by score and return top N
+        sorted_classes = sorted(class_scores.items(), key=lambda x: x[1], reverse=True)
+        return [class_name for class_name, score in sorted_classes[:n_classes]]
+        
+    def update_data(self, frame_number: int, zone_statistics: Dict[str, Dict], total_detections: int = 0, 
+                    class_counts: Dict[str, int] = None):
         """
         Update plot data with new frame information.
         
@@ -282,19 +433,24 @@ class VideoPlotWidget(QWidget):
         
         # Update per-class data from class_counts parameter
         if class_counts:
-            for class_name, count in class_counts.items():
+            # Initialize new classes with zeros for all previous frames
+            for class_name in class_counts.keys():
                 if class_name not in self.class_data:
-                    self.class_data[class_name] = []
-                self.class_data[class_name].append(count)
+                    self.class_data[class_name] = [0] * (len(self.frame_numbers) - 1)
+            
+            # Add current frame data for all known classes
+            for class_name in self.class_data.keys():
+                current_count = class_counts.get(class_name, 0)
+                self.class_data[class_name].append(current_count)
+        else:
+            # No class counts provided, pad existing classes with zeros
+            for class_name in self.class_data.keys():
+                self.class_data[class_name].append(0)
         
-        # Ensure all region and class data lists have the same length
+        # Ensure all region data lists have the same length
         for zone_id in list(self.region_data.keys()):
             while len(self.region_data[zone_id]) < len(self.frame_numbers):
                 self.region_data[zone_id].append(0)
-        
-        for class_name in list(self.class_data.keys()):
-            while len(self.class_data[class_name]) < len(self.frame_numbers):
-                self.class_data[class_name].append(0)
         
         # Trim data if it exceeds max_points
         if len(self.frame_numbers) > self.max_points:
@@ -310,13 +466,15 @@ class VideoPlotWidget(QWidget):
         
     def update_plot_display(self):
         """Update the plot display with current data using PyQtGraph."""
-        # Clear existing plots
+        # Clear existing plots and legend items
         self.plot_widget.clear()
         self.plot_curves.clear()
+        self.legend_items.clear()
         
         if not self.frame_numbers:
-            # Empty plot - just set title
+            # Empty plot - just set title and update legend
             self.plot_widget.setTitle("Real-time Detection Count", color=self.fg_color)
+            self.create_legend_in_separate_area()
             return
             
         x_data = np.array(self.frame_numbers)
@@ -334,19 +492,17 @@ class VideoPlotWidget(QWidget):
                 pen=pen,
                 symbol='o', 
                 symbolSize=4,
-                symbolBrush="#7b0068",
-                name="Total Detections"
+                symbolBrush="#7b0068"
             )
             
             self.plot_curves['total'] = curve
+            self.legend_items.append(("Total Detections", "#7b0068"))
             self.plot_widget.setTitle("Total Detections Over Time", color=self.fg_color)
             
         elif self.plot_mode == "regions":
             # Plot per-region data, or total data if no regions exist
             if self.region_data:
                 # We have region data - plot per region
-                legend = self.plot_widget.addLegend()
-                
                 for i, (zone_id, counts) in enumerate(self.region_data.items()):
                     if len(counts) > 0:
                         # Use TRACKING_COLORS for consistency
@@ -364,11 +520,11 @@ class VideoPlotWidget(QWidget):
                             pen=pen,
                             symbol='o',
                             symbolSize=4,
-                            symbolBrush=color_hex,
-                            name=f"Region {i}"
+                            symbolBrush=color_hex
                         )
                         
                         self.plot_curves[zone_id] = curve
+                        self.legend_items.append((f"Region {i+1}", color_hex))
                         
                 self.plot_widget.setTitle("Detections Per Region Over Time", color=self.fg_color)
             else:
@@ -384,42 +540,50 @@ class VideoPlotWidget(QWidget):
                     pen=pen,
                     symbol='o', 
                     symbolSize=4,
-                    symbolBrush="#7b0068",
-                    name="Total Detections (No Regions)"
+                    symbolBrush="#7b0068"
                 )
                 
                 self.plot_curves['total'] = curve
+                self.legend_items.append(("Total Detections (No Regions)", "#7b0068"))
                 self.plot_widget.setTitle("Total Detections Over Time (No Regions Defined)", color=self.fg_color)
         
         elif self.plot_mode == "classes":
             # Plot per-class data
             if self.class_data:
-                legend = self.plot_widget.addLegend()
+                # Get top classes to display
+                top_classes = self.get_top_classes_by_recent_activity(self.top_classes_limit)
                 
-                for i, (class_name, counts) in enumerate(self.class_data.items()):
-                    if len(counts) > 0:
-                        # Cycle colors for each class
-                        color_idx = i % len(TRACKING_COLORS.colors)
-                        color_hex = TRACKING_COLORS.colors[color_idx].as_hex()
-                        
-                        y_data = np.array(counts)
-                        
-                        # Create pen for this class
-                        pen = pg.mkPen(color=color_hex, width=self.line_width)
-                        
-                        # Plot the line with markers
-                        curve = self.plot_widget.plot(
-                            x_data, y_data,
-                            pen=pen,
-                            symbol='o',
-                            symbolSize=4,
-                            symbolBrush=color_hex,
-                            name=f"Class {class_name}"
-                        )
-                        
-                        self.plot_curves[class_name] = curve
-                        
-                self.plot_widget.setTitle("Detections Per Class Over Time", color=self.fg_color)
+                if top_classes:
+                    # Plot only the top classes
+                    for i, class_name in enumerate(top_classes):
+                        if class_name in self.class_data and len(self.class_data[class_name]) > 0:
+                            # Cycle colors for each class
+                            color_idx = i % len(TRACKING_COLORS.colors)
+                            color_hex = TRACKING_COLORS.colors[color_idx].as_hex()
+                            
+                            y_data = np.array(self.class_data[class_name])
+                            
+                            # Create pen for this class
+                            pen = pg.mkPen(color=color_hex, width=self.line_width)
+                            
+                            # Plot the line with markers
+                            curve = self.plot_widget.plot(
+                                x_data, y_data,
+                                pen=pen,
+                                symbol='o',
+                                symbolSize=4,
+                                symbolBrush=color_hex
+                            )
+                            
+                            self.plot_curves[class_name] = curve
+                            self.legend_items.append((class_name, color_hex))
+                    
+                    total_classes = len(self.class_data)
+                    shown_classes = len(top_classes)
+                    title = f"Top {shown_classes} Classes Over Time ({total_classes} total)"
+                    self.plot_widget.setTitle(title, color=self.fg_color)
+                else:
+                    self.plot_widget.setTitle("No Class Data Available", color=self.fg_color)
             else:
                 # No class data - fallback to total detections
                 y_data = np.array(self.total_counts)
@@ -433,15 +597,18 @@ class VideoPlotWidget(QWidget):
                     pen=pen,
                     symbol='o', 
                     symbolSize=4,
-                    symbolBrush="#7b0068",
-                    name="Total Detections (No Classes)"
+                    symbolBrush="#7b0068"
                 )
                 
                 self.plot_curves['total'] = curve
+                self.legend_items.append(("Total Detections (No Classes)", "#7b0068"))
                 self.plot_widget.setTitle("Total Detections Over Time (No Classes Defined)", color=self.fg_color)
         
         # Auto-range to fit all data
         self.plot_widget.autoRange()
+        
+        # Update the separate legend area
+        self.create_legend_in_separate_area()
         
     def clear_data(self):
         """Clear all plot data."""
@@ -450,6 +617,7 @@ class VideoPlotWidget(QWidget):
         self.region_data.clear()
         self.class_data.clear()
         self.plot_curves.clear()
+        self.legend_items.clear()
         self.update_plot_display()
         
     def reset_for_new_video(self):
