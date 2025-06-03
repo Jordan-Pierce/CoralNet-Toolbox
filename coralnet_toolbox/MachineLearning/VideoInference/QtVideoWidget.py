@@ -135,8 +135,9 @@ class VideoPlotWidget(QWidget):
         self.frame_numbers = []
         self.total_counts = []
         self.region_data = {}  # region_id -> list of counts
+        self.class_data = {}   # class_name -> list of counts
         
-        # Plot mode: "total" or "regions"
+        # Plot mode: "total", "regions", or "classes"
         self.plot_mode = "total"
         
         # Plot curves storage for efficient updates
@@ -166,7 +167,7 @@ class VideoPlotWidget(QWidget):
         # Plot mode controls - moved to the far left
         controls_layout.addWidget(QLabel("Plot Mode:"))
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Total Detections", "Per Region"])
+        self.mode_combo.addItems(["Total Detections", "Per Region", "Per Class"])
         self.mode_combo.currentTextChanged.connect(self.change_plot_mode)
         controls_layout.addWidget(self.mode_combo)
         
@@ -226,8 +227,13 @@ class VideoPlotWidget(QWidget):
         self.plot_widget.enableAutoRange()
         
     def change_plot_mode(self, mode_text):
-        """Change between total and per-region plotting modes."""
-        self.plot_mode = "total" if mode_text == "Total Detections" else "regions"
+        """Change between total, per-region, and per-class plotting modes."""
+        if mode_text == "Total Detections":
+            self.plot_mode = "total"
+        elif mode_text == "Per Region":
+            self.plot_mode = "regions"
+        elif mode_text == "Per Class":
+            self.plot_mode = "classes"
         self.update_plot_display()
         
     def enable_plotting(self):
@@ -242,7 +248,7 @@ class VideoPlotWidget(QWidget):
         self.enable_plot_btn.setEnabled(True)
         self.disable_plot_btn.setEnabled(False)
         
-    def update_data(self, frame_number: int, zone_statistics: Dict[str, Dict], total_detections: int = 0):
+    def update_data(self, frame_number: int, zone_statistics: Dict[str, Dict], total_detections: int = 0, class_counts: Dict[str, int] = None):
         """
         Update plot data with new frame information.
         
@@ -250,6 +256,7 @@ class VideoPlotWidget(QWidget):
             frame_number: Current frame number
             zone_statistics: Dictionary of zone statistics from RegionZoneManager
             total_detections: Total detections in frame when no regions are defined
+            class_counts: Dictionary mapping class names to detection counts
         """
         # Only update plot data if plotting is enabled
         if not self.plotting_enabled:
@@ -273,10 +280,21 @@ class VideoPlotWidget(QWidget):
                 self.region_data[zone_id] = []
             self.region_data[zone_id].append(stats.get('current_count', 0))
         
-        # Ensure all region data lists have the same length
+        # Update per-class data from class_counts parameter
+        if class_counts:
+            for class_name, count in class_counts.items():
+                if class_name not in self.class_data:
+                    self.class_data[class_name] = []
+                self.class_data[class_name].append(count)
+        
+        # Ensure all region and class data lists have the same length
         for zone_id in list(self.region_data.keys()):
             while len(self.region_data[zone_id]) < len(self.frame_numbers):
                 self.region_data[zone_id].append(0)
+        
+        for class_name in list(self.class_data.keys()):
+            while len(self.class_data[class_name]) < len(self.frame_numbers):
+                self.class_data[class_name].append(0)
         
         # Trim data if it exceeds max_points
         if len(self.frame_numbers) > self.max_points:
@@ -284,6 +302,8 @@ class VideoPlotWidget(QWidget):
             self.total_counts = self.total_counts[-self.max_points:]
             for zone_id in self.region_data:
                 self.region_data[zone_id] = self.region_data[zone_id][-self.max_points:]
+            for class_name in self.class_data:
+                self.class_data[class_name] = self.class_data[class_name][-self.max_points:]
         
         # Update the plot
         self.update_plot_display()
@@ -321,7 +341,7 @@ class VideoPlotWidget(QWidget):
             self.plot_curves['total'] = curve
             self.plot_widget.setTitle("Total Detections Over Time", color=self.fg_color)
             
-        else:
+        elif self.plot_mode == "regions":
             # Plot per-region data, or total data if no regions exist
             if self.region_data:
                 # We have region data - plot per region
@@ -371,6 +391,55 @@ class VideoPlotWidget(QWidget):
                 self.plot_curves['total'] = curve
                 self.plot_widget.setTitle("Total Detections Over Time (No Regions Defined)", color=self.fg_color)
         
+        elif self.plot_mode == "classes":
+            # Plot per-class data
+            if self.class_data:
+                legend = self.plot_widget.addLegend()
+                
+                for i, (class_name, counts) in enumerate(self.class_data.items()):
+                    if len(counts) > 0:
+                        # Cycle colors for each class
+                        color_idx = i % len(TRACKING_COLORS.colors)
+                        color_hex = TRACKING_COLORS.colors[color_idx].as_hex()
+                        
+                        y_data = np.array(counts)
+                        
+                        # Create pen for this class
+                        pen = pg.mkPen(color=color_hex, width=self.line_width)
+                        
+                        # Plot the line with markers
+                        curve = self.plot_widget.plot(
+                            x_data, y_data,
+                            pen=pen,
+                            symbol='o',
+                            symbolSize=4,
+                            symbolBrush=color_hex,
+                            name=f"Class {class_name}"
+                        )
+                        
+                        self.plot_curves[class_name] = curve
+                        
+                self.plot_widget.setTitle("Detections Per Class Over Time", color=self.fg_color)
+            else:
+                # No class data - fallback to total detections
+                y_data = np.array(self.total_counts)
+                
+                # Create pen for total detections line
+                pen = pg.mkPen(color="#7b0068", width=self.line_width)
+                
+                # Plot the line with markers
+                curve = self.plot_widget.plot(
+                    x_data, y_data, 
+                    pen=pen,
+                    symbol='o', 
+                    symbolSize=4,
+                    symbolBrush="#7b0068",
+                    name="Total Detections (No Classes)"
+                )
+                
+                self.plot_curves['total'] = curve
+                self.plot_widget.setTitle("Total Detections Over Time (No Classes Defined)", color=self.fg_color)
+        
         # Auto-range to fit all data
         self.plot_widget.autoRange()
         
@@ -379,6 +448,7 @@ class VideoPlotWidget(QWidget):
         self.frame_numbers.clear()
         self.total_counts.clear()
         self.region_data.clear()
+        self.class_data.clear()
         self.plot_curves.clear()
         self.update_plot_display()
         
@@ -695,7 +765,7 @@ class VideoRegionWidget(QWidget):
         
         if ret:
             # Process the frame for inference if enabled
-            processed_frame, total_detections = self.process_frame_for_inference(frame.copy())
+            processed_frame, total_detections, class_counts = self.process_frame_for_inference(frame.copy())
             
             self.current_frame = processed_frame
             self.current_frame_number = frame_number
@@ -703,7 +773,7 @@ class VideoRegionWidget(QWidget):
             self.update_frame_label()
             # Update plot with current statistics
             stats = self.get_zone_statistics()
-            self.plot_widget.update_data(self.current_frame_number, stats, total_detections)
+            self.plot_widget.update_data(self.current_frame_number, stats, total_detections, class_counts)
         else:
             QMessageBox.critical(self.parent, 
                                  "Error", 
@@ -1156,7 +1226,7 @@ class VideoRegionWidget(QWidget):
                 return
                 
         if frame is not None:
-            processed_frame, total_detections = self.process_frame_for_inference(frame.copy())
+            processed_frame, total_detections, class_counts = self.process_frame_for_inference(frame.copy())
             # Only write if recording
             if self.should_write_video:
                 self._write_frame_to_sink(processed_frame)
@@ -1170,24 +1240,43 @@ class VideoRegionWidget(QWidget):
             self.seek_slider.blockSignals(False)
             self.update_frame_label()
             
-            # Update plot with current statistics and total detection count
+            # Update plot with current statistics, total detection count, and class counts
             stats = self.get_zone_statistics()
-            self.plot_widget.update_data(self.current_frame_number, stats, total_detections)
+            self.plot_widget.update_data(self.current_frame_number, stats, total_detections, class_counts)
             
     def process_frame_for_inference(self, frame):
         """Process frame for inference if enabled."""
         total_detections = 0
+        class_counts = {}
         
         if not self.inference_enabled or not self.inference_engine:
-            return frame, total_detections
+            return frame, total_detections, class_counts
         
         try:
             # Run inference on the current frame
             detections = self.inference_engine.infer(frame)
             
-            # Get total detection count
+            # Get total detection count and class counts
             if detections is not None:
                 total_detections = len(detections)
+                
+                # Extract class information from detections
+                if hasattr(detections, 'data') and 'class_name' in detections.data:
+                    class_names = detections.data['class_name']
+                    # Count occurrences of each class
+                    for class_name in class_names:
+                        if class_name in class_counts:
+                            class_counts[class_name] += 1
+                        else:
+                            class_counts[class_name] = 1
+                elif hasattr(detections, 'class_id') and detections.class_id is not None:
+                    # Fallback to class IDs if class names not available
+                    for class_id in detections.class_id:
+                        class_name = f"Class_{class_id}"
+                        if class_name in class_counts:
+                            class_counts[class_name] += 1
+                        else:
+                            class_counts[class_name] = 1
             
             # Skip region counting if no regions are defined
             if not self.region_polygons:
@@ -1196,8 +1285,8 @@ class VideoRegionWidget(QWidget):
                     processed_frame = self.inference_engine.zone_manager.draw_detection_annotations_only(
                         frame, detections, self.parent.get_selected_annotators()
                     )
-                    return processed_frame, total_detections
-                return frame, total_detections
+                    return processed_frame, total_detections, class_counts
+                return frame, total_detections, class_counts
             
             # Count objects in defined regions
             detections, region_counts = self.inference_engine.count_objects_in_regions(detections, self.region_polygons)
@@ -1207,7 +1296,7 @@ class VideoRegionWidget(QWidget):
         except Exception as e:
             print(f"Inference processing failed: {e}")
             
-        return frame, total_detections
+        return frame, total_detections, class_counts
 
     def draw_inference_results(self, frame, detections, region_counts):
         """Draw inference results on the video frame using supervision annotators."""
