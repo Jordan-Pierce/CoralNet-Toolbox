@@ -58,21 +58,42 @@ def rasterio_open(image_path):
     try:
         # Use a local variable rather than instance attribute to avoid thread issues
         src = rasterio.open(image_path)
+        
+        # Test read a small sample to catch corruption early
+        try:
+            test_window = rasterio.windows.Window(0, 0, min(10, src.width), min(10, src.height))
+            src.read(1, window=test_window)
+        except Exception as read_error:
+            src.close()
+            raise read_error
+            
         return src
     except Exception as e:
-        print(f"Error opening image with rasterio: {image_path}")
-        print(f"Exception: {str(e)}")
-
-        # Try to inspect file existence and permissions
+        error_msg = f"Error opening image with rasterio: {image_path}\nException: {str(e)}"
+        
+        # Try to inspect file existence and permissions for more detailed error info
         if not os.path.exists(image_path):
-            print(f"File does not exist: {image_path}")
+            error_msg += f"\nFile does not exist: {image_path}"
         elif not os.path.isfile(image_path):
-            print(f"Path is not a file: {image_path}")
+            error_msg += f"\nPath is not a file: {image_path}"
         elif not os.access(image_path, os.R_OK):
-            print(f"File is not readable: {image_path}")
+            error_msg += f"\nFile is not readable: {image_path}"
+        else:
+            error_msg += f"\nFile appears to be corrupted or in an unsupported format"
 
-        # Return None on failure
-        return None
+        # Show critical message dialog if Qt application is available
+        if QApplication.instance() is not None:
+            QMessageBox.critical(
+                None,
+                "Image Loading Error",
+                f"Failed to open image file:\n\n{error_msg}\n\nThis file may be corrupted or in an unsupported format."
+            )
+        
+        # Print to console for logging
+        print(error_msg)
+        
+        # Raise a custom exception with detailed information
+        raise RuntimeError(f"Failed to open rasterio image: {image_path}. {error_msg}")
 
 
 def rasterio_to_qimage(rasterio_src, longest_edge=None):
