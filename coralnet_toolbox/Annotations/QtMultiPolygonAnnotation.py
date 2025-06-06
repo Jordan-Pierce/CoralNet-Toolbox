@@ -205,12 +205,17 @@ class MultiPolygonAnnotation(Annotation):
             item = QGraphicsPolygonItem(QPolygonF(poly.points))
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            pen = QPen(color, 4, Qt.SolidLine)
-
-            # If selected, use an inverse color and dotted line
+            
+            # Set pen style based on selection state
             if self.is_selected:
+                # Use inverse color and dotted line for selected items
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
                 pen = QPen(inverse_color, 6, Qt.DotLine)
+            else:
+                # Use label color with solid line for unselected items
+                pen_color = QColor(self.label.color)
+                pen = QPen(pen_color, 4, Qt.SolidLine)
+                
             item.setPen(pen)
             item.setBrush(QBrush(color))
             item.setData(0, self.id)  # <-- Enable selection by id
@@ -245,12 +250,16 @@ class MultiPolygonAnnotation(Annotation):
             item = QGraphicsPolygonItem(QPolygonF(poly.points))
             color = QColor(self.label.color)
             color.setAlpha(self.transparency)
-            pen = QPen(color, 4, Qt.SolidLine)
-
-            # If selected, use an inverse color and dotted line
+            
+            # Set pen style based on selection state
             if self.is_selected:
+                # Use inverse color and dotted line for selected items
                 inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
                 pen = QPen(inverse_color, 6, Qt.DotLine)
+            else:
+                # Use label color with solid line for unselected items
+                pen_color = QColor(self.label.color)
+                pen = QPen(pen_color, 4, Qt.SolidLine)
 
             item.setPen(pen)
             item.setBrush(QBrush(color))
