@@ -714,7 +714,7 @@ class Base(QDialog):
             'epochs': self.epochs_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
-            'multi_scale': self.multi_scale_combo,
+            'multi_scale': self.multi_scale_combo.currentText().lower() == "true",
             'optimizer': self.optimizer_combo.currentText(),
             'val': self.val_combo.currentText().lower() == "true",
             'workers': self.workers_spinbox.value(),
