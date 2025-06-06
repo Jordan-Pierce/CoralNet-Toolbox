@@ -737,6 +737,9 @@ class Base(QDialog):
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else f"tune_{now}"
         
+        # Default tune directory
+        params['tune_dir'] = f"{params['project']}/{params['name']}"
+        
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
 
