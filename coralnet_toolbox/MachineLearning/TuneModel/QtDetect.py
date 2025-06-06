@@ -39,16 +39,6 @@ class Detect(Base):
         dataset_yaml_layout.addWidget(self.dataset_button)
         layout.addRow("Dataset YAML:", dataset_yaml_layout)
 
-        # Class Mapping
-        self.mapping_edit = QLineEdit()
-        self.mapping_button = QPushButton("Browse...")
-        self.mapping_button.clicked.connect(self.browse_class_mapping_file)
-
-        class_mapping_layout = QHBoxLayout()
-        class_mapping_layout.addWidget(self.mapping_edit)
-        class_mapping_layout.addWidget(self.mapping_button)
-        layout.addRow("Class Mapping:", class_mapping_layout)
-
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 

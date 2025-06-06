@@ -1,12 +1,14 @@
 import warnings
 
-import os
 import gc
 import datetime
 import traceback
-import ujson as json
 
 from ultralytics import YOLO, RTDETR
+import ultralytics.data.build as build
+import ultralytics.models.yolo.classify.train as train_build
+from ultralytics.data.dataset import YOLODataset
+from ultralytics.data.dataset import ClassificationDataset
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
@@ -16,6 +18,8 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, Q
 from torch.cuda import empty_cache
 
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
+from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
+from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -58,6 +62,7 @@ class TuneModelWorker(QThread):
         self.is_yolo = True
         self.model = None
         self.model_path = None
+        self.weighted = False
 
     def pre_run(self):
         """
@@ -66,12 +71,22 @@ class TuneModelWorker(QThread):
         try:
             # Extract model path
             self.model_path = self.params.pop('model', None)
+            # Get the weighted flag
+            self.weighted = self.params.pop('weighted', False)
             # Whether to use YOLO or RTDETR
             self.is_yolo = False if 'detr' in self.model_path.lower() else True
 
             # Determine if ultralytics or community
             if self.model_path in get_available_configs(task=self.params['task']):
                 self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
+                # Cannot use weighted sampling with community models
+                self.weighted = False
+
+            # Use the custom dataset class for weighted sampling
+            if self.weighted and self.params['task'] == 'classify':
+                train_build.ClassificationDataset = WeightedClassificationDataset
+            elif self.weighted and self.params['task'] in ['detect', 'segment']:
+                build.YOLODataset = WeightedInstanceDataset
 
             # Load the model
             if self.is_yolo:
@@ -101,6 +116,9 @@ class TuneModelWorker(QThread):
             # Tune the model using the built-in tune method
             self.model.tune(**self.params)
 
+            # Post-run cleanup
+            self.post_run()
+
             # Emit signal to indicate tuning has completed
             self.tuning_completed.emit()
 
@@ -109,6 +127,16 @@ class TuneModelWorker(QThread):
             self.tuning_error.emit(f"Error during tuning: {e} (see console log)")
         finally:
             self._cleanup()
+
+    def post_run(self):
+        """
+        Clean up resources after tuning.
+        """
+        # Revert to the original dataset class without weighted sampling
+        if self.weighted and self.params['task'] == 'classify':
+            train_build.ClassificationDataset = ClassificationDataset
+        elif self.weighted and self.params['task'] in ['detect', 'segment']:
+            build.YOLODataset = YOLODataset
 
     def _cleanup(self):
         """
@@ -145,14 +173,14 @@ class Base(QDialog):
 
         # Task
         self.task = None
+        
         # For holding parameters
         self.params = {}
         self.custom_params = []
         self.custom_space_params = []
+        
         # Best model weights
         self.model_path = None
-        # Class mapping
-        self.class_mapping = {}
 
         # Task specific parameters
         self.imgsz = 640
@@ -321,6 +349,12 @@ class Base(QDialog):
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
+        
+        # Weighted
+        self.weighted_combo = QComboBox()
+        self.weighted_combo.addItems(["True", "False"])
+        self.weighted_combo.setCurrentText("True")
+        form_layout.addRow("Weighted Sampling:", self.weighted_combo)
         
         # Optimizer
         self.optimizer_combo = QComboBox()
@@ -631,12 +665,6 @@ class Base(QDialog):
         """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Dataset Directory")
         if dir_path:
-            # Load the class mapping if it exists
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
             # Set the dataset path
             self.dataset_edit.setText(dir_path)
 
@@ -649,30 +677,8 @@ class Base(QDialog):
                                                    "",
                                                    "YAML Files (*.yaml *.yml)")
         if file_path:
-            # Load the class mapping if it exists
-            dir_path = os.path.dirname(file_path)
-            class_mapping_path = f"{dir_path}/class_mapping.json"
-            if os.path.exists(class_mapping_path):
-                self.class_mapping = json.load(open(class_mapping_path, 'r'))
-                self.mapping_edit.setText(class_mapping_path)
-
-            # Set the dataset and class mapping paths
+            # Set the dataset path
             self.dataset_edit.setText(file_path)
-
-    def browse_class_mapping_file(self):
-        """
-        Browse and select a class mapping file.
-        """
-        file_path, _ = QFileDialog.getOpenFileName(self,
-                                                   "Select Class Mapping File",
-                                                   "",
-                                                   "JSON Files (*.json)")
-        if file_path:
-            # Load the class mapping
-            self.class_mapping = json.load(open(file_path, 'r'))
-
-            # Set the class mapping path
-            self.mapping_edit.setText(file_path)
 
     def browse_project_dir(self):
         """
@@ -715,6 +721,7 @@ class Base(QDialog):
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
             'multi_scale': self.multi_scale_combo.currentText().lower() == "true",
+            'weighted': self.weighted_combo.currentText().lower() == "true",
             'optimizer': self.optimizer_combo.currentText(),
             'val': self.val_combo.currentText().lower() == "true",
             'workers': self.workers_spinbox.value(),
@@ -814,14 +821,6 @@ class Base(QDialog):
         """
         Handle the event when the tuning starts.
         """
-        # Save the class mapping JSON file
-        output_dir_path = os.path.join(self.params['project'], self.params['name'])
-        os.makedirs(output_dir_path, exist_ok=True)
-        if self.class_mapping:
-            # Write the json file to the output directory
-            with open(f"{output_dir_path}/class_mapping.json", 'w') as json_file:
-                json.dump(self.class_mapping, json_file, indent=4)
-
         message = "Model hyperparameter tuning has commenced.\nMonitor the console for real-time progress."
         QMessageBox.information(self, "Model Tuning Status", message)
 

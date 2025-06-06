@@ -466,7 +466,7 @@ class Base(QDialog):
 
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
-        form_layout.addRow("Weighted:", self.weighted_combo)
+        form_layout.addRow("Weighted Sampling:", self.weighted_combo)
 
         # Dropout
         self.dropout_spinbox = QDoubleSpinBox()
