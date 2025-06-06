@@ -8,7 +8,7 @@ This guide provides instructions on how to use the application, including key fu
 - **PatchAnnotation**: Represents a patch annotation.
 - **RectangleAnnotation**: Represents a rectangular annotation.
 - **PolygonAnnotation**: Represents a polygonal annotation.
-- **MultiPolygonAnnotation**: Represents multiple, non-overlapping polygonal annotations.
+  - **MultiPolygonAnnotation**: Represents multiple, non-overlapping polygonal annotations.
 
 ## Computer Vision Tasks
 - **Classification**: Assign a label to an image (Patch).
@@ -74,7 +74,8 @@ The main window consists of several components:
 
 - **Tile**:
   - **Tile Dataset**: Tile existing Classification, Detection or Segmention datasets using `yolo-tiling`.
-  - **Tile Inference**: Pre-compute multiple work areas for the current image.
+  - **Tile Creation**: Pre-compute multiple work areas for selected images.
+  - **Tile Batch Inferece**: Apply inference on all imagues with work areas.
 
 - **CoralNet**: 
   - **Authenticate**: Authenticate with CoralNet.
@@ -100,6 +101,7 @@ The main window consists of several components:
   - **Optimize Model**: Convert model format.
   - **Deploy Model**: Make predictions using a trained model (Classification, Detection, Segmentation).
   - **Batch Inference**: Perform batch inferences.
+  - **Video Inference**: Peform inferencing on videos in real-time, view analytics.
 
 - **SAM**:
   - **Deploy Predictor**: Deploy `EdgeSAM`, `MobileSAM`, `SAM`, etc, to use interactively (points, box).
@@ -121,7 +123,7 @@ The main window consists of several components:
   - **Left-Click**: Select an annotation; drag to move it.
   - **Ctrl + Left-Click**: Add/remove annotation to current selection.
   - **Ctrl + Drag**: Create rectangle selection to select multiple annotations.
-  - **Delete / Backspace**: Remove selected annotation(s).
+  - **Ctrl + Delete / Backspace**: Remove selected annotation(s).
   - **Ctrl + Shift**: Show resize handles for the selected annotation.
   - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
   - **Ctrl + Shift + Mouse Wheel**: Change the number of vertices for a polygon annotation.
