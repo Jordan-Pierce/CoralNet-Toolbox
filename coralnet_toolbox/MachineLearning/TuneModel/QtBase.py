@@ -308,6 +308,12 @@ class Base(QDialog):
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(self.imgsz)
         form_layout.addRow("Image Size:", self.imgsz_spinbox)
+        
+        # Multi Scale
+        self.multi_scale_combo = QComboBox()
+        self.multi_scale_combo.addItems(["True", "False"])
+        self.multi_scale_combo.setCurrentText("False")
+        form_layout.addRow("Multi Scale:", self.multi_scale_combo)
 
         # Batch
         self.batch_spinbox = QSpinBox()
@@ -708,6 +714,7 @@ class Base(QDialog):
             'epochs': self.epochs_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
+            'multi_scale': self.multi_scale_combo,
             'optimizer': self.optimizer_combo.currentText(),
             'val': self.val_combo.currentText().lower() == "true",
             'workers': self.workers_spinbox.value(),
