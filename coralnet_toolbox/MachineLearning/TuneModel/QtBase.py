@@ -321,6 +321,12 @@ class Base(QDialog):
         self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
         self.optimizer_combo.setCurrentText("auto")
         form_layout.addRow("Optimizer:", self.optimizer_combo)
+        
+        # Validation
+        self.val_combo = QComboBox()
+        self.val_combo.addItems(["True", "False"])
+        self.val_combo.setCurrentText("False")
+        form_layout.addRow("Validation:", self.val_combo)
 
         # Workers
         self.workers_spinbox = QSpinBox()
@@ -698,12 +704,14 @@ class Base(QDialog):
             'project': self.project_edit.text(),
             'name': self.name_edit.text(),
             'data': self.dataset_edit.text(),
+            'iterations': self.iterations_spinbox.value(),
             'epochs': self.epochs_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
+            'optimizer': self.optimizer_combo.currentText(),
+            'val': self.val_combo.currentText().lower() == "true",
             'workers': self.workers_spinbox.value(),
             'exist_ok': True,
-            'iterations': self.iterations_spinbox.value(),
         }
         
         # Default project folder
