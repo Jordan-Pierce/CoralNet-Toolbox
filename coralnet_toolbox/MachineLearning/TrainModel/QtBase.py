@@ -428,7 +428,8 @@ class Base(QDialog):
 
         # Multi Scale
         self.multi_scale_combo = create_bool_combo()
-        form_layout.addRow("Multi-Scale:", self.multi_scale_combo)
+        self.multi_scale_combo.setCurrentText("False")  # Default to False
+        form_layout.addRow("Multi Scale:", self.multi_scale_combo)
 
         # Batch
         self.batch_spinbox = QSpinBox()
