@@ -38,6 +38,7 @@ class ImageFilter(QObject):
     def filter_images(self, 
                       search_text: str = "",
                       search_label: str = "",
+                      top_k: int = 1,
                       require_annotations: bool = False,
                       require_no_annotations: bool = False,
                       require_predictions: bool = False,
@@ -50,6 +51,7 @@ class ImageFilter(QObject):
         Args:
             search_text (str): Text to search for in image names
             search_label (str): Label code to search for
+            top_k (int): Number of top predictions to consider for label search
             require_annotations (bool): Require images to have annotations
             require_no_annotations (bool): Require images to have no annotations
             require_predictions (bool): Require images to have predictions
@@ -77,18 +79,19 @@ class ImageFilter(QObject):
         # Use threading if requested
         if use_threading:
             return self._filter_with_threading(
-                search_text, search_label, require_annotations,
+                search_text, search_label, top_k, require_annotations,
                 require_no_annotations, require_predictions, selected_paths, callback
             )
         else:
             return self._filter_images_sync(
-                search_text, search_label, require_annotations, 
+                search_text, search_label, top_k, require_annotations, 
                 require_no_annotations, require_predictions, selected_paths, callback
             )
     
     def _filter_images_sync(self, 
                             search_text: str,
                             search_label: str,
+                            top_k: int,
                             require_annotations: bool,
                             require_no_annotations: bool,
                             require_predictions: bool,
@@ -109,6 +112,7 @@ class ImageFilter(QObject):
         filtered_paths = self.raster_manager.get_filtered_paths(
             search_text=search_text,
             search_label=search_label,
+            top_k=top_k,
             require_annotations=require_annotations,
             require_no_annotations=require_no_annotations,
             require_predictions=require_predictions,
@@ -129,6 +133,7 @@ class ImageFilter(QObject):
     def _filter_with_threading(self, 
                                search_text: str,
                                search_label: str,
+                               top_k: int,
                                require_annotations: bool,
                                require_no_annotations: bool,
                                require_predictions: bool,
@@ -170,6 +175,7 @@ class ImageFilter(QObject):
                     raster.matches_filter,
                     search_text=search_text,
                     search_label=search_label,
+                    top_k=top_k,
                     require_annotations=require_annotations,
                     require_no_annotations=require_no_annotations,
                     require_predictions=require_predictions

@@ -240,6 +240,7 @@ class Raster(QObject):
     def matches_filter(self, 
                        search_text="", 
                        search_label="", 
+                       top_k=1,
                        require_annotations=False,
                        require_no_annotations=False,
                        require_predictions=False) -> bool:
@@ -249,6 +250,7 @@ class Raster(QObject):
         Args:
             search_text (str): Text to search for in filename
             search_label (str): Label code to search for
+            top_k (int): Number of top predictions to consider for label search
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions
@@ -264,7 +266,7 @@ class Raster(QObject):
         if search_label:
             label_match = False
             
-            # Check actual annotation labels
+            # Check actual annotation labels (always consider these)
             for label in self.labels:
                 if hasattr(label, 'short_label_code') and search_label in label.short_label_code:
                     label_match = True
@@ -274,8 +276,12 @@ class Raster(QObject):
             if not label_match:
                 for annotation in self.annotations:
                     if hasattr(annotation, 'machine_confidence') and annotation.machine_confidence:
-                        # Check each label in the machine confidence dictionary
-                        for pred_label in annotation.machine_confidence.keys():
+                        # Get the sorted machine confidence dictionary (already sorted by confidence)
+                        # Take only the top-k predictions
+                        top_predictions = list(annotation.machine_confidence.items())[:top_k]
+                        
+                        # Check each label in the top-k predictions
+                        for pred_label, confidence in top_predictions:
                             if hasattr(pred_label, 'short_label_code') and search_label in pred_label.short_label_code:
                                 label_match = True
                                 break

@@ -175,6 +175,14 @@ class ImageWindow(QWidget):
         self.search_bar_labels.editTextChanged.connect(self.schedule_filter)
         self.label_search_layout.addWidget(self.search_bar_labels)
 
+        # Add top-k combo box
+        self.top_k_combo = QComboBox(self)
+        self.top_k_combo.addItems(["Top1", "Top2", "Top3", "Top4", "Top5"])
+        self.top_k_combo.setCurrentText("Top1")
+        self.top_k_combo.setFixedWidth(60)
+        self.top_k_combo.currentTextChanged.connect(self.schedule_filter)
+        self.label_search_layout.addWidget(self.top_k_combo)
+
         self.label_search_button = QPushButton(self)
         self.label_search_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.label_search_button.clicked.connect(self.filter_images)
@@ -709,6 +717,10 @@ class ImageWindow(QWidget):
         has_predictions = self.has_predictions_checkbox.isChecked()
         highlighted_only = self.highlighted_checkbox.isChecked()
         
+        # Get top-k value from combo box
+        top_k_text = self.top_k_combo.currentText()
+        top_k = int(top_k_text.replace("Top", "")) if top_k_text.startswith("Top") else 1
+        
         # Get highlighted paths if needed
         highlighted_paths = self.table_model.get_highlighted_paths() if highlighted_only else None
         
@@ -716,6 +728,7 @@ class ImageWindow(QWidget):
         self.image_filter.filter_images(
             search_text=search_text,
             search_label=search_label,
+            top_k=top_k,
             require_annotations=has_annotations,
             require_no_annotations=no_annotations,
             require_predictions=has_predictions,
