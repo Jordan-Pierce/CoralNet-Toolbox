@@ -262,9 +262,27 @@ class Raster(QObject):
             
         # Check label search
         if search_label:
-            label_codes = [label.short_label_code for label in self.labels 
-                           if hasattr(label, 'short_label_code')]
-            if not any(search_label in code for code in label_codes):
+            label_match = False
+            
+            # Check actual annotation labels
+            for label in self.labels:
+                if hasattr(label, 'short_label_code') and search_label in label.short_label_code:
+                    label_match = True
+                    break
+            
+            # If no match in annotation labels, check machine learning predictions
+            if not label_match:
+                for annotation in self.annotations:
+                    if hasattr(annotation, 'machine_confidence') and annotation.machine_confidence:
+                        # Check each label in the machine confidence dictionary
+                        for pred_label in annotation.machine_confidence.keys():
+                            if hasattr(pred_label, 'short_label_code') and search_label in pred_label.short_label_code:
+                                label_match = True
+                                break
+                        if label_match:
+                            break
+            
+            if not label_match:
                 return False
         
         # Check annotation filters
