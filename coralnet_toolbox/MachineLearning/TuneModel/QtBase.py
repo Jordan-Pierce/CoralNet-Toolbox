@@ -731,7 +731,7 @@ class Base(QDialog):
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         # Default project folder
         params['project'] = self.project_edit.text()
-        params['project'] = params['project'] if params['project'] else "Data/Tune"
+        params['project'] = params['project'] if params['project'] else "Data/Tuning"
         # Default project name
         params['name'] = self.name_edit.text()
         params['name'] = params['name'] if params['name'] else f"tune_{now}"

@@ -652,7 +652,7 @@ class Base(QDialog):
 
     def import_parameters(self):
         """
-        Import parameters from a YAML file with explicit type information.
+        Import parameters from a YAML file with automatic type inference.
         """
         file_path, _ = QFileDialog.getOpenFileName(self,
                                                    "Import Parameters from YAML",
@@ -669,22 +669,40 @@ class Base(QDialog):
                 QMessageBox.warning(self, "Import Warning", "The YAML file appears to be empty or invalid.")
                 return
 
-            # Check if this is the new format with types and parameters sections
-            if 'types' in data and 'parameters' in data:
-                types_data = data['types']
-                params_data = data['parameters']
-            else:
-                # Handle legacy format or simple parameter files
-                QMessageBox.warning(self, 
-                                    "Import Warning", 
-                                    "YAML file format not recognized. Expected 'types' and 'parameters' sections.")
-                return
+            # Helper function to infer type from value
+            def infer_type_and_value(value):
+                """
+                Infer the type and convert the value based on its content.
+                Returns (type_string, converted_value)
+                """
+                if isinstance(value, bool):
+                    return "bool", value
+                elif isinstance(value, int):
+                    return "int", value
+                elif isinstance(value, float):
+                    return "float", value
+                elif isinstance(value, str):
+                    # Check for boolean strings
+                    if value.lower() in ['true', 'false']:
+                        return "bool", value.lower() == 'true'
+                    # Check for numeric strings
+                    try:
+                        # Try to convert to int first
+                        if '.' not in value:
+                            return "int", int(value)
+                        else:
+                            return "float", float(value)
+                    except ValueError:
+                        return "string", value
+                else:
+                    # For any other type, convert to string
+                    return "string", str(value)
 
             # Clear existing custom parameters before importing
             while self.custom_params:
                 self.remove_parameter_pair()
 
-            # Map parameters to UI controls (we know their types from the widgets)
+            # Map parameters to UI controls
             param_mapping = {
                 'epochs': self.epochs_spinbox,
                 'patience': self.patience_spinbox,
@@ -703,29 +721,29 @@ class Base(QDialog):
             }
 
             # Update UI controls with imported values
-            for param_name, value in params_data.items():
-                param_type = types_data.get(param_name, 'string')  # Default to string if type not found
+            for param_name, value in data.items():
+                param_type, converted_value = infer_type_and_value(value)
                 
                 if param_name in param_mapping:
                     widget = param_mapping[param_name]
                     
                     if isinstance(widget, QSpinBox):
-                        if param_type == 'int' and isinstance(value, (int, float)):
-                            widget.setValue(int(value))
+                        if param_type in ['int', 'float'] and isinstance(converted_value, (int, float)):
+                            widget.setValue(int(converted_value))
                     elif isinstance(widget, QDoubleSpinBox):
-                        if param_type == 'float' and isinstance(value, (int, float)):
-                            widget.setValue(float(value))
+                        if param_type in ['int', 'float'] and isinstance(converted_value, (int, float)):
+                            widget.setValue(float(converted_value))
                     elif isinstance(widget, QComboBox):
                         if param_name in ['multi_scale', 'save', 'weighted', 'val', 'verbose']:
-                            # Boolean parameters - use explicit type information
+                            # Boolean parameters
                             if param_type == 'bool':
-                                widget.setCurrentText("True" if value else "False")
+                                widget.setCurrentText("True" if converted_value else "False")
                         else:
                             # String parameters like optimizer
-                            if str(value) in [widget.itemText(i) for i in range(widget.count())]:
-                                widget.setCurrentText(str(value))
+                            if str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
+                                widget.setCurrentText(str(converted_value))
                 else:
-                    # Add as custom parameter using explicit type information
+                    # Add as custom parameter using inferred type
                     self.add_parameter_pair()
                     param_widgets = self.custom_params[-1]
                     param_name_widget, param_value_widget, param_type_widget = param_widgets
@@ -735,13 +753,13 @@ class Base(QDialog):
                     
                     # Set value based on type
                     if param_type == "bool":
-                        param_value_widget.setText("True" if value else "False")
+                        param_value_widget.setText("True" if converted_value else "False")
                     else:
-                        param_value_widget.setText(str(value))
+                        param_value_widget.setText(str(converted_value))
 
             QMessageBox.information(self, 
                                     "Import Success", 
-                                    "Parameters successfully imported")
+                                    "Parameters successfully imported with automatic type inference")
 
         except Exception as e:
             QMessageBox.critical(self, "Import Error", f"Failed to import parameters: {str(e)}")
