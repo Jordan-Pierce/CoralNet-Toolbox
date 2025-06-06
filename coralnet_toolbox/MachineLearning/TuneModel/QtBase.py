@@ -713,8 +713,6 @@ class Base(QDialog):
         # Extract values from dialog widgets
         params = {
             'task': self.task,
-            'project': self.project_edit.text(),
-            'name': self.name_edit.text(),
             'data': self.dataset_edit.text(),
             'iterations': self.iterations_spinbox.value(),
             'epochs': self.epochs_spinbox.value(),
@@ -728,17 +726,16 @@ class Base(QDialog):
             'exist_ok': True,
         }
         
-        # Default project folder
-        project = 'Data/Tuning'
-        params['project'] = params['project'] if params['project'] else project
-        
         # Default project name
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
-        params['name'] = params['name'] if params['name'] else f"tune_{now}"
+        
+        # Default project folder
+        project = 'Data/Tuning' if not self.project_edit.text() else self.project_edit.text()
+        name = f"tune_{now}" if not self.name_edit.text() else self.name_edit.text()
         
         # Default tune directory
-        params['tune_dir'] = f"{params['project']}/{params['name']}"
+        params['tune_dir'] = f"{project}/{name}"
         
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
