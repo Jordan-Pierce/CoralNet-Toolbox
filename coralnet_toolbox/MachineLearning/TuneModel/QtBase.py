@@ -726,16 +726,17 @@ class Base(QDialog):
             'exist_ok': True,
         }
         
-        # Default project name
+        # Get the current date and time for the project name
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
-        
         # Default project folder
-        project = 'Data/Tuning' if not self.project_edit.text() else self.project_edit.text()
-        name = f"tune_{now}" if not self.name_edit.text() else self.name_edit.text()
-        
-        # Default tune directory
-        params['tune_dir'] = f"{project}/{name}"
+        params['project'] = self.project_edit.text()
+        params['project'] = params['project'] if params['project'] else "Data/Tune"
+        # Default project name
+        params['name'] = self.name_edit.text()
+        params['name'] = params['name'] if params['name'] else f"tune_{now}"
+        # Combine project and name into a single parameter
+        params['project'] = f"{params['project']}/{params['name']}"
         
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
