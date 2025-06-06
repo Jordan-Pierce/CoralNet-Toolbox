@@ -5,6 +5,7 @@ import gc
 import datetime
 import traceback
 import ujson as json
+import yaml
 from pathlib import Path
 
 from ultralytics import YOLO, RTDETR
@@ -16,7 +17,7 @@ from ultralytics.data.dataset import ClassificationDataset
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
-                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox)
+                             QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame)
 
 from torch.cuda import empty_cache
 
@@ -239,7 +240,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_icon("coral.png"))
         self.setWindowTitle("Train Model")
-        self.resize(600, 650)
+        self.resize(600, 750)  
 
         # Set window settings
         self.setWindowFlags(Qt.Window |
@@ -271,6 +272,8 @@ class Base(QDialog):
         self.setup_dataset_layout()
         # Create the model layout (new)
         self.setup_model_layout()
+        # Create the output layout
+        self.setup_output_layout()
         # Create and set up the parameters layout
         self.setup_parameters_layout()
         # Create the buttons layout
@@ -336,30 +339,13 @@ class Base(QDialog):
         layout.addWidget(tab_widget)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-
-    def setup_parameters_layout(self):
+        
+    def setup_output_layout(self):
         """
-        Set up the layout and widgets for the generic layout.
+        Set up the layout and widgets for the output directory.
         """
-        # Create helper function for boolean dropdowns
-        def create_bool_combo():
-            combo = QComboBox()
-            combo.addItems(["True", "False"])
-            return combo
-
-        # Create a widget to hold the form layout
-        form_widget = QWidget()
-        form_layout = QFormLayout(form_widget)
-
-        # Create the scroll area
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setWidget(form_widget)
-
-        # Create parameters group box
-        group_box = QGroupBox("Parameters")
-        group_layout = QVBoxLayout(group_box)
-        group_layout.addWidget(scroll_area)
+        group_box = QGroupBox("Output Parameters")
+        form_layout = QFormLayout()
 
         # Project
         self.project_edit = QLineEdit()
@@ -374,6 +360,51 @@ class Base(QDialog):
         self.name_edit = QLineEdit()
         form_layout.addRow("Name:", self.name_edit)
 
+        group_box.setLayout(form_layout)
+        self.layout.addWidget(group_box)
+
+    def setup_parameters_layout(self):
+        """
+        Set up the layout and widgets for the generic layout.
+        """
+        # Create helper function for boolean dropdowns
+        def create_bool_combo():
+            combo = QComboBox()
+            combo.addItems(["True", "False"])
+            return combo
+
+        # Create parameters group box
+        group_box = QGroupBox("Training Parameters")
+        group_layout = QVBoxLayout(group_box)
+
+        # Add import/export buttons at the top
+        import_export_layout = QHBoxLayout()
+        
+        self.import_button = QPushButton("Import YAML")
+        self.import_button.clicked.connect(self.import_parameters)
+        import_export_layout.addWidget(self.import_button)
+
+        self.export_button = QPushButton("Export YAML")
+        self.export_button.clicked.connect(self.export_parameters)
+        import_export_layout.addWidget(self.export_button)
+        
+        # Add stretch to push buttons to the left
+        import_export_layout.addStretch()
+        
+        group_layout.addLayout(import_export_layout)
+
+        # Create a widget to hold the form layout
+        form_widget = QWidget()
+        form_layout = QFormLayout(form_widget)
+
+        # Create the scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(form_widget)
+        
+        group_layout.addWidget(scroll_area)
+
+        # Create parameters
         # Epochs
         self.epochs_spinbox = QSpinBox()
         self.epochs_spinbox.setMinimum(1)
@@ -457,23 +488,26 @@ class Base(QDialog):
         self.verbose_combo = create_bool_combo()
         form_layout.addRow("Verbose:", self.verbose_combo)
 
-        # Add custom parameters section
-        self.custom_params_layout = QVBoxLayout()
-        form_layout.addRow("Additional Parameters:", self.custom_params_layout)
-
-        # Add buttons for parameter management
-        param_buttons_layout = QHBoxLayout()
-
+        # Add horizontal separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        form_layout.addRow("", separator)
+        
+        # Add parameter button at the top of custom parameters section
         self.add_param_button = QPushButton("Add Parameter")
         self.add_param_button.clicked.connect(self.add_parameter_pair)
-        param_buttons_layout.addWidget(self.add_param_button)
+        form_layout.addRow("", self.add_param_button)
 
+        # Add custom parameters section
+        self.custom_params_layout = QVBoxLayout()
+        form_layout.addRow("", self.custom_params_layout)
+
+        # Remove parameter button at the bottom
         self.remove_param_button = QPushButton("Remove Parameter")
         self.remove_param_button.clicked.connect(self.remove_parameter_pair)
         self.remove_param_button.setEnabled(False)  # Disabled until at least one parameter is added
-        param_buttons_layout.addWidget(self.remove_param_button)
-
-        form_layout.addRow("", param_buttons_layout)
+        form_layout.addRow("", self.remove_param_button)
 
         self.layout.addWidget(group_box)
 
@@ -614,6 +648,183 @@ class Base(QDialog):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")
         if file_path:
             self.model_edit.setText(file_path)
+
+    def import_parameters(self):
+        """
+        Import parameters from a YAML file with explicit type information.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self,
+                                                   "Import Parameters from YAML",
+                                                   "",
+                                                   "YAML Files (*.yaml *.yml)")
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'r') as f:
+                data = yaml.safe_load(f)
+
+            if not data:
+                QMessageBox.warning(self, "Import Warning", "The YAML file appears to be empty or invalid.")
+                return
+
+            # Check if this is the new format with types and parameters sections
+            if 'types' in data and 'parameters' in data:
+                types_data = data['types']
+                params_data = data['parameters']
+            else:
+                # Handle legacy format or simple parameter files
+                QMessageBox.warning(self, 
+                                    "Import Warning", 
+                                    "YAML file format not recognized. Expected 'types' and 'parameters' sections.")
+                return
+
+            # Clear existing custom parameters before importing
+            while self.custom_params:
+                self.remove_parameter_pair()
+
+            # Map parameters to UI controls (we know their types from the widgets)
+            param_mapping = {
+                'epochs': self.epochs_spinbox,
+                'patience': self.patience_spinbox,
+                'imgsz': self.imgsz_spinbox,
+                'batch': self.batch_spinbox,
+                'workers': self.workers_spinbox,
+                'save_period': self.save_period_spinbox,
+                'freeze_layers': self.freeze_layers_spinbox,
+                'dropout': self.dropout_spinbox,
+                'multi_scale': self.multi_scale_combo,
+                'save': self.save_combo,
+                'weighted': self.weighted_combo,
+                'val': self.val_combo,
+                'verbose': self.verbose_combo,
+                'optimizer': self.optimizer_combo
+            }
+
+            # Update UI controls with imported values
+            for param_name, value in params_data.items():
+                param_type = types_data.get(param_name, 'string')  # Default to string if type not found
+                
+                if param_name in param_mapping:
+                    widget = param_mapping[param_name]
+                    
+                    if isinstance(widget, QSpinBox):
+                        if param_type == 'int' and isinstance(value, (int, float)):
+                            widget.setValue(int(value))
+                    elif isinstance(widget, QDoubleSpinBox):
+                        if param_type == 'float' and isinstance(value, (int, float)):
+                            widget.setValue(float(value))
+                    elif isinstance(widget, QComboBox):
+                        if param_name in ['multi_scale', 'save', 'weighted', 'val', 'verbose']:
+                            # Boolean parameters - use explicit type information
+                            if param_type == 'bool':
+                                widget.setCurrentText("True" if value else "False")
+                        else:
+                            # String parameters like optimizer
+                            if str(value) in [widget.itemText(i) for i in range(widget.count())]:
+                                widget.setCurrentText(str(value))
+                else:
+                    # Add as custom parameter using explicit type information
+                    self.add_parameter_pair()
+                    param_widgets = self.custom_params[-1]
+                    param_name_widget, param_value_widget, param_type_widget = param_widgets
+                    
+                    param_name_widget.setText(param_name)
+                    param_type_widget.setCurrentText(param_type)
+                    
+                    # Set value based on type
+                    if param_type == "bool":
+                        param_value_widget.setText("True" if value else "False")
+                    else:
+                        param_value_widget.setText(str(value))
+
+            QMessageBox.information(self, 
+                                    "Import Success", 
+                                    "Parameters successfully imported")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Failed to import parameters: {str(e)}")
+
+    def export_parameters(self):
+        """
+        Export current parameters to a YAML file with explicit type information.
+        """
+        file_path, _ = QFileDialog.getSaveFileName(self,
+                                                   "Export Parameters to YAML",
+                                                   "training_parameters.yaml",
+                                                   "YAML Files (*.yaml *.yml)")
+        if not file_path:
+            return
+
+        try:
+            # Structure: types section followed by parameters section
+            export_data = {
+                'types': {},
+                'parameters': {}
+            }
+            
+            # Standard parameters with their types
+            standard_params = {
+                'epochs': ('int', self.epochs_spinbox.value()),
+                'patience': ('int', self.patience_spinbox.value()),
+                'imgsz': ('int', self.imgsz_spinbox.value()),
+                'batch': ('int', self.batch_spinbox.value()),
+                'workers': ('int', self.workers_spinbox.value()),
+                'save_period': ('int', self.save_period_spinbox.value()),
+                'freeze_layers': ('float', self.freeze_layers_spinbox.value()),
+                'dropout': ('float', self.dropout_spinbox.value()),
+                'multi_scale': ('bool', self.multi_scale_combo.currentText() == "True"),
+                'save': ('bool', self.save_combo.currentText() == "True"),
+                'weighted': ('bool', self.weighted_combo.currentText() == "True"),
+                'val': ('bool', self.val_combo.currentText() == "True"),
+                'verbose': ('bool', self.verbose_combo.currentText() == "True"),
+                'optimizer': ('string', self.optimizer_combo.currentText())
+            }
+
+            # Add standard parameters
+            for param_name, (param_type, value) in standard_params.items():
+                export_data['types'][param_name] = param_type
+                export_data['parameters'][param_name] = value
+
+            # Custom parameters
+            for param_info in self.custom_params:
+                param_name, param_value, param_type = param_info
+                name = param_name.text().strip()
+                value = param_value.text().strip()
+                type_name = param_type.currentText()
+                
+                if name and value:
+                    export_data['types'][name] = type_name
+                    
+                    if type_name == "bool":
+                        export_data['parameters'][name] = value.lower() == "true"
+                    elif type_name == "int":
+                        try:
+                            export_data['parameters'][name] = int(value)
+                        except ValueError:
+                            export_data['parameters'][name] = value
+                            export_data['types'][name] = "string"  # Fallback to string
+                    elif type_name == "float":
+                        try:
+                            export_data['parameters'][name] = float(value)
+                        except ValueError:
+                            export_data['parameters'][name] = value
+                            export_data['types'][name] = "string"  # Fallback to string
+                    else:  # string type
+                        export_data['parameters'][name] = value
+
+            # Write to YAML file
+            with open(file_path, 'w') as f:
+                yaml.dump(export_data, f, default_flow_style=False, indent=2)
+
+            QMessageBox.information(self, 
+                                    "Export Success", 
+                                    "Parameters successfully exported")
+
+        except Exception as e:
+            QMessageBox.critical(self, 
+                                 "Export Error", 
+                                 f"Failed to export parameters: {str(e)}")
 
     def accept(self):
         """
