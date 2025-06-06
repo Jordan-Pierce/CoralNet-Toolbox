@@ -101,7 +101,7 @@ The main window consists of several components:
   - **Optimize Model**: Convert model format.
   - **Deploy Model**: Make predictions using a trained model (Classification, Detection, Segmentation).
   - **Batch Inference**: Perform batch inferences.
-  - **Video Inference**: Peform inferencing on videos in real-time, view analytics.
+  - **Video Inference**: Perform inferencing on videos in real-time, view analytics.
 
 - **SAM**:
   - **Deploy Predictor**: Deploy `EdgeSAM`, `MobileSAM`, `SAM`, etc, to use interactively (points, box).
