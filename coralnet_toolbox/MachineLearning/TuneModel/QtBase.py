@@ -329,6 +329,7 @@ class Base(QDialog):
         self.fraction_spinbox.setMinimum(0.01)
         self.fraction_spinbox.setMaximum(1.0)
         self.fraction_spinbox.setValue(0.1)  # Default to 10% of the dataset
+        form_layout.addRow("Fraction of Data:", self.fraction_spinbox)
 
         # Base training parameters
         # Epochs (for each iteration)
