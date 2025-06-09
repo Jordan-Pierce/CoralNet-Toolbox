@@ -376,6 +376,12 @@ class Base(QDialog):
         self.val_combo.addItems(["True", "False"])
         self.val_combo.setCurrentText("False")
         form_layout.addRow("Validation:", self.val_combo)
+        
+        # Save 
+        self.save_combo = QComboBox()
+        self.save_combo.addItems(["True", "False"])
+        self.save_combo.setCurrentText("False")
+        form_layout.addRow("Save Checkpoints:", self.save_combo)
 
         # Workers
         self.workers_spinbox = QSpinBox()
