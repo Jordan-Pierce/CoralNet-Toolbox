@@ -96,6 +96,7 @@ The main window consists of several components:
 
 - **Ultralytics**:
   - **Merge Datasets**: Merge multiple Classification datasets.
+  - **Tune Model**: Identify ideal hyperparameter values before fully training a model.
   - **Train Model**: Train a machine learning model.
   - **Evaluate Model**: Evaluate a trained model.
   - **Optimize Model**: Convert model format.
@@ -122,10 +123,10 @@ The main window consists of several components:
 - **Select Tool**: After selecting the tool
   - **Left-Click**: Select an annotation; drag to move it.
   - **Ctrl + Left-Click**: Add/remove annotation to current selection.
-  - **Ctrl + Drag**: Create rectangle selection to select multiple annotations.
   - **Ctrl + Delete / Backspace**: Remove selected annotation(s).
-  - **Ctrl + Shift**: Show resize handles for the selected annotation.
+  - **Ctrl + Drag**: Create rectangle selection to select multiple annotations.
   - **Ctrl + Mouse Wheel**: Change size of the selected annotation.
+  - **Ctrl + Shift**: Show resize handles for the selected annotation.
   - **Ctrl + Shift + Mouse Wheel**: Change the number of vertices for a polygon annotation.
   - **Ctrl + Space**: Confirm prediction for selected annotation with top machine confidence.
   - **Ctrl + X**: Enter cutting mode; left-click to start, draw line, left-click to end.
