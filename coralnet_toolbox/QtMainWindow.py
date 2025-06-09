@@ -2084,7 +2084,7 @@ class MainWindow(QMainWindow):
             needs_update = version.parse(latest_version) > version.parse(self.version)
 
             if needs_update:
-                pip_command = "\npip install -U coralnet-toolbox=={}".format(latest_version)
+                pip_command = "\npip install coralnet-toolbox=={}".format(latest_version)
                 # Create a QMessageBox instance
                 msg_box = QMessageBox(self)
                 msg_box.setIcon(QMessageBox.Information)

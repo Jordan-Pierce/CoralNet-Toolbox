@@ -71,6 +71,17 @@ Finally, you can run the `toolbox` from the command line:
 coralnet-toolbox
 ```
 
+### **How to Upgrade**
+
+When opening the `toolbox`, you will be notified if there is an update available, and you have the _option_ to do so, 
+if you so choose. To upgrade, run the following command from your terminal:
+
+```bash
+# cmd
+
+uv pip install -U coralnet-toolbox==[enter_newest_version_here]
+```
+
 ## GitHub Repository
 
 If you prefer to clone the repository and run the `toolbox` from the source code, you can do so with the following:
@@ -120,7 +131,7 @@ git fetch
 # Pull the updates from main
 git pull
 
-# Update your conda environment 
+# Update your version of coralnet-toolbox 
 pip install -e . -U
 ```
 

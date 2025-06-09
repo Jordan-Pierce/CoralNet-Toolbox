@@ -212,6 +212,17 @@ Finally, you can run the `toolbox` from the command line:
 coralnet-toolbox
 ```
 
+### **How to Upgrade**
+
+When opening the `toolbox`, you will be notified if there is an update available, and you have the _option_ to do so, 
+if you so choose. To upgrade, run the following command from your terminal:
+
+```bash
+# cmd
+
+uv pip install -U coralnet-toolbox==[enter_newest_version_here]
+```
+
 ## 🌊 Success Stories
 
 Using the `toolbox`? Share your successes and we can feature your work to help others learn!
