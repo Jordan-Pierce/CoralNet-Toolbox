@@ -25,7 +25,7 @@ class Label(QWidget):
     selected = pyqtSignal(object)  # Signal to emit the selected label
     label_deleted = pyqtSignal(object)  # Signal to emit when the label is deleted
 
-    def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None):
+    def __init__(self, short_label_code, long_label_code, color=QColor(255, 255, 255), label_id=None, pen_width=2):
         """Initialize the Label widget."""
         super().__init__()
 
@@ -33,6 +33,7 @@ class Label(QWidget):
         self.short_label_code = short_label_code
         self.long_label_code = long_label_code
         self.color = color
+        self.pen_width = pen_width  # Add pen width property
         self.transparency = 128
         self.is_selected = False
 
@@ -108,6 +109,11 @@ class Label(QWidget):
         """Update the label's transparency value."""
         self.transparency = transparency
 
+    def update_pen_width(self, pen_width):
+        """Update the label's pen width value."""
+        self.pen_width = pen_width
+        self.update()  # Trigger a repaint
+
     def delete_label(self):
         """Emit the label_deleted signal and schedule the widget for deletion."""
         self.label_deleted.emit(self)
@@ -132,8 +138,8 @@ class Label(QWidget):
         if self.is_selected:
             painter.setPen(QPen(Qt.black, 4, Qt.DashLine))
         else:
-            # Normal border with the color of the label
-            painter.setPen(QPen(Qt.black, 1, Qt.SolidLine))
+            # Use the label's color for the pen with the specified pen width
+            painter.setPen(QPen(self.color, self.pen_width, Qt.SolidLine))
 
         # Draw the outer rectangle
         painter.drawRect(0, 0, self.width(), self.height())
@@ -153,23 +159,27 @@ class Label(QWidget):
             'id': self.id,
             'short_label_code': self.short_label_code,
             'long_label_code': self.long_label_code,
-            'color': self.color.getRgb()
+            'color': self.color.getRgb(),
+            'pen_width': self.pen_width  # Include pen width in serialization
         }
 
     @classmethod
     def from_dict(cls, data):
         """Create a Label instance from a dictionary."""
+        pen_width = data.get('pen_width', 2)  # Default to 2 if not present
         return cls(data['short_label_code'],
                    data['long_label_code'],
                    QColor(*data['color']),
-                   data['id'])
+                   data['id'],
+                   pen_width)
 
     def __repr__(self):
         """Return a string representation of the Label object."""
         return (f"Label(id={self.id}, "
                 f"short_label_code={self.short_label_code}, "
                 f"long_label_code={self.long_label_code}, "
-                f"color={self.color.name()})")
+                f"color={self.color.name()}, "
+                f"pen_width={self.pen_width})")
 
 
 class LabelWindow(QWidget):
