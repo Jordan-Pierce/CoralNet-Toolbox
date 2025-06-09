@@ -96,9 +96,11 @@ These models enable fast, accurate, and flexible annotation workflows for a wide
 | ![Patch Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif)<br><sub>**Patch Annotation**</sub> | ![Rectangle Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif)<br><sub>**Rectangle Annotation**</sub> | ![Polygon Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif)<br><sub>**(Multi) Polygon Annotation**</sub> |
 |:--:|:--:|:--:|
 | ![Patch-based Image Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif)<br><sub>**Image Classification**</sub> | ![Object Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif)<br><sub>**Object Detection**</sub> | ![Instance Segmentation](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif)<br><sub>**Instance Segmentation**</sub> |
-| ![Segment Anything Model (SAM)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif)<br><sub>**Segment Anything (SAM)**</sub> | ![Polygon Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif)<br><sub>**Polygon Classification**</sub> | ![Patch-based LAI Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif)<br><sub>**Patch-based LAI Classification**</sub> |
-| ![Cut](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif)<br><sub>**Cut**</sub> | ![Combine](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif)<br><sub>**Combine**</sub> | ![See Anything (YOLOE)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif)<br><sub>**See Anything (YOLOE)**</sub> |
-|  | ![Region-based Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif)<br><sub>**Region-based Detection**</sub> |  |
+| ![Segment Anything Model (SAM)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif)<br><sub>**Segment Anything (SAM)**</sub> | ![Polygon Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif)<br><sub>**Polygon Classification**</sub> | ![Region-based Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif)<br><sub>**Region-based Detection**</sub> |
+| ![Cut](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif)<br><sub>**Cut**</sub> | ![Combine](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif)<br><sub>**Combine**</sub> | ![Simplify](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Simplify.gif)<br><sub>**Simplify**</sub> |
+| ![See Anything (YOLOE)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif)<br><sub>**See Anything (YOLOE)**</sub> | ![Patch-based LAI Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif)<br><sub>**Patch-based LAI Classification**</sub> | ![Video Inference](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Analytics.gif)<br><sub>**Video Inference**</sub> |
+
+</div>
 
 </div>
 
@@ -111,22 +113,27 @@ Enhance your CoralNet experience with these tools:
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
+  - 👨‍👩‍👧‍👦 MultiPolygons: Combine multiple, non-overlapping polygons (i.e, genets)
 - ✍️ Edit: Cut and Combine polygons and rectangles
 - 🦾 SAM: Use `FastSAM`, `CoralSCOP`, `RepViT-SAM`, `EdgeSAM`, `MobileSAM`, and `SAM` to create polygons
   - Uses [`xSAM`](https://github.com/Jordan-Pierce/xSAM)
+- 👷‍♂️ Work areas: Perform region-specific detections / segmentations with any model
 - 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically
 - 🧪 AutoDistill: Use `AutoDistill` to access the following for creating rectangles and polygons:
   - Uses `Grounding DINO`, `OWLViT`, `OmDetTurbo`
+- 📻 Tune: Tune hyperparameters to identify ideal training conditions
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
 - 🚀 Optimize: Productionize models for faster inferencing
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
+- 🎞️ Video Inference: Perform predictions on a video in real-time, record the output and analytics
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
   - Export annotations as [GeoJSONs](https://datatracker.ietf.org/doc/html/rfc7946), segmentation masks
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
   - Uses [`yolo-tiling`](https://github.com/Jordan-Pierce/yolo-tiling)
+- 🏗️ Tile Inference: Pre-compute multiple work areas for an entire image
 
 ### 📝 TODO
 - 🤗 Model Zoo: Download `Ultralytics` models from `HuggingFace` for use in `toolbox`
