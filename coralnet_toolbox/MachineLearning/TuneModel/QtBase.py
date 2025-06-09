@@ -458,7 +458,8 @@ class Base(QDialog):
             "mosaic": (0.0, 1.0),
             "mixup": (0.0, 1.0),
             "cutmix": (0.0, 1.0),
-            "copy_paste": (0.0, 1.0)
+            "copy_paste": (0.0, 1.0),
+            "dropout": (0.0, 1.0),
         }
 
         # Create UI elements for default search space
@@ -466,7 +467,6 @@ class Base(QDialog):
         for param_name, bounds in default_space.items():
             param_layout = QHBoxLayout()
             
-            # Standard numeric parameters
             # Min value
             min_spinbox = QDoubleSpinBox()
             min_spinbox.setDecimals(6)
@@ -494,7 +494,6 @@ class Base(QDialog):
             if len(bounds) > 2:
                 gain_spinbox.setValue(bounds[2])
             else:
-                # Set default gain to 10% of max value
                 gain_spinbox.setValue(bounds[1] * 0.1)
             param_layout.addWidget(gain_spinbox)
             
@@ -504,6 +503,8 @@ class Base(QDialog):
             param_layout.addWidget(enabled_checkbox)
             
             self.space_widgets[param_name] = (min_spinbox, max_spinbox, gain_spinbox, enabled_checkbox)
+            # Add the row to the form layout with the parameter name as label
+            form_layout.addRow(param_name, param_layout)
         
         # Add horizontal separator line
         separator = QFrame()
