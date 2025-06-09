@@ -9,7 +9,8 @@ import random
 
 from PyQt5.QtCore import Qt, QBasicTimer
 from PyQt5.QtGui import QPainter, QBrush
-from PyQt5.QtWidgets import QMainWindow, QMessageBox
+from PyQt5.QtWidgets import (QMainWindow, QMessageBox, QDialog, QVBoxLayout, 
+                             QHBoxLayout, QPushButton, QLabel, QButtonGroup)
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -18,15 +19,15 @@ from coralnet_toolbox.Icons import get_icon
 # Constants / Configurations
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Game settings
-FOOD_NUM = 30
-TIME_INTERVAL = 5
-BOARD_ROW = 20
-BOARD_COLUMN = 30
+# Base game settings (will be modified by difficulty)
+BASE_FOOD_NUM = 30
+BASE_TIME_INTERVAL = 5
+BASE_BOARD_ROW = 20
+BASE_BOARD_COLUMN = 30
 AUTO_PLAY = False
 
-# Initial delay speed (in milliseconds)
-SPEED = 500
+# Base initial delay speed (in milliseconds)
+BASE_SPEED = 500
 SPECIAL_FOOD = 4
 
 # Direction constants
@@ -45,6 +46,75 @@ FOOD = 3
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class DifficultyDialog(QDialog):
+    """
+    Dialog for selecting game difficulty level.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.selected_difficulty = "Medium"  # Default
+        self.init_ui()
+        
+    def init_ui(self):
+        """Initialize the difficulty selection UI."""
+        self.setWindowTitle("Select Difficulty")
+        self.setModal(True)
+        self.setFixedSize(400, 300)
+        
+        layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("Choose Your Difficulty Level")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFont(title.font())
+        title.font().setPointSize(16)
+        title.font().setBold(True)
+        layout.addWidget(title)
+        
+        # Difficulty descriptions
+        difficulties = {
+            "Easy": "🟢 Slower snake, smaller board, longer special food time\nPerfect for beginners!",
+            "Medium": "🟡 Balanced gameplay, standard board size\nThe classic experience",
+            "Hard": "🟠 Faster snake, larger board, shorter special food time\nFor experienced players",
+            "Insane": "🔴 Lightning fast, massive board, very short special food\nOnly for the brave!"
+        }
+        
+        self.button_group = QButtonGroup()
+        
+        for i, (difficulty, description) in enumerate(difficulties.items()):
+            btn = QPushButton(f"{difficulty}\n{description}")
+            btn.setFixedHeight(50)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, d=difficulty: self.set_difficulty(d))
+            self.button_group.addButton(btn, i)
+            layout.addWidget(btn)
+            
+            if difficulty == "Medium":  # Default selection
+                btn.setChecked(True)
+        
+        # OK/Cancel buttons
+        button_layout = QHBoxLayout()
+        ok_btn = QPushButton("Start Game")
+        cancel_btn = QPushButton("Cancel")
+        
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(ok_btn)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def set_difficulty(self, difficulty):
+        """Set the selected difficulty."""
+        self.selected_difficulty = difficulty
+        
+    def get_difficulty(self):
+        """Return the selected difficulty."""
+        return self.selected_difficulty
 
 
 class Snake:
@@ -251,28 +321,83 @@ class SnakeGame(QMainWindow):
         # Initialize time counter
         self.time_count = 0
         # Store the current speed (delay in ms)
-        self.speed = SPEED
+        self.speed = BASE_SPEED
+        # Store difficulty level
+        self.difficulty = "Medium"
+
+    def setup_difficulty_parameters(self):
+        """Set game parameters based on difficulty level."""
+        difficulty_settings = {
+            "Easy": {
+                "board_rows": 15,
+                "board_columns": 20,
+                "base_speed": 700,
+                "special_food_duration": 8,
+                "speed_increase_factor": 50
+            },
+            "Medium": {
+                "board_rows": 20,
+                "board_columns": 30,
+                "base_speed": 500,
+                "special_food_duration": 5,
+                "speed_increase_factor": 70
+            },
+            "Hard": {
+                "board_rows": 25,
+                "board_columns": 35,
+                "base_speed": 350,
+                "special_food_duration": 3,
+                "speed_increase_factor": 90
+            },
+            "Insane": {
+                "board_rows": 30,
+                "board_columns": 40,
+                "base_speed": 200,
+                "special_food_duration": 2,
+                "speed_increase_factor": 120
+            }
+        }
+        
+        settings = difficulty_settings[self.difficulty]
+        
+        # Update global constants based on difficulty
+        global BOARD_ROW, BOARD_COLUMN, BASE_SPEED, SPECIAL_FOOD
+        BOARD_ROW = settings["board_rows"]
+        BOARD_COLUMN = settings["board_columns"]
+        BASE_SPEED = settings["base_speed"]
+        self.speed = BASE_SPEED
+        self.special_food_duration = settings["special_food_duration"]
+        self.speed_increase_factor = settings["speed_increase_factor"]
 
     def start_game(self):
         """
-        Start the game by initializing the game window and UI.
+        Start the game by showing difficulty selection and initializing the game window and UI.
         """
-        # Show welcome dialog with instructions before starting the game.
-        welcome_msg = (
-            "Welcome to the classic game of Snake!\n\n"
-            "Rules:\n"
-            " - Use 'W' to move up\n"
-            " - Use 'A' to move left\n"
-            " - Use 'S' to move down\n"
-            " - Use 'D' to move right\n"
-            " - Avoid colliding with walls or your tail.\n"
-            " - Eat food to grow!\n\n"
-            "Click 'OK' to start playing."
-        )
-        if QMessageBox.information(self, "Welcome to Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
-            self.init_game()                   # Create snake and set board dimensions.
-            self.init_ui()                     # Use self.row and self.column for UI sizing.
-            self.update_timer.start(self.speed, self)  # Start the timer.
+        # Show difficulty selection dialog
+        difficulty_dialog = DifficultyDialog(self)
+        if difficulty_dialog.exec_() == DifficultyDialog.Accepted:
+            self.difficulty = difficulty_dialog.get_difficulty()
+            self.setup_difficulty_parameters()
+            
+            # Show welcome dialog with instructions before starting the game.
+            welcome_msg = (
+                f"Welcome to Snake - {self.difficulty} Mode!\n\n"
+                "Rules:\n"
+                " - Use 'W' to move up\n"
+                " - Use 'A' to move left\n"
+                " - Use 'S' to move down\n"
+                " - Use 'D' to move right\n"
+                " - Avoid colliding with walls or your tail.\n"
+                " - Eat yellow food to grow!\n"
+                " - Eat red special food for extra growth!\n\n"
+                "Click 'OK' to start playing."
+            )
+            if QMessageBox.information(self, "Welcome to Snake", welcome_msg, QMessageBox.Ok) == QMessageBox.Ok:
+                self.init_game()                   # Create snake and set board dimensions.
+                self.init_ui()                     # Use self.row and self.column for UI sizing.
+                self.update_timer.start(self.speed, self)  # Start the timer.
+        else:
+            self.close()
 
     def end_game(self):
         """
@@ -293,11 +418,21 @@ class SnakeGame(QMainWindow):
         """
         Set up the user interface dimensions and appearance.
         """
-        # Calculate dimensions and disable resizing/minimization.
-        width = int(self.column * self.size * 1.05)
-        height = int(self.row * self.size * 1.05)
-        self.resize(width, height)
-        self.setFixedSize(width, height)  # Prevent resizing/minimization.
+        # Calculate game board dimensions
+        board_width = self.column * self.size
+        board_height = self.row * self.size
+        
+        # Add padding around the board for centering
+        padding = 40  # 20 pixels on each side
+        window_width = board_width + padding
+        window_height = board_height + padding + 40  # Extra space for status bar
+        
+        # Store offset for centering the board
+        self.board_offset_x = padding // 2
+        self.board_offset_y = padding // 2
+        
+        self.resize(window_width, window_height)
+        self.setFixedSize(window_width, window_height)  # Prevent resizing/minimization.
         self.setWindowTitle(self.title)
         self.setWindowOpacity(self.opacity)
         self.show()
@@ -316,13 +451,18 @@ class SnakeGame(QMainWindow):
         """
         painter = QPainter()
         painter.begin(self)
-        # Draw each cell based on the board data
+        # Draw each cell based on the board data with centering offset
         for x in range(self.column):
             for y in range(self.row):
                 # Set the brush based on the current block state
                 painter.setBrush(self.brush[self.snake.board[x][y]])
-                # Draw the corresponding rectangle for the cell
-                painter.drawRect(x * self.size, y * self.size, self.size, self.size)
+                # Draw the corresponding rectangle for the cell with offset for centering
+                painter.drawRect(
+                    x * self.size + self.board_offset_x, 
+                    y * self.size + self.board_offset_y, 
+                    self.size, 
+                    self.size
+                )
         painter.end()
 
     def timerEvent(self, event):
@@ -330,8 +470,8 @@ class SnakeGame(QMainWindow):
         Handle game updates on each timer tick.
         """
         # Adjust the speed based on the snake's growth (each food eaten speeds up the snake)
-        # Here, every unit increase in snake length subtracts 70 ms from the delay, with a minimum delay of 50 ms.
-        new_speed = max(SPEED - (self.snake.length - 1) * 70, 50)
+        # Use difficulty-based speed increase factor
+        new_speed = max(BASE_SPEED - (self.snake.length - 1) * self.speed_increase_factor, 50)
         if new_speed != self.speed:
             self.speed = new_speed
             # Restart the timer with new speed
@@ -355,10 +495,11 @@ class SnakeGame(QMainWindow):
                 # Spawn special food every 15 seconds if not present
                 if self.time_count % 15 == 0 and self.snake.special_food == [-1, -1]:
                     self.snake.new_special_food(self.time_count)
-                # Remove special food if it lasts longer than 5 seconds
-                if self.snake.special_food != [-1, -1] and (self.time_count - self.snake.special_food_created_time) >= 5:
-                    self.snake.board[self.snake.special_food[0]][self.snake.special_food[1]] = BLANK
-                    self.snake.special_food = [-1, -1]
+                # Remove special food based on difficulty duration
+                if self.snake.special_food != [-1, -1]: 
+                    if (self.time_count - self.snake.special_food_created_time) >= self.special_food_duration:
+                        self.snake.board[self.snake.special_food[0]][self.snake.special_food[1]] = BLANK
+                        self.snake.special_food = [-1, -1]
             else:
                 # End the game if the snake is dead
                 self.game_over()
@@ -368,7 +509,7 @@ class SnakeGame(QMainWindow):
     def win_game(self):
         # Stop the timer and congratulate the user.
         self.update_timer.stop()
-        win_message = ("Congratulations! You've filled the entire board and won the game!\n\n"
+        win_message = (f"Congratulations! You've filled the entire board and won on {self.difficulty} mode!\n\n"
                        "Do you want to play again?")
         reply = QMessageBox.question(self, "You Win!", win_message, QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
@@ -411,7 +552,7 @@ class SnakeGame(QMainWindow):
         Display a message box when the game is over and handle restarting or closing.
         """
         # Show game-over dialog offering the choice to play again or get back to work.
-        message = "Time: {0}\nLength: {1}\n\nDo you want to play again?".format(self.time_count, self.snake.length)
+        message = f"Difficulty: {self.difficulty}\nTime: {self.time_count}\nLength: {self.snake.length}\n\nDo you want to play again?"
         reply = QMessageBox.question(
             self,
             "Game Over",
