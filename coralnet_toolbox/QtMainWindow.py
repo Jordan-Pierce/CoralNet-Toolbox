@@ -56,6 +56,9 @@ from coralnet_toolbox.IO import (
 )
 
 from coralnet_toolbox.MachineLearning import (
+    TuneClassify as ClassifyTuneDialog,
+    TuneDetect as DetectTuneDialog,
+    TuneSegment as SegmentTuneDialog,
     TrainClassify as ClassifyTrainModelDialog,
     TrainDetect as DetectTrainModelDialog,
     TrainSegment as SegmentTrainModelDialog,
@@ -215,6 +218,9 @@ class MainWindow(QMainWindow):
         self.detect_export_dataset_dialog = DetectExportDatasetDialog(self)
         self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
         self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
+        self.classify_tune_model_dialog = ClassifyTuneDialog(self)
+        self.detect_tune_model_dialog = DetectTuneDialog(self)
+        self.segment_tune_model_dialog = SegmentTuneDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
         self.segment_train_model_dialog = SegmentTrainModelDialog(self)
@@ -478,6 +484,21 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action = QAction("Classify", self)
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
+        
+        # tune Model submenu
+        self.ml_tune_model_menu = self.ml_menu.addMenu("Tune Model")
+        # Tune Classification Model
+        self.ml_classify_tune_model_action = QAction("Classify", self)
+        self.ml_classify_tune_model_action.triggered.connect(self.open_classify_tune_model_dialog)
+        self.ml_tune_model_menu.addAction(self.ml_classify_tune_model_action)
+        # Tune Detection Model
+        self.ml_detect_tune_model_action = QAction("Detect", self)
+        self.ml_detect_tune_model_action.triggered.connect(self.open_detect_tune_model_dialog)
+        self.ml_tune_model_menu.addAction(self.ml_detect_tune_model_action)
+        # Tune Segmentation Model
+        self.ml_segment_tune_model_action = QAction("Segment", self)
+        self.ml_segment_tune_model_action.triggered.connect(self.open_segment_tune_model_dialog)
+        self.ml_tune_model_menu.addAction(self.ml_segment_tune_model_action)
 
         # Train Model submenu
         self.ml_train_model_menu = self.ml_menu.addMenu("Train Model")
@@ -1706,6 +1727,30 @@ class MainWindow(QMainWindow):
             # Untoggle all tools, choose the work area tool
             self.choose_specific_tool("work_area")
             self.tile_batch_inference_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_classify_tune_model_dialog(self):
+        """Open the Classify Tune Model dialog to tune a classification model."""
+        try:
+            self.untoggle_all_tools()
+            self.classify_tune_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_detect_tune_model_dialog(self):
+        """Open the Detect Tune Model dialog to tune a detection model."""
+        try:
+            self.untoggle_all_tools()
+            self.detect_tune_model_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+            
+    def open_segment_tune_model_dialog(self):
+        """Open the Segment Tune Model dialog to tune a segmentation model."""
+        try:
+            self.untoggle_all_tools()
+            self.segment_tune_model_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

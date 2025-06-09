@@ -2,6 +2,10 @@
 
 from .Community.cfg import get_available_configs
 
+from .TuneModel.QtClassify import Classify as TuneClassify
+from .TuneModel.QtDetect import Detect as TuneDetect
+from .TuneModel.QtSegment import Segment as TuneSegment
+
 from .TrainModel.QtClassify import Classify as TrainClassify
 from .TrainModel.QtDetect import Detect as TrainDetect 
 from .TrainModel.QtSegment import Segment as TrainSegment
@@ -34,6 +38,9 @@ from .OptimizeModel.QtBase import Base as Optimize
 
 __all__ = [
     'get_available_configs',
+    "TuneClassify",
+    "TuneDetect",
+    "TuneSegment",
     'TrainClassify', 
     'TrainDetect', 
     'TrainSegment',
