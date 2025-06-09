@@ -124,7 +124,7 @@ class Laser:
         
     def draw(self, painter):
         """Draw the laser."""
-        painter.setBrush(QBrush(QColor(255, 255, 0)))
+        painter.setBrush(QBrush(QColor(255, 0, 0)))
         painter.setPen(Qt.NoPen)
         painter.drawRect(self.rect)
 

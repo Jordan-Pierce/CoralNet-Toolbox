@@ -459,7 +459,6 @@ class Base(QDialog):
             "mixup": (0.0, 1.0),
             "cutmix": (0.0, 1.0),
             "copy_paste": (0.0, 1.0),
-            "dropout": (0.0, 1.0),
         }
 
         # Create UI elements for default search space
