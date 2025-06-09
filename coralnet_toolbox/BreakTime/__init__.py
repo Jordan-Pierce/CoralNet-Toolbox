@@ -1,6 +1,6 @@
 # coralnet_toolbox/BreakTime/__init__.py
 
 from .QtSnake import SnakeGame
-from .QtBreakOut import BreakoutGame
+from .QtBreakout import BreakoutGame
 
 __all__ = ["SnakeGame", "BreakoutGame"]
