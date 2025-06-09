@@ -212,9 +212,13 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Hyperparameter tuning systematically searches for optimal hyperparameters. "
-                            "Details on tuning can be found "
-                            "<a href='https://docs.ultralytics.com/guides/hyperparameter-tuning/'>here</a>.")
+        info_label = QLabel(
+            "Hyperparameter tuning systematically searches for optimal hyperparameters. "
+            "Details on tuning can be found "
+            "<a href='https://docs.ultralytics.com/guides/hyperparameter-tuning/'>here</a>, "
+            "and the original script can be found "
+            "<a href='https://github.com/ultralytics/ultralytics/blob/main/ultralytics/engine/tuner.py'>here</a>."
+        )
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
@@ -422,6 +426,13 @@ class Base(QDialog):
         
         group_layout.addWidget(scroll_area)
 
+        # Add column headers for the search space parameters
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(QLabel("Min"))
+        header_layout.addWidget(QLabel("Max"))
+        header_layout.addWidget(QLabel("Gain"))
+        form_layout.addRow("", header_layout)
+
         # Default search space parameters
         default_space = {
             "lr0": (1e-5, 1e-1),
@@ -458,7 +469,7 @@ class Base(QDialog):
             # Standard numeric parameters
             # Min value
             min_spinbox = QDoubleSpinBox()
-            min_spinbox.setDecimals(2)
+            min_spinbox.setDecimals(6)
             min_spinbox.setSingleStep(0.01)
             min_spinbox.setMinimum(-1000000)
             min_spinbox.setMaximum(1000000)
@@ -467,7 +478,7 @@ class Base(QDialog):
             
             # Max value
             max_spinbox = QDoubleSpinBox()
-            max_spinbox.setDecimals(2)
+            max_spinbox.setDecimals(6)
             max_spinbox.setSingleStep(0.01)
             max_spinbox.setMinimum(-1000000)
             max_spinbox.setMaximum(1000000)
@@ -476,14 +487,15 @@ class Base(QDialog):
             
             # Gain value (optional, third parameter)
             gain_spinbox = QDoubleSpinBox()
-            gain_spinbox.setDecimals(2)
+            gain_spinbox.setDecimals(6)
             gain_spinbox.setSingleStep(0.01)
             gain_spinbox.setMinimum(-1000000)
             gain_spinbox.setMaximum(1000000)
             if len(bounds) > 2:
                 gain_spinbox.setValue(bounds[2])
             else:
-                gain_spinbox.setValue(1.0)
+                # Set default gain to 10% of max value
+                gain_spinbox.setValue(bounds[1] * 0.1)
             param_layout.addWidget(gain_spinbox)
             
             # Enabled checkbox
@@ -493,8 +505,6 @@ class Base(QDialog):
             
             self.space_widgets[param_name] = (min_spinbox, max_spinbox, gain_spinbox, enabled_checkbox)
         
-            form_layout.addRow(f"{param_name}:", param_layout)
-
         # Add horizontal separator line
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
@@ -530,7 +540,7 @@ class Base(QDialog):
 
         # Min value
         min_spinbox = QDoubleSpinBox()
-        min_spinbox.setDecimals(2)
+        min_spinbox.setDecimals(6)
         min_spinbox.setSingleStep(0.01)
         min_spinbox.setMinimum(-1000000)
         min_spinbox.setMaximum(1000000)
@@ -538,7 +548,7 @@ class Base(QDialog):
 
         # Max value
         max_spinbox = QDoubleSpinBox()
-        max_spinbox.setDecimals(2)
+        max_spinbox.setDecimals(6)
         max_spinbox.setSingleStep(0.01)
         max_spinbox.setMinimum(-1000000)
         max_spinbox.setMaximum(1000000)
@@ -546,7 +556,7 @@ class Base(QDialog):
 
         # Gain value
         gain_spinbox = QDoubleSpinBox()
-        gain_spinbox.setDecimals(2)
+        gain_spinbox.setDecimals(6)
         gain_spinbox.setSingleStep(0.01)
         gain_spinbox.setMinimum(-1000000)
         gain_spinbox.setMaximum(1000000)
