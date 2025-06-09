@@ -321,6 +321,14 @@ class Base(QDialog):
         self.iterations_spinbox.setMaximum(10000)
         self.iterations_spinbox.setValue(100)
         form_layout.addRow("Iterations:", self.iterations_spinbox)
+        
+        # Fraction (for ratio of training data used)
+        self.fraction_spinbox = QDoubleSpinBox()
+        self.fraction_spinbox.setDecimals(2)
+        self.fraction_spinbox.setSingleStep(0.01)
+        self.fraction_spinbox.setMinimum(0.01)
+        self.fraction_spinbox.setMaximum(1.0)
+        self.fraction_spinbox.setValue(0.1)  # Default to 10% of the dataset
 
         # Base training parameters
         # Epochs (for each iteration)
@@ -715,6 +723,7 @@ class Base(QDialog):
             'task': self.task,
             'data': self.dataset_edit.text(),
             'iterations': self.iterations_spinbox.value(),
+            'fraction': self.fraction_spinbox.value(),
             'epochs': self.epochs_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
