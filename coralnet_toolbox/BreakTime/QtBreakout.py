@@ -128,7 +128,6 @@ class Laser:
         painter.setPen(Qt.NoPen)
         painter.drawRect(self.rect)
 
-
 class HighScoreManager:
     """Manages high scores storage and retrieval."""
     def __init__(self):
@@ -504,8 +503,8 @@ class Board(QWidget):
             
         elif power_type == 'fast_ball':
             for ball in self.balls:
-                new_x_dir = int(ball['xDir'] * 1.5)
-                new_y_dir = int(ball['yDir'] * 1.5)
+                new_x_dir = int(ball['xDir'] * 3.0)
+                new_y_dir = int(ball['yDir'] * 3.0)
                 
                 # Ensure reasonable maximum speed
                 max_speed = int(4 * self.ball_speed_multiplier)
