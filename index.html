@@ -683,12 +683,13 @@ computer vision and deep learning built in <code>PyTorch</code>. For more inform
 | ![Patch Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Patches.gif)<br><sub>**Patch Annotation**</sub> | ![Rectangle Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Rectangles.gif)<br><sub>**Rectangle Annotation**</sub> | ![Polygon Annotation Tool](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Polygons.gif)<br><sub>**(Multi) Polygon Annotation**</sub> |
 |:--:|:--:|:--:|
 | ![Patch-based Image Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classification.gif)<br><sub>**Image Classification**</sub> | ![Object Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Object_Detection.gif)<br><sub>**Object Detection**</sub> | ![Instance Segmentation](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Instance_Segmentation.gif)<br><sub>**Instance Segmentation**</sub> |
-| ![Segment Anything Model (SAM)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif)<br><sub>**Segment Anything (SAM)**</sub> | ![Polygon Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif)<br><sub>**Polygon Classification**</sub> | ![Patch-based LAI Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif)<br><sub>**Patch-based LAI Classification**</sub> |
-| ![Cut](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif)<br><sub>**Cut**</sub> | ![Combine](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif)<br><sub>**Combine**</sub> | ![See Anything (YOLOE)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif)<br><sub>**See Anything (YOLOE)**</sub> |
-|  | ![Region-based Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif)<br><sub>**Region-based Detection**</sub> |  |
+| ![Segment Anything Model (SAM)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Segment_Anything.gif)<br><sub>**Segment Anything (SAM)**</sub> | ![Polygon Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Polygons.gif)<br><sub>**Polygon Classification**</sub> | ![Region-based Detection](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Work_Areas.gif)<br><sub>**Region-based Detection**</sub> |
+| ![Cut](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Cut.gif)<br><sub>**Cut**</sub> | ![Combine](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Combine.gif)<br><sub>**Combine**</sub> | ![Simplify](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Simplify.gif)<br><sub>**Simplify**</sub> |
+| ![See Anything (YOLOE)](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/See_Anything.gif)<br><sub>**See Anything (YOLOE)**</sub> | ![Patch-based LAI Classification](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Classifying_Orthomosaics.gif)<br><sub>**Patch-based LAI Classification**</sub> | ![Video Inference](https://raw.githubusercontent.com/Jordan-Pierce/CoralNet-Toolbox/refs/heads/main/figures/tools/Analytics.gif)<br><sub>**Video Inference**</sub> |
 
 </div>
 
+</div>
 <p>Enhance your CoralNet experience with these tools:
 - 📥 <a href="https://www.youtube.com/watch?v=Ds9JZATmCmw">Download</a>: Retrieve Source data (images and annotations) from CoralNet
 - 🎬 Rasters: Import images, or extract frames directly from video files
@@ -698,22 +699,27 @@ computer vision and deep learning built in <code>PyTorch</code>. For more inform
 - 🧩 Patches: Create patches (points)
 - 🔳 Rectangles: Create rectangles (bounding boxes)
 - 🟣 Polygons: Create polygons (instance masks)
+  - 👨‍👩‍👧‍👦 MultiPolygons: Combine multiple, non-overlapping polygons (i.e, genets)
 - ✍️ Edit: Cut and Combine polygons and rectangles
 - 🦾 SAM: Use <code>FastSAM</code>, <code>CoralSCOP</code>, <code>RepViT-SAM</code>, <code>EdgeSAM</code>, <code>MobileSAM</code>, and <code>SAM</code> to create polygons
   - Uses <a href="https://github.com/Jordan-Pierce/xSAM"><code>xSAM</code></a>
+- 👷‍♂️ Work areas: Perform region-specific detections / segmentations with any model
 - 👀 YOLOE (See Anything): Detect similar appearing objects using visual prompts automatically
 - 🧪 AutoDistill: Use <code>AutoDistill</code> to access the following for creating rectangles and polygons:
   - Uses <code>Grounding DINO</code>, <code>OWLViT</code>, <code>OmDetTurbo</code>
+- 📻 Tune: Tune hyperparameters to identify ideal training conditions
 - 🧠 Train: Build local patch-based classifiers, object detection, and instance segmentation models
 - 🔮 Deploy: Use trained models for predictions
 - 📊 Evaluation: Evaluate model performance
 - 🚀 Optimize: Productionize models for faster inferencing
 - ⚙️ Batch Inference: Perform predictions on multiple images, automatically
+- 🎞️ Video Inference: Perform predictions on a video in real-time, record the output and analytics
 - ↔️ I/O: Import and Export annotations from / to CoralNet, Viscore, and TagLab
   - Export annotations as <a href="https://datatracker.ietf.org/doc/html/rfc7946">GeoJSONs</a>, segmentation masks
 - 📸 YOLO: Import and Export YOLO datasets for machine learning
 - 🧱 Tile Dataset: Tile existing Detection / Segmentation datasets
-  - Uses <a href="https://github.com/Jordan-Pierce/yolo-tiling"><code>yolo-tiling</code></a></p>
+  - Uses <a href="https://github.com/Jordan-Pierce/yolo-tiling"><code>yolo-tiling</code></a>
+- 🏗️ Tile Inference: Pre-compute multiple work areas for an entire image</p>
 <h3 id="todo">📝 TODO<a class="headerlink" href="#todo" title="Permanent link">&para;</a></h3>
 <ul>
 <li>🤗 Model Zoo: Download <code>Ultralytics</code> models from <code>HuggingFace</code> for use in <code>toolbox</code></li>
@@ -742,7 +748,7 @@ computer vision and deep learning built in <code>PyTorch</code>. For more inform
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="May 21, 2025 20:24:26 UTC"><span class="timeago" datetime="2025-05-21T20:24:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="May 21, 2025 20:24:26 UTC">2025-05-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="June 9, 2025 14:14:03 UTC"><span class="timeago" datetime="2025-06-09T14:14:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="June 9, 2025 14:14:03 UTC">2025-06-09</span>
   </span>
 
     
