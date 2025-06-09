@@ -749,12 +749,9 @@ class Base(QDialog):
             name = f"tune_{now.strftime('%Y-%m-%d_%H-%M-%S')}"
         
         # Use Ultralytics standard project/name structure
-        params['project'] = project_path
+        params['project'] = f"{project_path}/results"
         params['name'] = name
-        
-        # Update Project path
-        params['project'] = f"{params['project']}/{params['name']}/results"
-        
+                
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
 
