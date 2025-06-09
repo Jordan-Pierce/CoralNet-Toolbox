@@ -735,17 +735,24 @@ class Base(QDialog):
             'exist_ok': True,
         }
         
-        # Get the current date and time for the project name
-        now = datetime.datetime.now()
-        now = now.strftime("%Y-%m-%d_%H-%M-%S")
-        # Default project folder
-        params['project'] = self.project_edit.text()
-        params['project'] = params['project'] if params['project'] else "Data/Tuning"
-        # Default project name
-        params['name'] = self.name_edit.text()
-        params['name'] = params['name'] if params['name'] else f"tune_{now}"
-        # Combine project and name into a single parameter
-        params['project'] = f"{params['project']}/{params['name']}"
+        # Handle project and name parameters properly
+        project_path = self.project_edit.text().strip()
+        name = self.name_edit.text().strip()
+        
+        # Set defaults if empty
+        if not project_path:
+            project_path = "Data/Tuning"
+        
+        if not name:
+            now = datetime.datetime.now()
+            name = f"tune_{now.strftime('%Y-%m-%d_%H-%M-%S')}"
+        
+        # Use Ultralytics standard project/name structure
+        params['project'] = project_path
+        params['name'] = name
+        
+        # Update Project path
+        params['project'] = f"{params['project']}/{params['name']}/results"
         
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
