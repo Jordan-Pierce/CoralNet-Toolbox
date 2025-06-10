@@ -21,8 +21,6 @@ from coralnet_toolbox.Results.MapResults import MapResults
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-from coralnet_toolbox.utilities import check_model_architecture
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -132,38 +130,11 @@ class Segment(Base):
             return
 
         try:
+            # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # Get the model architecture and task
-            model_architecture, task = check_model_architecture(self.model_path)
-
-            if not model_architecture:
-                # If architecture can't be determined, ask user to choose
-                msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("Model Architecture Selection")
-                msg_box.setText("Model architecture could not be determined (is it still training?)\n"
-                                "Please select how to load this model:")
-                yolo_button = msg_box.addButton("Load as YOLO", QMessageBox.ActionRole)
-                rtdetr_button = msg_box.addButton("Load as RTDETR", QMessageBox.ActionRole)
-                cancel_button = msg_box.addButton(QMessageBox.Cancel)
-
-                msg_box.exec_()
-
-                if msg_box.clickedButton() == yolo_button:
-                    model_architecture = "yolo"
-                elif msg_box.clickedButton() == rtdetr_button:
-                    model_architecture = "rtdetr"
-                else:
-                    QApplication.restoreOverrideCursor()
-                    return
-
-            # Check if the model is supported
-            if model_architecture == "yolo":
-                self.loaded_model = YOLO(self.model_path)
-            elif model_architecture == "rtdetr":
-                self.loaded_model = RTDETR(self.model_path)
-            else:
-                raise ValueError(f"Unsupported model architecture: {model_architecture}")
+            # Load the model (8.3.141) YOLO handles RTDETR too
+            self.loaded_model = YOLO(self.model_path)
 
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']
@@ -350,8 +321,8 @@ class Segment(Base):
                 # Check if the work area is valid, or the image path is being used
                 if work_areas and self.annotation_window.get_selected_tool() == "work_area":
                     # Map results from work area to the full image
-                    results = MapResults().map_results_from_work_area(results[0], 
-                                                                      raster, 
+                    results = MapResults().map_results_from_work_area(results[0],
+                                                                      raster,
                                                                       work_areas[idx],
                                                                       self.task == 'segment')
                 else:

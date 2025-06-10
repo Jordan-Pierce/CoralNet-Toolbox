@@ -58,7 +58,7 @@ def rasterio_open(image_path):
     try:
         # Use a local variable rather than instance attribute to avoid thread issues
         src = rasterio.open(image_path)
-        
+
         # Test read a small sample to catch corruption early
         try:
             test_window = rasterio.windows.Window(0, 0, min(10, src.width), min(10, src.height))
@@ -66,11 +66,11 @@ def rasterio_open(image_path):
         except Exception as read_error:
             src.close()
             raise read_error
-            
+
         return src
     except Exception as e:
         error_msg = f"Error opening image with rasterio: {image_path}\nException: {str(e)}"
-        
+
         # Try to inspect file existence and permissions for more detailed error info
         if not os.path.exists(image_path):
             error_msg += f"\nFile does not exist: {image_path}"
@@ -88,10 +88,10 @@ def rasterio_open(image_path):
                 "Image Loading Error",
                 f"Failed to open image file:\n\n{error_msg}\n\nThis file may be corrupted or in an unsupported format."
             )
-        
+
         # Print to console for logging
         print(error_msg)
-        
+
         # Raise a custom exception with detailed information
         raise RuntimeError(f"Failed to open rasterio image: {image_path}. {error_msg}")
 
@@ -610,50 +610,6 @@ def densify_polygon(xy_points):
     except Exception as e:
         print(f"Error densifying polygon: {e}")
         return xy_points.tolist() if isinstance(xy_points, np.ndarray) else xy_points
-
-
-# TODO deal with optimized model types
-def check_model_architecture(weights_file):
-    """
-    Determine the model architecture type and task from weights file.
-
-    Args:
-        weights_file (str): Path to model weights (.pt or .pth)
-
-    Returns:
-        tuple: (architecture_type, task_type) where both are strings.
-               Returns ("", "") if architecture cannot be determined.
-    """
-    try:
-        model = torch.load(weights_file)
-        if 'model' not in model:
-            return "", ""
-
-        if model['model'] is not None:
-            decoder = model["model"].model[-1]
-        else:
-            decoder = model["ema"].model[-1]
-
-        decoder_name = decoder.__class__.__name__
-
-        if decoder_name == "RTDETRDecoder":
-            return "rtdetr", "detect"
-
-        if not any(task in decoder_name for task in ["Detect", "Segment", "Classify"]):
-            return "", ""
-
-        task_map = {
-            "Detect": "detect",
-            "Segment": "segment",
-            "Classify": "classify"
-        }
-
-        for key, task in task_map.items():
-            if key in decoder_name:
-                return "yolo", task
-
-    except Exception:
-        return "", ""
 
 
 def console_user(error_msg, parent=None):
