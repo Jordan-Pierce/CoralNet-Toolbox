@@ -12,6 +12,8 @@ from PyQt5.QtWidgets import (QApplication, QVBoxLayout, QDialog, QHBoxLayout,
                              QFormLayout, QGroupBox, QGraphicsRectItem, QMessageBox)
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
 from coralnet_toolbox.QtWorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
@@ -445,7 +447,8 @@ class PatchSamplingDialog(QDialog):
                 found = next(
                     (
                         a for a in image_annotations
-                        if a.get_polygon().containsPoint(center, Qt.OddEvenFill)
+                        if a.get_polygon().containsPoint(center, Qt.OddEvenFill) and
+                        (isinstance(a, PolygonAnnotation) or isinstance(a, RectangleAnnotation))
                     ),
                     None
                 )

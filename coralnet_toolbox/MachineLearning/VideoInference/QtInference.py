@@ -1,11 +1,12 @@
-import os
-from datetime import datetime
+import gc
 from typing import List, Optional, Dict, Tuple
 
 import cv2
 import numpy as np
 
 from shapely.geometry import Polygon
+
+import torch
 
 import supervision as sv
 from ultralytics import YOLO
@@ -881,4 +882,13 @@ class InferenceEngine:
         """Reset the zone manager."""
         if self.zone_manager:
             self.zone_manager.reset_zones()
+            
+    def cleanup(self):
+        """Clean up resources and reset states."""
+        self.reset_tracker()
+        self.reset_zone_manager()
+        # Reset model and task
+        self.model = None
+        torch.cuda.empty_cache()
+        gc.collect()
             

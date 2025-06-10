@@ -8,10 +8,10 @@ import ujson as json
 import yaml
 from pathlib import Path
 
-from ultralytics import YOLO, RTDETR
-import ultralytics.data.build as build
-import ultralytics.models.yolo.classify.train as train_build
+from ultralytics import YOLO
+import ultralytics.data.build as detection_build
 from ultralytics.data.dataset import YOLODataset
+import ultralytics.models.yolo.classify.train as train_build
 from ultralytics.data.dataset import ClassificationDataset
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -61,12 +61,8 @@ class TrainModelWorker(QThread):
         super().__init__()
         self.params = params
         self.device = device
-
-        self.is_yolo = True
-
         self.model = None
         self.model_path = None
-
         self.weighted = False
 
     def pre_run(self):
@@ -78,8 +74,6 @@ class TrainModelWorker(QThread):
             self.model_path = self.params.pop('model', None)
             # Get the weighted flag
             self.weighted = self.params.pop('weighted', False)
-            # Whether to use YOLO or RTDETR
-            self.is_yolo = False if 'detr' in self.model_path.lower() else True
 
             # Determine if ultralytics or community
             if self.model_path in get_available_configs(task=self.params['task']):
@@ -91,13 +85,10 @@ class TrainModelWorker(QThread):
             if self.weighted and self.params['task'] == 'classify':
                 train_build.ClassificationDataset = WeightedClassificationDataset
             elif self.weighted and self.params['task'] in ['detect', 'segment']:
-                build.YOLODataset = WeightedInstanceDataset
+                detection_build.YOLODataset = WeightedInstanceDataset
 
-            # Load the model
-            if self.is_yolo:
-                self.model = YOLO(self.model_path)
-            else:
-                self.model = RTDETR(self.model_path)
+            # Load the model (8.3.141) YOLO handles RTDETR
+            self.model = YOLO(self.model_path)
 
             # Set the task in the model itself
             self.model.task = self.params['task']
@@ -159,7 +150,7 @@ class TrainModelWorker(QThread):
         if self.weighted and self.params['task'] == 'classify':
             train_build.ClassificationDataset = ClassificationDataset
         elif self.weighted and self.params['task'] in ['detect', 'segment']:
-            build.YOLODataset = YOLODataset
+            detection_build.YOLODataset = YOLODataset
 
     def evaluate_model(self):
         """

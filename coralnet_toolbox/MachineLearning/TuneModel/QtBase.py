@@ -1,10 +1,9 @@
 import warnings
 
 import gc
-import datetime
 import traceback
 
-from ultralytics import YOLO, RTDETR
+from ultralytics import YOLO
 import ultralytics.data.build as build
 import ultralytics.models.yolo.classify.train as train_build
 from ultralytics.data.dataset import YOLODataset
@@ -20,6 +19,8 @@ from torch.cuda import empty_cache
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
+
+from coralnet_toolbox.MachineLearning.TuneModel.tuner import Tuner, DEFAULT_SPACE
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -59,22 +60,20 @@ class TuneModelWorker(QThread):
         self.params = params
         self.device = device
 
-        self.is_yolo = True
         self.model = None
         self.model_path = None
         self.weighted = False
+        self.tuner = None
 
     def pre_run(self):
         """
         Set up the model and prepare parameters for tuning.
         """
         try:
-            # Extract model path
-            self.model_path = self.params.pop('model', None)
+            # Extract model path before creating tuner args
+            self.model_path = self.params.get('model', None)
             # Get the weighted flag
             self.weighted = self.params.pop('weighted', False)
-            # Whether to use YOLO or RTDETR
-            self.is_yolo = False if 'detr' in self.model_path.lower() else True
 
             # Determine if ultralytics or community
             if self.model_path in get_available_configs(task=self.params['task']):
@@ -88,14 +87,21 @@ class TuneModelWorker(QThread):
             elif self.weighted and self.params['task'] in ['detect', 'segment']:
                 build.YOLODataset = WeightedInstanceDataset
 
-            # Load the model
-            if self.is_yolo:
-                self.model = YOLO(self.model_path)
-            else:
-                self.model = RTDETR(self.model_path)
+            # Load the model (8.3.141) YOLO handles RTDETR too
+            self.model = YOLO(self.model_path)
 
             # Set the task in the model itself
             self.model.task = self.params['task']
+
+            # Prepare tuner arguments following the same pattern as model.tune()
+            self.mutation = self.params.pop('mutation', None)
+            self.iterations = self.params.pop('iterations', None)  # Remove iterations, will pass separately
+            
+            # Add mode parameter as done in model.tune()
+            self.params['mode'] = 'train'
+            
+            # Create the custom tuner with the prepared arguments
+            self.tuner = Tuner(self.mutation, args=self.params, _callbacks=self.model.callbacks)
 
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
@@ -113,8 +119,11 @@ class TuneModelWorker(QThread):
             # Set up the model and parameters
             self.pre_run()
 
-            # Tune the model using the built-in tune method
-            self.model.tune(**self.params)
+            # Run the custom tuner following the same pattern as model.tune()
+            results = self.tuner(model=self.model, iterations=self.iterations)
+
+            # Store results for potential future use
+            self.tuning_results = results
 
             # Post-run cleanup
             self.post_run()
@@ -144,6 +153,8 @@ class TuneModelWorker(QThread):
         """
         if self.model:
             del self.model
+        if self.tuner:
+            del self.tuner
         gc.collect()
         empty_cache()
 
@@ -165,11 +176,11 @@ class Base(QDialog):
         self.resize(700, 800)  
 
         # Set window settings
-        self.setWindowFlags(Qt.Window |
-                            Qt.WindowCloseButtonHint |
-                            Qt.WindowMinimizeButtonHint |
-                            Qt.WindowMaximizeButtonHint |
-                            Qt.WindowTitleHint)
+        self.setWindowFlags(Qt.Window
+                            | Qt.WindowCloseButtonHint
+                            | Qt.WindowMinimizeButtonHint
+                            | Qt.WindowMaximizeButtonHint
+                            | Qt.WindowTitleHint)
 
         # Task
         self.task = None
@@ -319,6 +330,22 @@ class Base(QDialog):
         group_layout.addWidget(scroll_area)
 
         # Tuning-specific parameters
+        # Mutation methods
+        self.mutation_combo = QComboBox()
+        self.mutation_combo.addItems([
+            "gaussian",
+            "adaptive", 
+            "cauchy",
+            "polynomial",
+            "levy",
+            "differential",
+            "parameter_specific",
+            "multi_scale",
+            "simulated_annealing"
+        ])
+        self.mutation_combo.setCurrentText("gaussian")  # Set default to original method
+        form_layout.addRow("Mutation Method:", self.mutation_combo)
+        
         # Iterations
         self.iterations_spinbox = QSpinBox()
         self.iterations_spinbox.setMinimum(1)
@@ -340,12 +367,6 @@ class Base(QDialog):
         self.imgsz_spinbox.setMaximum(4096)
         self.imgsz_spinbox.setValue(self.imgsz)
         form_layout.addRow("Image Size:", self.imgsz_spinbox)
-        
-        # Multi Scale
-        self.multi_scale_combo = QComboBox()
-        self.multi_scale_combo.addItems(["True", "False"])
-        self.multi_scale_combo.setCurrentText("False")
-        form_layout.addRow("Multi Scale:", self.multi_scale_combo)
 
         # Batch
         self.batch_spinbox = QSpinBox()
@@ -362,8 +383,8 @@ class Base(QDialog):
         
         # Optimizer
         self.optimizer_combo = QComboBox()
-        self.optimizer_combo.addItems(["auto", "SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
-        self.optimizer_combo.setCurrentText("auto")
+        self.optimizer_combo.addItems(["SGD", "Adam", "AdamW", "NAdam", "RAdam", "RMSProp"])
+        self.optimizer_combo.setCurrentText("SGD")
         form_layout.addRow("Optimizer:", self.optimizer_combo)
         
         # Validation
@@ -426,44 +447,18 @@ class Base(QDialog):
         
         group_layout.addWidget(scroll_area)
 
-        # Add column headers for the search space parameters
+        # Add section header for Min and Max
         header_layout = QHBoxLayout()
+        header_layout.addWidget(QLabel(""))
         header_layout.addWidget(QLabel("Min"))
         header_layout.addWidget(QLabel("Max"))
-        header_layout.addWidget(QLabel("Gain"))
-        form_layout.addRow("", header_layout)
+        header_layout.addWidget(QLabel(""))
+        form_layout.addRow(header_layout)
 
-        # Default search space parameters
-        default_space = {
-            "lr0": (1e-5, 1e-1),
-            "lrf": (0.0001, 0.1),
-            "momentum": (0.7, 0.98, 0.3),
-            "weight_decay": (0.0, 0.001),
-            "warmup_epochs": (0.0, 5.0),
-            "warmup_momentum": (0.0, 0.95),
-            "box": (1.0, 20.0),
-            "cls": (0.2, 4.0),
-            "dfl": (0.4, 6.0),
-            "hsv_h": (0.0, 0.1),
-            "hsv_s": (0.0, 0.9),
-            "hsv_v": (0.0, 0.9),
-            "degrees": (0.0, 45.0),
-            "translate": (0.0, 0.9),
-            "scale": (0.0, 0.95),
-            "shear": (0.0, 10.0),
-            "perspective": (0.0, 0.001),
-            "flipud": (0.0, 1.0),
-            "fliplr": (0.0, 1.0),
-            "bgr": (0.0, 1.0),
-            "mosaic": (0.0, 1.0),
-            "mixup": (0.0, 1.0),
-            "cutmix": (0.0, 1.0),
-            "copy_paste": (0.0, 1.0),
-        }
-
-        # Create UI elements for default search space
+        # Use imported default search space parameters from tuner.py
+        # Create UI elements for all parameters (continuous and what was previously boolean)
         self.space_widgets = {}
-        for param_name, bounds in default_space.items():
+        for param_name, bounds in DEFAULT_SPACE.items():
             param_layout = QHBoxLayout()
             
             # Min value
@@ -484,123 +479,17 @@ class Base(QDialog):
             max_spinbox.setValue(bounds[1])
             param_layout.addWidget(max_spinbox)
             
-            # Gain value (optional, third parameter)
-            gain_spinbox = QDoubleSpinBox()
-            gain_spinbox.setDecimals(6)
-            gain_spinbox.setSingleStep(0.01)
-            gain_spinbox.setMinimum(-1000000)
-            gain_spinbox.setMaximum(1000000)
-            if len(bounds) > 2:
-                gain_spinbox.setValue(bounds[2])
-            else:
-                gain_spinbox.setValue(bounds[1] * 0.1)
-            param_layout.addWidget(gain_spinbox)
-            
-            # Enabled checkbox
-            enabled_checkbox = QCheckBox("Enabled")
-            enabled_checkbox.setChecked(True)
+            # Enabled checkbox (default to checked for all parameters)
+            enabled_checkbox = QCheckBox()
+            enabled_checkbox.setChecked(True)  # Enable all by default
             param_layout.addWidget(enabled_checkbox)
             
-            self.space_widgets[param_name] = (min_spinbox, max_spinbox, gain_spinbox, enabled_checkbox)
+            # Store widgets without gain spinbox
+            self.space_widgets[param_name] = (min_spinbox, max_spinbox, enabled_checkbox)
             # Add the row to the form layout with the parameter name as label
             form_layout.addRow(param_name, param_layout)
         
-        # Add horizontal separator line
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        form_layout.addRow("", separator)
-        
-        # Add custom space parameter button
-        self.add_space_param_button = QPushButton("Add Space Parameter")
-        self.add_space_param_button.clicked.connect(self.add_space_parameter_pair)
-        form_layout.addRow("", self.add_space_param_button)
-
-        # Add custom space parameters section
-        self.custom_space_params_layout = QVBoxLayout()
-        form_layout.addRow("", self.custom_space_params_layout)
-
-        # Remove space parameter button
-        self.remove_space_param_button = QPushButton("Remove Space Parameter")
-        self.remove_space_param_button.clicked.connect(self.remove_space_parameter_pair)
-        self.remove_space_param_button.setEnabled(False)
-        form_layout.addRow("", self.remove_space_param_button)
-
         self.layout.addWidget(group_box)
-
-    def add_space_parameter_pair(self):
-        """
-        Add a new search space parameter input group.
-        """
-        param_layout = QHBoxLayout()
-
-        # Parameter name field
-        param_name = QLineEdit()
-        param_name.setPlaceholderText("Parameter name")
-
-        # Min value
-        min_spinbox = QDoubleSpinBox()
-        min_spinbox.setDecimals(6)
-        min_spinbox.setSingleStep(0.01)
-        min_spinbox.setMinimum(-1000000)
-        min_spinbox.setMaximum(1000000)
-        min_spinbox.setValue(0.0)
-
-        # Max value
-        max_spinbox = QDoubleSpinBox()
-        max_spinbox.setDecimals(6)
-        max_spinbox.setSingleStep(0.01)
-        max_spinbox.setMinimum(-1000000)
-        max_spinbox.setMaximum(1000000)
-        max_spinbox.setValue(1.0)
-
-        # Gain value
-        gain_spinbox = QDoubleSpinBox()
-        gain_spinbox.setDecimals(6)
-        gain_spinbox.setSingleStep(0.01)
-        gain_spinbox.setMinimum(-1000000)
-        gain_spinbox.setMaximum(1000000)
-        gain_spinbox.setValue(1.0)
-
-        # Add widgets to layout
-        param_layout.addWidget(param_name)
-        param_layout.addWidget(min_spinbox)
-        param_layout.addWidget(max_spinbox)
-        param_layout.addWidget(gain_spinbox)
-
-        # Store the widgets for later retrieval
-        self.custom_space_params.append((param_name, min_spinbox, max_spinbox, gain_spinbox))
-        self.custom_space_params_layout.addLayout(param_layout)
-
-        # Enable the remove button
-        self.remove_space_param_button.setEnabled(True)
-
-    def remove_space_parameter_pair(self):
-        """
-        Remove the most recently added search space parameter pair.
-        """
-        if not self.custom_space_params:
-            return
-
-        # Get the last parameter group
-        self.custom_space_params.pop()
-
-        # Remove the layout containing these widgets
-        layout_to_remove = self.custom_space_params_layout.itemAt(self.custom_space_params_layout.count() - 1)
-
-        if layout_to_remove:
-            # Remove and delete widgets from the layout
-            while layout_to_remove.count():
-                widget = layout_to_remove.takeAt(0).widget()
-                if widget:
-                    widget.deleteLater()
-
-            # Remove the layout itself
-            self.custom_space_params_layout.removeItem(layout_to_remove)
-
-        # Disable the remove button if no more parameters
-        if not self.custom_space_params:
-            self.remove_space_param_button.setEnabled(False)
 
     def add_parameter_pair(self):
         """
@@ -722,7 +611,7 @@ class Base(QDialog):
     def get_parameters(self):
         """
         Get the tuning parameters from the dialog widgets.
-    
+
         Returns:
             dict: A dictionary of tuning parameters.
         """
@@ -730,11 +619,11 @@ class Base(QDialog):
         params = {
             'task': self.task,
             'data': self.dataset_edit.text(),
+            'mutation': self.mutation_combo.currentText(),
             'iterations': self.iterations_spinbox.value(),
             'epochs': self.epochs_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
-            'multi_scale': self.multi_scale_combo.currentText().lower() == "true",
             'weighted': self.weighted_combo.currentText().lower() == "true",
             'optimizer': self.optimizer_combo.currentText(),
             'val': self.val_combo.currentText().lower() == "true",
@@ -759,41 +648,22 @@ class Base(QDialog):
         # Either the model path, or the model name provided from combo box
         params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
 
-        # Build search space
+        # Build search space - ALWAYS include it, even if empty
         space = {}
         
         # Add enabled default space parameters
         for param_name, widgets in self.space_widgets.items():
-            # Handle numeric parameters
-            min_spinbox, max_spinbox, gain_spinbox, enabled_checkbox = widgets
+            min_spinbox, max_spinbox, enabled_checkbox = widgets
             if enabled_checkbox.isChecked():
                 min_val = min_spinbox.value()
                 max_val = max_spinbox.value()
-                gain_val = gain_spinbox.value()
                 
-                if gain_val != 1.0:
-                    space[param_name] = (min_val, max_val, gain_val)
-                else:
-                    space[param_name] = (min_val, max_val)
+                # Store as simple tuple (min, max) since gain is no longer used
+                space[param_name] = (min_val, max_val)
 
-        # Add custom space parameters
-        for param_info in self.custom_space_params:
-            param_name_widget, min_spinbox, max_spinbox, gain_spinbox = param_info
-            name = param_name_widget.text().strip()
-            
-            if name:
-                min_val = min_spinbox.value()
-                max_val = max_spinbox.value()
-                gain_val = gain_spinbox.value()
-                
-                if gain_val != 1.0:
-                    space[name] = (min_val, max_val, gain_val)
-                else:
-                    space[name] = (min_val, max_val)
-
-        if space:
-            params['space'] = space
-
+        # Always add space parameter to params
+        params['space'] = space
+        
         # Add custom parameters (allows overriding the above parameters)
         for param_info in self.custom_params:
             param_name, param_value, param_type = param_info

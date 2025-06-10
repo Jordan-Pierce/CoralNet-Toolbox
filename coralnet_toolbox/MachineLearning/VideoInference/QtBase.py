@@ -318,10 +318,6 @@ class Base(QDialog):
                 if hasattr(self.video_region_widget, 'inference_engine') and self.video_region_widget.inference_engine:
                     if hasattr(self.video_region_widget.inference_engine, 'cleanup'):
                         self.video_region_widget.inference_engine.cleanup()
-                    
-                    # Clear model reference
-                    if hasattr(self.video_region_widget.inference_engine, 'model'):
-                        self.video_region_widget.inference_engine.model = None
                 
                 # Release video capture if exists
                 if hasattr(self.video_region_widget, 'cap') and self.video_region_widget.cap:
