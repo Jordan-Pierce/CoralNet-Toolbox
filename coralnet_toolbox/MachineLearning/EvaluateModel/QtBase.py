@@ -93,6 +93,7 @@ class Base(QDialog):
                             Qt.WindowMaximizeButtonHint |
                             Qt.WindowTitleHint)
         
+        self.imgsz = 640
         self.task = None
         self.params = {}
         self.class_mapping = {}
@@ -151,7 +152,7 @@ class Base(QDialog):
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setMinimum(16)
         self.imgsz_spinbox.setMaximum(4096)
-        self.imgsz_spinbox.setValue(640)
+        self.imgsz_spinbox.setValue(self.imgsz)
         layout.addRow("Image Size:", self.imgsz_spinbox)
         
         # Batch size
