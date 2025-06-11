@@ -35,6 +35,33 @@ BASE_GAME_SPEED = 5  # Lower is faster
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
 
+class BallTrail:
+    """Represents a trailing effect behind the ball."""
+    def __init__(self, x, y, size):
+        self.x = x
+        self.y = y
+        self.size = size
+        self.life = 30  # Increased from 15 to 30 for a longer tail
+        self.max_life = 30
+        
+    def update(self):
+        """Update trail position and properties."""
+        self.life -= 1
+        self.size = max(1, self.size - 0.15)  # Slower shrink for longer visible trail
+        return self.life > 0
+        
+    def draw(self, painter):
+        """Draw the trail segment."""
+        if self.life > 0:
+            # Fade out over time
+            alpha = int(200 * (self.life / self.max_life))
+            color = QColor(100, 100, 100)  # Gray trail
+            color.setAlpha(alpha)
+            painter.setBrush(QBrush(color))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(int(self.x), int(self.y), int(self.size), int(self.size))
+
+
 class Particle:
     """Represents a visual particle for brick destruction effects."""
     def __init__(self, x, y, color, velocity_x=None, velocity_y=None):
@@ -78,10 +105,10 @@ class PowerUp:
             'multiball': QColor(255, 0, 255),       # Magenta
             'big_paddle': QColor(0, 255, 0),        # Green
             'small_paddle': QColor(255, 165, 0),    # Orange
-            'sticky_paddle': QColor(255, 255, 0),   # Yellow
             'laser': QColor(255, 0, 0),             # Red
             'slow_ball': QColor(0, 0, 255),         # Blue
             'fast_ball': QColor(255, 255, 255),     # White
+            'reverse_paddle': QColor(128, 0, 128),  # Purple
             'extra_life': QColor(255, 20, 147)      # Deep Pink
         }
         
@@ -102,10 +129,10 @@ class PowerUp:
             'multiball': 'M',
             'big_paddle': '+',
             'small_paddle': '-',
-            'sticky_paddle': 'S',
             'laser': 'L',
             'slow_ball': 'SL',
             'fast_ball': 'F',
+            'reverse_paddle': 'R',
             'extra_life': '♥'
         }
         symbol = symbols.get(self.power_type, '?')
@@ -127,6 +154,7 @@ class Laser:
         painter.setBrush(QBrush(QColor(255, 0, 0)))
         painter.setPen(Qt.NoPen)
         painter.drawRect(self.rect)
+
 
 class HighScoreManager:
     """Manages high scores storage and retrieval."""
@@ -252,8 +280,8 @@ class Board(QWidget):
             "Easy": {
                 "paddle_width_multiplier": 1.5,
                 "ball_speed_multiplier": 0.7,
-                "game_speed": 16,  # Slower
-                "brick_rows": 4,
+                "game_speed": 10,  # Slower
+                "brick_rows": 6,
                 "ball_diameter_multiplier": 1.2,
                 "score_multiplier": 1.0,
                 "width_multiplier": 0.8,  # Smaller play area
@@ -262,8 +290,8 @@ class Board(QWidget):
             "Medium": {
                 "paddle_width_multiplier": 1.0,
                 "ball_speed_multiplier": 1.0,
-                "game_speed": 12,  # Normal
-                "brick_rows": 6,
+                "game_speed": 8,  # Normal
+                "brick_rows": 8,
                 "ball_diameter_multiplier": 1.0,
                 "score_multiplier": 1.5,
                 "width_multiplier": 1.0,  # Normal play area
@@ -272,8 +300,8 @@ class Board(QWidget):
             "Hard": {
                 "paddle_width_multiplier": 0.7,
                 "ball_speed_multiplier": 1.4,
-                "game_speed": 8,  # Faster
-                "brick_rows": 8,
+                "game_speed": 6,  # Faster
+                "brick_rows": 10,
                 "ball_diameter_multiplier": 0.8,
                 "score_multiplier": 2.0,
                 "width_multiplier": 1.2,  # Larger play area
@@ -282,8 +310,8 @@ class Board(QWidget):
             "Insane": {
                 "paddle_width_multiplier": 0.5,
                 "ball_speed_multiplier": 2.0,
-                "game_speed": 5,  # Very fast
-                "brick_rows": 10,
+                "game_speed": 4,  # Very fast
+                "brick_rows": 12,
                 "ball_diameter_multiplier": 0.6,
                 "score_multiplier": 3.0,
                 "width_multiplier": 1.4,  # Much larger play area
@@ -320,7 +348,7 @@ class Board(QWidget):
         
         # Ball speed progression
         self.speed_increase_factor = 1.05  # 5% speed increase per collision
-        self.max_speed_multiplier = 2.5   # Maximum speed multiplier
+        self.max_speed_multiplier = 5   # Maximum speed multiplier
         
         # Paddle setup
         self.original_paddle_width = self.PADDLE_WIDTH
@@ -343,6 +371,7 @@ class Board(QWidget):
         
         # Visual effects
         self.particles = []
+        self.trails = []  # List of active trails
 
         # Bricks setup
         self.initBricks()
@@ -429,14 +458,14 @@ class Board(QWidget):
 
     def spawn_power_up(self, x, y):
         """Randomly spawn a power-up at the given position."""
-        if random.random() < 0.15:  # 15% chance
+        if random.random() < 0.25:  # 25% chance (increased from 15%)
             power_types = ['multiball', 
                            'big_paddle', 
                            'small_paddle', 
-                           'sticky_paddle', 
                            'laser', 
                            'slow_ball', 
-                           'fast_ball']
+                           'fast_ball',
+                           'reverse_paddle']
             
             if self.current_level >= 3:
                 power_types.append('extra_life')
@@ -477,15 +506,18 @@ class Board(QWidget):
             self.active_power_ups['small_paddle'] = True
             self.power_up_timers['small_paddle'] = 500
             
-        elif power_type == 'sticky_paddle':
-            self.active_power_ups['sticky_paddle'] = True
-            self.power_up_timers['sticky_paddle'] = 1000  # 10 seconds
-            
         elif power_type == 'laser':
             self.active_power_ups['laser'] = True
             self.power_up_timers['laser'] = 1000
             
         elif power_type == 'slow_ball':
+            # Store original speeds before slowing down
+            if 'slow_ball' not in self.active_power_ups:
+                self.original_ball_speeds = []
+                for ball in self.balls:
+                    self.original_ball_speeds.append({'xDir': ball['xDir'], 'yDir': ball['yDir']})
+                    
+            # Apply slow effect to all balls
             for ball in self.balls:
                 new_x_dir = int(ball['xDir'] * 0.5)
                 new_y_dir = int(ball['yDir'] * 0.5)
@@ -498,29 +530,42 @@ class Board(QWidget):
                     
                 ball['xDir'] = new_x_dir
                 ball['yDir'] = new_y_dir
+                
             self.active_power_ups['slow_ball'] = True
             self.power_up_timers['slow_ball'] = 1000
             
         elif power_type == 'fast_ball':
+            # Store original speeds before speeding up
+            if 'fast_ball' not in self.active_power_ups:
+                self.original_ball_speeds = []
+                for ball in self.balls:
+                    self.original_ball_speeds.append({'xDir': ball['xDir'], 'yDir': ball['yDir']})
+                    
+            # Apply fast effect to all balls
             for ball in self.balls:
-                new_x_dir = int(ball['xDir'] * 3.0)
-                new_y_dir = int(ball['yDir'] * 3.0)
+                new_x_dir = int(ball['xDir'] * 2.0)  # Reduced from 3.0 to 2.0 for better gameplay
+                new_y_dir = int(ball['yDir'] * 2.0)
                 
                 # Ensure reasonable maximum speed
-                max_speed = int(4 * self.ball_speed_multiplier)
+                max_speed = int(6 * self.ball_speed_multiplier)  # Increased max for fast ball
                 new_x_dir = max(-max_speed, min(max_speed, new_x_dir))
                 new_y_dir = max(-max_speed, min(max_speed, new_y_dir))
                 
                 # Ensure minimum movement
-                if abs(new_x_dir) < 1:
-                    new_x_dir = 1 if ball['xDir'] >= 0 else -1
-                if abs(new_y_dir) < 1:
-                    new_y_dir = 1 if ball['yDir'] >= 0 else -1
+                if abs(new_x_dir) < 2:  # Higher minimum for fast ball
+                    new_x_dir = 2 if ball['xDir'] >= 0 else -2
+                if abs(new_y_dir) < 2:
+                    new_y_dir = 2 if ball['yDir'] >= 0 else -2
                     
                 ball['xDir'] = new_x_dir
                 ball['yDir'] = new_y_dir
+                
             self.active_power_ups['fast_ball'] = True
             self.power_up_timers['fast_ball'] = 500
+            
+        elif power_type == 'reverse_paddle':
+            self.active_power_ups['reverse_paddle'] = True
+            self.power_up_timers['reverse_paddle'] = 800  # 8 seconds
             
         elif power_type == 'extra_life':
             self.lives += 1
@@ -549,6 +594,18 @@ class Board(QWidget):
             self.paddle = QRect(self.paddle.x(), self.paddle.y(), 
                                 self.original_paddle_width, 
                                 self.PADDLE_HEIGHT)
+        elif effect in ['slow_ball', 'fast_ball']:
+            # Restore original ball speeds
+            if hasattr(self, 'original_ball_speeds') and self.original_ball_speeds:
+                for i, ball in enumerate(self.balls):
+                    if i < len(self.original_ball_speeds):
+                        # Restore the original direction and speed magnitude
+                        original = self.original_ball_speeds[i]
+                        ball['xDir'] = original['xDir']
+                        ball['yDir'] = original['yDir']
+                        
+                # Clear the stored speeds
+                self.original_ball_speeds = []
 
     def paintEvent(self, event):
         """Handles all the drawing."""
@@ -593,6 +650,10 @@ class Board(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawRect(self.paddle)
 
+        # Draw Trails (behind balls)
+        for trail in self.trails:
+            trail.draw(painter)
+            
         # Draw Balls
         for ball in self.balls:
             painter.setBrush(QColor(50, 50, 50))
@@ -642,16 +703,41 @@ class Board(QWidget):
         key = event.key()
         old_paddle_x = self.paddle.x()
 
+        # Check if reverse paddle is active
+        is_reversed = 'reverse_paddle' in self.active_power_ups
+
         if key == Qt.Key_A:
-            if self.paddle.left() > 0:
-                self.paddle.translate(-self.PADDLE_SPEED, 0)
-                # Move any stuck balls with the paddle
-                self.move_stuck_balls_with_paddle(old_paddle_x)
+            # Move left normally, or right if reversed
+            if is_reversed:
+                if self.paddle.right() < self.WIDTH:
+                    self.paddle.translate(self.PADDLE_SPEED, 0)
+                    self.move_stuck_balls_with_paddle(old_paddle_x)
+                    # Also move ball if game hasn't started
+                    if not self.isStarted:
+                        self.move_ball_with_paddle_before_start(old_paddle_x)
+            else:
+                if self.paddle.left() > 0:
+                    self.paddle.translate(-self.PADDLE_SPEED, 0)
+                    self.move_stuck_balls_with_paddle(old_paddle_x)
+                    # Also move ball if game hasn't started
+                    if not self.isStarted:
+                        self.move_ball_with_paddle_before_start(old_paddle_x)
         elif key == Qt.Key_D:
-            if self.paddle.right() < self.WIDTH:
-                self.paddle.translate(self.PADDLE_SPEED, 0)
-                # Move any stuck balls with the paddle
-                self.move_stuck_balls_with_paddle(old_paddle_x)
+            # Move right normally, or left if reversed
+            if is_reversed:
+                if self.paddle.left() > 0:
+                    self.paddle.translate(-self.PADDLE_SPEED, 0)
+                    self.move_stuck_balls_with_paddle(old_paddle_x)
+                    # Also move ball if game hasn't started
+                    if not self.isStarted:
+                        self.move_ball_with_paddle_before_start(old_paddle_x)
+            else:
+                if self.paddle.right() < self.WIDTH:
+                    self.paddle.translate(self.PADDLE_SPEED, 0)
+                    self.move_stuck_balls_with_paddle(old_paddle_x)
+                    # Also move ball if game hasn't started
+                    if not self.isStarted:
+                        self.move_ball_with_paddle_before_start(old_paddle_x)
         elif key == Qt.Key_Space:
             if not self.isStarted and not self.isPaused:
                 self.startGame()
@@ -672,6 +758,14 @@ class Board(QWidget):
         
         self.update()  # Redraw after key press
 
+    def move_ball_with_paddle_before_start(self, old_paddle_x):
+        """Move the ball with the paddle when the game hasn't started yet."""
+        if not self.isStarted and self.balls:
+            paddle_movement = self.paddle.x() - old_paddle_x
+            # Move the ball to stay centered on the paddle
+            for ball in self.balls:
+                ball['rect'].translate(paddle_movement, 0)
+                
     def move_stuck_balls_with_paddle(self, old_paddle_x):
         """Move any stuck balls along with the paddle movement."""
         if 'sticky_paddle' not in self.active_power_ups:
@@ -734,6 +828,7 @@ class Board(QWidget):
             self.updatePowerUps()
             self.updateLasers()
             self.updateParticles()
+            self.updateTrails()
             self.checkCollision()
             self.update()
 
@@ -741,6 +836,14 @@ class Board(QWidget):
         """Moves all balls according to their direction vectors."""
         if self.isStarted and not self.isPaused:
             for ball in self.balls:
+                # Create trail at current position before moving
+                ball_center = ball['rect'].center()
+                trail = BallTrail(ball_center.x() - self.BALL_DIAMETER // 4, 
+                                  ball_center.y() - self.BALL_DIAMETER // 4, 
+                                  self.BALL_DIAMETER // 2)
+                self.trails.append(trail)
+                
+                # Move the ball
                 ball['rect'].translate(ball['xDir'], ball['yDir'])
 
     def updatePowerUps(self):
@@ -762,6 +865,12 @@ class Board(QWidget):
         for particle in self.particles[:]:
             if not particle.update():
                 self.particles.remove(particle)
+
+    def updateTrails(self):
+        """Update trail effects."""
+        for trail in self.trails[:]:
+            if not trail.update():
+                self.trails.remove(trail)
 
     def checkCollision(self):
         """Checks for and handles collisions with comprehensive safeguards."""
@@ -950,13 +1059,19 @@ class Board(QWidget):
         if ((ball['rect'].left() < corner_margin and ball['rect'].top() < corner_margin) or
             (ball['rect'].right() > self.WIDTH - corner_margin and ball['rect'].top() < corner_margin)):
             # Ball is in a top corner, push it toward center
-            ball['rect'].moveCenter((self.WIDTH // 2, ball['rect'].center().y() + 20))
+            ball['rect'].moveCenter(QPoint(self.WIDTH // 2, ball['rect'].center().y() + 20))
             ball['xDir'] = random.choice([-1, 1]) * max(1, abs(ball['xDir']))
             ball['yDir'] = max(1, abs(ball['yDir']))
 
     def ensure_minimum_ball_speed(self, ball):
         """Ensure ball maintains minimum speed to prevent getting stuck."""
-        min_speed = max(1, int(self.ball_speed_multiplier * 0.5))
+        # Check if we have active speed modifiers
+        if 'slow_ball' in self.active_power_ups:
+            min_speed = max(1, int(self.ball_speed_multiplier * 0.3))  # Lower minimum for slow ball
+        elif 'fast_ball' in self.active_power_ups:
+            min_speed = max(2, int(self.ball_speed_multiplier * 0.8))  # Higher minimum for fast ball
+        else:
+            min_speed = max(1, int(self.ball_speed_multiplier * 0.5))
         
         # Ensure minimum horizontal speed
         if abs(ball['xDir']) < min_speed:
@@ -966,8 +1081,14 @@ class Board(QWidget):
         if abs(ball['yDir']) < min_speed:
             ball['yDir'] = min_speed if ball['yDir'] >= 0 else -min_speed
             
-        # Prevent ball from moving too fast and causing collision issues
-        max_speed = int(4 * self.ball_speed_multiplier)
+        # Set maximum speed based on active power-ups
+        if 'fast_ball' in self.active_power_ups:
+            max_speed = int(6 * self.ball_speed_multiplier)  # Higher max for fast ball
+        elif 'slow_ball' in self.active_power_ups:
+            max_speed = int(2 * self.ball_speed_multiplier)  # Lower max for slow ball
+        else:
+            max_speed = int(4 * self.ball_speed_multiplier)
+            
         ball['xDir'] = max(-max_speed, min(max_speed, ball['xDir']))
         ball['yDir'] = max(-max_speed, min(max_speed, ball['yDir']))
 

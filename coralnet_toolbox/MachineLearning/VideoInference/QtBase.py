@@ -65,25 +65,21 @@ class Base(QDialog):
         self.layout.addLayout(self.video_layout, 70)
 
         # Setup the input layout
-        self.setup_input_layout()
-        # Setup the output layout
-        self.setup_output_layout()
+        self.setup_io_layout()
         # Setup the model and parameters layout
         self.setup_model_layout()
-        # Setup the video player widget
-        self.setup_video_layout()
-        # Setup regions control layout
-        self.setup_regions_layout()
         # Setup annotators control layout
         self.setup_annotators_layout()
-        # Setup inference controls layout
-        self.setup_inference_layout()
+        # Setup regions control layout
+        self.setup_regions_layout()
         # Setup Run/Cancel buttons
         self.setup_buttons_layout()
+        # Setup the video player widget
+        self.setup_video_layout()
 
-    def setup_input_layout(self):
+    def setup_io_layout(self):
         """Setup the input video group with a file browser using QFormLayout."""
-        group_box = QGroupBox("Input Parameters")
+        group_box = QGroupBox("IO Parameters")
         layout = QFormLayout()
 
         self.input_edit = QLineEdit()
@@ -94,19 +90,10 @@ class Base(QDialog):
         input_layout.addWidget(browse_btn)
         input_widget = QWidget()
         input_widget.setLayout(input_layout)
-
         layout.addRow(QLabel("Input Video:"), input_widget)
 
-        group_box.setLayout(layout)
-        self.controls_layout.addWidget(group_box)
-
-    def setup_output_layout(self):
-        """Setup the output directory group with a file browser using QFormLayout."""
-        group_box = QGroupBox("Output Parameters")
-        layout = QFormLayout()
-
         self.output_edit = QLineEdit()
-        self.output_edit.setPlaceholderText("Provide directory to write inferenced video...")
+        self.output_edit.setPlaceholderText("Provide directory to output video...")
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self.browse_output)
         output_layout = QHBoxLayout()
@@ -114,7 +101,6 @@ class Base(QDialog):
         output_layout.addWidget(browse_btn)
         output_widget = QWidget()
         output_widget.setLayout(output_layout)
-
         layout.addRow(QLabel("Output Directory:"), output_widget)
 
         group_box.setLayout(layout)
@@ -209,6 +195,19 @@ class Base(QDialog):
         area_max_widget = QWidget()
         area_max_widget.setLayout(area_max_layout)
         form_layout.addRow(QLabel("Area Threshold Max:"), area_max_widget)
+        
+        # Inference enable/disable buttons
+        inference_button_layout = QHBoxLayout()
+        self.enable_inference_btn = QPushButton("Enable Inference")
+        self.enable_inference_btn.clicked.connect(self.enable_inference)
+        self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        inference_button_layout.addWidget(self.enable_inference_btn)
+        self.disable_inference_btn = QPushButton("Disable Inference")
+        self.disable_inference_btn.clicked.connect(self.disable_inference)
+        self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.disable_inference_btn.setEnabled(False)           # Initially disabled
+        inference_button_layout.addWidget(self.disable_inference_btn)
+        form_layout.addRow(inference_button_layout)
 
         group_box.setLayout(form_layout)
         self.controls_layout.addWidget(group_box)
@@ -263,25 +262,6 @@ class Base(QDialog):
     def setup_annotators_layout(self):
         """Setup the annotator selection layout using a QListWidget with checkable items."""
         raise NotImplementedError("This method should be implemented in subclasses.")
-
-    def setup_inference_layout(self):
-        """Setup the inference control group with Enable/Disable buttons."""
-        group_box = QGroupBox("Inference Controls")
-        layout = QHBoxLayout()
-        
-        self.enable_inference_btn = QPushButton("Enable Inference")
-        self.enable_inference_btn.clicked.connect(self.enable_inference)
-        self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
-        layout.addWidget(self.enable_inference_btn)
-        
-        self.disable_inference_btn = QPushButton("Disable Inference")
-        self.disable_inference_btn.clicked.connect(self.disable_inference)
-        self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
-        self.disable_inference_btn.setEnabled(False)           # Initially disabled
-        layout.addWidget(self.disable_inference_btn)
-        
-        group_box.setLayout(layout)
-        self.controls_layout.addWidget(group_box)
 
     def setup_buttons_layout(self):
         """Setup the Exit button at the bottom of the controls layout."""

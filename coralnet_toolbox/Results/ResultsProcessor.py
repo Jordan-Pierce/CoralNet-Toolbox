@@ -136,11 +136,8 @@ class ResultsProcessor:
         indices_iou = set(self.indices_pass_iou(results))
         indices_area = set(self.indices_pass_area(results))
 
-        # Get the indexes of results that pass all filters
-        indices = set()
-        indices.update(indices_uncertainty)
-        indices.update(indices_iou)
-        indices.update(indices_area)
+        # Get the indexes of results that pass all filters (intersection)
+        indices = indices_uncertainty.intersection(indices_iou).intersection(indices_area)
 
         return list(indices)
 
