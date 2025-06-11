@@ -139,7 +139,8 @@ class ImageWindow(QWidget):
         self.search_layout = QFormLayout()
         self.filter_layout.addLayout(self.search_layout)
 
-        fixed_width = 250
+        # Set fixed width for search bars (big effect on layout width)
+        fixed_width = 125
 
         # Create containers for search bars and buttons
         self.image_search_container = QWidget()
