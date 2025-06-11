@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from typing import List, Optional, Dict, Tuple
+from typing import Dict
 
 import cv2
 import numpy as np
@@ -14,11 +14,10 @@ import supervision as sv
 
 from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, 
-                             QLabel, QLineEdit, QPushButton, QSlider, QFileDialog, 
-                             QWidget, QListWidget, QListWidgetItem, QFrame,
-                             QAbstractItemView, QFormLayout, QComboBox, QSizePolicy,
-                             QMessageBox, QApplication, QSpinBox, QScrollArea)
+from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QGroupBox, 
+                             QLabel, QPushButton, QSlider, QFileDialog, 
+                             QWidget, QFrame, QComboBox, QSizePolicy,
+                             QMessageBox, QApplication, QScrollArea)
 
 from coralnet_toolbox.MachineLearning.VideoInference.QtInference import TRACKING_COLORS
 from coralnet_toolbox.MachineLearning.VideoInference.QtInference import InferenceEngine
@@ -276,8 +275,11 @@ class VideoPlotWidget(QWidget):
         self.plot_widget.getAxis('left').setPen(axis_pen)
         self.plot_widget.getAxis('bottom').setPen(axis_pen)
         
-        # Restore normal margins since we have separate legend area
-        self.plot_widget.getPlotItem().setContentsMargins(10, 10, 10, 20)
+        # Force the plot to use more of the available space
+        self.plot_widget.getPlotItem().getViewBox().setDefaultPadding(0.02)
+        
+        # Set explicit margins to ensure grid extends across full area
+        self.plot_widget.getPlotItem().setContentsMargins(10, 10, 10, 10)
         
         # Enable auto-range on main plot
         self.plot_widget.enableAutoRange()
@@ -623,7 +625,7 @@ class VideoPlotWidget(QWidget):
     def reset_for_new_video(self):
         """Reset plot data for a new video."""
         self.clear_data()
-
+        
 
 class VideoRegionWidget(QWidget):
     """Widget for displaying video, playback controls, and drawing/editing rectangular regions only."""
@@ -640,7 +642,7 @@ class VideoRegionWidget(QWidget):
         
         # Add VideoPlotWidget above the video player
         self.plot_widget = VideoPlotWidget(self)
-
+        
         # Inference
         self.inference_engine = InferenceEngine(self)
         self.inference_enabled = False
@@ -706,81 +708,115 @@ class VideoRegionWidget(QWidget):
         
         # Add video group to main layout with stretch factor
         self.layout.addWidget(self.video_group, stretch=1)
-
-        # Media Controls GroupBox - fixed height
+    
+        # Controls container - horizontal layout for side-by-side groupboxes
+        controls_container = QHBoxLayout()
+        controls_container.setSpacing(10)
+    
+        # Media Controls GroupBox - left side
         self.controls_group = QGroupBox("Media Controls")
-        self.controls_group.setMaximumHeight(100)
-        self.controls_group.setMinimumHeight(100)
-        controls = QHBoxLayout(self.controls_group)
-        controls.setContentsMargins(10, 10, 10, 10)
-
-        # Main playback controls
+        self.controls_group.setMaximumHeight(150)
+        self.controls_group.setMinimumHeight(150)
+        controls_main_layout = QVBoxLayout(self.controls_group)
+        controls_main_layout.setContentsMargins(10, 10, 10, 10)
+        controls_main_layout.setSpacing(5)
+    
+        # Frame label and speed control row - moved to top
+        info_layout = QHBoxLayout()
+        self.frame_label = QLabel("Frame: 0 / 0")
+        info_layout.addWidget(self.frame_label)
+        info_layout.addStretch()
+        self.speed_dropdown = QComboBox()
+        self.speed_dropdown.addItems(["0.5x", "1x", "2x"])
+        self.speed_dropdown.setCurrentIndex(1)
+        self.speed_dropdown.currentIndexChanged.connect(self.change_speed)
+        self.speed_dropdown.setMaximumWidth(80)
+        info_layout.addWidget(self.speed_dropdown)
+        controls_main_layout.addLayout(info_layout)
+    
+        # Seek slider row - center with increased width
+        seek_layout = QHBoxLayout()
+        seek_layout.addSpacing(5)
+        self.seek_slider = QSlider(Qt.Horizontal)
+        self.seek_slider.valueChanged.connect(self.seek)
+        self.seek_slider.setMinimumWidth(400)  # Increased width
+        seek_layout.addWidget(self.seek_slider)
+        seek_layout.addSpacing(5)
+        controls_main_layout.addLayout(seek_layout)
+    
+        # Main controls row - playback buttons on left, recording buttons on right
+        controls = QHBoxLayout()
+        
+        # Playback controls group - left side
+        playback_controls = QHBoxLayout()
+        playback_controls.setSpacing(2)  # Tight spacing for grouped buttons
+        
         self.step_back_btn = QPushButton()
         self.step_back_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekBackward))
         self.step_back_btn.clicked.connect(self.step_backward)
         self.step_back_btn.setFocusPolicy(Qt.NoFocus)
-        controls.addWidget(self.step_back_btn)
-
+        playback_controls.addWidget(self.step_back_btn)
+    
         self.play_btn = QPushButton()
         self.play_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
         self.play_btn.setToolTip("Play")
         self.play_btn.clicked.connect(self.play_video)
         self.play_btn.setFocusPolicy(Qt.NoFocus)
-        controls.addWidget(self.play_btn)
-
+        playback_controls.addWidget(self.play_btn)
+    
         self.pause_btn = QPushButton()
         self.pause_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPause))
         self.pause_btn.setToolTip("Pause")
         self.pause_btn.clicked.connect(self.pause_video)
         self.pause_btn.setFocusPolicy(Qt.NoFocus)
-        controls.addWidget(self.pause_btn)
-
+        playback_controls.addWidget(self.pause_btn)
+    
         self.step_fwd_btn = QPushButton()
         self.step_fwd_btn.setIcon(self.style().standardIcon(self.style().SP_MediaSeekForward))
         self.step_fwd_btn.setToolTip("Step Forward")
         self.step_fwd_btn.clicked.connect(self.step_forward)
         self.step_fwd_btn.setFocusPolicy(Qt.NoFocus)
-        controls.addWidget(self.step_fwd_btn)
-
+        playback_controls.addWidget(self.step_fwd_btn)
+    
         self.stop_btn = QPushButton()
         self.stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
         self.stop_btn.setToolTip("Stop & Reset")
         self.stop_btn.clicked.connect(self.stop_video)
         self.stop_btn.setFocusPolicy(Qt.NoFocus)
-        controls.addWidget(self.stop_btn)
-
-        # Add vertical line separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.VLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        controls.addWidget(separator)
-
-        # Record Play and Stop buttons (no groupbox)
+        playback_controls.addWidget(self.stop_btn)
+    
+        # Add playback controls to main controls layout
+        controls.addLayout(playback_controls)
+        
+        # Add stretch to push recording buttons to the right
+        controls.addStretch()
+    
+        # Recording controls group - right side
+        recording_controls = QHBoxLayout()
+        recording_controls.setSpacing(2)  # Tight spacing for grouped buttons
+        
         self.record_play_btn = QPushButton()
         self.record_play_btn.setIcon(self.style().standardIcon(self.style().SP_MediaPlay))
         self.record_play_btn.setToolTip("Start Recording")
         self.record_play_btn.setFocusPolicy(Qt.NoFocus)
         self.record_play_btn.clicked.connect(self.start_recording)
         self.record_play_btn.setEnabled(False)  # Only enabled if output_dir is set
-        controls.addWidget(self.record_play_btn)
+        recording_controls.addWidget(self.record_play_btn)
+        
         self.record_stop_btn = QPushButton()
         self.record_stop_btn.setIcon(self.style().standardIcon(self.style().SP_MediaStop))
         self.record_stop_btn.setToolTip("Stop Recording")
         self.record_stop_btn.setFocusPolicy(Qt.NoFocus)
         self.record_stop_btn.clicked.connect(self.stop_recording)
         self.record_stop_btn.setEnabled(False)
-        controls.addWidget(self.record_stop_btn)
-
-        # Seek slider
-        controls.addSpacing(8)
-        controls.addStretch(1)
-        self.seek_slider = QSlider(Qt.Horizontal)
-        self.seek_slider.valueChanged.connect(self.seek)
-        self.seek_slider.setMinimumWidth(300)
-        controls.addWidget(self.seek_slider)
-        controls.addStretch(1)
-        controls.addSpacing(8)
-
+        recording_controls.addWidget(self.record_stop_btn)
+    
+        # Add recording controls to main controls layout
+        controls.addLayout(recording_controls)
+    
+        # Add to media controls layout
+        controls_main_layout.addLayout(controls)
+    
         # Set button sizes
         max_btn_size = 32
         for btn in [self.step_back_btn, 
@@ -791,20 +827,53 @@ class VideoRegionWidget(QWidget):
                     self.record_play_btn, 
                     self.record_stop_btn]:
             btn.setMaximumSize(max_btn_size, max_btn_size)
-
-        # Frame label and speed control
-        self.frame_label = QLabel("Frame: 0 / 0")
-        controls.addWidget(self.frame_label)
-
-        self.speed_dropdown = QComboBox()
-        self.speed_dropdown.addItems(["0.5x", "1x", "2x"])
-        self.speed_dropdown.setCurrentIndex(1)
-        self.speed_dropdown.currentIndexChanged.connect(self.change_speed)
-        self.speed_dropdown.setMaximumWidth(80)
-        controls.addWidget(self.speed_dropdown)
-
-        # Add controls group to main layout with no stretch
-        self.layout.addWidget(self.controls_group, stretch=0)
+    
+        # Region Controls GroupBox - right side, minimized width
+        self.region_controls_group = QGroupBox("Region Controls")
+        self.region_controls_group.setMaximumHeight(150)
+        self.region_controls_group.setMinimumHeight(150)
+        self.region_controls_group.setMaximumWidth(220)  # Reduced width
+        self.region_controls_group.setMinimumWidth(220)
+        region_main_layout = QVBoxLayout(self.region_controls_group)
+        region_main_layout.setContentsMargins(8, 8, 8, 8)  # Reduced margins
+        region_main_layout.setSpacing(3)  # Reduced spacing
+        
+        # Count criteria row - compact
+        criteria_layout = QHBoxLayout()
+        criteria_layout.addWidget(QLabel("Count:"))
+        self.count_criteria_combo = QComboBox()
+        self.count_criteria_combo.addItems(["Centroid", "Bounding Box"])
+        self.count_criteria_combo.setCurrentIndex(0)
+        self.count_criteria_combo.currentIndexChanged.connect(self.update_region_parameters)
+        criteria_layout.addWidget(self.count_criteria_combo)
+        region_main_layout.addLayout(criteria_layout)
+    
+        # Display outside detections row - compact
+        outside_layout = QHBoxLayout()
+        outside_layout.addWidget(QLabel("Show Outside:"))
+        self.display_outside_combo = QComboBox()
+        self.display_outside_combo.addItems(["True", "False"])
+        self.display_outside_combo.setCurrentIndex(0)
+        self.display_outside_combo.currentIndexChanged.connect(self.update_region_parameters)
+        outside_layout.addWidget(self.display_outside_combo)
+        region_main_layout.addLayout(outside_layout)
+        
+        # Add vertical stretch to push clear button to bottom
+        region_main_layout.addStretch()
+        
+        # Clear regions button - moved to bottom and full width
+        self.clear_regions_btn = QPushButton("Clear Regions")
+        self.clear_regions_btn.setFocusPolicy(Qt.NoFocus)
+        self.clear_regions_btn.clicked.connect(self.clear_regions)
+        self.clear_regions_btn.setMinimumHeight(30)  # Slightly taller
+        region_main_layout.addWidget(self.clear_regions_btn)
+    
+        # Add both group boxes to the controls container
+        controls_container.addWidget(self.controls_group, stretch=1)  # Media controls get more space
+        controls_container.addWidget(self.region_controls_group, stretch=0)  # Region controls fixed width
+    
+        # Add controls container to main layout with no stretch
+        self.layout.addLayout(controls_container)
         
     def closeEvent(self, event):
         """Handle widget close event."""
@@ -987,13 +1056,14 @@ class VideoRegionWidget(QWidget):
         self.region_polygons.clear()  
         
         # Reset the zone manager completely and create a fresh instance
-        self.inference_engine.zone_manager = RegionZoneManager(
-            count_criteria=self.inference_engine.count_criteria,
-            display_outside=self.inference_engine.display_outside
-        )
-        
-        # Also, reset the tracker to ensure tracking data doesn't persist
-        self.inference_engine.reset_tracker()
+        if self.inference_engine:
+            self.inference_engine.zone_manager = RegionZoneManager(
+                count_criteria=self.inference_engine.count_criteria,
+                display_outside=self.inference_engine.display_outside
+            )
+            
+            # Also, reset the tracker to ensure tracking data doesn't persist
+            self.inference_engine.reset_tracker()
         
         # Update the display and refresh the current frame
         self.video_display.update()
@@ -1001,6 +1071,8 @@ class VideoRegionWidget(QWidget):
         
         # Also clear the plot data
         self.plot_widget.clear_data()
+        
+        # Note: Don't call self.regions_widget.clear_regions() to avoid circular reference
 
     def get_zone_statistics(self):
         """Get zone statistics from the inference engine."""
@@ -1479,3 +1551,22 @@ class VideoRegionWidget(QWidget):
         self._cleanup_video_sink()
         if self.cap:
             self.cap.release()
+
+    def update_region_parameters(self):
+        """Update region parameters based on the selected count criteria and display outside detections."""
+        if not self.inference_engine:
+            return
+            
+        count_criteria = self.count_criteria_combo.currentText()
+        display_outside = self.display_outside_combo.currentText() == "True"
+        
+        # Update the inference engine with the selected criteria
+        if (hasattr(self.inference_engine, 'set_count_criteria') and 
+            hasattr(self.inference_engine, 'set_display_outside_detections')):
+            
+            self.inference_engine.set_count_criteria(count_criteria)
+            self.inference_engine.set_display_outside_detections(display_outside)
+            
+            # Refresh the current frame to apply new parameters immediately
+            if hasattr(self, 'current_frame_number'):
+                self.seek(self.current_frame_number)

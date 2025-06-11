@@ -56,7 +56,7 @@ class Classify(Base):
         btn_widget.setLayout(btn_layout)
         form_layout.addRow(QLabel(""), btn_widget)
 
-        # Parameter sliders (IoU, uncertainty, area)
+        # Parameter sliders (only uncertainty for classification)
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
         self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
@@ -68,15 +68,28 @@ class Classify(Base):
         uncertainty_widget = QWidget()
         uncertainty_widget.setLayout(uncertainty_layout)
         form_layout.addRow(QLabel("Uncertainty Threshold:"), uncertainty_widget)
+        
+        # Add annotators section (child class specific)
+        self.add_annotators_to_form(form_layout)
+        
+        # Inference enable/disable buttons
+        inference_button_layout = QHBoxLayout()
+        self.enable_inference_btn = QPushButton("Enable Inference")
+        self.enable_inference_btn.clicked.connect(self.enable_inference)
+        self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        inference_button_layout.addWidget(self.enable_inference_btn)
+        self.disable_inference_btn = QPushButton("Disable Inference")
+        self.disable_inference_btn.clicked.connect(self.disable_inference)
+        self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.disable_inference_btn.setEnabled(False)           # Initially disabled
+        inference_button_layout.addWidget(self.disable_inference_btn)
+        form_layout.addRow(inference_button_layout)
 
         group_box.setLayout(form_layout)
         self.controls_layout.addWidget(group_box)
-        
-    def setup_annotators_layout(self):
-        """Setup the annotator selection layout using a QListWidget with checkable items."""
-        group_box = QGroupBox("Annotators")
-        layout = QVBoxLayout()
 
+    def add_annotators_to_form(self, form_layout):
+        """Add annotators section to the model form layout."""
         self.annotator_list_widget = QListWidget()
         # List of annotator types (LabelAnnotator now included and checked by default)
         self.annotator_types = [
@@ -93,11 +106,14 @@ class Classify(Base):
                 item.setCheckState(Qt.Unchecked)
             item.setData(Qt.UserRole, key)
             self.annotator_list_widget.addItem(item)
-        layout.addWidget(self.annotator_list_widget)
-
-        group_box.setLayout(layout)
-        self.controls_layout.addWidget(group_box)
         
+        form_layout.addRow(QLabel("Annotators:"), self.annotator_list_widget)
+
+    def setup_annotators_layout(self):
+        """Setup the annotator selection layout using a QListWidget with checkable items."""
+        # This method is now handled by add_annotators_to_form
+        pass
+    
     def initialize_thresholds(self):
         """Initialize all threshold sliders with current values."""
         self.initialize_uncertainty_threshold()

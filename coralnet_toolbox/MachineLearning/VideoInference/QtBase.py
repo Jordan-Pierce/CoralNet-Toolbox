@@ -39,6 +39,10 @@ class Base(QDialog):
         # Optionally set a minimum size
         self.setMinimumSize(800, 600)
         
+        # Allow maximizing
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
         # Initialize device as 'cpu' by default
         self.device = 'cpu'
                 
@@ -65,25 +69,17 @@ class Base(QDialog):
         self.layout.addLayout(self.video_layout, 70)
 
         # Setup the input layout
-        self.setup_input_layout()
-        # Setup the output layout
-        self.setup_output_layout()
+        self.setup_io_layout()
         # Setup the model and parameters layout
         self.setup_model_layout()
-        # Setup the video player widget
-        self.setup_video_layout()
-        # Setup regions control layout
-        self.setup_regions_layout()
-        # Setup annotators control layout
-        self.setup_annotators_layout()
-        # Setup inference controls layout
-        self.setup_inference_layout()
         # Setup Run/Cancel buttons
         self.setup_buttons_layout()
+        # Setup the video player widget
+        self.setup_video_layout()
 
-    def setup_input_layout(self):
+    def setup_io_layout(self):
         """Setup the input video group with a file browser using QFormLayout."""
-        group_box = QGroupBox("Input Parameters")
+        group_box = QGroupBox("IO Parameters")
         layout = QFormLayout()
 
         self.input_edit = QLineEdit()
@@ -94,19 +90,10 @@ class Base(QDialog):
         input_layout.addWidget(browse_btn)
         input_widget = QWidget()
         input_widget.setLayout(input_layout)
-
         layout.addRow(QLabel("Input Video:"), input_widget)
 
-        group_box.setLayout(layout)
-        self.controls_layout.addWidget(group_box)
-
-    def setup_output_layout(self):
-        """Setup the output directory group with a file browser using QFormLayout."""
-        group_box = QGroupBox("Output Parameters")
-        layout = QFormLayout()
-
         self.output_edit = QLineEdit()
-        self.output_edit.setPlaceholderText("Provide directory to write inferenced video...")
+        self.output_edit.setPlaceholderText("Provide directory to output video...")
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self.browse_output)
         output_layout = QHBoxLayout()
@@ -114,7 +101,6 @@ class Base(QDialog):
         output_layout.addWidget(browse_btn)
         output_widget = QWidget()
         output_widget.setLayout(output_layout)
-
         layout.addRow(QLabel("Output Directory:"), output_widget)
 
         group_box.setLayout(layout)
@@ -209,9 +195,32 @@ class Base(QDialog):
         area_max_widget = QWidget()
         area_max_widget.setLayout(area_max_layout)
         form_layout.addRow(QLabel("Area Threshold Max:"), area_max_widget)
+        
+        # Add annotators section (child class specific)
+        self.add_annotators_to_form(form_layout)
+        
+        # Add some spacing
+        self.controls_layout.addSpacing(10)
+        
+        # Inference enable/disable buttons
+        inference_button_layout = QHBoxLayout()
+        self.enable_inference_btn = QPushButton("Enable Inference")
+        self.enable_inference_btn.clicked.connect(self.enable_inference)
+        self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        inference_button_layout.addWidget(self.enable_inference_btn)
+        self.disable_inference_btn = QPushButton("Disable Inference")
+        self.disable_inference_btn.clicked.connect(self.disable_inference)
+        self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
+        self.disable_inference_btn.setEnabled(False)           # Initially disabled
+        inference_button_layout.addWidget(self.disable_inference_btn)
+        form_layout.addRow(inference_button_layout)
 
         group_box.setLayout(form_layout)
         self.controls_layout.addWidget(group_box)
+
+    def add_annotators_to_form(self, form_layout):
+        """Add annotators section to the form layout. To be implemented by subclasses."""
+        raise NotImplementedError("This method should be implemented in subclasses.")
 
     def filter_class_list(self, text):
         """Filter the class filter QListWidget based on the search text."""
@@ -224,64 +233,6 @@ class Base(QDialog):
         """Setup the video region widget directly without an external group box."""
         self.video_region_widget = VideoRegionWidget(self)
         self.video_layout.addWidget(self.video_region_widget)
-
-    def setup_regions_layout(self):
-        """Setup the regions control group."""
-        group_box = QGroupBox("Regions")
-        layout = QHBoxLayout()
-
-        clear_btn = QPushButton("Clear Regions")
-        clear_btn.setFocusPolicy(Qt.NoFocus)
-        clear_btn.clicked.connect(self.clear_regions)
-        layout.addWidget(clear_btn)
-        
-        # Add stretch to push everything to the left
-        layout.addStretch()
-        
-        # Count criteria dropdown with label
-        layout.addWidget(QLabel("Count Criteria:"))
-        self.count_criteria_combo = QComboBox()
-        self.count_criteria_combo.addItems(["Centroid", "Bounding Box"])
-        self.count_criteria_combo.setCurrentIndex(0)
-        self.count_criteria_combo.currentIndexChanged.connect(self.update_region_parameters)
-        layout.addWidget(self.count_criteria_combo)
-
-        # Dropdown for display detections outside regions with label
-        layout.addWidget(QLabel("Show Outside Detections:"))
-        self.display_outside_combo = QComboBox()
-        self.display_outside_combo.addItems(["True", "False"])
-        self.display_outside_combo.setCurrentIndex(0)
-        self.display_outside_combo.currentIndexChanged.connect(self.update_region_parameters)
-        layout.addWidget(self.display_outside_combo)
-        
-        # Add some spacing
-        layout.addSpacing(10)
-
-        group_box.setLayout(layout)
-        self.controls_layout.addWidget(group_box)
-
-    def setup_annotators_layout(self):
-        """Setup the annotator selection layout using a QListWidget with checkable items."""
-        raise NotImplementedError("This method should be implemented in subclasses.")
-
-    def setup_inference_layout(self):
-        """Setup the inference control group with Enable/Disable buttons."""
-        group_box = QGroupBox("Inference Controls")
-        layout = QHBoxLayout()
-        
-        self.enable_inference_btn = QPushButton("Enable Inference")
-        self.enable_inference_btn.clicked.connect(self.enable_inference)
-        self.enable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
-        layout.addWidget(self.enable_inference_btn)
-        
-        self.disable_inference_btn = QPushButton("Disable Inference")
-        self.disable_inference_btn.clicked.connect(self.disable_inference)
-        self.disable_inference_btn.setFocusPolicy(Qt.NoFocus)  # Prevent focus/highlighting
-        self.disable_inference_btn.setEnabled(False)           # Initially disabled
-        layout.addWidget(self.disable_inference_btn)
-        
-        group_box.setLayout(layout)
-        self.controls_layout.addWidget(group_box)
 
     def setup_buttons_layout(self):
         """Setup the Exit button at the bottom of the controls layout."""
@@ -323,7 +274,7 @@ class Base(QDialog):
                 if hasattr(self.video_region_widget, 'cap') and self.video_region_widget.cap:
                     self.video_region_widget.cap.release()
                     self.video_region_widget.cap = None
-            
+                    
             # Clear class filter
             if hasattr(self, 'class_filter_widget') and self.class_filter_widget:
                 self.class_filter_widget.clear()
@@ -460,14 +411,6 @@ class Base(QDialog):
             self.area_thresh_max
         )
         
-    def update_region_parameters(self):
-        """Update region parameters based on the selected count criteria and display outside detections."""
-        count_criteria = self.count_criteria_combo.currentText()
-        display_outside = self.display_outside_combo.currentText() == "True"
-        # Update the inference engine with the selected criteria
-        self.video_region_widget.inference_engine.set_count_criteria(count_criteria)
-        self.video_region_widget.inference_engine.set_display_outside_detections(display_outside)
-
     def populate_class_filter(self):
         """Populate the class filter widget with class names from the loaded model."""
         self.class_filter_widget.clear()

@@ -23,11 +23,8 @@ class Detect(Base):
         self.showMaximized()
         super().showEvent(event)
 
-    def setup_annotators_layout(self):
-        """Setup the annotator selection layout using a QListWidget with checkable items."""
-        group_box = QGroupBox("Annotators")
-        layout = QVBoxLayout()
-
+    def add_annotators_to_form(self, form_layout):
+        """Add annotators section to the model form layout."""
         self.annotator_list_widget = QListWidget()
         self.annotator_types = [
             ("LabelAnnotator", "Label Annotator"),
@@ -53,10 +50,13 @@ class Detect(Base):
                 item.setCheckState(Qt.Unchecked)
             item.setData(Qt.UserRole, key)
             self.annotator_list_widget.addItem(item)
-        layout.addWidget(self.annotator_list_widget)
+        
+        form_layout.addRow(QLabel("Annotators:"), self.annotator_list_widget)
 
-        group_box.setLayout(layout)
-        self.controls_layout.addWidget(group_box)
+    def setup_annotators_layout(self):
+        """Setup the annotator selection layout using a QListWidget with checkable items."""
+        # This method is now handled by add_annotators_to_form
+        pass
         
     def initialize_thresholds(self):
         """Initialize all threshold sliders with current values."""
