@@ -14,6 +14,7 @@ Examples:
     >>> model.tune(data="coco8.yaml", epochs=10, iterations=300, optimizer="AdamW", plots=False, save=False, val=False)
 """
 
+import gc
 import time
 import math
 import shutil
@@ -564,6 +565,10 @@ class Tuner:
                                    best_save_dir, 
                                    iteration_times, 
                                    base_model_prep_time)
+            
+            # Clear cache to free memory
+            gc.collect()
+            torch.cuda.empty_cache()
 
     def _get_starting_iteration(self) -> int:
         """Get the starting iteration number for resume functionality."""
