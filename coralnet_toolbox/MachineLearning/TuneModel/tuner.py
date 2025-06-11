@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 
 import torch
+from ultralytics import YOLO
 
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.utils import DEFAULT_CFG, LOGGER, YAML, callbacks, colorstr, remove_colorstr
@@ -383,7 +384,7 @@ class Tuner:
                 
                 elif 'batch_size' in k.lower() or 'size' in k.lower():
                     # Sizes: geometric progression
-                    sizes = [2**i for i in range(int(np.log2(max(v[0], 1))), int(np.log2(v[1]))+1)]
+                    sizes = [2**i for i in range(int(np.log2(max(v[0], 1))), int(np.log2(v[1])) + 1)]
                     new_val = random.choice(sizes) if sizes else current_val
                 
                 else:
@@ -441,23 +442,78 @@ class Tuner:
         u = np.random.normal(0, sigma_u)
         v = np.random.normal(0, 1)
         return u / (abs(v) ** (1 / alpha))
+    
+    def prepare_base_model(self, base_model_save_path: str = "base_trained_model.pt") -> str:
+        """
+        Prepare a base trained model that will be used as the starting point for all hyperparameter iterations.
+        This ensures fair comparison by having all iterations start from the same model state.
+        
+        Args:
+            base_model_save_path: Path where the base trained model will be saved
+            
+        Returns:
+            str: Path to the saved base model
+        """        
+        # Load the original model
+        original_model_path = self.args.model
+        original_model = YOLO(original_model_path)
+        
+        LOGGER.info(f"{self.prefix}Preparing base model from {original_model_path}")
+        
+        # Train the model with base settings to create a starting point
+        base_train_args = {**vars(self.args)}
+        # Remove model from train args to avoid conflicts
+        base_train_args = {k: v for k, v in base_train_args.items() if k != 'model'}
+        # Use minimal training for the base model (can be customized)
+        base_train_args['epochs'] = 1
+        base_train_args['resume'] = False
+        
+        LOGGER.info(f"{self.prefix}Training base model with settings: {base_train_args}")
+        original_model.train(**base_train_args)
+        
+        # Save the trained base model
+        base_model_path = Path(base_model_save_path)
+        original_model.save(base_model_path)
+        
+        LOGGER.info(f"{self.prefix}Base model saved to {base_model_path}")
+        return str(base_model_path)
 
-    def __call__(self, model=None, iterations: int = 10, cleanup: bool = True):
+    def __call__(self, base_model_path: str = None, iterations: int = 10, cleanup: bool = True, 
+                 auto_prepare_base: bool = True):
         """
         Execute the hyperparameter evolution process when the Tuner instance is called.
 
         Args:
-            model (Model): A pre-initialized YOLO model to be used for training.
+            base_model_path (str): Path to a base trained model that each iteration should start from.
+                                 If None and auto_prepare_base is True, will create one automatically.
             iterations (int): The number of generations to run the evolution for.
             cleanup (bool): Whether to delete iteration weights to reduce storage space used during tuning.
+            auto_prepare_base (bool): If True and base_model_path is None, automatically prepare a base model.
         """
         # Initialize tuning session
         t0 = time.time()
         best_save_dir, best_metrics = None, None
         (self.tune_dir / "weights").mkdir(parents=True, exist_ok=True)
         
+        # Initialize timing tracking
+        iteration_times = []
+        
         # Set max generations for adaptive methods
         self.max_generations = iterations
+        
+        # Prepare base model if needed
+        base_model_prep_start = time.time()
+        if base_model_path is None and auto_prepare_base:
+            base_model_path = self.prepare_base_model(self.tune_dir / "base_trained_model.pt")
+            base_model_prep_time = time.time() - base_model_prep_start
+            LOGGER.info(f"{self.prefix}Automatically prepared base model at {base_model_path} "
+                        f"(took {base_model_prep_time:.2f}s)")
+        elif base_model_path is not None:
+            base_model_prep_time = 0
+            LOGGER.info(f"{self.prefix}Using provided base model at {base_model_path}")
+        else:
+            base_model_prep_time = 0
+            LOGGER.info(f"{self.prefix}No base model - using subprocess method for training")
         
         # Determine starting iteration (for resume functionality)
         start = self._get_starting_iteration()
@@ -465,6 +521,7 @@ class Tuner:
         
         # Main tuning loop
         for i in range(start, iterations):
+            iteration_start_time = time.time()
             self.generation = i
             LOGGER.info(f"{self.prefix}Starting iteration {i + 1}/{iterations} (method: {self.mutation_method})")
             
@@ -473,7 +530,14 @@ class Tuner:
             LOGGER.info(f"{self.prefix}Hyperparameters: {mutated_hyp}")
 
             # Step 2: Train model with mutated hyperparameters
-            metrics, save_dir = self._train_with_hyperparameters(mutated_hyp, i + 1)
+            training_start_time = time.time()
+            if base_model_path is not None:
+                # Use direct training with base model
+                metrics, save_dir = self._train_with_hyperparameters_modified(mutated_hyp, i + 1, base_model_path)
+            else:
+                # Fallback to subprocess method if no base model provided
+                metrics, save_dir = self._train_with_hyperparameters(mutated_hyp, i + 1)
+            training_time = time.time() - training_start_time
             
             # Step 3: Log results to CSV
             self._log_results_to_csv(metrics, mutated_hyp)
@@ -483,8 +547,23 @@ class Tuner:
                 metrics, save_dir, best_save_dir, best_metrics, i, cleanup
             )
 
+            # Calculate and log iteration timing
+            iteration_end_time = time.time()
+            iteration_total_time = iteration_end_time - iteration_start_time
+            iteration_times.append(iteration_total_time)
+            
+            fitness = metrics.get("fitness", 0.0)
+            LOGGER.info(f"{self.prefix}Iteration {i + 1} completed in {iteration_total_time:.2f}s "
+                        f"(training: {training_time:.2f}s, fitness: {fitness:.4f})")
+
             # Step 5: Generate reports and plots
-            self._generate_reports(i + 1, iterations, t0, best_metrics, best_save_dir)
+            self._generate_reports(i + 1, 
+                                   iterations, 
+                                   t0, 
+                                   best_metrics, 
+                                   best_save_dir, 
+                                   iteration_times, 
+                                   base_model_prep_time)
 
     def _get_starting_iteration(self) -> int:
         """Get the starting iteration number for resume functionality."""
@@ -522,6 +601,85 @@ class Tuner:
             
         except Exception as e:
             LOGGER.error(f"training failure for hyperparameter tuning iteration {iteration}\n{e}")
+            
+        return metrics, save_dir
+
+    def _train_with_hyperparameters_modified(self, mutated_hyp: Dict, iteration: int, 
+                                             base_model_path: str = None) -> tuple:
+        """Train YOLO model with mutated hyperparameters using direct model training.
+        
+        Each iteration starts from the same base model state to ensure fair comparison of hyperparameters.
+        
+        Args:
+            mutated_hyp: Dictionary of mutated hyperparameters
+            iteration: Current iteration number
+            base_model_path: Path to the base trained model that each iteration should start from
+        """
+        metrics = {}
+        
+        # Convert boolean parameters from float to bool
+        boolean_params = ['multi_scale']  # Add other boolean params here if needed
+        for param in boolean_params:
+            if param in mutated_hyp:
+                mutated_hyp[param] = bool(round(mutated_hyp[param]))
+        
+        # Prepare training arguments
+        train_args = {**vars(self.args), **mutated_hyp}
+        save_dir = get_save_dir(get_cfg(train_args))
+        weights_dir = save_dir / "weights"
+        
+        try:
+            # Always start from the same base model state for fair comparison
+            if base_model_path and Path(base_model_path).exists():
+                # Load from the base trained model (each iteration starts from same point)
+                current_model = YOLO(base_model_path)
+                LOGGER.info(f"Loading base model from {base_model_path} for iteration {iteration}")
+            else:
+                # Fallback: load from the original model path
+                model_path = train_args.get('model', 'yolo11n.pt')
+                current_model = YOLO(model_path)
+                LOGGER.warning(f"Base model path not found, using {model_path} for iteration {iteration}")
+            
+            # Train the model directly with mutated hyperparameters
+            # Remove 'model' from train_args to avoid conflicts
+            train_kwargs = {k: v for k, v in train_args.items() if k != 'model'}
+            # Ensure resume=False so we don't resume from previous training
+            train_kwargs['resume'] = False
+            
+            results = current_model.train(**train_kwargs)
+            
+            # Extract metrics from training results
+            if hasattr(results, 'results_dict'):
+                metrics = results.results_dict
+            elif hasattr(results, 'metrics'):
+                metrics = results.metrics
+            else:
+                # Fallback: try to load from saved checkpoint
+                ckpt_file = weights_dir / ("best.pt" if (weights_dir / "best.pt").exists() else "last.pt")
+                if ckpt_file.exists():
+                    checkpoint = torch.load(ckpt_file, map_location='cpu')
+                    metrics = checkpoint.get("train_metrics", {})
+                else:
+                    LOGGER.warning(f"Could not find checkpoint file for iteration {iteration}")
+                    metrics = {"fitness": 0.0}
+            
+            # Ensure fitness is available
+            if "fitness" not in metrics:
+                # Calculate fitness from available metrics (this is model-dependent)
+                # For classification: might use top1 accuracy
+                # For detection: might use mAP
+                if "metrics/accuracy_top1" in metrics:
+                    metrics["fitness"] = metrics["metrics/accuracy_top1"]
+                elif "metrics/mAP50-95" in metrics:
+                    metrics["fitness"] = metrics["metrics/mAP50-95"]
+                else:
+                    # Fallback fitness calculation
+                    metrics["fitness"] = 0.0
+                    LOGGER.warning(f"Could not determine fitness for iteration {iteration}")
+            
+        except Exception as e:
+            LOGGER.error(f"training failure for hyperparameter tuning iteration {iteration}\n{e}")
+            metrics = {"fitness": 0.0}
             
         return metrics, save_dir
 
@@ -579,8 +737,9 @@ class Tuner:
         return best_save_dir, best_metrics
 
     def _generate_reports(self, current_iter: int, total_iterations: int, start_time: float, 
-                          best_metrics: Dict, best_save_dir):
-        """Generate plots and save best hyperparameters."""
+                          best_metrics: Dict, best_save_dir, iteration_times: List[float] = None, 
+                          base_model_prep_time: float = 0):
+        """Generate plots and save best hyperparameters with timing information."""
         # Generate evolution plot
         plot_tune_results(self.tune_csv)
         
@@ -589,10 +748,31 @@ class Tuner:
         fitness = x[:, 0]
         best_idx = fitness.argmax()
         
-        # Create status header
+        # Calculate timing statistics
         elapsed_time = time.time() - start_time
+        timing_info = ""
+        
+        if iteration_times:
+            avg_iteration_time = sum(iteration_times) / len(iteration_times)
+            fastest_iteration = min(iteration_times)
+            slowest_iteration = max(iteration_times)
+            total_training_time = sum(iteration_times)
+            overhead_time = elapsed_time - total_training_time - base_model_prep_time
+            
+            timing_info = (
+                f"{self.prefix}Timing Summary:\n"
+                f"{self.prefix}  Base model preparation: {base_model_prep_time:.2f}s\n"
+                f"{self.prefix}  Total training time: {total_training_time:.2f}s\n"
+                f"{self.prefix}  Average iteration time: {avg_iteration_time:.2f}s\n"
+                f"{self.prefix}  Fastest iteration: {fastest_iteration:.2f}s\n"
+                f"{self.prefix}  Slowest iteration: {slowest_iteration:.2f}s\n"
+                f"{self.prefix}  Overhead time: {overhead_time:.2f}s\n"
+            )
+        
+        # Create status header
         header = (
             f"{self.prefix}{current_iter}/{total_iterations} iterations complete ✅ ({elapsed_time:.2f}s)\n"
+            f"{timing_info}"
             f"{self.prefix}Results saved to {colorstr('bold', self.tune_dir)}\n"
             f"{self.prefix}Best fitness={fitness[best_idx]} observed at iteration {best_idx + 1}\n"
             f"{self.prefix}Best fitness metrics are {best_metrics}\n"
