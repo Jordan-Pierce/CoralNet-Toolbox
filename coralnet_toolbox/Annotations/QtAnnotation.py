@@ -4,8 +4,8 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF
-from PyQt5.QtGui import QColor, QImage, QPolygonF, QPen, QBrush
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPointF, QTimer, pyqtProperty
+from PyQt5.QtGui import QColor, QPolygonF, QPen, QBrush
 from PyQt5.QtWidgets import (QMessageBox, QGraphicsEllipseItem, QGraphicsRectItem,
                              QGraphicsPolygonItem, QGraphicsScene, QGraphicsItemGroup)
 
@@ -62,6 +62,50 @@ class Annotation(QObject):
         # New: group for all graphics items
         self.graphics_item_group = None
         
+        # Animation properties
+        self._dash_offset = 0
+        self.animation_timer = QTimer()
+        self.animation_timer.timeout.connect(self._update_dash_offset)
+        self.animation_timer.setInterval(50)  # Update every 50ms for smooth animation
+        
+    @pyqtProperty(float)
+    def dash_offset(self):
+        return self._dash_offset
+    
+    @dash_offset.setter
+    def dash_offset(self, value):
+        self._dash_offset = value
+        self._update_pen_styles()
+    
+    def _update_dash_offset(self):
+        """Update the dash offset for animation."""
+        self._dash_offset = (self._dash_offset + 1) % 20  # Reset every 20 pixels
+        self._update_pen_styles()
+    
+    def _update_pen_styles(self):
+        """Update pen styles with current dash offset."""
+        if not self.is_selected:
+            return
+            
+        color = QColor(self.label.color)
+        inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
+        
+        # Create animated dashed pen
+        pen = QPen(inverse_color, 4)
+        pen.setStyle(Qt.CustomDashLine)
+        pen.setDashPattern([5, 5])  # 5 pixels on, 5 pixels off
+        pen.setDashOffset(self._dash_offset)
+        
+        # Update all graphics items with the animated pen
+        if self.graphics_item:
+            self.graphics_item.setPen(pen)
+        if self.center_graphics_item:
+            self.center_graphics_item.setPen(pen)
+        if self.bounding_box_graphics_item:
+            self.bounding_box_graphics_item.setPen(pen)
+        if self.polygon_graphics_item:
+            self.polygon_graphics_item.setPen(pen)
+
     def contains_point(self, point: QPointF) -> bool:
         """Check if the annotation contains a given point."""
         raise NotImplementedError("Subclasses must implement this method.")
@@ -133,14 +177,21 @@ class Annotation(QObject):
         """Mark the annotation as selected and update its visual appearance."""
         self.is_selected = True
         self.update_graphics_item()
+        # Start animation
+        self.animation_timer.start()
 
     def deselect(self):
         """Mark the annotation as not selected and update its visual appearance."""
         self.is_selected = False
+        # Stop animation
+        self.animation_timer.stop()
         self.update_graphics_item()
 
     def delete(self):
         """Remove the annotation and all associated graphics items from the scene."""
+        # Stop animation
+        self.animation_timer.stop()
+        
         # Emit the deletion signal first
         self.annotationDeleted.emit(self)
 
@@ -182,9 +233,13 @@ class Annotation(QObject):
         
         # Set pen style based on selection state
         if self.is_selected:
-            # Use inverse color and dotted line for selected items
+            # Use inverse color and animated dashed line for selected items
             inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+            pen = QPen(inverse_color, 4)
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([5, 5])  # 5 pixels on, 5 pixels off
+            pen.setDashOffset(self._dash_offset)
+            self.graphics_item.setPen(pen)
         else:
             # Use label color with solid line for unselected items
             pen_color = QColor(self.label.color)
@@ -224,12 +279,16 @@ class Annotation(QObject):
         self.center_graphics_item = QGraphicsEllipseItem(center_xy.x() - 5, center_xy.y() - 5, 10, 10)
         self.center_graphics_item.setBrush(color)
     
-        # Always set a colored pen with increased width
+        # Set pen style based on selection state
         pen_color = QColor(self.label.color)
         if self.is_selected:
-            # Use inverse color and dotted line for selected items
+            # Use inverse color and animated dashed line for selected items
             inverse_color = QColor(255 - pen_color.red(), 255 - pen_color.green(), 255 - pen_color.blue())
-            self.center_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+            pen = QPen(inverse_color, 4)
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([5, 5])
+            pen.setDashOffset(self._dash_offset)
+            self.center_graphics_item.setPen(pen)
         else:
             # Use label color with solid line for unselected items
             self.center_graphics_item.setPen(QPen(pen_color, 3, Qt.SolidLine))
@@ -259,11 +318,17 @@ class Annotation(QObject):
             bottom_right.y() - top_left.y()
         )
     
-        # By default, no pen unless selected
+        # Set pen style based on selection state
         if self.is_selected:
+            # Use inverse color and animated dashed line for selected items
             inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.bounding_box_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+            pen = QPen(inverse_color, 4)
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([5, 5])
+            pen.setDashOffset(self._dash_offset)
+            self.bounding_box_graphics_item.setPen(pen)
         else:
+            # Use label color with solid line for unselected items
             self.bounding_box_graphics_item.setPen(QPen(color, 3, Qt.SolidLine))
     
         if add_to_group and self.graphics_item_group:
@@ -289,11 +354,17 @@ class Annotation(QObject):
         self.polygon_graphics_item = QGraphicsPolygonItem(polygon)
         self.polygon_graphics_item.setBrush(color)
     
-        # By default, no pen unless selected
+        # Set pen style based on selection state
         if self.is_selected:
+            # Use inverse color and animated dashed line for selected items
             inverse_color = QColor(255 - color.red(), 255 - color.green(), 255 - color.blue())
-            self.polygon_graphics_item.setPen(QPen(inverse_color, 4, Qt.DotLine))
+            pen = QPen(inverse_color, 4)
+            pen.setStyle(Qt.CustomDashLine)
+            pen.setDashPattern([5, 5])
+            pen.setDashOffset(self._dash_offset)
+            self.polygon_graphics_item.setPen(pen)
         else:
+            # Use label color with solid line for unselected items
             self.polygon_graphics_item.setPen(QPen(color, 3, Qt.SolidLine))
     
         if add_to_group and self.graphics_item_group:
