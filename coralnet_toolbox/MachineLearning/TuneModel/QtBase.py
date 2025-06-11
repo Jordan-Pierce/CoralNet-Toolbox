@@ -3,22 +3,12 @@ import warnings
 import gc
 import traceback
 
-from ultralytics import YOLO
-import ultralytics.data.build as build
-import ultralytics.models.yolo.classify.train as train_build
-from ultralytics.data.dataset import YOLODataset
-from ultralytics.data.dataset import ClassificationDataset
-
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QCheckBox, QWidget, QVBoxLayout,
                              QLabel, QLineEdit, QDialog, QHBoxLayout, QPushButton, QComboBox, QSpinBox,
                              QFormLayout, QTabWidget, QDoubleSpinBox, QGroupBox, QFrame)
 
 from torch.cuda import empty_cache
-
-from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
-from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
-from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 
 from coralnet_toolbox.MachineLearning.TuneModel.tuner import Tuner, DEFAULT_SPACE
 
@@ -48,7 +38,7 @@ class TuneModelWorker(QThread):
     tuning_error = pyqtSignal(str)
     tuning_progress = pyqtSignal(int, int)  # current iteration, total iterations
 
-    def __init__(self, params, device):
+    def __init__(self, params):
         """
         Initialize the TuneModelWorker.
 
@@ -58,11 +48,6 @@ class TuneModelWorker(QThread):
         """
         super().__init__()
         self.params = params
-        self.device = device
-
-        self.model = None
-        self.model_path = None
-        self.weighted = False
         self.tuner = None
 
     def pre_run(self):
@@ -70,29 +55,6 @@ class TuneModelWorker(QThread):
         Set up the model and prepare parameters for tuning.
         """
         try:
-            # Extract model path before creating tuner args
-            self.model_path = self.params.get('model', None)
-            # Get the weighted flag
-            self.weighted = self.params.pop('weighted', False)
-
-            # Determine if ultralytics or community
-            if self.model_path in get_available_configs(task=self.params['task']):
-                self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
-                # Cannot use weighted sampling with community models
-                self.weighted = False
-
-            # Use the custom dataset class for weighted sampling
-            if self.weighted and self.params['task'] == 'classify':
-                train_build.ClassificationDataset = WeightedClassificationDataset
-            elif self.weighted and self.params['task'] in ['detect', 'segment']:
-                build.YOLODataset = WeightedInstanceDataset
-
-            # Load the model (8.3.141) YOLO handles RTDETR too
-            self.model = YOLO(self.model_path)
-
-            # Set the task in the model itself
-            self.model.task = self.params['task']
-
             # Prepare tuner arguments following the same pattern as model.tune()
             self.mutation = self.params.pop('mutation', None)
             self.iterations = self.params.pop('iterations', None)  # Remove iterations, will pass separately
@@ -101,7 +63,7 @@ class TuneModelWorker(QThread):
             self.params['mode'] = 'train'
             
             # Create the custom tuner with the prepared arguments
-            self.tuner = Tuner(self.mutation, args=self.params, _callbacks=self.model.callbacks)
+            self.tuner = Tuner(self.mutation, args=self.params)
 
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
@@ -119,8 +81,8 @@ class TuneModelWorker(QThread):
             # Set up the model and parameters
             self.pre_run()
 
-            # Run the custom tuner following the same pattern as model.tune()
-            results = self.tuner(model=self.model, iterations=self.iterations)
+            # The model is already set up in the tuner through the args
+            results = self.tuner(iterations=self.iterations)
 
             # Store results for potential future use
             self.tuning_results = results
@@ -141,18 +103,12 @@ class TuneModelWorker(QThread):
         """
         Clean up resources after tuning.
         """
-        # Revert to the original dataset class without weighted sampling
-        if self.weighted and self.params['task'] == 'classify':
-            train_build.ClassificationDataset = ClassificationDataset
-        elif self.weighted and self.params['task'] in ['detect', 'segment']:
-            build.YOLODataset = YOLODataset
+        pass
 
     def _cleanup(self):
         """
         Clean up resources after tuning.
         """
-        if self.model:
-            del self.model
         if self.tuner:
             del self.tuner
         gc.collect()
@@ -374,12 +330,6 @@ class Base(QDialog):
         self.batch_spinbox.setMaximum(1024)
         self.batch_spinbox.setValue(self.batch)
         form_layout.addRow("Batch Size:", self.batch_spinbox)
-        
-        # Weighted
-        self.weighted_combo = QComboBox()
-        self.weighted_combo.addItems(["True", "False"])
-        self.weighted_combo.setCurrentText("True")
-        form_layout.addRow("Weighted Sampling:", self.weighted_combo)
         
         # Optimizer
         self.optimizer_combo = QComboBox()
@@ -624,7 +574,6 @@ class Base(QDialog):
             'epochs': self.epochs_spinbox.value(),
             'batch': self.batch_spinbox.value(),
             'imgsz': self.imgsz_spinbox.value(),
-            'weighted': self.weighted_combo.currentText().lower() == "true",
             'optimizer': self.optimizer_combo.currentText(),
             'val': self.val_combo.currentText().lower() == "true",
             'workers': self.workers_spinbox.value(),
@@ -688,6 +637,8 @@ class Base(QDialog):
                         params[name] = value
                 else:  # string type
                     params[name] = value
+                    
+        params['device'] = self.main_window.device  # Add device parameter
 
         # Return the dictionary of parameters
         return params
@@ -700,7 +651,7 @@ class Base(QDialog):
         self.params = self.get_parameters()
 
         # Create and start the worker thread
-        self.worker = TuneModelWorker(self.params, self.main_window.device)
+        self.worker = TuneModelWorker(self.params)
         self.worker.tuning_started.connect(self.on_tuning_started)
         self.worker.tuning_completed.connect(self.on_tuning_completed)
         self.worker.tuning_error.connect(self.on_tuning_error)
