@@ -237,15 +237,16 @@ class Annotation(QObject):
         """Stop the animation for deselected annotations."""
         self.animation_timer.stop()
     
-    def _create_pen(self, color: QColor) -> QPen:
+    def _create_pen(self, base_color: QColor) -> QPen:
         """Create a pen with appropriate style based on selection state."""
         # Set pen style based on selection state
         if self.is_selected:
             # Use same color if verified, black if not verified
             if self.verified:
-                pen_color = color
+                pen_color = QColor(base_color)  # Create a copy
+                pen_color.setAlpha(255)  # Pen should always be fully opaque
             else:
-                pen_color = QColor(0, 0, 0)  # Black
+                pen_color = QColor(0, 0, 0, 255)  # Black, fully opaque
             
             pen = QPen(pen_color, 2)  # Reduced width for dotted line
             pen.setStyle(Qt.CustomDashLine)
@@ -253,8 +254,9 @@ class Annotation(QObject):
             pen.setDashOffset(self._animated_line)
             return pen
         else:
-            # Use label color with solid line for unselected items
-            pen_color = QColor(color)
+            # Use label color with solid line for unselected items, always opaque
+            pen_color = QColor(base_color)
+            pen_color.setAlpha(255)  # Pen should always be fully opaque
             return QPen(pen_color, 2, Qt.SolidLine)  # Consistent width
     
     def _update_pen_styles(self):
