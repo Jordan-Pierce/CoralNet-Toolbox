@@ -60,11 +60,19 @@ class Label(QWidget):
         """Handle mouse press events for selection and initiating drag."""
         if event.button() == Qt.LeftButton:
             self.is_selected = not self.is_selected
+            if self.is_selected:
+                self.start_animation()
+            else:
+                self.stop_animation()
             self.update_selection()
             self.selected.emit(self)  # Emit the selected signal
 
         if event.button() == Qt.RightButton:
             self.is_selected = not self.is_selected
+            if self.is_selected:
+                self.start_animation()
+            else:
+                self.stop_animation()
             self.update_selection()
             self.selected.emit(self)  # Emit the selected signal
             self.drag_start_position = event.pos()
